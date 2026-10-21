@@ -16,6 +16,7 @@ var ErrDNSChallengeNotFound = errors.New("controlstate: DNS challenge not found"
 
 type DNSChallengeContext struct {
 	PublicURLID           string
+	PrivateServiceID      string
 	TeamID                string
 	DomainID              string
 	DNSAuthorityReference string
@@ -92,6 +93,15 @@ func (d *Database) GetDNSChallengeContext(
 	row, err := queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{
 		PublicURLID: publicURLID, AuthorizationID: authorizationID,
 	})
+	privateID := ""
+	if strings.HasPrefix(publicURLID, "psvc_") {
+		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{PrivateServiceID: publicURLID, AuthorizationID: authorizationID})
+		err = privateErr
+		if err == nil {
+			privateID = private.PrivateServiceID
+			row = controlstatedb.GetDNSChallengeContextRow{TeamID: private.TeamID, DomainID: private.DomainID.String, DnsAuthorityReference: private.DnsAuthorityReference, CanonicalHostname: private.CanonicalHostname, CanonicalDomain: private.CanonicalDomain, AuthorizationID: private.AuthorizationID, Identifier: private.Identifier, ChallengeDigest: private.ChallengeDigest, PresentationReference: private.PresentationReference, State: private.State}
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
 	}
@@ -113,6 +123,7 @@ func (d *Database) GetDNSChallengeContext(
 	}
 	result := DNSChallengeContext{
 		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
+		PrivateServiceID:      privateID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,
 		AuthorizationID: row.AuthorizationID, Identifier: row.Identifier,
 		PresentationReference: row.PresentationReference.String, State: state,
@@ -130,11 +141,11 @@ func (d *Database) GetDNSChallengeContext(
 	return result, nil
 }
 
-// WithDNSChallengeLock serializes the stored snapshot and DNS update for one
-// TXT name across control processes. the dedicated transaction rolls back
+// WithDNSRecordLock serializes the stored snapshot and DNS update for one
+// record name across control processes. the dedicated transaction rolls back
 // after the callback returns, releasing its lock; connection loss releases
 // it too. the callback can still read through the pooled runtime connections.
-func (d *Database) WithDNSChallengeLock(ctx context.Context, recordName string, run func() error) (retErr error) {
+func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run func() error) (retErr error) {
 	base := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(recordName), "."), "_acme-challenge.")
 	if canonical, err := naming.CanonicalizeHostname(base); err != nil || canonical != base || run == nil {
 		return errors.New("controlstate: invalid DNS challenge lock")
@@ -159,7 +170,7 @@ func (d *Database) WithDNSChallengeLock(ctx context.Context, recordName string, 
 		return fmt.Errorf("controlstate: begin DNS challenge lock: %w", err)
 	}
 	defer rollback(ctx, tx, "DNS challenge lock", &retErr)()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-challenge:"+base); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-record:"+base); err != nil {
 		return fmt.Errorf("controlstate: lock DNS challenge: %w", err)
 	}
 	return run()

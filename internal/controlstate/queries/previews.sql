@@ -7,11 +7,11 @@ DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled;
 
 -- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
+SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_publish_run_id
 FROM control.previews WHERE id = $1;
 
 -- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled
+SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_publish_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE;
 
 -- name: SetPreviewTeamAccess :exec

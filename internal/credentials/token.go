@@ -6,30 +6,24 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
 )
 
 const (
-	accessPrefix              = "tnl_access_"
-	loginPrefix               = "tnl_login_"
-	refreshPrefix             = "tnl_refresh_"
-	invitationPrefix          = "tnl_invitation_"
-	sessionPrefix             = "tnl_session_"
-	connectionPrefix          = "tnl_connection_"
-	publishCredentialPrefix   = "tnl_publish_"
-	ephemeralCredentialPrefix = "tnl_eph_"
-	lookupBytes               = 16
-	secretBytes               = 32
+	accessPrefix     = "tnl_access_"
+	refreshPrefix    = "tnl_refresh_"
+	invitationPrefix = "tnl_invitation_"
+	sessionPrefix    = "tnl_session_"
+	connectionPrefix = "tnl_connection_"
+	lookupBytes      = 16
+	secretBytes      = 32
 )
 
 var (
 	// ErrInvalidAccessToken is returned for malformed or rejected access tokens.
 	ErrInvalidAccessToken = errors.New("invalid access token")
-	// ErrInvalidLoginToken is returned for malformed login tokens.
-	ErrInvalidLoginToken = errors.New("invalid login token")
 	// ErrInvalidRefreshToken is returned for malformed or rejected refresh tokens.
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	// ErrInvalidInvitationToken is returned for malformed or rejected invitation tokens.
@@ -38,15 +32,10 @@ var (
 	ErrInvalidPublishRunToken = errors.New("invalid publish run token")
 	// ErrInvalidPublisherConnectionCredential is returned for malformed publisher connection credentials.
 	ErrInvalidPublisherConnectionCredential = errors.New("invalid publisher connection credential")
-	ErrInvalidPublicURLPublishCredential    = errors.New("invalid public URL publish credential")
-	ErrInvalidEphemeralCredential           = errors.New("invalid ephemeral public URL credential")
 )
 
 // AccessToken authenticates an identity to the tnl server API.
 type AccessToken string
-
-// LoginToken authenticates only to the built-in authority's token exchange.
-type LoginToken string
 
 // RefreshToken rotates one control session's access and refresh credentials.
 type RefreshToken string
@@ -60,24 +49,11 @@ type PublishRunToken string
 // PublisherConnectionCredential authorizes one publisher connection assignment claim.
 type PublisherConnectionCredential string
 
-// PublicURLPublishCredential authorizes starting publish runs for one saved public URL.
-type PublicURLPublishCredential string
-
-// EphemeralCredential authorizes allocating and publishing ad-hoc public URLs.
-type EphemeralCredential string
-
 // CredentialID is the nonsecret lookup portion of a credential.
 type CredentialID string
 
 // SecretHash is the stored digest of a random token secret.
 type SecretHash [sha256.Size]byte
-
-// LoginVerifier is the verification material for one login token.
-type LoginVerifier struct {
-	id             CredentialID
-	hash           SecretHash
-	sourceRevision int64
-}
 
 // NewAccessToken creates an access token and its storage values.
 func NewAccessToken() (AccessToken, CredentialID, SecretHash, error) {
@@ -88,21 +64,6 @@ func NewAccessToken() (AccessToken, CredentialID, SecretHash, error) {
 // ParseAccessToken validates an access token and returns its storage lookup values.
 func ParseAccessToken(token AccessToken) (CredentialID, SecretHash, error) {
 	return parseToken(string(token), accessPrefix, ErrInvalidAccessToken)
-}
-
-// NewLoginToken creates a local login token.
-func NewLoginToken() (LoginToken, error) {
-	token, _, _, err := newToken(loginPrefix)
-	return LoginToken(token), err
-}
-
-// ParseLoginToken validates a login token and returns its verifier.
-func ParseLoginToken(token LoginToken) (LoginVerifier, error) {
-	lookupID, hash, err := parseToken(string(token), loginPrefix, ErrInvalidLoginToken)
-	if err != nil {
-		return LoginVerifier{}, err
-	}
-	return LoginVerifier{id: lookupID, hash: hash, sourceRevision: loginSourceRevision(token)}, nil
 }
 
 // NewRefreshToken creates a control-session refresh token and its storage values.
@@ -180,46 +141,6 @@ func ParsePublishRunToken(token PublishRunToken) (CredentialID, SecretHash, erro
 	return parseToken(string(token), sessionPrefix, ErrInvalidPublishRunToken)
 }
 
-// NewPublicURLPublishCredential creates a revocable, public URL-scoped credential.
-func NewPublicURLPublishCredential() (PublicURLPublishCredential, CredentialID, SecretHash, error) {
-	token, id, hash, err := newToken(publishCredentialPrefix)
-	return PublicURLPublishCredential(token), id, hash, err
-}
-
-// ParsePublicURLPublishCredential returns its lookup ID, verifier, and retry secret.
-func ParsePublicURLPublishCredential(token PublicURLPublishCredential) (CredentialID, SecretHash, []byte, error) {
-	id, hash, err := parseToken(string(token), publishCredentialPrefix, ErrInvalidPublicURLPublishCredential)
-	if err != nil {
-		return "", SecretHash{}, nil, err
-	}
-	return id, hash, validatedTokenSecret(string(token), publishCredentialPrefix), nil
-}
-
-// IsPublicURLPublishCredential identifies the saved-URL token type before parsing.
-func IsPublicURLPublishCredential(token string) bool {
-	return strings.HasPrefix(token, publishCredentialPrefix)
-}
-
-// NewEphemeralCredential creates a revocable ad-hoc public URL credential.
-func NewEphemeralCredential() (EphemeralCredential, CredentialID, SecretHash, error) {
-	token, id, hash, err := newToken(ephemeralCredentialPrefix)
-	return EphemeralCredential(token), id, hash, err
-}
-
-// ParseEphemeralCredential returns its lookup ID, verifier, and retry secret.
-func ParseEphemeralCredential(token EphemeralCredential) (CredentialID, SecretHash, []byte, error) {
-	id, hash, err := parseToken(string(token), ephemeralCredentialPrefix, ErrInvalidEphemeralCredential)
-	if err != nil {
-		return "", SecretHash{}, nil, err
-	}
-	return id, hash, validatedTokenSecret(string(token), ephemeralCredentialPrefix), nil
-}
-
-// IsEphemeralCredential identifies the namespace token type before parsing.
-func IsEphemeralCredential(token string) bool {
-	return strings.HasPrefix(token, ephemeralCredentialPrefix)
-}
-
 // NewPublisherConnectionCredential creates a credential for one connection assignment.
 func NewPublisherConnectionCredential() (PublisherConnectionCredential, SecretHash, error) {
 	token, _, hash, err := newToken(connectionPrefix)
@@ -251,24 +172,8 @@ func DerivePublisherConnectionCredential(publishRunToken PublishRunToken, assign
 	return PublisherConnectionCredential(credential), hash, nil
 }
 
-// Matches reports whether token matches this verifier.
-func (v LoginVerifier) Matches(token LoginToken) bool {
-	candidate, err := ParseLoginToken(token)
-	if err != nil {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(v.id), []byte(candidate.id)) == 1 &&
-		SecretHashMatches(v.hash[:], candidate.hash)
-}
-
-// SourceRevision identifies the login-token source used to issue sessions.
-func (v LoginVerifier) SourceRevision() int64 { return v.sourceRevision }
-
 // String returns the serialized access token.
 func (t AccessToken) String() string { return string(t) }
-
-// String returns the serialized login token.
-func (t LoginToken) String() string { return string(t) }
 
 // String returns the serialized refresh token.
 func (t RefreshToken) String() string { return string(t) }
@@ -281,10 +186,6 @@ func (t PublishRunToken) String() string { return string(t) }
 
 // String returns the serialized publisher connection credential.
 func (t PublisherConnectionCredential) String() string { return string(t) }
-
-// String returns the serialized public URL publish credential.
-func (t PublicURLPublishCredential) String() string { return string(t) }
-func (t EphemeralCredential) String() string        { return string(t) }
 
 // String returns the nonsecret credential ID.
 func (id CredentialID) String() string { return string(id) }
@@ -319,15 +220,6 @@ func parseToken(token, prefix string, invalid error) (CredentialID, SecretHash, 
 		return "", SecretHash{}, invalid
 	}
 	return CredentialID(encodedID), sha256.Sum256(secret), nil
-}
-
-func loginSourceRevision(token LoginToken) int64 {
-	digest := sha256.Sum256([]byte(token))
-	revision := int64(binary.BigEndian.Uint64(digest[:8]) & uint64(^uint64(0)>>1))
-	if revision == 0 {
-		return 1
-	}
-	return revision
 }
 
 // SecretHashMatches compares a stored digest without data-dependent timing.

@@ -21,6 +21,7 @@ import (
 var ErrInvitationNotFound = errors.New("controlstate: invitation not found")
 
 type Invitation struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	MemberSlug                 string
@@ -37,16 +38,17 @@ type InvitationSecret struct {
 }
 
 type CreateInvitationRequest struct {
-	IdentityID       string
-	TeamID           string
-	IdempotencyKey   string
-	RequestDigest    [32]byte
-	MemberSlug       string
-	InitialRole      TeamRole
-	ExpiresAt        time.Time
-	EmailRestriction string
-	RetrySecret      []byte
-	SendEmail        bool
+	PersonalAccountException bool
+	IdentityID               string
+	TeamID                   string
+	IdempotencyKey           string
+	RequestDigest            [32]byte
+	MemberSlug               string
+	InitialRole              TeamRole
+	ExpiresAt                time.Time
+	EmailRestriction         string
+	RetrySecret              []byte
+	SendEmail                bool
 }
 
 func (d *Database) ListTeamInvitations(
@@ -85,7 +87,7 @@ func (d *Database) ListTeamInvitations(
 	for index, row := range rows {
 		result[index] = invitationFromRow(
 			row.ID, row.TeamID, row.MemberSlug, row.InitialRole, row.NormalizedEmailRestriction,
-			row.State, row.CreatedAt, row.ExpiresAt,
+			row.State, row.CreatedAt, row.ExpiresAt, row.PersonalAccountException,
 		)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -124,7 +126,7 @@ func (d *Database) CreateTeamInvitation(
 	}
 	actorRole := TeamRole(actor.ActorRole)
 	if TeamKind(actor.Kind) != TeamKindOrganization || actorRole != TeamRoleAdmin && actorRole != TeamRoleOwner ||
-		request.InitialRole != TeamRoleMember && actorRole != TeamRoleOwner {
+		(request.InitialRole != TeamRoleMember || request.PersonalAccountException) && actorRole != TeamRoleOwner {
 		return InvitationSecret{}, ErrAuthorityAccess
 	}
 	if err := expireTeamInvitations(ctx, queries, request.TeamID, now); err != nil {
@@ -134,7 +136,7 @@ func (d *Database) CreateTeamInvitation(
 		IdentityID: request.IdentityID, TeamID: request.TeamID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if existing.TeamID != request.TeamID || subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
+		if existing.TeamID != request.TeamID || existing.PersonalAccountException != request.PersonalAccountException || subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
 			return InvitationSecret{}, ErrAuthorityIdempotency
 		}
 		state := InvitationState(existing.State)
@@ -154,7 +156,7 @@ func (d *Database) CreateTeamInvitation(
 		}
 		return InvitationSecret{Invitation: invitationFromRow(
 			existing.ID, existing.TeamID, existing.MemberSlug, existing.InitialRole,
-			existing.NormalizedEmailRestriction, existing.State, existing.CreatedAt, existing.ExpiresAt,
+			existing.NormalizedEmailRestriction, existing.State, existing.CreatedAt, existing.ExpiresAt, existing.PersonalAccountException,
 		), Secret: token.String()}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -186,7 +188,8 @@ func (d *Database) CreateTeamInvitation(
 		return InvitationSecret{}, err
 	}
 	row, err := queries.CreateTeamInvitation(ctx, controlstatedb.CreateTeamInvitationParams{
-		ID: invitationID, TeamID: request.TeamID, SlugReservationID: reservationID,
+		PersonalAccountException: request.PersonalAccountException,
+		ID:                       invitationID, TeamID: request.TeamID, SlugReservationID: reservationID,
 		InitialRole: string(request.InitialRole), InvitedByIdentityID: request.IdentityID,
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: request.RequestDigest[:], TokenDigest: tokenDigest[:],
 		NormalizedEmailRestriction: nullableText(normalizedEmail),
@@ -205,7 +208,7 @@ func (d *Database) CreateTeamInvitation(
 	}
 	return InvitationSecret{Invitation: invitationFromRow(
 		row.ID, row.TeamID, request.MemberSlug, row.InitialRole, row.NormalizedEmailRestriction,
-		row.State, row.CreatedAt, row.ExpiresAt,
+		row.State, row.CreatedAt, row.ExpiresAt, row.PersonalAccountException,
 	), Secret: token.String()}, nil
 }
 
@@ -398,6 +401,14 @@ func (d *Database) AcceptInvitation(
 	}); err != nil {
 		return Membership{}, fmt.Errorf("controlstate: accept invitation: create membership: %w", err)
 	}
+	if invitation.PersonalAccountException {
+		if _, err := tx.Exec(ctx, `UPDATE control.team_memberships SET personal_account_exception=true WHERE id=$1`, membershipID); err != nil {
+			return Membership{}, err
+		}
+		if err := queries.InsertCompanyAccessAudit(ctx, controlstatedb.InsertCompanyAccessAuditParams{TeamID: invitation.TeamID, ActorIdentityID: text(invitation.InvitedByIdentityID), TargetIdentityID: text(identityID), Operation: "membership.contractor_invitation", Revision: revision, Now: timestamptz(now), Details: `{"personal_account_exception":true}`}); err != nil {
+			return Membership{}, err
+		}
+	}
 	if updated, err := queries.AcceptTeamInvitation(ctx, controlstatedb.AcceptTeamInvitationParams{
 		AcceptedAt: timestamp(now), IdentityID: text(identityID), MembershipID: text(membershipID), InvitationID: invitation.ID,
 	}); err != nil || updated != 1 {
@@ -415,6 +426,7 @@ func (d *Database) AcceptInvitation(
 	return membershipFromRow(
 		row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
 		row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+		row.IdentityConnectionID, row.ManualSuspendedAt, row.PersonalAccountException, row.CompanySignInRequired, row.Active,
 	), nil
 }
 
@@ -441,9 +453,11 @@ func invitationFromRow(
 	normalizedEmail pgtype.Text,
 	state string,
 	createdAt, expiresAt pgtype.Timestamptz,
+	personalAccountException bool,
 ) Invitation {
 	return Invitation{
-		ID: id, TeamID: teamID, MemberSlug: memberSlug, InitialRole: TeamRole(initialRole),
+		PersonalAccountException: personalAccountException,
+		ID:                       id, TeamID: teamID, MemberSlug: memberSlug, InitialRole: TeamRole(initialRole),
 		NormalizedEmailRestriction: normalizedEmail.String, State: InvitationState(state),
 		CreatedAt: createdAt.Time, ExpiresAt: expiresAt.Time,
 	}

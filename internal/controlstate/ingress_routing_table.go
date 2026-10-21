@@ -54,7 +54,8 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 	identity IngressLeaseIdentity,
 	now time.Time,
 ) (result IngressRoutingTableSnapshot, retErr error) {
-	defer d.observeOperation("ReadIngressRoutingTableSnapshot", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableSnapshot")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTableSnapshot{}, err
 	}
@@ -113,7 +114,8 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	pageSize int,
 	now time.Time,
 ) (result IngressRoutingTablePage, retErr error) {
-	defer d.observeOperation("ReadIngressRoutingTableEvents", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableEvents")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTablePage{}, err
 	}
@@ -209,8 +211,7 @@ func (d *Database) ingressRoutingTableEvent(
 	createdAt pgtype.Timestamptz,
 ) (IngressRoutingTableEvent, error) {
 	if routingTableRevision <= 0 || publishRunNumber <= 0 || entryRevision <= 0 || !createdAt.Valid ||
-		(eventKind != "public_url_upsert" && eventKind != "public_url_tombstone" &&
-			eventKind != "challenge_upsert" && eventKind != "challenge_tombstone") {
+		(eventKind != "public_url_upsert" && eventKind != "public_url_tombstone") {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: invalid ingress routing-table event row")
 	}
 	var projection IngressRoutingTableProjection
@@ -226,8 +227,11 @@ func (d *Database) ingressRoutingTableEvent(
 		projection.CanonicalHostname != canonicalHostname {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table projection identity mismatch")
 	}
+	if projection.Traffic != nil && (!projection.Traffic.Valid() || projection.Traffic.RatePer == 0) {
+		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table traffic limits are invalid")
+	}
 	if projection.IPPolicy == IPPolicyHashedAllowlist {
-		if projection.IPPolicyKeyID == "" || len(projection.AllowedIPHashes) == 0 {
+		if projection.IPPolicyKeyID == "" {
 			return IngressRoutingTableEvent{}, errors.New("controlstate: hashed IP policy is invalid")
 		}
 		if len(policyCiphertext) != 0 {

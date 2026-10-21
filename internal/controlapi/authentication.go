@@ -24,7 +24,7 @@ func (h *handler) authenticatePublishRunRequest(
 	}
 	if h.store == nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		operatorlog.Report("authenticate publish run", failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
+		operatorlog.ReportContext(request.Context(), "authenticate publish run", failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
 		return controlstate.PublishRunAuthentication{}, false
 	}
 	authentication, err := h.store.PublishRunAuthentication(
@@ -36,7 +36,7 @@ func (h *handler) authenticatePublishRunRequest(
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authentication is unavailable")
-		operatorlog.Report("authenticate publish run", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "authenticate publish run", failure.ServerAPIInternal, requestID, err)
 		return controlstate.PublishRunAuthentication{}, false
 	}
 	return authentication, true

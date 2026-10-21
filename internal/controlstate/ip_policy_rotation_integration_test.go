@@ -15,7 +15,7 @@ import (
 
 func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_policy_rotation")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.AllowedIPPrefixes = []string{"192.0.2.0/24"}
 	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {

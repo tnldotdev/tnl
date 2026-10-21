@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,16 +50,25 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 	err := d.pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM control.control_sessions WHERE retry_secret_storage_key_id = $1) +
-			(SELECT count(*) FROM control.email_deliveries WHERE storage_key_id = $1) +
+			(SELECT count(*) FROM control.team_invitation_email_deliveries WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.acme_accounts WHERE account_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.control_tls_cache WHERE cache_storage_key_id = $1) +
+			(SELECT count(*) FROM control.service_client_certificate_issuer WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.runtime_secret WHERE guest_retry_master_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.public_url_usage_configuration WHERE visitor_network_hash_master_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.guest_retry_keys WHERE guest_retry_master_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.visitor_network_hash_keys WHERE visitor_network_hash_master_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.public_urls WHERE allowed_ip_policy_storage_key_id = $1) +
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
+			(SELECT count(*) FROM control.private_service_runs WHERE assignment_seed_storage_key_id = $1) +
+			(SELECT count(*) FROM control.private_ingress_assignment_requests WHERE storage_key_id = $1) +
+			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.workload_ingress_requests WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.ingress_transport_issuers WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.managed_http_browser_logins WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.publisher_namespace_renames WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_routing_table_events WHERE policy_storage_key_id = $1)
 	`, previousKeyID).Scan(&count)
 	if err != nil {
@@ -134,7 +144,19 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		}
 		return nil
 	}
-	if err := rotate(`SELECT ctid::text, delivery_id, payload_ciphertext FROM control.email_deliveries
+	if err := rotate(`SELECT ctid::text, seed_ciphertext FROM control.service_client_certificate_issuer WHERE storage_key_id=$1 FOR UPDATE SKIP LOCKED LIMIT $2`,
+		func(rows pgx.Rows) (string, string, []byte, error) {
+			var row string
+			var ciphertext []byte
+			err := rows.Scan(&row, &ciphertext)
+			return row, serviceClientIssuerContext, ciphertext, err
+		}, func(row, key string, ciphertext []byte) error {
+			_, err := tx.Exec(ctx, `UPDATE control.service_client_certificate_issuer SET seed_ciphertext=$1,storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, key, row, previousKeyID)
+			return err
+		}); err != nil {
+		return 0, err
+	}
+	if err := rotate(`SELECT ctid::text, delivery_id, payload_ciphertext FROM control.team_invitation_email_deliveries
 		WHERE storage_key_id = $1 ORDER BY delivery_id FOR UPDATE SKIP LOCKED LIMIT $2`,
 		func(rows pgx.Rows) (string, string, []byte, error) {
 			var rowID, id string
@@ -142,7 +164,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 			err := rows.Scan(&rowID, &id, &ciphertext)
 			return rowID, emailPayloadContext(id), ciphertext, err
 		}, func(rowID, keyID string, ciphertext []byte) error {
-			_, err := tx.Exec(ctx, `UPDATE control.email_deliveries SET payload_ciphertext=$1, storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, keyID, rowID, previousKeyID)
+			_, err := tx.Exec(ctx, `UPDATE control.team_invitation_email_deliveries SET payload_ciphertext=$1, storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, keyID, rowID, previousKeyID)
 			return err
 		}); err != nil {
 		return 0, err
@@ -195,29 +217,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 	}
 
 	if err := rotate(`
-		SELECT ctid::text, directory_url, cache_key, cache_ciphertext
-		FROM control.control_tls_cache
-		WHERE cache_storage_key_id = $1
-		ORDER BY directory_url, cache_key
-		FOR UPDATE SKIP LOCKED
-		LIMIT $2
-	`, func(rows pgx.Rows) (string, string, []byte, error) {
-		var rowID, directoryURL, cacheKey string
-		var ciphertext []byte
-		err := rows.Scan(&rowID, &directoryURL, &cacheKey, &ciphertext)
-		return rowID, controlTLSCacheContext(directoryURL, cacheKey), ciphertext, err
-	}, func(rowID, keyID string, ciphertext []byte) error {
-		_, err := tx.Exec(ctx, `
-			UPDATE control.control_tls_cache
-			SET cache_ciphertext = $1, cache_storage_key_id = $2
-			WHERE ctid = $3::tid AND cache_storage_key_id = $4
-		`, ciphertext, keyID, rowID, previousKeyID)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("controlstate: rotate control TLS cache: %w", err)
-	}
-
-	if err := rotate(`
 		SELECT ctid::text, relay_service_id, transport_private_key_ciphertext
 		FROM control.relay_services
 		WHERE transport_private_key_storage_key_id = $1
@@ -265,7 +264,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 
 	if err := rotate(`
 		SELECT ctid::text, guest_retry_master_key_ciphertext
-		FROM control.runtime_secret
+		FROM control.guest_retry_keys
 		WHERE guest_retry_master_key_storage_key_id = $1
 		FOR UPDATE SKIP LOCKED
 		LIMIT $2
@@ -276,7 +275,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return rowID, guestRetryMasterKeyContext(), ciphertext, err
 	}, func(rowID, keyID string, ciphertext []byte) error {
 		_, err := tx.Exec(ctx, `
-			UPDATE control.runtime_secret
+			UPDATE control.guest_retry_keys
 			SET guest_retry_master_key_ciphertext = $1, guest_retry_master_key_storage_key_id = $2
 			WHERE ctid = $3::tid AND guest_retry_master_key_storage_key_id = $4
 		`, ciphertext, keyID, rowID, previousKeyID)
@@ -287,7 +286,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 
 	if err := rotate(`
 		SELECT ctid::text, visitor_network_hash_master_key_ciphertext
-		FROM control.public_url_usage_configuration
+		FROM control.visitor_network_hash_keys
 		WHERE visitor_network_hash_master_key_storage_key_id = $1
 		FOR UPDATE SKIP LOCKED
 		LIMIT $2
@@ -298,7 +297,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return rowID, visitorNetworkHashMasterKeyContext(), ciphertext, err
 	}, func(rowID, keyID string, ciphertext []byte) error {
 		_, err := tx.Exec(ctx, `
-			UPDATE control.public_url_usage_configuration
+			UPDATE control.visitor_network_hash_keys
 			SET visitor_network_hash_master_key_ciphertext = $1, visitor_network_hash_master_key_storage_key_id = $2
 			WHERE ctid = $3::tid AND visitor_network_hash_master_key_storage_key_id = $4
 		`, ciphertext, keyID, rowID, previousKeyID)
@@ -311,6 +310,22 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		query, column, keyIDColumn, table string
 		context                           func(string) string
 	}{
+		{`SELECT ctid::text,id,credential_ciphertext FROM control.workload_sessions WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"credential_ciphertext", "storage_key_id", "control.workload_sessions", workloadCredentialContext},
+		{`SELECT ctid::text,workload_session_id || '/' || idempotency_key,result_ciphertext FROM control.workload_ingress_requests WHERE storage_key_id=$1 ORDER BY workload_session_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"result_ciphertext", "storage_key_id", "control.workload_ingress_requests", func(id string) string {
+				session, key, _ := strings.Cut(id, "/")
+				return workloadRequestScope(session, key)
+			}},
+		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.managed_http_browser_logins
+		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"verifier_ciphertext", "storage_key_id", "control.managed_http_browser_logins", func(id string) string { return "browser-access:" + id }},
+		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
+		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
+		{`SELECT ctid::text, team_id || '/' || project_key || '/' || idempotency_key, response_ciphertext FROM control.publisher_namespace_renames
+		  WHERE storage_key_id=$1 ORDER BY team_id,project_key,idempotency_key LIMIT $2 FOR UPDATE SKIP LOCKED`,
+			"response_ciphertext", "storage_key_id", "control.publisher_namespace_renames", func(id string) string { return "publisher-namespace-rename/" + id }},
 		{`SELECT ctid::text, id, allowed_ip_policy_ciphertext FROM control.public_urls
 		  WHERE allowed_ip_policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"allowed_ip_policy_ciphertext", "allowed_ip_policy_storage_key_id", "control.public_urls", publicURLIPPolicyContext},
@@ -320,6 +335,14 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.publish_runs
 		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"request_digest_ciphertext", "request_digest_storage_key_id", "control.publish_runs", publishRunRequestDigestContext},
+		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.private_service_runs
+		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.private_service_runs", privateAssignmentSeedContext},
+		{`SELECT ctid::text, identity_id || '/' || idempotency_key, result_ciphertext FROM control.private_ingress_assignment_requests
+		  WHERE storage_key_id=$1 ORDER BY identity_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"result_ciphertext", "storage_key_id", "control.private_ingress_assignment_requests", privateIngressAssignmentContext},
+		{`SELECT ctid::text, revision::text, private_key_ciphertext FROM control.ingress_transport_issuers WHERE storage_key_id=$1 ORDER BY revision FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"private_key_ciphertext", "storage_key_id", "control.ingress_transport_issuers", func(id string) string { return "ingress-transport-issuer:" + id }},
 		{`SELECT ctid::text, public_url_id, policy_ciphertext FROM control.ingress_routing_table_events
 		  WHERE policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"policy_ciphertext", "policy_storage_key_id", "control.ingress_routing_table_events", publicURLIPPolicyContext},
@@ -336,6 +359,19 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		}); err != nil {
 			return 0, fmt.Errorf("controlstate: rotate private IP policy: %w", err)
 		}
+	}
+	if err := rotate(`SELECT ctid::text,ingress_id,ingress_run_id,ingress_lease_revision,tls_server_name,private_key_ciphertext
+	    FROM control.ingress_transport_certificates WHERE storage_key_id=$1 ORDER BY ingress_id,ingress_run_id FOR UPDATE SKIP LOCKED LIMIT $2`, func(rows pgx.Rows) (string, string, []byte, error) {
+		var rowID, id, run, name string
+		var revision int64
+		var ciphertext []byte
+		err := rows.Scan(&rowID, &id, &run, &revision, &name, &ciphertext)
+		return rowID, ingressTransportKeyContext(id, run, revision, name), ciphertext, err
+	}, func(rowID, keyID string, ciphertext []byte) error {
+		_, err := tx.Exec(ctx, `UPDATE control.ingress_transport_certificates SET private_key_ciphertext=$1,storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, keyID, rowID, previousKeyID)
+		return err
+	}); err != nil {
+		return 0, fmt.Errorf("controlstate: rotate ingress transport private keys: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

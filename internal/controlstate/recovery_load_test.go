@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -412,7 +413,9 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 				slots[slot] = true
 			}
 			for _, connection := range before.Projection.PublisherConnections {
-				if connection.RelayID != failedRelayID && !slices.Contains(connections, connection) {
+				if connection.RelayID != failedRelayID && !slices.ContainsFunc(connections, func(current IngressRoutingTablePublisherConnection) bool {
+					return reflect.DeepEqual(current, connection)
+				}) {
 					return fmt.Errorf("snapshot lost surviving connection route=%s slot=%d", event.PublicURLID, connection.ConnectionSlot)
 				}
 			}

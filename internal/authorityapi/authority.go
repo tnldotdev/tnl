@@ -11,123 +11,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
-
-func (h *handler) ExchangeLoginToken(response http.ResponseWriter, request *http.Request) {
-	var body authorityv1.LoginTokenExchangeRequest
-	if err := decodeJSON(response, request, &body); err != nil {
-		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
-		return
-	}
-	token := credentials.LoginToken(body.LoginToken)
-	if h.config.LoginToken == "" || !h.loginVerifier.Matches(token) {
-		writeBearerProblem(response)
-		return
-	}
-	if h.store == nil {
-		writeAuthenticationUnavailable(response, "exchange login token", nil)
-		return
-	}
-	issued, err := h.store.CreateBuiltinControlSession(
-		request.Context(), h.config.ManagedDomain, h.loginSourceRevision,
-		h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now(),
-	)
-	if err != nil {
-		writeAuthenticationUnavailable(response, "exchange login token", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
-}
-
-func (h *handler) ExchangeOIDCToken(response http.ResponseWriter, request *http.Request) {
-	var body authorityv1.OIDCTokenExchangeRequest
-	if err := decodeJSON(response, request, &body); err != nil {
-		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
-		return
-	}
-	if h.config.OIDCVerifier == nil {
-		writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
-		return
-	}
-	if h.store == nil {
-		writeAuthenticationUnavailable(response, "exchange OIDC token", nil)
-		return
-	}
-	identity, err := h.config.OIDCVerifier.Verify(request.Context(), body.IdToken)
-	if errors.Is(err, oidcauth.ErrUnauthenticated) {
-		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
-		return
-	}
-	if errors.Is(err, oidcauth.ErrUnavailable) {
-		writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "OIDC provider unavailable")
-		return
-	}
-	if err != nil {
-		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("verify OIDC token", failure.ServerAPIInternal, requestID, err)
-		return
-	}
-	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDomain, controlstate.OIDCIdentity{
-		Issuer: identity.Issuer, Subject: identity.Subject, DisplayName: identity.DisplayName,
-		NormalizedEmail: identity.NormalizedEmail, EmailVerified: identity.EmailVerified,
-		AssertionDigest: identity.AssertionDigest, AssertionExpiry: identity.ExpiresAt,
-	}, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
-	if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) {
-		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
-		return
-	}
-	if err != nil {
-		writeAuthenticationUnavailable(response, "exchange OIDC token", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
-}
-
-func (h *handler) ExchangeBrowserOIDCToken(response http.ResponseWriter, request *http.Request) {
-	var body authorityv1.OIDCTokenExchangeRequest
-	if err := decodeJSON(response, request, &body); err != nil {
-		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
-		return
-	}
-	if h.config.BrowserOIDCVerifier == nil {
-		writeProblem(response, http.StatusNotFound, authorityv1.NotFound, "resource not found")
-		return
-	}
-	if h.store == nil {
-		writeAuthenticationUnavailable(response, "exchange browser OIDC token", nil)
-		return
-	}
-	identity, err := h.config.BrowserOIDCVerifier.Verify(request.Context(), body.IdToken)
-	if errors.Is(err, oidcauth.ErrUnauthenticated) {
-		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
-		return
-	}
-	if errors.Is(err, oidcauth.ErrUnavailable) {
-		writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "OIDC provider unavailable")
-		return
-	}
-	if err != nil {
-		writeAuthenticationUnavailable(response, "verify browser OIDC token", err)
-		return
-	}
-	issued, err := h.store.CreateOIDCControlSession(request.Context(), h.config.ManagedDomain, controlstate.OIDCIdentity{
-		Issuer: identity.Issuer, Subject: identity.Subject, DisplayName: identity.DisplayName,
-		NormalizedEmail: identity.NormalizedEmail, EmailVerified: identity.EmailVerified,
-		AssertionDigest: identity.AssertionDigest, AssertionExpiry: identity.ExpiresAt,
-	}, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
-	if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) {
-		writeProblem(response, http.StatusUnauthorized, authorityv1.Unauthenticated, "authentication required")
-		return
-	}
-	if err != nil {
-		writeAuthenticationUnavailable(response, "exchange browser OIDC token", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
-}
 
 func (h *handler) RefreshControlSession(response http.ResponseWriter, request *http.Request) {
 	var body authorityv1.RefreshControlSessionRequest
@@ -140,7 +26,7 @@ func (h *handler) RefreshControlSession(response http.ResponseWriter, request *h
 		return
 	}
 	issued, err := h.store.RefreshControlSession(
-		request.Context(), credentials.RefreshToken(body.RefreshToken), h.loginSourceRevision,
+		request.Context(), credentials.RefreshToken(body.RefreshToken),
 		h.config.AccessTokenLifetime, time.Now(),
 	)
 	if errors.Is(err, controlstate.ErrControlAuthentication) {
@@ -177,7 +63,7 @@ func (h *handler) GetIdentityContext(response http.ResponseWriter, request *http
 	identity, err := h.store.IdentityContext(request.Context(), principal.IdentityID)
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("read identity context", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "read identity context", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, identityContextResponse(identity))
@@ -191,7 +77,7 @@ func (h *handler) ListTeams(response http.ResponseWriter, request *http.Request)
 	teams, err := h.store.ListTeams(request.Context(), principal.IdentityID)
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("list teams", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "list teams", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.TeamPage{Teams: make([]authorityv1.Team, len(teams))}
@@ -250,7 +136,7 @@ func (h *handler) GetTeam(response http.ResponseWriter, request *http.Request, t
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("get team", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "get team", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, teamResponse(team))
@@ -353,18 +239,21 @@ func (h *handler) CreateTeamInvitation(
 	if body.EmailRestriction != nil {
 		email = strings.ToLower(strings.TrimSpace(string(*body.EmailRestriction)))
 	}
+	contractor := body.PersonalAccountException != nil && *body.PersonalAccountException
 	digest, err := authorityRequestDigest(struct {
-		MemberSlug       string               `json:"member_slug"`
-		InitialRole      authorityv1.TeamRole `json:"initial_role"`
-		ExpiresAt        time.Time            `json:"expires_at"`
-		EmailRestriction string               `json:"email_restriction,omitempty"`
-	}{body.MemberSlug, body.InitialRole, body.ExpiresAt.UTC(), email})
+		PersonalAccountException bool                 `json:"personal_account_exception,omitempty"`
+		MemberSlug               string               `json:"member_slug"`
+		InitialRole              authorityv1.TeamRole `json:"initial_role"`
+		ExpiresAt                time.Time            `json:"expires_at"`
+		EmailRestriction         string               `json:"email_restriction,omitempty"`
+	}{contractor, body.MemberSlug, body.InitialRole, body.ExpiresAt.UTC(), email})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 		return
 	}
 	created, err := h.store.CreateTeamInvitation(request.Context(), controlstate.CreateInvitationRequest{
-		IdentityID: principal.IdentityID, TeamID: string(teamID), IdempotencyKey: params.IdempotencyKey,
+		PersonalAccountException: contractor,
+		IdentityID:               principal.IdentityID, TeamID: string(teamID), IdempotencyKey: params.IdempotencyKey,
 		RequestDigest: digest, MemberSlug: body.MemberSlug, InitialRole: controlstate.TeamRole(body.InitialRole),
 		ExpiresAt: body.ExpiresAt, EmailRestriction: email, RetrySecret: principal.RetrySecret[:], SendEmail: h.config.EmailDelivery,
 	}, time.Now())
@@ -428,7 +317,7 @@ func (h *handler) ListTeamDomains(response http.ResponseWriter, request *http.Re
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("list team domains", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "list team domains", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.DomainPage{Domains: make([]authorityv1.Domain, len(domains))}

@@ -42,11 +42,13 @@ type PublicURL struct {
 	DomainID                      string
 	MembershipID                  string
 	CanonicalHostname             string
+	Namespace                     string
 	Target                        string
 	ServiceProtocol               PublicURLServiceProtocol
-	PublicPort                    *uint16
+	PublisherPool                 bool
 	PublicURLScope                PublicURLScope
 	Purpose                       PublicURLPurpose
+	AccessMode                    VisitorAccessMode
 	PolicyRevision                int64
 	LifecycleState                PublicURLLifecycleState
 	DNSAuthorityReference         string
@@ -72,19 +74,21 @@ type CreatePublicURLRequest struct {
 	RequestDigest         [32]byte
 	CanonicalHostname     string
 	Target                string
+	PublisherPool         bool
 	ServiceProtocol       PublicURLServiceProtocol
 	PublicURLScope        PublicURLScope
 	Purpose               PublicURLPurpose
+	AccessMode            VisitorAccessMode
 	ManagedURLMode        naming.ManagedURLMode
 	AllowedIPPrefixes     []string
 	DNSState              PublicURLDNSState
 	DNSAuthorityReference string
 	PolicyRevision        uint64
 	Ephemeral             bool
-	EphemeralCredentialID string
-	EphemeralInvocationID string
-	EphemeralTokenDigest  credentials.SecretHash
-	EphemeralNamespace    string
+	PublisherIdentityID   string
+	PublisherGrantID      string
+	PublisherInvocationID string
+	PublisherNamespace    string
 }
 
 type AuthorizedPublicURLUpdateRequest struct {
@@ -104,7 +108,8 @@ type AuthorizedPublicURLDeleteRequest struct {
 	GuestID                  string
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
-	EphemeralCredential      credentials.EphemeralCredential
+	PublisherIdentityID      string
+	PublisherGrantID         string
 }
 
 type PublicURLPage struct {
@@ -113,8 +118,21 @@ type PublicURLPage struct {
 }
 
 func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLRequest, now time.Time) (result PublicURL, retErr error) {
+	if request.PublisherPool && (request.GuestID != "" || request.Ephemeral || request.PublisherIdentityID != "") {
+		return result, ErrPublicURLAccess
+	}
 	if request.ServiceProtocol == "" {
 		request.ServiceProtocol = PublicURLServiceHTTP
+	}
+	if request.AccessMode == "" {
+		request.AccessMode = VisitorAccessRestricted
+		if request.Purpose == PublicURLPurposeOAuth || request.Purpose == PublicURLPurposeWebhooks {
+			request.AccessMode = VisitorAccessAnonymous
+		}
+	}
+	if !request.AccessMode.Valid() || request.GuestID != "" && request.AccessMode != VisitorAccessRestricted ||
+		(request.Purpose == PublicURLPurposeOAuth || request.Purpose == PublicURLPurposeWebhooks) && request.AccessMode != VisitorAccessAnonymous {
+		return PublicURL{}, ErrPublicURLInvalid
 	}
 	prefixes, err := validateCreatePublicURLRequest(request)
 	if err != nil {
@@ -136,23 +154,20 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 			return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock team: %w", err)
 		}
 	}
-	if _, err := queries.LockPublicURLCreator(ctx, request.ActingIdentityID); errors.Is(err, pgx.ErrNoRows) {
-		return PublicURL{}, ErrPublicURLAccess
-	} else if err != nil {
-		return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
+	if request.PublisherIdentityID == "" {
+		if _, err := queries.LockPublicURLCreator(ctx, request.ActingIdentityID); errors.Is(err, pgx.ErrNoRows) {
+			return PublicURL{}, ErrPublicURLAccess
+		} else if err != nil {
+			return PublicURL{}, fmt.Errorf("controlstate: create public_url: lock creator: %w", err)
+		}
 	}
-	if request.EphemeralCredentialID != "" {
-		credential, domain, err := validateEphemeralAllocation(ctx, queries, request, now)
+	if request.PublisherIdentityID != "" {
+		publisher, domain, err := d.validatePublisherAllocation(ctx, queries, request, now)
 		if err != nil {
 			return PublicURL{}, err
 		}
 		request.DNSAuthorityReference = domain.DnsAuthorityReference.String
-		request.PolicyRevision = uint64(credential.PolicyRevision)
-		if request.EphemeralNamespace == domain.CanonicalDomain {
-			request.PublicURLScope, request.MembershipID = PublicURLScopeShared, ""
-		} else {
-			request.PublicURLScope, request.MembershipID = PublicURLScopeMember, credential.MembershipID
-		}
+		request.PublicURLScope, request.MembershipID = publisher.Scope.PublicURLScope, publisher.Scope.MembershipID
 	}
 	policyRevision := int64(0)
 	namespace := ""
@@ -165,17 +180,17 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		IdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if request.EphemeralCredentialID != "" {
-			allocation, lookupErr := queries.GetEphemeralPublicURLAllocation(ctx, existing.ID)
-			if lookupErr != nil || allocation.CredentialID != request.EphemeralCredentialID ||
-				allocation.InvocationID != request.EphemeralInvocationID {
+		if request.PublisherIdentityID != "" {
+			allocation, lookupErr := queries.GetPublisherAllocation(ctx, existing.ID)
+			if lookupErr != nil || allocation.PublisherIdentityID != request.PublisherIdentityID || allocation.PublisherGrantID != request.PublisherGrantID ||
+				allocation.InvocationID != request.PublisherInvocationID {
 				return PublicURL{}, ErrPublicURLAccess
 			}
 		}
 		if PublicURLLifecycleState(existing.LifecycleState) == PublicURLLifecycleDeleted {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
-		if existing.Purpose != string(request.Purpose) || existing.ServiceProtocol != string(request.ServiceProtocol) {
+		if existing.Purpose != string(request.Purpose) || existing.ServiceProtocol != string(request.ServiceProtocol) || existing.PublisherPool != request.PublisherPool {
 			return PublicURL{}, ErrPublicURLIdempotency
 		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
@@ -199,8 +214,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: read idempotent public_url: %w", err)
 	}
-	if request.EphemeralCredentialID != "" {
-		request.CanonicalHostname, err = newEphemeralHostname(request.EphemeralNamespace)
+	if request.PublisherIdentityID != "" {
+		request.CanonicalHostname, err = newEphemeralHostname(request.PublisherNamespace)
 		if err != nil {
 			return PublicURL{}, err
 		}
@@ -247,7 +262,24 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if !enabled {
 		return PublicURL{}, ErrPublicURLCreationGated
 	}
-	if request.GuestID == "" {
+	if request.PublisherIdentityID != "" {
+		namespace = request.PublisherNamespace
+		policyRevision = positive(request.PolicyRevision)
+		_, err := queries.LockLocalTeamForSession(ctx, request.TeamID)
+		if err != nil {
+			return PublicURL{}, err
+		}
+		if err := tx.QueryRow(ctx, `SELECT ingress_pool_id, policy_revision FROM control.teams WHERE id=$1`, request.TeamID).Scan(&ingressPoolID, &policyRevision); err != nil {
+			return PublicURL{}, err
+		}
+		domain, err := queries.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: request.DomainID, TeamID: text(request.TeamID)})
+		if err != nil {
+			return PublicURL{}, err
+		}
+		if domain.Kind == "managed" && namespace == domain.CanonicalDomain {
+			return PublicURL{}, ErrPublicURLAccess
+		}
+	} else if request.GuestID == "" {
 		creation, err := queries.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{
 			IdentityID: request.ActingIdentityID, DomainID: request.DomainID, TeamID: request.TeamID,
 		})
@@ -266,7 +298,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		ingressPoolID = creation.IngressPoolID
 		if request.PublicURLScope == PublicURLScopeShared {
-			namespace = creation.CanonicalDomain
+			namespace = naming.SharedPublicURLNamespace(creation.CanonicalDomain, creation.DomainKind == "managed", request.ManagedURLMode, creation.TeamDisplayName, creation.TeamManagedLabel)
 		} else {
 			namespace, _ = naming.PublicURLNamespace(naming.NamespaceFacts{
 				Domain: creation.CanonicalDomain, Managed: creation.DomainKind == "managed",
@@ -274,9 +306,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 				TeamName: creation.TeamDisplayName, MemberSlug: creation.ActorMemberSlug,
 				ManagedLabel: creation.ActorManagedLabel,
 			})
-		}
-		if request.EphemeralCredentialID != "" && namespace != request.EphemeralNamespace {
-			return PublicURL{}, ErrPublicURLAccess
 		}
 		if creation.DomainKind == "custom" && request.PublicURLScope == PublicURLScopeShared && request.CanonicalHostname != creation.CanonicalDomain {
 			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
@@ -287,17 +316,6 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 				return PublicURL{}, fmt.Errorf("controlstate: check reserved member slug: %w", err)
 			} else if reserved {
 				return PublicURL{}, ErrPublicURLConflict
-			}
-		}
-		if creation.DomainKind == "managed" && request.PublicURLScope == PublicURLScopeShared {
-			relative := strings.TrimSuffix(request.CanonicalHostname, "."+creation.CanonicalDomain)
-			label := relative[strings.LastIndex(relative, ".")+1:]
-			if _, err := queries.ReserveManagedDirectName(ctx, controlstatedb.ReserveManagedDirectNameParams{
-				Label: label, TeamID: text(request.TeamID), CreatedAt: timestamp(now),
-			}); errors.Is(err, pgx.ErrNoRows) {
-				return PublicURL{}, ErrPublicURLConflict
-			} else if err != nil {
-				return PublicURL{}, fmt.Errorf("controlstate: reserve managed direct name: %w", err)
 			}
 		}
 		policyRevision = creation.PolicyRevision
@@ -323,6 +341,13 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if request.MembershipID != "" {
 		membershipID = text(request.MembershipID)
 	}
+	managed, err := queries.ManagedNamespaceOwnsHostname(ctx, request.CanonicalHostname)
+	if err != nil {
+		return result, err
+	}
+	if managed {
+		return result, ErrPublicURLConflict
+	}
 	row, err := queries.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
 		ID: publicURLID, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: membershipID,
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
@@ -331,7 +356,8 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
 		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
 		ServiceProtocol: string(request.ServiceProtocol),
-		PolicyRevision:  policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		PublisherPool:   request.PublisherPool,
+		PolicyRevision:  policyRevision, AccessMode: string(request.AccessMode), IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),
@@ -351,22 +377,9 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
-	if request.ServiceProtocol != PublicURLServiceHTTP {
-		claim, err := allocateTCPPortForURL(ctx, queries, publicURLID, ingressPoolID, row.CanonicalHostname, now)
-		if err != nil {
+	if request.PublisherIdentityID != "" {
+		if err := queries.InsertPublisherAllocation(ctx, controlstatedb.InsertPublisherAllocationParams{PublicURLID: publicURLID, PublisherIdentityID: request.PublisherIdentityID, PublisherGrantID: request.PublisherGrantID, InvocationID: request.PublisherInvocationID}); err != nil {
 			return PublicURL{}, err
-		}
-		row.PublicPort = pgtype.Int4{Int32: int32(claim.Port), Valid: true}
-	}
-	if request.EphemeralCredentialID != "" {
-		rows, err := queries.InsertEphemeralPublicURLAllocation(ctx, controlstatedb.InsertEphemeralPublicURLAllocationParams{
-			PublicURLID: publicURLID, CredentialID: request.EphemeralCredentialID, InvocationID: request.EphemeralInvocationID,
-		})
-		if err != nil {
-			return PublicURL{}, fmt.Errorf("controlstate: record ad-hoc allocation: %w", err)
-		}
-		if rows != 1 {
-			return PublicURL{}, ErrPublicURLAccess
 		}
 	}
 	if request.GuestID != "" {
@@ -433,8 +446,7 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
 		return PublicURL{}, ErrPublicURLNotEnabled
 	}
-	if request.Target == "" && (route.Target != "" || route.Purpose != string(PublicURLPurposeApp) ||
-		route.Ephemeral && route.ServiceProtocol == string(PublicURLServiceHTTP)) ||
+	if request.Target == "" && (route.Target != "" || !PublicURLServiceProtocol(route.ServiceProtocol).ValidCreateTarget(PublicURLPurpose(route.Purpose), "", route.Ephemeral)) ||
 		request.Target != "" && route.ServiceProtocol != string(PublicURLServiceHTTP) {
 		return PublicURL{}, ErrPublicURLInvalid
 	}
@@ -466,6 +478,9 @@ func (d *Database) UpdateAuthorizedPublicURL(
 			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
 			return PublicURL{}, ErrPublicURLAccess
 		}
+	}
+	if err = rejectProjectManagedDefinition(ctx, tx, request.PublicURLID); err != nil {
+		return PublicURL{}, err
 	}
 	policyCiphertext, policyHashes, policyKeyID, err := d.storeIPPolicy(request.PublicURLID, prefixes, false)
 	if err != nil {
@@ -537,9 +552,6 @@ func (d *Database) DeleteExpiredEphemeralPublicURLs(ctx context.Context, now tim
 		}
 		if hasOpenSession {
 			continue
-		}
-		if err := quarantineTCPPortClaim(ctx, queries, route.ID, now); err != nil {
-			return 0, fmt.Errorf("controlstate: quarantine ephemeral public URL port: %w", err)
 		}
 		updated, err := queries.DeletePublicURL(ctx, controlstatedb.DeletePublicURLParams{
 			DeletedAt: timestamptz(now), PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
@@ -713,7 +725,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
 	var route controlstatedb.ControlPublicUrl
-	if request.GuestID == "" && request.EphemeralCredential != "" {
+	if request.GuestID == "" && request.PublisherIdentityID != "" {
 		if _, err := queries.LockLocalPublicURLTeamForMutation(ctx, publicURLID); errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicURLNotFound
 		} else if err != nil {
@@ -726,7 +738,7 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 		if err != nil {
 			return fmt.Errorf("controlstate: delete ad-hoc public_url: lock URL: %w", err)
 		}
-		if err := validateEphemeralDeletion(ctx, queries, request.EphemeralCredential, route, now); err != nil {
+		if err := d.validatePublisherDeletion(ctx, queries, request, route, now); err != nil {
 			return err
 		}
 	} else if request.GuestID == "" {
@@ -764,6 +776,9 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 			return ErrPublicURLMutationStale
 		}
 	}
+	if err = rejectProjectManagedDefinition(ctx, tx, publicURLID); err != nil {
+		return err
+	}
 	expectedMutationRevision := route.MutationRevision
 	if request.ExpectedMutationRevision != 0 {
 		if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {
@@ -773,9 +788,6 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	}
 	if err := closeOpenPublishRun(ctx, queries, &pendingEvents, route, now, "public_url_deleted"); err != nil {
 		return err
-	}
-	if err := quarantineTCPPortClaim(ctx, queries, publicURLID, now); err != nil {
-		return fmt.Errorf("controlstate: quarantine public URL port: %w", err)
 	}
 	updated, err := queries.DeletePublicURL(ctx, controlstatedb.DeletePublicURLParams{
 		DeletedAt: timestamptz(now), PublicURLID: publicURLID, ExpectedMutationRevision: expectedMutationRevision,
@@ -805,7 +817,8 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 }
 
 func (d *Database) ClosePublishRun(ctx context.Context, publishRunID string, token credentials.PublishRunToken, now time.Time) (retErr error) {
-	defer d.observeOperation("ClosePublishRun", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ClosePublishRun")
+	defer func() { finish(retErr) }()
 	if !validStateText(publishRunID) {
 		return ErrPublishRunCredential
 	}
@@ -867,14 +880,16 @@ func closeOpenPublishRun(
 	now time.Time,
 	reason string,
 ) error {
-	session, err := queries.GetOpenPublishRun(ctx, route.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
+	sessions, err := queries.ListOpenPublishRuns(ctx, route.ID)
 	if err != nil {
 		return fmt.Errorf("controlstate: close publish run: read open session: %w", err)
 	}
-	return closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason)
+	for _, session := range sessions {
+		if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // the caller holds the public URL row through commit, keeping the live/expired
@@ -886,13 +901,31 @@ func expireStaleOpenPublishRun(
 	route controlstatedb.ControlPublicUrl,
 	now time.Time,
 ) (live, closed bool, retErr error) {
-	session, err := queries.GetOpenPublishRun(ctx, route.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, false, nil
-	}
+	live, count, err := expireStaleOpenPublishRuns(ctx, queries, pendingEvents, route, now)
+	return live, count > 0, err
+}
+
+func expireStaleOpenPublishRuns(ctx context.Context, queries *controlstatedb.Queries, pendingEvents *pendingIngressRoutingTableEvents,
+	route controlstatedb.ControlPublicUrl, now time.Time) (live bool, closed int, retErr error) {
+	sessions, err := queries.ListOpenPublishRuns(ctx, route.ID)
 	if err != nil {
-		return false, false, fmt.Errorf("controlstate: expire publish run: read open session: %w", err)
+		return false, 0, fmt.Errorf("controlstate: expire publish run: read open session: %w", err)
 	}
+	for _, session := range sessions {
+		oneLive, oneClosed, err := expireOpenPublishRun(ctx, queries, pendingEvents, route, session, now)
+		if err != nil {
+			return false, 0, err
+		}
+		live = live || oneLive
+		if oneClosed {
+			closed++
+		}
+	}
+	return live, closed, nil
+}
+
+func expireOpenPublishRun(ctx context.Context, queries *controlstatedb.Queries, pendingEvents *pendingIngressRoutingTableEvents,
+	route controlstatedb.ControlPublicUrl, session controlstatedb.ControlPublishRun, now time.Time) (bool, bool, error) {
 	closedAt := now
 	reason := "publisher_expired"
 	if session.PublisherExpiresAt.Valid {
@@ -943,23 +976,6 @@ func closePublishRun(
 	now time.Time,
 	reason string,
 ) error {
-	if challengeExpiresAt, active, err := activePublishRunChallengeExpiry(ctx, queries, session.ID, now); err != nil {
-		return err
-	} else if active {
-		entryRevision, err := queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
-			PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
-		})
-		if err != nil {
-			return fmt.Errorf("controlstate: close publish run: read ingress routing-table entry revision: %w", err)
-		}
-		if entryRevision > 0 {
-			if _, err := pendingEvents.addChallengeEvent(
-				ctx, queries, route, session, nil, "challenge_tombstone", challengeExpiresAt, now,
-			); err != nil {
-				return err
-			}
-		}
-	}
 	if session.ReadyAt.Valid {
 		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, nil, "public_url_tombstone", now); err != nil {
 			return err
@@ -1008,10 +1024,10 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 		}
 	}
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
-		request.EphemeralCredentialID == "" && !validStateText(request.CanonicalHostname) ||
-		request.EphemeralCredentialID != "" && (request.CanonicalHostname != "" || !request.Ephemeral ||
-			!opaqueid.Valid(request.EphemeralCredentialID, opaqueid.PublicURLPublishCredentialPrefix) ||
-			!opaqueid.Valid(request.EphemeralInvocationID, opaqueid.InvocationPrefix)) ||
+		request.PublisherIdentityID == "" && !validStateText(request.CanonicalHostname) ||
+		request.PublisherIdentityID != "" && (request.CanonicalHostname != "" || !request.Ephemeral ||
+			!opaqueid.Valid(request.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(request.PublisherGrantID, opaqueid.PublisherGrantPrefix) ||
+			!opaqueid.Valid(request.PublisherInvocationID, opaqueid.InvocationPrefix)) ||
 		!request.Purpose.ValidForCreation() || request.GuestID != "" && request.Purpose != PublicURLPurposeDemo ||
 		request.DNSAuthorityReference != "" && !validStateText(request.DNSAuthorityReference) ||
 		request.DNSState == PublicURLDNSUnmanaged && request.DNSAuthorityReference != "" ||
@@ -1022,14 +1038,14 @@ func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Pre
 	if request.GuestID != "" && (!validStateText(request.GuestID) || request.ActingIdentityID != request.GuestID || request.PolicyRevision == 0) {
 		return nil, ErrPublicURLInvalid
 	}
-	if request.EphemeralCredentialID == "" {
+	if request.PublisherIdentityID == "" {
 		canonical, err := naming.CanonicalizeHostname(request.CanonicalHostname)
 		if err != nil || canonical != request.CanonicalHostname {
 			return nil, ErrPublicURLInvalid
 		}
 	}
 	if !request.ServiceProtocol.ValidCreateTarget(request.Purpose, request.Target, request.Ephemeral) ||
-		request.ServiceProtocol != PublicURLServiceHTTP && (request.GuestID != "" || request.EphemeralCredentialID != "") {
+		request.ServiceProtocol != PublicURLServiceHTTP {
 		return nil, ErrPublicURLInvalid
 	}
 	canonicalPrefixes, err := authorization.CanonicalizeIPPrefixes(request.AllowedIPPrefixes)
@@ -1082,7 +1098,6 @@ func authorizeRouteCreation(
 	actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
 		Domain: context.CanonicalDomain, Managed: context.DomainKind == "managed",
 		Mode: request.ManagedURLMode, Personal: context.TeamKind == "personal",
-		Builtin:  context.IdentityKind == "builtin" && context.TeamCreatorIdentityID == request.ActingIdentityID,
 		TeamName: context.TeamDisplayName, MemberSlug: context.ActorMemberSlug, ManagedLabel: context.ActorManagedLabel,
 	})
 	if request.PublicURLScope == "member" {
@@ -1096,10 +1111,17 @@ func authorizeRouteCreation(
 		return ErrPublicURLAccess
 	}
 	if context.DomainKind == "managed" {
-		if request.ManagedURLMode != naming.ManagedURLModeSimple || context.TeamKind != "personal" || context.IdentityKind != "builtin" ||
-			context.TeamCreatorIdentityID != request.ActingIdentityID ||
-			request.CanonicalHostname == context.CanonicalDomain {
+		namespace := naming.SharedPublicURLNamespace(context.CanonicalDomain, true, request.ManagedURLMode, context.TeamDisplayName, context.TeamManagedLabel)
+		if depth, within := naming.ChildDepth(request.CanonicalHostname, namespace); !within || depth < 1 {
 			return ErrPublicURLAccess
+		}
+		if context.TeamKind == "organization" && request.ManagedURLMode == naming.ManagedURLModeSimple {
+			for _, label := range labels {
+				memberNamespace := label.MemberSlug + "." + namespace
+				if hostnameWithin(request.CanonicalHostname, memberNamespace) {
+					return ErrPublicURLAccess
+				}
+			}
 		}
 		return nil
 	}
@@ -1132,48 +1154,48 @@ func nullableText(value string) pgtype.Text {
 
 func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID string) PublicURL {
 	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
+		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
 	)
 }
 
 func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempotencyRow) PublicURL {
 	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
+		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
 	)
 }
 
 func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) PublicURL {
 	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
+		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
 	)
 }
 
 func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicURL {
 	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
+		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
 	)
 }
 
 func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsDataRow) PublicURL {
 	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target,
-		row.PublicURLScope, row.Purpose, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublicPort,
+		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
+		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
+		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
 	)
 }
 
 func publicURLFromValues(
 	id, teamID, domainID string,
 	membershipID pgtype.Text,
-	canonicalHostname, target, publicURLScope, purpose string,
+	canonicalHostname, target, namespace, publicURLScope, purpose, accessMode string,
 	policyRevision int64,
 	lifecycleState string,
 	dnsAuthorityReference pgtype.Text,
@@ -1185,13 +1207,14 @@ func publicURLFromValues(
 	openPublishRunID string,
 	createdAt, updatedAt pgtype.Timestamptz,
 	serviceProtocol string,
-	publicPort pgtype.Int4,
+	publisherPool bool,
 ) PublicURL {
 	result := PublicURL{
 		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
-		CanonicalHostname: canonicalHostname, Target: target, PublicURLScope: PublicURLScope(publicURLScope), Purpose: PublicURLPurpose(purpose),
+		CanonicalHostname: canonicalHostname, Namespace: namespace, Target: target, PublicURLScope: PublicURLScope(publicURLScope), Purpose: PublicURLPurpose(purpose),
 		ServiceProtocol: PublicURLServiceProtocol(serviceProtocol),
-		PolicyRevision:  policyRevision, LifecycleState: PublicURLLifecycleState(lifecycleState),
+		PublisherPool:   publisherPool,
+		PolicyRevision:  policyRevision, AccessMode: VisitorAccessMode(accessMode), LifecycleState: PublicURLLifecycleState(lifecycleState),
 		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: PublicURLDNSState(dnsState),
 		NextPublishRunNumber: nextPublishRunNumber,
 		MutationRevision:     uint64(mutationRevision), AuthorizationPublishRunNumber: uint64(nextPublishRunNumber),
@@ -1201,10 +1224,6 @@ func publicURLFromValues(
 	if expiresAt.Valid {
 		value := expiresAt.Time
 		result.ExpiresAt = &value
-	}
-	if publicPort.Valid {
-		value := uint16(publicPort.Int32)
-		result.PublicPort = &value
 	}
 	return result
 }
@@ -1216,8 +1235,8 @@ func publicURLModelFromDeleteRow(row controlstatedb.LockIdentityPublicURLForDele
 		RequestDigestCiphertext:   row.RequestDigestCiphertext,
 		RequestDigestStorageKeyID: row.RequestDigestStorageKeyID,
 		CanonicalHostname:         row.CanonicalHostname, Target: row.Target,
-		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, ServiceProtocol: row.ServiceProtocol, PublicPort: row.PublicPort,
-		PolicyRevision: row.PolicyRevision, IpPolicy: row.IpPolicy,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+		PolicyRevision: row.PolicyRevision, AccessMode: row.AccessMode, IpPolicy: row.IpPolicy,
 		AllowedIpPolicyCiphertext:   row.AllowedIpPolicyCiphertext,
 		AllowedIpPolicyStorageKeyID: row.AllowedIpPolicyStorageKeyID,
 		AllowedIpHashes:             row.AllowedIpHashes, AllowedIpHashKeyID: row.AllowedIpHashKeyID,

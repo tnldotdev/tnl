@@ -48,13 +48,13 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 	old := time.Hour
 	revisions := seedRetentionEvents(t, f, []retentionEvent{
 		{IngressPublicURLUpsert, 1, old, time.Hour},
-		{IngressChallengeUpsert, 1, old, time.Hour},
+		{IngressPublicURLUpsert, 1, old, time.Hour},
 		{IngressPublicURLUpsert, 1, old, -time.Second},
 		{IngressPublicURLTombstone, 2, old, -time.Second},
-		{IngressChallengeTombstone, 2, old, -time.Second},
+		{IngressPublicURLTombstone, 2, old, -time.Second},
 		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
 		{IngressPublicURLUpsert, 3, old, time.Hour}, // old timestamp after a recent revision.
-		{IngressChallengeUpsert, 3, time.Minute, time.Hour},
+		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
 	})
 	ingress := registerTestIngress(t, f.database, f.now)
 	before, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
@@ -97,7 +97,7 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 
 func TestIntegrationRoutingRetentionReaderSnapshotsAndClock(t *testing.T) {
 	f := newPublishRunFixture(t)
-	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour, 0}, {IngressChallengeUpsert, 1, time.Hour, -time.Second}})
+	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour, 0}, {IngressPublicURLUpsert, 1, time.Hour, -time.Second}})
 	ctx := t.Context()
 	reader, err := f.database.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestIntegrationRoutingRetentionReaderSnapshotsAndClock(t *testing.T) {
 	callCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	batch, err := f.database.PruneIngressRoutingHistory(callCtx, 0)
-	if err != nil || batch.Deleted != 1 {
+	if err != nil || batch.Deleted != 2 {
 		t.Fatalf("pruning waited for the publication clock: %+v %v", batch, err)
 	}
 	for _, tx := range []pgx.Tx{reader, between} {

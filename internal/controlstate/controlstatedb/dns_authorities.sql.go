@@ -217,6 +217,7 @@ SELECT
         WHERE routes.domain_id = $1
           AND (
               orders.state NOT IN ('waiting_for_install', 'installed', 'failed', 'canceled')
+              OR orders.finalization_possible AND orders.not_after IS NULL
               OR orders.not_after > $2
               OR EXISTS (
                   SELECT 1
@@ -242,6 +243,25 @@ SELECT
         FROM control.public_urls AS routes
         WHERE routes.domain_id = $1
           AND routes.dns_state NOT IN ('unmanaged', 'removed')
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.project_publisher_groups publisher_group
+        WHERE publisher_group.domain_id=$1 AND publisher_group.deleted_at IS NULL
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.private_services service
+        WHERE service.domain_id=$1 AND service.deleted_at IS NULL
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.managed_service_endpoints endpoint
+        WHERE endpoint.domain_id=$1 AND endpoint.dns_state NOT IN('unmanaged','removed')
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.acme_orders issuance
+        WHERE issuance.certificate_domain_id=$1
+          AND (issuance.not_after>$2 OR issuance.state NOT IN('waiting_for_install','installed','failed','canceled') OR issuance.finalization_possible AND issuance.not_after IS NULL
+            OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id
+              AND (auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL)))
     ) AS ready
 `
 

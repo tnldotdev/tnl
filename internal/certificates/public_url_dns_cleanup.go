@@ -63,7 +63,7 @@ func (w *PublicURLWorker) continueDNSCleanup(
 		if authorization.ChallengeType != certificateidentity.ChallengeDNS01 || authorization.State != controlstate.ACMEAuthorizationCleaning {
 			continue
 		}
-		if err := w.config.DNSChallenges.Cleanup(ctx, work.PublicURLID, authorization.ID); err != nil {
+		if err := w.config.DNSChallenges.Cleanup(ctx, work.ServiceID(), authorization.ID); err != nil {
 			return false, err
 		}
 		// all authorizations for this identifier share one TXT name. reconcile

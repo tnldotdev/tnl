@@ -6,21 +6,17 @@ import "github.com/tnldotdev/tnl/internal/authorization"
 type PublicURLServiceProtocol string
 
 const (
-	PublicURLServiceHTTP     PublicURLServiceProtocol = "http"
-	PublicURLServicePostgres PublicURLServiceProtocol = "postgres"
-	PublicURLServiceMySQL    PublicURLServiceProtocol = "mysql"
-	PublicURLServiceRedis    PublicURLServiceProtocol = "redis"
-	PublicURLServiceSSH      PublicURLServiceProtocol = "ssh"
+	PublicURLServiceHTTP PublicURLServiceProtocol = "http"
 )
 
 func (protocol PublicURLServiceProtocol) Valid() bool {
-	return protocol == PublicURLServiceHTTP || protocol == PublicURLServicePostgres || protocol == PublicURLServiceMySQL || protocol == PublicURLServiceRedis || protocol == PublicURLServiceSSH
+	return protocol == PublicURLServiceHTTP
 }
 
 // ValidCreateTarget checks how a public URL receives its local target.
 func (protocol PublicURLServiceProtocol) ValidCreateTarget(purpose PublicURLPurpose, target string, ephemeral bool) bool {
-	if !protocol.Valid() || protocol != PublicURLServiceHTTP && (purpose != PublicURLPurposeApp || target != "") ||
-		target == "" && (purpose != PublicURLPurposeApp || ephemeral && protocol == PublicURLServiceHTTP) {
+	if !protocol.Valid() || !purpose.ValidForCreation() ||
+		target == "" && (ephemeral || purpose != PublicURLPurposeApp && purpose != PublicURLPurposeAlias) {
 		return false
 	}
 	return target == "" || authorization.ValidateTarget(target) == nil

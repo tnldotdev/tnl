@@ -68,7 +68,7 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", operation, "success", count)
 	}
-	for _, outcome := range []string{"error", "canceled", "deadline_exceeded"} {
+	for _, outcome := range []string{"error", "canceled", "timeout"} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "CreatePublishRun", outcome, 1)
 	}
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 1)
@@ -81,7 +81,7 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 			continue
 		}
 		for _, metric := range family.Metric {
-			if len(metric.Label) == 2 && metric.Label[0].GetValue() == "create" && metric.Label[1].GetValue() == "placed" {
+			if len(metric.Label) == 3 && metric.Label[0].GetName() == "tnl_operation" && metric.Label[0].GetValue() == "create" && metric.Label[1].GetValue() == "success" && metric.Label[2].GetValue() == "placed" {
 				placements += metric.GetCounter().GetValue()
 			}
 		}
@@ -161,7 +161,7 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("metrics collection blocked on exhausted pool")
 	}
-	if response.Code != 200 || !strings.Contains(response.Body.String(), `tnl_database_operations_active{operation="unknown"} 1`) || strings.Contains(response.Body.String(), "private-query") {
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `tnl_database_operations_active{tnl_operation="unknown"} 1`) || strings.Contains(response.Body.String(), "private-query") {
 		t.Fatalf("passive scrape did not expose safe active-query state: status=%d", response.Code)
 	}
 	after := database.PoolStats()
@@ -182,8 +182,8 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ReadIngressRoutingTableClock", "success", 1)
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "error", 1)
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "canceled", 1)
-	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "deadline_exceeded", 1)
-	assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "ReadIngressRoutingTableSnapshot", "deadline_exceeded", 1)
+	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "unknown", "timeout", 1)
+	assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "ReadIngressRoutingTableSnapshot", "timeout", 1)
 	var acquireFailures uint64
 	for _, family := range families {
 		if family.GetName() != "tnl_database_pool_acquire_duration_seconds" {
@@ -191,7 +191,7 @@ func TestIntegrationQueryMetricsAndPassiveCollection(t *testing.T) {
 		}
 		for _, metric := range family.Metric {
 			for _, label := range metric.Label {
-				if label.GetName() == "outcome" && label.GetValue() == "deadline_exceeded" {
+				if label.GetName() == "tnl_outcome" && label.GetValue() == "timeout" {
 					acquireFailures += metric.GetHistogram().GetSampleCount()
 				}
 			}
@@ -261,7 +261,7 @@ func assertDurationCount(t *testing.T, families []*dto.MetricFamily, name, opera
 			for _, label := range metric.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
-			if labels["operation"] != operation || labels["outcome"] != outcome {
+			if labels["tnl_operation"] != operation || labels["tnl_outcome"] != outcome {
 				continue
 			}
 			h := metric.GetHistogram()
@@ -281,6 +281,6 @@ func assertDurationCount(t *testing.T, families []*dto.MetricFamily, name, opera
 			return h
 		}
 	}
-	t.Fatalf("missing %s{operation=%q,outcome=%q}", name, operation, outcome)
+	t.Fatalf("missing %s{tnl_operation=%q,tnl_outcome=%q}", name, operation, outcome)
 	return nil
 }

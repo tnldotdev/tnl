@@ -31,11 +31,17 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 				t.Fatal(err)
 			}
 			create := func(preview Preview, key string) FeedbackThread {
-				thread, err := d.CreateFeedback(ctx, f.authentication(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true}}, now)
+				thread, err := d.CreateFeedback(ctx, f.authentication(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"}}, now)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return thread
+			}
+			if _, err := d.pool.Exec(ctx, `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.pool.Exec(ctx, `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
+				t.Fatal(err)
 			}
 			demoThread, projectThread := create(demo, "demo"), create(project, "project")
 			if crashed {

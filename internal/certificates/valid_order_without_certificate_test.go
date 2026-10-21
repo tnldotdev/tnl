@@ -42,10 +42,10 @@ func TestPublicURLWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 		Finalize:    "https://acme.example.test/finalize/1",
 	}}
 	store := &certificateStoreStub{work: controlstate.ACMEOrderWork{
-		State: "finalizing", ChallengeMethod: "tls-alpn-01", CertificateIdentifiers: []string{hostname}, OrderURL: api.order.URL,
+		State: "finalizing", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{hostname}, OrderURL: api.order.URL,
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"},
 	}}
-	worker := &PublicURLWorker{store: store, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
+	worker := &PublicURLWorker{store: store, config: PublicURLConfig{DNSChallenges: &dnsChallengesStub{}}, now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
 	for range 2 {
 		if found, err := worker.processOne(t.Context()); !found || err != nil {
 			t.Fatalf("process valid order: found=%t error=%v", found, err)

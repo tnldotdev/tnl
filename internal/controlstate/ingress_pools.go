@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/ingresspool"
-	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const PrimaryIngressPoolID = string(ingresspool.PrimaryID)
@@ -31,11 +30,9 @@ type IngressPool struct {
 	State       IngressPoolState
 }
 
-// EnsurePrimaryIngressPool enables only ports the operator has made reachable
-// on the existing public ingress address. removing a range from configuration
-// never releases claims or disables a port already published to clients.
-func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 string, ports []int32, now time.Time) (retErr error) {
-	if len(ports) == 0 || now.IsZero() {
+// EnsurePrimaryIngressPool pins the public HTTP ingress address.
+func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 string, now time.Time) (retErr error) {
+	if now.IsZero() {
 		return ErrPublicURLInvalid
 	}
 	parse := func(value string, ipv4 bool) (*netip.Addr, error) {
@@ -55,16 +52,6 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 	v6, err := parse(ipv6, false)
 	if err != nil || v4 == nil && v6 == nil {
 		return ErrPublicURLInvalid
-	}
-	seen := make(map[int32]struct{}, len(ports))
-	for _, port := range ports {
-		if !tcpport.Valid(int(port)) {
-			return ErrPublicURLInvalid
-		}
-		if _, found := seen[port]; found {
-			return ErrPublicURLInvalid
-		}
-		seen[port] = struct{}{}
 	}
 	if err := d.requireOpen(); err != nil {
 		return err
@@ -87,11 +74,6 @@ func (d *Database) EnsurePrimaryIngressPool(ctx context.Context, ipv4, ipv6 stri
 		}
 	} else if IngressPoolState(pool.State) != IngressPoolEnabled || !sameIngressAddress(pool.Ipv4Address, v4) || !sameIngressAddress(pool.Ipv6Address, v6) {
 		return errors.New("controlstate: ingress-a address differs from the enabled pool")
-	}
-	if _, err := queries.EnableIngressPoolPorts(ctx, controlstatedb.EnableIngressPoolPortsParams{
-		IngressPoolID: PrimaryIngressPoolID, Ports: ports,
-	}); err != nil {
-		return fmt.Errorf("controlstate: enable ingress-a ports: %w", err)
 	}
 	return tx.Commit(ctx)
 }

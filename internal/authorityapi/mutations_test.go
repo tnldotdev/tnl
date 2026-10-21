@@ -30,7 +30,7 @@ func TestInvitationCreationCanonicalRequestAndSecret(t *testing.T) {
 				ID: "invitation_result", TeamID: "team_path", MemberSlug: "new-member", InitialRole: "admin", State: "pending",
 				ExpiresAt: expires, NormalizedEmailRestriction: "user@example.test",
 			}}
-			response := serveAuthorityMutation(testHandler(t, Config{LoginToken: testLoginToken}, store), http.MethodPost, "/v1/teams/team_path/invitations", test.body, "Bearer exact-access-token", "invitation-idempotency")
+			response := serveAuthorityMutation(testHandler(t, Config{}, store), http.MethodPost, "/v1/teams/team_path/invitations", test.body, "Bearer exact-access-token", "invitation-idempotency")
 			if response.Code != http.StatusCreated {
 				t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 			}
@@ -71,7 +71,7 @@ func TestDomainClaimCanonicalDefaultAndIdempotency(t *testing.T) {
 				ID: "domain_result", TeamID: "team_path", Kind: "custom", CanonicalDomain: "claim.example.test", State: "pending", AuthorityRevision: 8,
 				RequiredRecords: []controlstate.DNSRecord{{Name: "claim.example.test", Type: "NS", Value: "ns.example.test"}},
 			}}
-			response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true, LoginToken: testLoginToken}, store), http.MethodPost, "/v1/teams/team_path/domains", test.body, "Bearer exact-access-token", "domain-idempotency")
+			response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true}, store), http.MethodPost, "/v1/teams/team_path/domains", test.body, "Bearer exact-access-token", "domain-idempotency")
 			if response.Code != http.StatusCreated {
 				t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 			}
@@ -109,7 +109,7 @@ func TestAuthorityResourceMutationsUseActorAndPath(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &authorityResourceStore{authorityAuthenticationStub: newAuthorityAuthenticationStub()}
-			response := serveAuthorityMutation(testHandler(t, Config{LoginToken: testLoginToken}, store), test.method, test.path, test.body, "Bearer exact-access-token", "")
+			response := serveAuthorityMutation(testHandler(t, Config{}, store), test.method, test.path, test.body, "Bearer exact-access-token", "")
 			if response.Code != test.status {
 				t.Fatalf("response = %d: %s, want %d", response.Code, response.Body.String(), test.status)
 			}
@@ -149,7 +149,7 @@ func TestAuthorityMutationsRejectAuthenticationBeforeStoreMutation(t *testing.T)
 				t.Run(auth.name, func(t *testing.T) {
 					store := &rejectedMutationStore{authorityResourceStore: &authorityResourceStore{authorityAuthenticationStub: newAuthorityAuthenticationStub()}}
 					store.err = controlstate.ErrControlAuthentication
-					response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true, LoginToken: testLoginToken}, store), operation.method, operation.path, operation.body, auth.header, operation.key)
+					response := serveAuthorityMutation(testHandler(t, Config{DNSAutomation: true, CustomDomainsEnabled: true}, store), operation.method, operation.path, operation.body, auth.header, operation.key)
 					if response.Code != http.StatusUnauthorized || len(store.tokens) != auth.calls || len(store.mutations) != 0 {
 						t.Fatalf("response = %d: %s; authentications %v, mutations %#v", response.Code, response.Body.String(), store.tokens, store.mutations)
 					}
@@ -186,18 +186,21 @@ func newAuthorityAuthenticationStub() *authorityAuthenticationStub {
 	return &authorityAuthenticationStub{principal: controlstate.ControlPrincipal{IdentityID: "identity_actor", RetrySecret: [32]byte{1, 7, 9}}}
 }
 
-func (s *authorityAuthenticationStub) AuthenticateAccessToken(_ context.Context, token credentials.AccessToken, revision int64, _ time.Time) (controlstate.ControlPrincipal, error) {
-	s.tokens, s.revisions = append(s.tokens, token), append(s.revisions, revision)
+func (s *authorityAuthenticationStub) AuthorizeTeamSession(_ context.Context, p controlstate.ControlPrincipal, team string, _ time.Time) error {
+	if p.IdentityID != s.principal.IdentityID || team == "" {
+		return controlstate.ErrAuthorityAccess
+	}
+	return s.err
+}
+
+func (s *authorityAuthenticationStub) AuthenticateAccessToken(_ context.Context, token credentials.AccessToken, _ time.Time) (controlstate.ControlPrincipal, error) {
+	s.tokens = append(s.tokens, token)
 	return s.principal, s.err
 }
 
 func assertAuthorityAuthentication(t *testing.T, s *authorityAuthenticationStub) {
 	t.Helper()
-	verifier, err := credentials.ParseLoginToken(credentials.LoginToken(testLoginToken))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(s.tokens, []credentials.AccessToken{"exact-access-token"}) || !reflect.DeepEqual(s.revisions, []int64{verifier.SourceRevision()}) {
+	if !reflect.DeepEqual(s.tokens, []credentials.AccessToken{"exact-access-token"}) {
 		t.Fatalf("authentication tokens = %v, revisions = %v", s.tokens, s.revisions)
 	}
 }

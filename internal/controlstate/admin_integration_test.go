@@ -11,8 +11,8 @@ import (
 
 func TestIntegrationAdministrationState(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "administration")
-	session, err := database.CreateBuiltinControlSession(
-		t.Context(), "managed.example.test", 1, time.Hour, 24*time.Hour, now,
+	session, err := createTestControlSession(
+		t.Context(), database, "managed.example.test", time.Hour, 24*time.Hour, now,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestIntegrationAdministrationState(t *testing.T) {
 
 func TestIntegrationMaintenanceControlReadersShareGate(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "maintenance_readers")
-	session := newBuiltinSession(t, database, now)
+	session := newOIDCSession(t, database, now)
 	actor := session.Identity.Identity.ID
 	tests := []struct {
 		name  MaintenanceControlName

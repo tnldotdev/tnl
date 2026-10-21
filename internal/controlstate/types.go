@@ -1,5 +1,17 @@
 package controlstate
 
+// VisitorAccessMode selects whether tnl requires a visitor credential.
+type VisitorAccessMode string
+
+const (
+	VisitorAccessRestricted VisitorAccessMode = "restricted"
+	VisitorAccessAnonymous  VisitorAccessMode = "anonymous"
+)
+
+func (mode VisitorAccessMode) Valid() bool {
+	return mode == VisitorAccessRestricted || mode == VisitorAccessAnonymous
+}
+
 // PublicURLScope identifies whether a public URL belongs to one membership or a team.
 type PublicURLScope string
 
@@ -87,6 +99,4 @@ type IngressRoutingTableEventKind string
 const (
 	IngressPublicURLUpsert    IngressRoutingTableEventKind = "public_url_upsert"
 	IngressPublicURLTombstone IngressRoutingTableEventKind = "public_url_tombstone"
-	IngressChallengeUpsert    IngressRoutingTableEventKind = "challenge_upsert"
-	IngressChallengeTombstone IngressRoutingTableEventKind = "challenge_tombstone"
 )

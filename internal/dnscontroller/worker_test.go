@@ -97,8 +97,8 @@ func TestWorkerPersistsProviderFailureForRetry(t *testing.T) {
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	for _, want := range []string{
-		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="provider"} 1`,
-		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="advance"} 1`,
+		`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="authority",tnl_operation="provider",tnl_outcome="error"} 1`,
+		`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="authority",tnl_operation="advance",tnl_outcome="error"} 1`,
 	} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Errorf("saved retry missing metric %q", want)
@@ -455,7 +455,7 @@ type providerStub struct {
 	releaseCalls            int
 	publishCalls            int
 	removeCalls             int
-	record                  PublicURLRecord
+	record                  AddressRecord
 	ensureWork, releaseWork controlstate.DNSAuthorityWork
 	beforeCall              func()
 }
@@ -478,7 +478,7 @@ func (p *providerStub) ReleaseCustomZone(_ context.Context, work controlstate.DN
 	return p.err
 }
 
-func (p *providerStub) PublishPublicURL(_ context.Context, record PublicURLRecord) (Zone, error) {
+func (p *providerStub) PublishAddress(_ context.Context, record AddressRecord) (Zone, error) {
 	p.publishCalls++
 	p.record = record
 	if p.beforeCall != nil {
@@ -487,7 +487,7 @@ func (p *providerStub) PublishPublicURL(_ context.Context, record PublicURLRecor
 	return p.zone, p.err
 }
 
-func (p *providerStub) RemovePublicURL(_ context.Context, record PublicURLRecord) (Zone, error) {
+func (p *providerStub) RemoveAddress(_ context.Context, record AddressRecord) (Zone, error) {
 	p.removeCalls++
 	p.record = record
 	if p.beforeCall != nil {
@@ -560,9 +560,9 @@ func TestWorkerReconcilesClaimedRoutePublicationAndRemoval(t *testing.T) {
 			if found, err := worker.processOne(t.Context()); !found || err != nil {
 				t.Fatalf("process = %v, %v", found, err)
 			}
-			wantRecord := PublicURLRecord{
+			wantRecord := AddressRecord{
 				ZoneID: "ZCLAIMED", ZoneDomain: "claimed.example.test", CustomZone: true,
-				AuthorityReference: authority.Reference, TeamID: "team_1", DomainID: "domain_1", PublicURLID: "public_url_claimed",
+				AuthorityReference: authority.Reference, TeamID: "team_1", DomainID: "domain_1", Owner: PublicURLOwner("public_url_claimed"),
 				CanonicalHostname: "api.claimed.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 			}
 			if !reflect.DeepEqual(provider.record, wantRecord) || !reflect.DeepEqual(store.authorityReferences, []string{authority.Reference}) {
@@ -675,7 +675,7 @@ func TestWorkerPersistenceFailureAfterExternalSuccess(t *testing.T) {
 				if provider.ensureCalls != 2 || !reflect.DeepEqual(provider.ensureWork, testDNSWork(now)) || store.saves != 2 {
 					t.Fatalf("authority retry = %#v, %#v", provider, store)
 				}
-			} else if provider.publishCalls != 2 || provider.record.PublicURLID != "public_url_claimed" || store.publicURLSaves != 2 {
+			} else if provider.publishCalls != 2 || provider.record.Owner != PublicURLOwner("public_url_claimed") || store.publicURLSaves != 2 {
 				t.Fatalf("route retry = %#v, %#v", provider, store)
 			}
 		})

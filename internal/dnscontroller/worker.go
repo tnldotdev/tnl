@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -28,14 +29,14 @@ type Zone struct {
 	ChangeID    string
 }
 
-type PublicURLRecord struct {
+type AddressRecord struct {
 	ZoneID               string
 	ZoneDomain           string
 	CustomZone           bool
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
-	PublicURLID          string
+	Owner                AddressOwner
 	CanonicalHostname    string
 	Namespace            string
 	WildcardHostname     string
@@ -46,8 +47,8 @@ type PublicURLRecord struct {
 type Provider interface {
 	EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
 	ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error
-	PublishPublicURL(context.Context, PublicURLRecord) (Zone, error)
-	RemovePublicURL(context.Context, PublicURLRecord) (Zone, error)
+	PublishAddress(context.Context, AddressRecord) (Zone, error)
+	RemoveAddress(context.Context, AddressRecord) (Zone, error)
 }
 
 type DNSVerifier interface {
@@ -80,11 +81,11 @@ type Config struct {
 }
 
 type DNSObserver interface {
-	ObserveDNSWork(kind, phase string, outcome observability.DNSWorkOutcome, elapsed time.Duration)
+	ObserveDNSWorkContext(context.Context, string, string, observability.DNSWorkOutcome, time.Duration)
 	ObserveDNSTransition(kind, state string)
 }
 
-func observeDNS(observer DNSObserver, kind, phase string, started time.Time, ready bool, err error) {
+func observeDNS(ctx context.Context, observer DNSObserver, kind, phase string, started time.Time, ready bool, err error) {
 	if observer == nil {
 		return
 	}
@@ -94,7 +95,7 @@ func observeDNS(observer DNSObserver, kind, phase string, started time.Time, rea
 	} else if !ready {
 		outcome = observability.DNSWorkPending
 	}
-	observer.ObserveDNSWork(kind, phase, outcome, time.Since(started))
+	observer.ObserveDNSWorkContext(ctx, kind, phase, outcome, time.Since(started))
 }
 
 type Worker struct {
@@ -104,6 +105,7 @@ type Worker struct {
 	config        Config
 	now           func() time.Time
 	publicURLNext bool
+	managedNext   bool
 }
 
 func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*Worker, error) {
@@ -139,18 +141,31 @@ func (w *Worker) Run(ctx context.Context) error {
 		OperationTimeout: w.config.OperationTimeout,
 		IdleInterval:     w.config.PollInterval,
 		Process:          w.processOne,
-		OnError: func(err error) {
-			if ctx.Err() == nil {
-				reason := dnsFailureReason(err)
-				definition, _ := failure.DefinitionFor(reason)
-				w.config.Logger.Error("DNS controller iteration failed", "reason", reason, "action", definition.Action)
-			}
-		},
 	})
+}
+
+func finishDNSAttempt(ctx context.Context, finish func(error), err error) {
+	canceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if err != nil && (!canceled || !workerloop.LifetimeEnded(ctx)) {
+		err = failure.Wrap("advance DNS work", dnsFailureReason(err), err)
+		operatorlog.ReportContext(ctx, "advance DNS work", dnsFailureReason(err), "", err)
+	}
+	finish(err)
 }
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
+	if w.managedNext {
+		w.managedNext = false
+		if found, err := w.processManagedEndpoint(ctx, now); found || err != nil {
+			return found, err
+		}
+	}
+	w.managedNext = true
+	return w.processExisting(ctx, now)
+}
+
+func (w *Worker) processExisting(ctx context.Context, now time.Time) (bool, error) {
 	if w.publicURLNext {
 		found, err := w.processPublicURL(ctx, now)
 		if found || err != nil {
@@ -172,7 +187,10 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	if found || err != nil {
 		w.publicURLNext = false
 	}
-	return found, err
+	if found || err != nil {
+		return found, err
+	}
+	return w.processManagedEndpoint(ctx, now)
 }
 
 func (w *Worker) retryAvailableAt(attempts uint64, now time.Time) time.Time {

@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -38,6 +39,7 @@ var (
 	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
 	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
 	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
+	ErrProjectManaged       = failure.Wrap("change project-managed resource", failure.ServerConflict, fmt.Errorf("resource is managed by project configuration: %w", ErrStatusConflict))
 	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
 	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
 	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
@@ -72,7 +74,7 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 	if err != nil {
 		return nil, failure.Wrap("select control server", failure.InvalidControlURL, err)
 	}
-	httpClient = httpclient.NoRedirects(httpClient)
+	httpClient = observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "control")
 	apiClient, err := controlv1.NewClient(
 		server,
 		controlv1.WithHTTPClient(httpClient),
@@ -135,6 +137,12 @@ func (c *Client) CreateShare(ctx context.Context, previewID, key string, body co
 	})
 }
 
+func (c *Client) CreateURLShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.Share, error) {
+	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateURLShare(ctx, &controlv1.CreateURLShareParams{IdempotencyKey: key}, body, editors...)
+	})
+}
+
 func (c *Client) GetShare(ctx context.Context, id string) (controlv1.Share, error) {
 	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetShare(ctx, id, editors...)
@@ -185,9 +193,13 @@ func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, e
 }
 
 func (c *Client) EnableShareAccess(ctx context.Context, runID string, version uint64, previewID string, token credentials.PublishRunToken) error {
+	var selected *string
+	if previewID != "" {
+		selected = &previewID
+	}
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{
-			PublishRunNumber: int64(version), PreviewId: previewID,
+			PublishRunNumber: int64(version), PreviewId: selected,
 		}, editors...)
 	})
 	return err
@@ -303,111 +315,10 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 	return err
 }
 
-// CreatePublicURLPublishCredential returns the secret only on creation.
-func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURLID string, expiresIn time.Duration) (controlv1.IssuedPublicURLPublishCredential, error) {
-	seconds := int64(expiresIn / time.Second)
-	return requestWithAccess[controlv1.IssuedPublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublicURLPublishCredential(ctx, publicURLID, controlv1.CreatePublicURLPublishCredentialRequest{ExpiresInSeconds: &seconds}, editors...)
-	})
-}
-
-func (c *Client) CreateEphemeralPublishCredential(ctx context.Context, teamID, domainID string, scope controlv1.PublicURLScope, expiresIn time.Duration) (controlv1.IssuedEphemeralPublishCredential, error) {
-	seconds := int64(expiresIn / time.Second)
-	return requestWithAccess[controlv1.IssuedEphemeralPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateEphemeralPublishCredential(ctx, controlv1.CreateEphemeralPublishCredentialRequest{
-			TeamId: teamID, DomainId: domainID, PublicUrlScope: scope, ExpiresInSeconds: &seconds,
-		}, editors...)
-	})
-}
-
-func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicURLID string) ([]controlv1.PublicURLPublishCredential, error) {
-	page, err := requestWithAccess[struct {
-		Credentials []controlv1.PublicURLPublishCredential `json:"credentials"`
-	}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListPublicURLPublishCredentials(ctx, publicURLID, editors...)
-	})
-	return page.Credentials, err
-}
-
-func (c *Client) ListTeamPublicURLPublishCredentials(ctx context.Context, teamID, cursor string) (controlv1.PublicURLPublishCredentialPage, error) {
-	params := &controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: teamID}
-	if cursor != "" {
-		params.Cursor = &cursor
-	}
-	return requestWithAccess[controlv1.PublicURLPublishCredentialPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListTeamPublicURLPublishCredentials(ctx, params, editors...)
-	})
-}
-
-func (c *Client) AllTeamPublicURLPublishCredentials(ctx context.Context, teamID string) ([]controlv1.PublicURLPublishCredential, error) {
-	items := []controlv1.PublicURLPublishCredential{}
-	cursor := ""
-	for {
-		page, err := c.ListTeamPublicURLPublishCredentials(ctx, teamID, cursor)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, page.Credentials...)
-		if page.NextCursor == nil {
-			return items, nil
-		}
-		if len(page.Credentials) == 0 || *page.NextCursor <= cursor {
-			return nil, failure.Wrap("list publish credentials", failure.ServerResponseInvalid, errors.New("control returned an invalid credential cursor"))
-		}
-		cursor = *page.NextCursor
-	}
-}
-
-func (c *Client) RevokePublishCredentialByID(ctx context.Context, teamID, credentialID string) (controlv1.PublicURLPublishCredential, error) {
-	params := &controlv1.RevokePublishCredentialByIDParams{TeamId: teamID}
-	return requestWithAccess[controlv1.PublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePublishCredentialByID(ctx, credentialID, params, editors...)
-	})
-}
-
-func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePublicURLPublishCredential(ctx, publicURLID, credentialID, editors...)
-	})
-	return err
-}
-
-func (c *Client) PublicURLForPublishCredential(ctx context.Context, credential credentials.PublicURLPublishCredential) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, credential.String(), c.api.GetPublicURLForPublishCredential)
-}
-
-func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AllocateEphemeralPublicURL(ctx, body, editors...)
-	})
-}
-
-func (c *Client) DeleteEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, publicURLID string) error {
-	_, err := request[struct{}](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.DeleteEphemeralPublicURL(ctx, publicURLID, editors...)
-	})
-	return err
-}
-
-func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
-}
-
-func (c *Client) CreatePublishRunWithEphemeralCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
-}
-
-func (c *Client) createPublishRunWithBearer(ctx context.Context, publicURLID, idempotencyKey, bearer string) (controlv1.PublishRunSetup, error) {
-	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
-	return request[controlv1.PublishRunSetup](ctx, c, bearer, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
-	})
-}
-
 func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
+		return c.api.CreatePublishRun(ctx, publicURLID, params, controlv1.CreatePublishRunRequest{}, editors...)
 	})
 }
 
@@ -445,19 +356,6 @@ func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceID string, 
 	return request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetCertificateIssuance(ctx, issuanceID, editors...)
 	})
-}
-
-func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	return requestWithTimeout[controlv1.CertificateIssuance](ctx, c, certificateCallTimeout, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkCertificateChallengeReady(ctx, issuanceID, editors...)
-	})
-}
-
-func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.PublishRunToken) error {
-	_, err := request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkCertificateChallengeRemoved(ctx, issuanceID, editors...)
-	})
-	return err
 }
 
 func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunID string, publishRunNumber uint64, issuanceID string, notAfter time.Time, token credentials.PublishRunToken) error {
@@ -551,6 +449,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case controlv1.ProjectManaged:
+		return fmt.Errorf("%w: %w", ErrProjectManaged, &ProblemError{Status: status, Problem: problem})
 	case controlv1.MemberHostnameDepthExceeded:
 		return ErrMemberHostnameDepth
 	case controlv1.Unauthenticated:

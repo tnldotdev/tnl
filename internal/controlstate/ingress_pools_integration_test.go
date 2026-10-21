@@ -1,16 +1,13 @@
 package controlstate
 
 import (
-	"errors"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestIntegrationIngressPoolClaimsKeepTheirAddressAndHistory(t *testing.T) {
+func TestIntegrationIngressPoolSavedPublicURLsKeepTheirTeamPlacement(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "ingress_pool_claims")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	first, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
@@ -25,18 +22,6 @@ func TestIntegrationIngressPoolClaimsKeepTheirAddressAndHistory(t *testing.T) {
 	if teamPool != "ingress-a" || urlPool != teamPool {
 		t.Fatalf("seeded pool: team %q, url %q", teamPool, urlPool)
 	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled) VALUES ('ingress-a', 15432, true)`); err != nil {
-		t.Fatal(err)
-	}
-	insertClaim := func(id, publicURLID, hostname string) error {
-		_, err := database.pool.Exec(t.Context(), `INSERT INTO control.tcp_port_claims
-			(id, public_url_id, ingress_pool_id, canonical_hostname, port, state, claimed_at)
-			VALUES ($1, $2, 'ingress-a', $3, 15432, 'held', $4)`, id, publicURLID, hostname, now)
-		return err
-	}
-	if err := insertClaim("claim_1", first.ID, first.CanonicalHostname); err != nil {
-		t.Fatal(err)
-	}
 	secondRequest := request
 	secondRequest.IdempotencyKey = "second-pool-url"
 	secondRequest.CanonicalHostname = "second." + request.CanonicalHostname
@@ -44,28 +29,14 @@ func TestIntegrationIngressPoolClaimsKeepTheirAddressAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var constraint *pgconn.PgError
-	if err := insertClaim("claim_2", second.ID, second.CanonicalHostname); !errors.As(err, &constraint) || constraint.Code != "23505" {
-		t.Fatalf("second public URL claimed an occupied port: %v", err)
-	}
-	until := now.Add(7 * 24 * time.Hour)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.tcp_port_claims SET state = 'quarantined', retired_at = $1, reusable_after = $2 WHERE id = 'claim_1'`, now, until); err != nil {
-		t.Fatal(err)
-	}
-	if err := insertClaim("claim_3", second.ID, second.CanonicalHostname); !errors.As(err, &constraint) || constraint.Code != "23505" {
-		t.Fatalf("quarantined port was claimed: %v", err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.tcp_port_claims SET state = 'released' WHERE id = 'claim_1'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := insertClaim("claim_4", second.ID, second.CanonicalHostname); err != nil {
-		t.Fatalf("port could not be reused by a different hostname: %v", err)
+	if err := database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.public_urls WHERE id=$1`, second.ID).Scan(&urlPool); err != nil || urlPool != teamPool {
+		t.Fatalf("saved URL changed ingress placement: %q %v", urlPool, err)
 	}
 }
 
 func TestIntegrationPublicURLPinsTeamIngressPoolAtCreation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "ingress_pool_placement")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.ingress_pools
 		(id, ipv4_address, state, created_at, updated_at)
 		VALUES ('ingress-b', '203.0.113.20', 'enabled', $1, $1)`, now); err != nil {
@@ -99,36 +70,24 @@ func TestIntegrationPublicURLPinsTeamIngressPoolAtCreation(t *testing.T) {
 	}
 }
 
-func TestIntegrationPrimaryIngressPoolProvisioningIsAdditive(t *testing.T) {
+func TestIntegrationPrimaryIngressPoolAddressIsPinned(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "ingress_pool_inventory")
 	ctx := t.Context()
-	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 15432}, now); err != nil {
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 15432, 3306}, now.Add(time.Hour)); err != nil {
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := database.GetIngressPool(ctx, "ingress-a")
 	if err != nil || pool.State != IngressPoolEnabled || pool.IPv4Address.String() != "192.0.2.10" || pool.IPv6Address.String() != "2001:db8::10" {
 		t.Fatalf("enabled pool = %#v, %v", pool, err)
 	}
-	capacities, err := database.TCPPortPoolCapacities(ctx)
-	if err != nil || len(capacities) != 1 || capacities[0].ConfiguredPorts != 3 || capacities[0].AvailablePorts != 3 {
-		t.Fatalf("expanded inventory = %#v, %v", capacities, err)
-	}
-	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.20", "2001:db8::10", []int32{5432}, now.Add(time.Hour)); err == nil {
+	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.20", "2001:db8::10", now.Add(time.Hour)); err == nil {
 		t.Fatal("a later control process changed the public address for existing URL placements")
 	}
-	if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{5432, 5432}, now); err == nil {
-		t.Fatal("duplicate operator port inventory accepted")
-	}
-	for _, port := range []int32{1023, 65536} {
-		if err := database.EnsurePrimaryIngressPool(ctx, "192.0.2.10", "2001:db8::10", []int32{port}, now); err == nil {
-			t.Fatalf("out-of-range operator port %d accepted", port)
-		}
-	}
-	capacities, err = database.TCPPortPoolCapacities(ctx)
-	if err != nil || len(capacities) != 1 || capacities[0].ConfiguredPorts != 3 {
-		t.Fatalf("failed configuration changed inventory = %#v, %v", capacities, err)
+	var ports bool
+	if err := database.pool.QueryRow(ctx, `SELECT to_regclass('control.tcp_port_claims') IS NOT NULL OR to_regclass('control.ingress_pool_ports') IS NOT NULL`).Scan(&ports); err != nil || ports {
+		t.Fatalf("public TCP allocation remains in HTTP-only schema: %t %v", ports, err)
 	}
 }

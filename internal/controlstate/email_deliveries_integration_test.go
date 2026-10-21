@@ -11,7 +11,7 @@ import (
 
 func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "invitation_email")
-	admin, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+	admin, err := createTestControlSession(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 	}
 	invitation := create("sam")
 	var ciphertext []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext FROM control.email_deliveries WHERE delivery_id=$1`, invitation.Invitation.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte(invitation.Secret)) || bytes.Contains(ciphertext, []byte("sam@example.com")) {
+	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext FROM control.team_invitation_email_deliveries WHERE delivery_id=$1`, invitation.Invitation.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte(invitation.Secret)) || bytes.Contains(ciphertext, []byte("sam@example.com")) {
 		t.Fatalf("plaintext email persisted: %v", err)
 	}
 	job, err := database.ClaimInvitationEmail(t.Context(), "worker-a", now)
@@ -59,7 +59,7 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 		t.Fatal(err)
 	}
 	var scrubbed bool
-	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL AND storage_key_id IS NULL FROM control.email_deliveries WHERE delivery_id=$1`, job.ID).Scan(&scrubbed); err != nil || !scrubbed {
+	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL AND storage_key_id IS NULL FROM control.team_invitation_email_deliveries WHERE delivery_id=$1`, job.ID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatalf("completed payload retained: %v", err)
 	}
 	revoked := create("revoked")
@@ -69,7 +69,7 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 	if job, err := database.ClaimInvitationEmail(t.Context(), "worker-a", now); err != nil || job.ID != "" {
 		t.Fatalf("revoked delivery=%+v, %v", job, err)
 	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL FROM control.email_deliveries WHERE delivery_id=$1`, revoked.Invitation.ID).Scan(&scrubbed); err != nil || !scrubbed {
+	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL FROM control.team_invitation_email_deliveries WHERE delivery_id=$1`, revoked.Invitation.ID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatalf("revoked payload retained: %v", err)
 	}
 }

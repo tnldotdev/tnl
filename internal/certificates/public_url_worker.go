@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 type PublicURLConfig struct {
@@ -33,8 +34,8 @@ type PublicURLConfig struct {
 
 // PublicURLWorkObserver records only fixed worker stages and outcomes.
 type PublicURLWorkObserver interface {
-	ObserveCertificateWork(stage string, outcome observability.CertificateWorkOutcome, elapsed time.Duration)
-	ObserveCertificateMilestone(milestone string, age time.Duration)
+	ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration)
+	ObserveCertificateMilestone(kind, milestone string, age time.Duration)
 }
 
 type PublicURLDNSChallenges interface {
@@ -46,7 +47,6 @@ type PublicURLDNSChallenges interface {
 // PublicURLStore is the stored certificate work used by a PublicURLWorker.
 type PublicURLStore interface {
 	ClaimACMEOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.ACMEOrderWork, bool, error)
-	ACMEChallengeRoutingReady(context.Context, string, time.Time) (bool, error)
 	SaveACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (controlstate.ACMEOrderWork, error)
 }
 
@@ -87,28 +87,36 @@ func NewPublicURLWorker(store PublicURLStore, config PublicURLConfig) (*PublicUR
 
 func (w *PublicURLWorker) Run(ctx context.Context) error {
 	return runWorkerLoop(
-		ctx, w, w.config.Logger, w.config.OperationTimeout, w.config.IdleInterval,
-		"public URL certificate worker iteration failed",
+		ctx, w, w.config.OperationTimeout, w.config.IdleInterval,
 	)
 }
 
-func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
+func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error) {
+	ctx, finish := observability.WorkerAttempt(ctx, "certificate.service.attempt")
+	var attemptErr error
+	defer func() {
+		finishCertificateAttempt(ctx, finish, errors.Join(retErr, attemptErr))
+	}()
 	now := w.now()
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if observer, ok := w.config.Observer.(interface {
 		ObserveCertificateClaim(string, observability.CertificateClaimOutcome)
-	}); ok && ctx.Err() == nil {
+	}); ok && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
+		kind := "service_queue"
 		if err != nil {
 			outcome = observability.CertificateError
 		} else if !found {
 			outcome = observability.CertificateEmpty
+		} else {
+			kind = certificateKind(work)
 		}
-		observer.ObserveCertificateClaim("public_url", outcome)
+		observer.ObserveCertificateClaim(kind, outcome)
 	}
 	if err != nil || !found {
 		return found, err
 	}
+	ctx = observability.WithCertificateKind(ctx, certificateKind(work))
 	stage := work.State
 	hadPendingCleanup := hasPendingDNSCleanup(work.Authorizations)
 	started := time.Now()
@@ -119,6 +127,7 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	if err == nil {
 		err = w.advance(ctx, client, &work, now)
 	}
+	attemptErr = err
 	completedAt := w.now()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -129,8 +138,8 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	saved, saveErr := w.store.SaveACMEOrderWork(ctx, work, completedAt)
 	if saveErr != nil {
 		if ctx.Err() == nil {
-			w.observeWork(string(stage), "save_failed", started)
-			w.logWork(work, string(stage), "save_failed", completedAt)
+			w.observeWork(ctx, certificateKind(work), string(stage), "save_failed", started)
+			w.logWork(ctx, work, string(stage), "save_failed", completedAt)
 		}
 		return true, saveErr
 	}
@@ -139,21 +148,21 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 			if stage != saved.State {
 				switch saved.State {
 				case "waiting_for_install":
-					observer.ObserveCertificateTransition("public_url", "available")
+					observer.ObserveCertificateTransition(certificateKind(work), "available")
 				case "failed":
-					observer.ObserveCertificateTransition("public_url", "failed")
+					observer.ObserveCertificateTransition(certificateKind(work), "failed")
 				}
 			}
 			if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) {
-				observer.ObserveCertificateTransition("public_url", "cleanup_complete")
+				observer.ObserveCertificateTransition(certificateKind(work), "cleanup_complete")
 			}
 		}
 		if stage != "waiting_for_install" && saved.State == "waiting_for_install" && len(saved.CertificatePEM) != 0 {
-			w.config.Observer.ObserveCertificateMilestone("ready", completedAt.Sub(saved.CreatedAt))
+			w.config.Observer.ObserveCertificateMilestone(certificateKind(work), "ready", completedAt.Sub(saved.CreatedAt))
 		}
 		if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) &&
 			(saved.State == "waiting_for_install" || saved.State == "installed") {
-			w.config.Observer.ObserveCertificateMilestone("cleanup", completedAt.Sub(saved.CreatedAt))
+			w.config.Observer.ObserveCertificateMilestone(certificateKind(work), "cleanup", completedAt.Sub(saved.CreatedAt))
 		}
 	}
 	outcome := observability.CertificateProgress
@@ -162,9 +171,9 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	} else if err != nil {
 		outcome = observability.CertificateRetry
 	}
-	w.observeWork(string(stage), outcome, started)
+	w.observeWork(ctx, certificateKind(work), string(stage), outcome, started)
 	if err != nil || work.State != stage && (work.State == "waiting_for_install" || work.State == "failed") && completedAt.Sub(work.CreatedAt) >= 30*time.Second {
-		w.logWork(work, string(stage), string(outcome), completedAt)
+		w.logWork(ctx, work, string(stage), string(outcome), completedAt)
 	}
 	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
 		return true, err
@@ -172,17 +181,24 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (w *PublicURLWorker) observeWork(stage string, outcome observability.CertificateWorkOutcome, started time.Time) {
+func certificateKind(work controlstate.ACMEOrderWork) string {
+	if work.PrivateRunID != "" {
+		return "managed_service"
+	}
+	return "public_url"
+}
+
+func (w *PublicURLWorker) observeWork(ctx context.Context, kind, stage string, outcome observability.CertificateWorkOutcome, started time.Time) {
 	if w.config.Observer != nil {
-		w.config.Observer.ObserveCertificateWork(stage, outcome, time.Since(started))
+		w.config.Observer.ObserveCertificateIterationContext(ctx, kind, stage, outcome, time.Since(started))
 	}
 }
 
-func (w *PublicURLWorker) logWork(work controlstate.ACMEOrderWork, stage, outcome string, now time.Time) {
+func (w *PublicURLWorker) logWork(ctx context.Context, work controlstate.ACMEOrderWork, stage, outcome string, now time.Time) {
 	if w.config.Logger == nil {
 		return
 	}
-	w.config.Logger.Info("public URL certificate work", "publish_run_id", work.PublishRunID, "publish_run_number", work.PublishRunNumber,
+	w.config.Logger.InfoContext(ctx, "service certificate work", "publish_run_id", work.PublishRunID, "publish_run_number", work.PublishRunNumber, "private_run_id", work.PrivateRunID, "run_number", work.PrivateRunNumber,
 		"issuance_id", work.ID, "stage", stage, "state", work.State, "outcome", outcome,
 		"attempts", work.Attempts, "age", now.Sub(work.CreatedAt).Round(time.Second), "next_available_at", work.AvailableAt)
 }
@@ -206,11 +222,11 @@ func (w *PublicURLWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, 
 
 func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	work.LastError = ""
-	if w.config.DNSChallenges == nil && (work.ChallengeMethod == certificateidentity.ChallengeDNS01 ||
-		slices.ContainsFunc(work.Authorizations, func(value controlstate.ACMEAuthorizationWork) bool {
-			return value.ChallengeType == certificateidentity.ChallengeDNS01
-		})) {
+	if w.config.DNSChallenges == nil {
 		return dnscontroller.ErrChallengesNotConfigured
+	}
+	if work.ChallengeMethod != certificateidentity.ChallengeDNS01 {
+		return terminalf("certificate issuance requires DNS-01")
 	}
 	switch work.State {
 	case "pending":
@@ -231,6 +247,11 @@ func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *con
 		}
 		return err
 	case "failed", "canceled":
+		if work.FinalizationPossible && work.NotAfter == nil {
+			// finalization may have reached the CA before a response was lost.
+			// retain its actual certificate lifetime before releasing names.
+			return w.collectCertificate(ctx, client, work, now)
+		}
 		_, err := w.continueDNSCleanup(ctx, work, now)
 		return err
 	default:
@@ -371,6 +392,7 @@ func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI
 		work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
 		return nil
 	case "invalid":
+		work.FinalizationPossible = false
 		return w.invalidOrder(ctx, client, work)
 	case "valid":
 		if order.Certificate == "" {

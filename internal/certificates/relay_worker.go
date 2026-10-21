@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 const defaultFailedRetryInterval = time.Hour
@@ -48,7 +49,7 @@ type RelayConfig struct {
 
 type RelayWorkObserver interface {
 	ObserveCertificateClaim(kind string, outcome observability.CertificateClaimOutcome)
-	ObserveCertificateIteration(kind, stage string, outcome observability.CertificateWorkOutcome, elapsed time.Duration)
+	ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration)
 	ObserveCertificateTransition(kind, state string)
 }
 
@@ -85,12 +86,14 @@ func NewRelayWorker(store RelayStore, config RelayConfig) (*RelayWorker, error) 
 
 func (w *RelayWorker) Run(ctx context.Context) error {
 	return runWorkerLoop(
-		ctx, w, w.config.Logger, w.config.OperationTimeout, w.config.IdleInterval,
-		"relay certificate worker iteration failed",
+		ctx, w, w.config.OperationTimeout, w.config.IdleInterval,
 	)
 }
 
-func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
+func (w *RelayWorker) processOne(ctx context.Context) (_ bool, retErr error) {
+	ctx, finish := observability.WorkerAttempt(ctx, "certificate.relay.attempt")
+	var attemptErr error
+	defer func() { finishCertificateAttempt(ctx, finish, errors.Join(retErr, attemptErr)) }()
 	now := w.now()
 	if _, err := w.store.PrepareRelayCertificateOrder(
 		ctx, w.config.AccountID, now, w.config.FailedRetryInterval,
@@ -98,7 +101,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	work, found, err := w.store.ClaimRelayCertificateOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
-	if w.config.Observer != nil && ctx.Err() == nil {
+	if w.config.Observer != nil && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
 		if err != nil {
 			outcome = observability.CertificateError
@@ -118,6 +121,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 	if err == nil {
 		err = w.advance(ctx, client, &work, now)
 	}
+	attemptErr = err
 	completedAt := w.now()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -137,7 +141,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 	saved, saveErr := w.store.SaveRelayCertificateOrderWork(ctx, work, completedAt)
 	if saveErr != nil {
 		if w.config.Observer != nil && ctx.Err() == nil {
-			w.config.Observer.ObserveCertificateIteration("relay", string(stage), "save_failed", time.Since(started))
+			w.config.Observer.ObserveCertificateIterationContext(ctx, "relay", string(stage), "save_failed", time.Since(started))
 		}
 		return true, saveErr
 	}
@@ -148,7 +152,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (bool, error) {
 		} else if err != nil {
 			outcome = observability.CertificateRetry
 		}
-		w.config.Observer.ObserveCertificateIteration("relay", string(stage), outcome, time.Since(started))
+		w.config.Observer.ObserveCertificateIterationContext(ctx, "relay", string(stage), outcome, time.Since(started))
 		if stage != saved.State {
 			switch saved.State {
 			case "cleaning":

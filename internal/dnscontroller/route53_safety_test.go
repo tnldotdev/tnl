@@ -58,28 +58,28 @@ func TestRoute53ProviderRecoversLostZoneCreateResponseAcrossPages(t *testing.T) 
 func TestRoute53ProviderRejectsConflictsBeforeMutation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		change func(*route53Stub, PublicURLRecord)
+		change func(*route53Stub, AddressRecord)
 	}{
-		{"unowned_A", func(c *route53Stub, r PublicURLRecord) {
-			delete(c.recordSets, dnsName(publicURLOwnerName(r.CanonicalHostname)))
+		{"unowned_A", func(c *route53Stub, r AddressRecord) {
+			delete(c.recordSets, dnsName(addressOwnerName(r.CanonicalHostname)))
 		}},
-		{"foreign_owner", func(c *route53Stub, r PublicURLRecord) {
-			c.recordSets[dnsName(publicURLOwnerName(r.CanonicalHostname))][0].ResourceRecords[0].Value = aws.String(`"tnl-public-url:foreign"`)
+		{"foreign_owner", func(c *route53Stub, r AddressRecord) {
+			c.recordSets[dnsName(addressOwnerName(r.CanonicalHostname))][0].ResourceRecords[0].Value = aws.String(`"tnl-public-url:foreign"`)
 		}},
-		{"CNAME", func(c *route53Stub, r PublicURLRecord) {
+		{"CNAME", func(c *route53Stub, r AddressRecord) {
 			c.recordSets[dnsName(r.CanonicalHostname)] = []types.ResourceRecordSet{*simpleRecordSet(r.CanonicalHostname, types.RRTypeCname, []string{"foreign.example.test."})}
 		}},
-		{"weighted_address", func(c *route53Stub, r PublicURLRecord) {
+		{"weighted_address", func(c *route53Stub, r AddressRecord) {
 			c.recordSets[dnsName(r.CanonicalHostname)][0].SetIdentifier = aws.String("weighted")
 			c.recordSets[dnsName(r.CanonicalHostname)][0].Weight = aws.Int64(10)
 		}},
-		{"alias_address", func(c *route53Stub, r PublicURLRecord) {
+		{"alias_address", func(c *route53Stub, r AddressRecord) {
 			c.recordSets[dnsName(r.CanonicalHostname)][0].AliasTarget = &types.AliasTarget{DNSName: aws.String("foreign.example.test."), HostedZoneId: aws.String("ZFOREIGN")}
 			c.recordSets[dnsName(r.CanonicalHostname)][0].ResourceRecords = nil
 			c.recordSets[dnsName(r.CanonicalHostname)][0].TTL = nil
 		}},
-		{"weighted_owner", func(c *route53Stub, r PublicURLRecord) {
-			c.recordSets[dnsName(publicURLOwnerName(r.CanonicalHostname))][0].SetIdentifier = aws.String("weighted")
+		{"weighted_owner", func(c *route53Stub, r AddressRecord) {
+			c.recordSets[dnsName(addressOwnerName(r.CanonicalHostname))][0].SetIdentifier = aws.String("weighted")
 		}},
 	} {
 		for _, operation := range []string{"publish", "remove"} {
@@ -89,9 +89,9 @@ func TestRoute53ProviderRejectsConflictsBeforeMutation(t *testing.T) {
 				test.change(client, record)
 				var err error
 				if operation == "publish" {
-					_, err = provider.PublishPublicURL(t.Context(), record)
+					_, err = provider.PublishAddress(t.Context(), record)
 				} else {
-					_, err = provider.RemovePublicURL(t.Context(), record)
+					_, err = provider.RemoveAddress(t.Context(), record)
 				}
 				var terminal *terminalError
 				if !errors.As(err, &terminal) || len(client.changes) != 0 {
@@ -127,11 +127,11 @@ func TestRoute53ProviderChecksCustomZoneIdentityAndTags(t *testing.T) {
 						}
 					}
 				}
-				record := PublicURLRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, CustomZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, PublicURLID: "public_url_1", CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
+				record := AddressRecord{ZoneID: "Z123", ZoneDomain: work.CanonicalDomain, CustomZone: true, AuthorityReference: work.Reference, TeamID: work.TeamID, DomainID: work.DomainID, Owner: PublicURLOwner("public_url_1"), CanonicalHostname: "api." + work.CanonicalDomain, IngressIPv4Addresses: []string{"192.0.2.10"}}
 				var err error
 				switch operation {
 				case "publish":
-					_, err = provider.PublishPublicURL(t.Context(), record)
+					_, err = provider.PublishAddress(t.Context(), record)
 				case "challenge":
 					_, err = provider.ReconcileChallenge(t.Context(), ChallengeRecord{ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, CustomZone: true, AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID, RecordName: "_acme-challenge." + record.CanonicalHostname, DesiredOwnedValues: []string{"owned"}})
 				case "release":
@@ -206,7 +206,7 @@ func TestRoute53ProviderRemovesAddressFamilyAndSupportsAAAAOnly(t *testing.T) {
 				record.IngressIPv4Addresses = nil
 				record.IngressIPv6Addresses = []string{"2001:db8::20"}
 			}
-			if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+			if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 				t.Fatal(err)
 			}
 			if len(client.changes) != 3 {
@@ -237,7 +237,7 @@ func TestRoute53ProviderRemovesAddressFamilyAndSupportsAAAAOnly(t *testing.T) {
 	record := route53TestPublicURL(client)
 	client.recordSets = map[string][]types.ResourceRecordSet{}
 	record.IngressIPv4Addresses, record.IngressIPv6Addresses = nil, []string{"2001:db8::10"}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 2 || client.changes[1].ResourceRecordSet.Type != types.RRTypeAaaa {

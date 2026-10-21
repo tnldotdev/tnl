@@ -2,7 +2,6 @@ package controlapi
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -15,10 +14,13 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 		protocol = controlv1.Http
 	}
 	result := controlv1.PublicURL{
-		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
+		PublisherPool: &route.PublisherPool,
+		Id:            route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
-		ServiceProtocol: protocol,
-		PublicUrlScope:  controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
+		ServiceProtocol:  protocol,
+		AccessMode:       controlv1.VisitorAccessMode(route.AccessMode),
+		MutationRevision: int64(route.MutationRevision),
+		PublicUrlScope:   controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
 		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
 		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}
@@ -35,10 +37,6 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 	if route.OpenPublishRunID != "" {
 		result.OpenPublishRunId = &route.OpenPublishRunID
 	}
-	if route.PublicPort != nil {
-		port := int(*route.PublicPort)
-		result.PublicPort = &port
-	}
 	return result
 }
 
@@ -51,6 +49,7 @@ func publishRunSetupResponse(
 		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
 		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
+		Traffic:              trafficLimitsResponse(setup.Traffic),
 	}
 }
 
@@ -134,17 +133,6 @@ func certificateIssuanceResponse(issuance controlstate.CertificateIssuance) cont
 			result.CertificatePem = &issuance.CertificatePEM
 		}
 		result.NotBefore, result.NotAfter = issuance.NotBefore, issuance.NotAfter
-	}
-	if len(issuance.Challenges) > 0 {
-		challenges := make([]controlv1.CertificateChallenge, len(issuance.Challenges))
-		for index, challenge := range issuance.Challenges {
-			challenges[index] = controlv1.CertificateChallenge{
-				Identifier: challenge.Identifier, Method: controlv1.CertificateChallengeMethod(challenge.Method),
-				Token: challenge.Token, Digest: base64.RawURLEncoding.EncodeToString(challenge.Digest[:]),
-				ExpiresAt: challenge.ExpiresAt,
-			}
-		}
-		result.Challenges = &challenges
 	}
 	return result
 }

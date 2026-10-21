@@ -15,9 +15,9 @@ import (
 
 func TestIntegrationTeamCreation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creation")
-	session := newBuiltinSession(t, database, now)
+	session := newOIDCSession(t, database, now)
 	personal, err := database.GetTeam(t.Context(), session.Identity.Identity.ID, session.Identity.PersonalTeamID)
-	if err != nil || personal.DisplayName != "local-administrator" || personal.ManagedLabel == "" {
+	if err != nil || personal.DisplayName != "operator" || personal.ManagedLabel == "" {
 		t.Fatalf("personal team name = %#v, %v", personal, err)
 	}
 	request := authorityTeamRequest(session.Identity.Identity.ID)
@@ -55,7 +55,7 @@ func TestIntegrationTeamCreation(t *testing.T) {
 		t.Fatalf("NUL display name was not rejected at validation: %v", err)
 	}
 	memberships, err := database.ListTeamMemberships(t.Context(), session.Identity.Identity.ID, team.ID)
-	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "local-administrator" || memberships[0].TeamDisplayName != team.DisplayName {
+	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "operator" || memberships[0].TeamDisplayName != team.DisplayName {
 		t.Fatalf("initial memberships = %#v, %v", memberships, err)
 	}
 	duplicate := authorityTeamRequest(session.Identity.Identity.ID)
@@ -73,9 +73,9 @@ func TestIntegrationTeamCreation(t *testing.T) {
 func TestIntegrationSimpleModeOnlyReservesReadableLabels(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "simple_labels")
 	database.managedURLMode = naming.ManagedURLModeSimple
-	admin := newBuiltinSession(t, database, now)
-	if member := admin.Identity.Memberships[0]; member.ManagedLabel != "local-administrator" {
-		t.Fatalf("builtin label = %q", member.ManagedLabel)
+	admin := newOIDCSession(t, database, now)
+	if member := admin.Identity.Memberships[0]; member.ManagedLabel != "operator" {
+		t.Fatalf("OIDC personal label = %q", member.ManagedLabel)
 	}
 	owner := admin.Identity.Identity.ID
 	teamRequest := authorityTeamRequest(owner)
@@ -201,7 +201,7 @@ func TestIntegrationMembershipRemovalClosesRoutesAndQuarantinesSlug(t *testing.T
 		ID: "session_member", PublicURLID: "public_url_member", TeamID: team.ID,
 		MembershipID: member.ID, ActingIdentityID: member.IdentityID, PolicyRevision: int64(member.PolicyRevision),
 		CertificateCacheKey: "member-cert", CertificateScope: "route", CertificateIdentifiers: []string{"second.example.test"},
-		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
 	if err := database.RemoveMembership(t.Context(), admin.IdentityID, team.ID, member.ID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -343,9 +343,9 @@ func TestIntegrationDNSAuthorities(t *testing.T) {
 	}
 }
 
-func newBuiltinSession(t *testing.T, database *Database, now time.Time) ControlSession {
+func newOIDCSession(t *testing.T, database *Database, now time.Time) ControlSession {
 	t.Helper()
-	session, err := database.CreateBuiltinControlSession(t.Context(), "tunnels.example.test", 7, time.Hour, 24*time.Hour, now)
+	session, err := createTestControlSession(t.Context(), database, "tunnels.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func authorityTeamRequest(owner string) CreateTeamRequest {
 func newAuthorityTeam(t *testing.T) (*Database, time.Time, string, Team) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "authority")
-	owner := newBuiltinSession(t, database, now).Identity.Identity.ID
+	owner := newOIDCSession(t, database, now).Identity.Identity.ID
 	team, err := database.CreateTeam(t.Context(), authorityTeamRequest(owner), now)
 	if err != nil {
 		t.Fatal(err)
@@ -396,8 +396,8 @@ func insertAuthorityIdentity(t *testing.T, database *Database, identityID, norma
 		email = normalizedEmail
 	}
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.identities (
-		id, kind, display_name, normalized_email, email_verified, administrator, created_at, updated_at
-	) VALUES ($1, 'oidc', $1, $2, $3, false, $4, $4)`, identityID, email, emailVerified, now); err != nil {
+		id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at
+	) VALUES ($1, 'oidc', 'https://identity.fixture.test', $1, $1, $2, $3, false, $4, $4)`, identityID, email, emailVerified, now); err != nil {
 		t.Fatal(err)
 	}
 }

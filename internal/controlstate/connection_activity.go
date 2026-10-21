@@ -13,13 +13,12 @@ type connectionPurpose int
 
 const (
 	requestPoolConnection connectionPurpose = iota
-	tlsLeadershipConnection
 	dnsChallengeConnection
 	diagnosticConnection
 	poolerDiagnosticConnection
 )
 
-var connectionPurposeNames = [...]string{"request_pool", "tls_leadership", "dns_challenge", "diagnostics", "pooler_diagnostics"}
+var connectionPurposeNames = [...]string{"request_pool", "dns_challenge", "diagnostics", "pooler_diagnostics"}
 
 // counts describe this process's client sockets, not PostgreSQL backend slots.
 // only fixed purpose labels and counters are retained, never connection details.
@@ -83,7 +82,7 @@ func (t *connectionTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool,
 		return
 	}
 	if started, ok := ctx.Value(acquireStartedKey{}).(time.Time); ok {
-		t.queries.metrics.Load().ObserveDatabaseAcquire(data.Err, time.Since(started))
+		t.queries.metrics.Load().ObserveDatabaseAcquireContext(ctx, data.Err, time.Since(started))
 	}
 }
 

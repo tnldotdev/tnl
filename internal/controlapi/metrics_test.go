@@ -21,7 +21,7 @@ func TestControlHandlersRecordMatchedOperations(t *testing.T) {
 	if strings.Contains(text, "public_url_private-id") {
 		t.Fatal("metrics exposed a route ID")
 	}
-	for _, want := range []string{"tnl_control_api_request_duration_seconds_count", "tnl_control_api_requests_in_flight", `outcome="client_error"`, `outcome="success"`} {
+	for _, want := range []string{"tnl_api_request_duration_seconds_count", "tnl_api_requests_in_flight", `tnl_outcome="denied"`, `tnl_outcome="success"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("metrics missing %q:\n%s", want, text)
 		}

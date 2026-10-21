@@ -42,6 +42,9 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	if err := database.EnableShareAccess(t.Context(), f.authentication(), preview.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
+		t.Fatal(err)
+	}
 	secret := []byte("0123456789abcdefghijklmnopqrstuv")
 	share, err := database.CreateShare(t.Context(), CreateShareRequest{
 		PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
@@ -58,7 +61,8 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	actor := FeedbackActor{Kind: "reviewer", ShareID: share.ID, CookieSecret: cookie}
+	auth := f.authentication()
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth}
 	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
@@ -187,6 +191,9 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 
 func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 	f := newPublishRunFixture(t)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, f.now); err != nil {
+		t.Fatal(err)
+	}
 	preview, err := f.database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "concurrent-reports", f.now)
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +203,9 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2,
 	}, f.now)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan struct{})
@@ -209,7 +219,7 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 				ReportText:     "The settings save is inconsistent",
 				Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 				SourceAtReport: source, IdempotencyKey: key,
-				Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true},
+				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"},
 			}, f.now)
 			results <- err
 		}()

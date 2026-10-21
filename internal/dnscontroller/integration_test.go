@@ -175,7 +175,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 		case <-tick.C:
 		}
 	}
-	if err := otherDatabase.WithDNSChallengeLock(ctx, "_acme-challenge.unrelated.example.test", func() error { return otherDatabase.Health(ctx) }); err != nil {
+	if err := otherDatabase.WithDNSRecordLock(ctx, "_acme-challenge.unrelated.example.test", func() error { return otherDatabase.Health(ctx) }); err != nil {
 		t.Fatalf("unrelated record or pool read was blocked: %v", err)
 	}
 	// this presentation did not exist in either caller's pre-lock snapshot.
@@ -204,7 +204,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		lockCtx, cancelLock := context.WithCancel(ctx)
 		failure := errors.New("provider failure")
-		err := database.WithDNSChallengeLock(lockCtx, recordName, func() error {
+		err := database.WithDNSRecordLock(lockCtx, recordName, func() error {
 			if canceled {
 				cancelLock()
 				return lockCtx.Err()
@@ -218,7 +218,7 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 		if !errors.Is(err, failure) {
 			t.Fatalf("lock failure = %v", err)
 		}
-		if err := otherDatabase.WithDNSChallengeLock(ctx, recordName, func() error { return otherDatabase.Health(ctx) }); err != nil {
+		if err := otherDatabase.WithDNSRecordLock(ctx, recordName, func() error { return otherDatabase.Health(ctx) }); err != nil {
 			t.Fatalf("lock leaked after callback failure: %v", err)
 		}
 	}

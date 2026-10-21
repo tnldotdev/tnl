@@ -1,10 +1,12 @@
 package oidcauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -22,14 +24,32 @@ var (
 
 // Identity contains the limited identity fields authenticated by an OIDC ID token.
 type Identity struct {
-	Issuer          string
-	Subject         string
-	DisplayName     string
-	NormalizedEmail string
-	EmailVerified   bool
-	Nonce           string
-	ExpiresAt       time.Time
-	AssertionDigest [32]byte
+	Issuer                 string
+	Subject                string
+	DisplayName            string
+	NormalizedEmail        string
+	EmailVerified          bool
+	Nonce                  string
+	ExpiresAt              time.Time
+	AssertionDigest        [32]byte
+	AssertionID            string
+	ClientID               string
+	IssuedAt               time.Time
+	TeamContexts           []TeamContext
+	AuthenticatedAt        time.Time
+	TenantID, HostedDomain string
+	Groups                 []string
+}
+
+// TeamContext is issuer-signed company authentication, not directory membership.
+// control binds it to its exact connection revision, eligibility and new session.
+type TeamContext struct {
+	TeamID               string `json:"team_id"`
+	IdentityConnectionID string `json:"identity_connection_id"`
+	ConnectionRevision   int64  `json:"connection_revision"`
+	Subject              string `json:"subject"`
+	SourceID             string `json:"source_id"`
+	AuthenticatedAt      int64  `json:"authenticated_at"`
 }
 
 // Verifier verifies ID tokens from one exact OIDC issuer for one client.
@@ -68,13 +88,23 @@ func NewVerifier(config VerifierConfig) (Verifier, error) {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	client = httpclient.NoRedirects(client)
+	if client.Timeout <= 0 || client.Timeout > 20*time.Second {
+		client.Timeout = 20 * time.Second
+	}
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = boundedProviderTransport{base}
 	return &providerVerifier{
 		issuer: config.Issuer, clientID: config.ClientID, httpClient: client,
 		discovery: make(chan struct{}, 1),
 	}, nil
 }
 
-func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, error) {
+func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, retErr error) {
+	ctx, finish := observe(ctx, "oidc.verify")
+	defer func() { finish(retErr) }()
 	if raw == "" || len(raw) > 64<<10 || strings.TrimSpace(raw) != raw {
 		return Identity{}, ErrUnauthenticated
 	}
@@ -85,7 +115,9 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, er
 	return verifyToken(oidc.ClientContext(ctx, v.httpClient), provider, v.clientID, raw, v.keySet)
 }
 
-func (v *providerVerifier) getProvider(ctx context.Context) (*oidc.Provider, error) {
+func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, retErr error) {
+	ctx, finish := observe(ctx, "oidc.discovery")
+	defer func() { finish(retErr) }()
 	select {
 	case v.discovery <- struct{}{}:
 		defer func() { <-v.discovery }()
@@ -138,22 +170,53 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 		}
 		return Identity{}, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
-	if !validClaim(token.Issuer, 2048) || !validClaim(token.Subject, 256) || token.Expiry.IsZero() {
+	if token.Issuer != providerIssuer(provider) || !validClaim(token.Issuer, 2048) || !validClaim(token.Subject, 256) || token.Expiry.IsZero() {
 		return Identity{}, ErrUnauthenticated
 	}
 	var claims struct {
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
-		Email             string `json:"email"`
-		EmailVerified     bool   `json:"email_verified"`
-		Nonce             string `json:"nonce"`
-		AuthorizedParty   string `json:"azp"`
+		Name              string        `json:"name"`
+		AssertionID       string        `json:"jti"`
+		PreferredUsername string        `json:"preferred_username"`
+		Email             string        `json:"email"`
+		EmailVerified     bool          `json:"email_verified"`
+		Nonce             string        `json:"nonce"`
+		AuthorizedParty   string        `json:"azp"`
+		IssuedAt          int64         `json:"iat"`
+		NotBefore         int64         `json:"nbf"`
+		TeamContexts      []TeamContext `json:"tnl_team_contexts"`
+		AuthenticatedAt   int64         `json:"auth_time"`
+		TenantID          string        `json:"tid"`
+		HostedDomain      string        `json:"hd"`
+		Groups            []string      `json:"groups"`
 	}
 	if err := token.Claims(&claims); err != nil ||
 		claims.AuthorizedParty != "" && claims.AuthorizedParty != clientID ||
 		len(token.Audience) > 1 && claims.AuthorizedParty != clientID ||
 		claims.Nonce != "" && !validClaim(claims.Nonce, 256) {
 		return Identity{}, ErrUnauthenticated
+	}
+	now := time.Now()
+	if claims.AuthenticatedAt > now.Add(time.Minute).Unix() || len(claims.Groups) > 1024 || len(claims.TenantID) > 256 || len(claims.HostedDomain) > 256 {
+		return Identity{}, ErrUnauthenticated
+	}
+	for _, group := range claims.Groups {
+		if !validClaim(group, 256) {
+			return Identity{}, ErrUnauthenticated
+		}
+	}
+	if claims.IssuedAt <= 0 || claims.IssuedAt > now.Add(time.Minute).Unix() || claims.NotBefore > now.Add(time.Minute).Unix() || token.Expiry.Unix() <= claims.IssuedAt || token.Expiry.Sub(time.Unix(claims.IssuedAt, 0)) > 24*time.Hour || len(token.Audience) > 16 {
+		return Identity{}, ErrUnauthenticated
+	}
+	if len(claims.TeamContexts) > 64 {
+		return Identity{}, ErrUnauthenticated
+	}
+	seen := make(map[string]bool, len(claims.TeamContexts))
+	for _, c := range claims.TeamContexts {
+		key := c.TeamID + "/" + c.IdentityConnectionID
+		if !validClaim(c.TeamID, 128) || !validClaim(c.IdentityConnectionID, 128) || !validClaim(c.Subject, 256) || !validClaim(c.SourceID, 256) || c.ConnectionRevision < 1 || c.AuthenticatedAt <= 0 || seen[key] {
+			return Identity{}, ErrUnauthenticated
+		}
+		seen[key] = true
 	}
 
 	email := ""
@@ -169,10 +232,36 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 		return Identity{}, ErrUnauthenticated
 	}
 	return Identity{
-		Issuer: token.Issuer, Subject: token.Subject, DisplayName: displayName,
+		AssertionID: claims.AssertionID,
+		Issuer:      token.Issuer, Subject: token.Subject, DisplayName: displayName,
 		NormalizedEmail: email, EmailVerified: claims.EmailVerified, Nonce: claims.Nonce,
 		ExpiresAt: token.Expiry.UTC(), AssertionDigest: sha256.Sum256([]byte(raw)),
+		TeamContexts:    claims.TeamContexts,
+		ClientID:        clientID,
+		IssuedAt:        time.Unix(claims.IssuedAt, 0),
+		AuthenticatedAt: time.Unix(claims.AuthenticatedAt, 0), TenantID: claims.TenantID, HostedDomain: claims.HostedDomain, Groups: claims.Groups,
 	}, nil
+}
+
+type boundedProviderTransport struct{ base http.RoundTripper }
+
+func (t boundedProviderTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	const maximum = 256 << 10
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maximum {
+		return nil, errors.New("OIDC response exceeds size limit")
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	return response, nil
 }
 
 func firstValidClaim(maximum int, values ...string) string {

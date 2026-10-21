@@ -3,15 +3,28 @@ package controlapi
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstate.FeedbackActor, error) {
-	actor := controlstate.FeedbackActor{Kind: "reviewer", AllowedIP: access.AllowedIp}
+	actor := controlstate.FeedbackActor{Kind: "reviewer", VisitAllowed: access.VisitAllowed}
+	if access.ShareSecret != nil {
+		secret, err := base64.RawURLEncoding.Strict().DecodeString(*access.ShareSecret)
+		if err != nil || len(secret) != 32 || access.ShareId == nil {
+			return actor, controlstate.ErrFeedbackAccess
+		}
+		actor.ShareID, actor.ShareSecret = *access.ShareId, secret
+	}
+	if access.SourceIp != nil {
+		actor.SourceIP = *access.SourceIp
+	}
 	if access.BrowserCookieSecret != nil {
 		secret, err := base64.RawURLEncoding.DecodeString(*access.BrowserCookieSecret)
 		if err != nil || len(secret) != 32 {
@@ -19,11 +32,8 @@ func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstat
 		}
 		actor.BrowserCookieSecret = secret
 	}
-	if access.AllowedIp {
-		return actor, nil
-	}
 	if access.ShareId == nil || access.CookieSecret == nil {
-		if len(actor.BrowserCookieSecret) != 0 {
+		if actor.VisitAllowed || len(actor.ShareSecret) != 0 || len(actor.BrowserCookieSecret) != 0 {
 			return actor, nil
 		}
 		return actor, controlstate.ErrFeedbackAccess
@@ -37,13 +47,17 @@ func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstat
 }
 
 func (h *handler) feedbackBrowserActor(request *http.Request, auth controlstate.PublishRunAuthentication, actor controlstate.FeedbackActor) (controlstate.FeedbackActor, error) {
+	actor.PublishRunAuthentication = &auth
 	if len(actor.BrowserCookieSecret) == 0 {
 		return actor, nil
 	}
 	token := base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
 	session, principal, teamMember, err := h.browserSessionAccess(request, auth, token)
 	if err != nil {
-		return actor, controlstate.ErrFeedbackAccess
+		if errors.Is(err, controlstate.ErrPreviewAccess) || errors.Is(err, authorization.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+			return actor, controlstate.ErrVisitorSignIn
+		}
+		return actor, err
 	}
 	actor.IdentityID, actor.DisplayName, actor.TeamMember = session.IdentityID, principal.displayName, teamMember
 	return actor, nil
@@ -70,7 +84,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeControlStateProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(response, "verify signed-in reviewer", err)
 		return
 	}
 	anchor, err := json.Marshal(body.Anchor)
@@ -100,7 +114,7 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create feedback report", err)
+		writeFeedbackProblem(response, "create feedback report", err)
 		return
 	}
 	result, err := feedbackThreadResponse(thread)
@@ -132,12 +146,12 @@ func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request 
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeControlStateProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(response, "verify signed-in reviewer", err)
 		return
 	}
 	_, publicURLID, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, body.PreviewId, actor, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "read reviewer page", err)
+		writeFeedbackProblem(response, "read reviewer page", err)
 		return
 	}
 	cursor := ""
@@ -185,7 +199,7 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeControlStateProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(response, "verify signed-in reviewer", err)
 		return
 	}
 	thread, authorized := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
@@ -200,7 +214,7 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	write.FeedbackID, write.IdempotencyKey, write.Actor = thread.ID, request.Header.Get("Idempotency-Key"), actor
 	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "append reviewer feedback", err)
+		writeFeedbackProblem(response, "append reviewer feedback", err)
 		return
 	}
 	result, err := feedbackEventResponse(event)
@@ -271,7 +285,7 @@ func (h *handler) reviewerFeedbackRead(response http.ResponseWriter, request *ht
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeControlStateProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(response, "verify signed-in reviewer", err)
 		return controlstate.FeedbackThread{}, body, false
 	}
 	thread, ok := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
@@ -292,7 +306,7 @@ func (h *handler) readReviewerFeedback(response http.ResponseWriter, request *ht
 	}
 	_, publicURLID, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, thread.PreviewID, actor, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "verify reviewer feedback access", err)
+		writeFeedbackProblem(response, "verify reviewer feedback access", err)
 		return controlstate.FeedbackThread{}, false
 	}
 	if thread.PublicURLID != publicURLID || thread.PublicURLID != auth.PublicURLID {

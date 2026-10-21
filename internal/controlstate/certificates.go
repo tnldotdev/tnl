@@ -29,7 +29,6 @@ var (
 	ErrCertificateIssuanceIdempotency = errors.New("controlstate: certificate issuance idempotency conflict")
 	ErrCertificateIssuanceInvalid     = errors.New("controlstate: certificate issuance request is invalid")
 	ErrCertificateIssuanceNotFound    = errors.New("controlstate: certificate issuance not found")
-	ErrCertificateChallengeNotReady   = errors.New("controlstate: certificate challenge is not ready for acknowledgement")
 )
 
 type ACMEAccount struct {
@@ -41,14 +40,6 @@ type ACMEAccount struct {
 	AcceptedTerms string
 }
 
-type CertificateChallenge struct {
-	Identifier string
-	Method     certificateidentity.ChallengeMethod
-	Token      string
-	Digest     [32]byte
-	ExpiresAt  time.Time
-}
-
 type CertificatePlan struct {
 	CacheKey        string
 	Scope           string
@@ -58,21 +49,24 @@ type CertificatePlan struct {
 
 type CertificateIssuance struct {
 	// new order facts describe a committed insertion, not an idempotent retry.
-	NewOrder         bool
-	DomainKind       DomainKind
-	ID               string
-	PublishRunID     string
-	PublicURLID      string
-	PublishRunNumber uint64
-	CertificatePlan  CertificatePlan
-	State            ACMEOrderState
-	Challenges       []CertificateChallenge
-	CertificatePEM   string
-	RetryAt          *time.Time
-	NotBefore        *time.Time
-	NotAfter         *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	NewOrder            bool
+	DomainKind          DomainKind
+	ID                  string
+	PublishRunID        string
+	PublicURLID         string
+	PublishRunNumber    uint64
+	PrivateRunID        string
+	PrivateServiceID    string
+	PrivateRunNumber    uint64
+	PublisherIdentityID string
+	CertificatePlan     CertificatePlan
+	State               ACMEOrderState
+	CertificatePEM      string
+	RetryAt             *time.Time
+	NotBefore           *time.Time
+	NotAfter            *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type CreateCertificateIssuanceRequest struct {
@@ -206,9 +200,9 @@ func (d *Database) CreateCertificateIssuance(
 	row, err := queries.InsertACMEOrder(ctx, controlstatedb.InsertACMEOrderParams{
 		ID: issuanceID, AccountID: account.ID, PublishRunID: session.ID, PublicURLID: session.PublicURLID,
 		PublishRunNumber: session.PublishRunNumber, IdempotencyKey: request.IdempotencyKey,
-		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey,
-		CertificateScope: session.CertificateScope, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
-		ChallengeMethod: session.CertificateChallengeMethod, CsrDer: slices.Clone(request.CSRDER),
+		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
+		ChallengeMethod: session.CertificateChallengeMethod.String, CsrDer: slices.Clone(request.CSRDER),
 		CsrDigest: csrDigest[:], CreatedAt: timestamptz(now),
 	})
 	if err != nil {
@@ -283,168 +277,6 @@ func (d *Database) GetCertificateIssuance(
 	return result, nil
 }
 
-func (d *Database) MarkCertificateChallengeReady(
-	ctx context.Context,
-	issuanceID string,
-	token credentials.PublishRunToken,
-	now time.Time,
-) (CertificateIssuance, error) {
-	return d.updateCertificateChallenge(ctx, issuanceID, token, now, true)
-}
-
-func (d *Database) MarkCertificateChallengeRemoved(
-	ctx context.Context,
-	issuanceID string,
-	token credentials.PublishRunToken,
-	now time.Time,
-) (CertificateIssuance, error) {
-	return d.updateCertificateChallenge(ctx, issuanceID, token, now, false)
-}
-
-func (d *Database) updateCertificateChallenge(
-	ctx context.Context,
-	issuanceID string,
-	token credentials.PublishRunToken,
-	now time.Time,
-	ready bool,
-) (result CertificateIssuance, retErr error) {
-	if !validStateText(issuanceID) {
-		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
-	}
-	if err := d.requireOpen(); err != nil {
-		return CertificateIssuance{}, err
-	}
-	authentication, err := d.publishRunAuthenticationForToken(ctx, token)
-	if err != nil {
-		return CertificateIssuance{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: update certificate challenge: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "update certificate challenge", &retErr)()
-	queries := controlstatedb.New(tx)
-	pendingEvents := pendingIngressRoutingTableEvents{}
-	route, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
-	if err != nil {
-		return CertificateIssuance{}, err
-	}
-	order, err := queries.LockACMEOrder(ctx, issuanceID)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.PublishRunID != session.ID {
-		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
-	}
-	if err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: update certificate challenge: lock order: %w", err)
-	}
-	authorizations, err := queries.ListACMEOrderAuthorizations(ctx, issuanceID)
-	if err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: update certificate challenge: list authorizations: %w", err)
-	}
-	if !validCertificateChallengeAcknowledgement(order, authorizations, ready, now) {
-		return CertificateIssuance{}, ErrCertificateChallengeNotReady
-	}
-	challengeExpiresAt := authorizations[0].ExpiresAt.Time
-	transitioning := false
-	for _, authorization := range authorizations {
-		if authorization.ExpiresAt.Time.Before(challengeExpiresAt) {
-			challengeExpiresAt = authorization.ExpiresAt.Time
-		}
-		transitioning = transitioning || ready && authorization.State == "presenting" ||
-			!ready && authorization.State != "complete"
-	}
-	if transitioning {
-		connections := []controlstatedb.ListValidReadyPublisherConnectionsRow(nil)
-		eventKind := IngressChallengeTombstone
-		if ready {
-			connections, err = validReadyPublisherConnections(ctx, queries, session.ID, now)
-			if err != nil {
-				return CertificateIssuance{}, err
-			}
-			if len(connections) == 0 {
-				return CertificateIssuance{}, ErrCertificateChallengeNotReady
-			}
-			eventKind = IngressChallengeUpsert
-		}
-		if _, err := pendingEvents.addChallengeEvent(
-			ctx, queries, route, session, connections, eventKind, challengeExpiresAt, now,
-		); err != nil {
-			return CertificateIssuance{}, err
-		}
-	}
-	if ready {
-		presented, err := queries.MarkACMEAuthorizationsPresented(ctx, controlstatedb.MarkACMEAuthorizationsPresentedParams{
-			PresentedAt: timestamptz(now), IssuanceID: issuanceID,
-		})
-		if err != nil {
-			return CertificateIssuance{}, fmt.Errorf("controlstate: mark certificate challenge presented: %w", err)
-		}
-		// a state transition supersedes the claimed authorization snapshot.
-		// replayed acknowledgements must preserve a newer claim and poll deadline.
-		if presented > 0 {
-			if err := queries.WakeACMEOrder(ctx, controlstatedb.WakeACMEOrderParams{
-				AvailableAt: timestamptz(now), IssuanceID: issuanceID,
-			}); err != nil {
-				return CertificateIssuance{}, fmt.Errorf("controlstate: wake certificate order: %w", err)
-			}
-		}
-	} else if _, err := queries.CompleteACMEAuthorizationCleanup(ctx, controlstatedb.CompleteACMEAuthorizationCleanupParams{
-		CompletedAt: timestamptz(now), IssuanceID: issuanceID,
-	}); err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: complete certificate challenge cleanup: %w", err)
-	}
-	order, err = queries.GetACMEOrder(ctx, issuanceID)
-	if err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: update certificate challenge: reload order: %w", err)
-	}
-	result, err = loadCertificateIssuance(ctx, queries, order, now)
-	if err != nil {
-		return CertificateIssuance{}, err
-	}
-	if err := pendingEvents.publish(ctx, queries); err != nil {
-		return CertificateIssuance{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: update certificate challenge: commit: %w", err)
-	}
-	return result, nil
-}
-
-func validCertificateChallengeAcknowledgement(
-	order controlstatedb.ControlAcmeOrder,
-	authorizations []controlstatedb.ControlAcmeAuthorization,
-	ready bool,
-	now time.Time,
-) bool {
-	if len(authorizations) == 0 || order.ChallengeMethod != "tls-alpn-01" {
-		return false
-	}
-	if ready && order.State != "authorizing" && order.State != "ready_to_finalize" &&
-		order.State != "finalizing" && order.State != "waiting_for_install" && order.State != "installed" {
-		return false
-	}
-	for _, authorization := range authorizations {
-		if authorization.ChallengeType.String != "tls-alpn-01" || !authorization.ExpiresAt.Valid ||
-			ready && !authorization.ExpiresAt.Time.After(now) {
-			return false
-		}
-		if ready {
-			if authorization.State != "presenting" && authorization.State != "presented" &&
-				authorization.State != "validating" && authorization.State != "valid" &&
-				authorization.State != "cleaning" && authorization.State != "complete" {
-				return false
-			}
-		} else if order.State != "waiting_for_install" && order.State != "installed" &&
-			order.State != "failed" && order.State != "canceled" ||
-			authorization.State != "presenting" && authorization.State != "presented" &&
-				authorization.State != "validating" && authorization.State != "valid" &&
-				authorization.State != "cleaning" && authorization.State != "failed" &&
-				authorization.State != "complete" {
-			return false
-		}
-	}
-	return true
-}
-
 func (d *Database) publishRunAuthenticationForToken(
 	ctx context.Context,
 	token credentials.PublishRunToken,
@@ -470,11 +302,15 @@ func validateCertificateIssuanceRequest(request CreateCertificateIssuanceRequest
 	if err := validatePublishRunAuthentication(request.Authentication); err != nil {
 		return [32]byte{}, err
 	}
-	if !validStateText(request.DirectoryURL) || !validStateText(request.IdempotencyKey) ||
-		len(request.IdempotencyKey) > 128 || len(request.CSRDER) == 0 || len(request.CSRDER) > 65536 {
+	return validateCertificateCSR(request.DirectoryURL, request.IdempotencyKey, request.CSRDER)
+}
+
+func validateCertificateCSR(directory, key string, der []byte) ([32]byte, error) {
+	if !validStateText(directory) || !validStateText(key) ||
+		len(key) > 128 || len(der) == 0 || len(der) > 65536 {
 		return [32]byte{}, ErrCertificateIssuanceInvalid
 	}
-	csr, err := x509.ParseCertificateRequest(request.CSRDER)
+	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil || csr.CheckSignature() != nil || len(csr.DNSNames) == 0 || len(csr.EmailAddresses) != 0 ||
 		len(csr.IPAddresses) != 0 || len(csr.URIs) != 0 || csr.Subject.String() != "" ||
 		!certificateidentity.DNSNamesOnly(csr.Extensions, csr.DNSNames) {
@@ -483,7 +319,7 @@ func validateCertificateIssuanceRequest(request CreateCertificateIssuanceRequest
 	if _, err := canonicalCertificateIdentifiers(csr.DNSNames); err != nil {
 		return [32]byte{}, ErrCertificateIssuanceInvalid
 	}
-	return sha256.Sum256(request.CSRDER), nil
+	return sha256.Sum256(der), nil
 }
 
 func canonicalCertificateIdentifiers(identifiers []string) ([]string, error) {
@@ -531,10 +367,6 @@ func loadCertificateIssuance(
 	order controlstatedb.ControlAcmeOrder,
 	now time.Time,
 ) (CertificateIssuance, error) {
-	rows, err := queries.ListACMEOrderAuthorizations(ctx, order.ID)
-	if err != nil {
-		return CertificateIssuance{}, fmt.Errorf("controlstate: list certificate challenges: %w", err)
-	}
 	method := certificateidentity.ChallengeMethod(order.ChallengeMethod)
 	state := ACMEOrderState(order.State)
 	if !method.Valid() {
@@ -545,11 +377,12 @@ func loadCertificateIssuance(
 	}
 	result := CertificateIssuance{
 		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
+		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
 		PublishRunNumber: uint64(order.PublishRunNumber), CertificatePlan: CertificatePlan{
 			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
 			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: method,
 		},
-		State: state, Challenges: make([]CertificateChallenge, 0, len(rows)),
+		State:          state,
 		CertificatePEM: string(order.CertificatePem), CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
 	}
 	if order.AvailableAt.Valid && order.AvailableAt.Time.After(now) {
@@ -563,18 +396,6 @@ func loadCertificateIssuance(
 	if order.NotAfter.Valid {
 		notAfter := order.NotAfter.Time
 		result.NotAfter = &notAfter
-	}
-	for _, row := range rows {
-		if row.ChallengeType.String != string(certificateidentity.ChallengeTLSALPN01) || len(row.ChallengeDigest) != sha256.Size || !row.ExpiresAt.Valid ||
-			row.State == "complete" || row.State == "canceled" {
-			continue
-		}
-		challenge := CertificateChallenge{
-			Identifier: row.Identifier, Method: certificateidentity.ChallengeTLSALPN01, Token: row.ChallengeToken.String,
-			ExpiresAt: row.ExpiresAt.Time,
-		}
-		copy(challenge.Digest[:], row.ChallengeDigest)
-		result.Challenges = append(result.Challenges, challenge)
 	}
 	return result, nil
 }

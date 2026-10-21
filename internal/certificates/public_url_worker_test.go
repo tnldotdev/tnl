@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
+func TestPublicURLWorkerAdvancesExactDNSOrder(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	const hostname = "route.example.test"
 	csrDER, certificatePEM := testCertificate(t, hostname, now)
@@ -32,15 +32,15 @@ func TestPublicURLWorkerAdvancesTLSALPNOrder(t *testing.T) {
 			URL: "https://acme.example.test/authorization/1", Status: "pending", Expires: &expires,
 			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
 			Challenges: []acmeclient.Challenge{{
-				Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/1", Status: "pending", Token: "token-1",
+				Type: "dns-01", URL: "https://acme.example.test/challenge/1", Status: "pending", Token: "token-1",
 			}},
 		},
 		certificatePEM:   certificatePEM,
 		challengeRetryAt: now.Add(2 * time.Minute),
 	}
-	worker := &PublicURLWorker{store: &certificateStoreStub{}, config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second}}
+	worker := &PublicURLWorker{store: &certificateStoreStub{}, config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{verified: true}}}
 	work := controlstate.ACMEOrderWork{
-		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", CSRDER: csrDER,
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01", CSRDER: csrDER,
 		State: "pending", AvailableAt: now,
 	}
 	if err := worker.advance(t.Context(), api, &work, now); err != nil {
@@ -119,17 +119,17 @@ func TestPublicURLWorkerReportsACMEChallengeProblem(t *testing.T) {
 			Status:     "invalid",
 			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
 			Challenges: []acmeclient.Challenge{{
-				Type: "tls-alpn-01", URL: challengeURL, Status: "invalid", Token: "token-1",
+				Type: "dns-01", URL: challengeURL, Status: "invalid", Token: "token-1",
 				Error: &acmeclient.Problem{Type: "urn:ietf:params:acme:error:connection", Detail: "connection refused"},
 			}},
 		},
 	}
-	worker := &PublicURLWorker{config: PublicURLConfig{PollInterval: time.Second}}
+	worker := &PublicURLWorker{config: PublicURLConfig{PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{}}}
 	work := controlstate.ACMEOrderWork{
-		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", State: "authorizing",
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01", State: "authorizing",
 		OrderURL: api.order.URL,
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
-			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "dns-01",
 			ChallengeURL: challengeURL, State: "validating",
 		}},
 	}
@@ -139,7 +139,7 @@ func TestPublicURLWorkerReportsACMEChallengeProblem(t *testing.T) {
 	}
 }
 
-func TestPublicURLWorkerWaitsForIngressBeforeAcceptingTLSALPNChallenge(t *testing.T) {
+func TestPublicURLWorkerWaitsForDNSBeforeAcceptingChallenge(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	const hostname = "route.example.test"
 	const authorizationURL = "https://acme.example.test/authorization/1"
@@ -149,25 +149,24 @@ func TestPublicURLWorkerWaitsForIngressBeforeAcceptingTLSALPNChallenge(t *testin
 		Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
 		Authorizations: []string{authorizationURL}, Finalize: "https://acme.example.test/finalize/1",
 	}}
-	ready := false
-	store := &certificateStoreStub{challengeReady: func(context.Context) (bool, error) { return ready, nil }}
-	worker := &PublicURLWorker{store: store, config: PublicURLConfig{PollInterval: time.Second}}
+	dns := &dnsChallengesStub{}
+	worker := &PublicURLWorker{store: &certificateStoreStub{}, config: PublicURLConfig{PollInterval: time.Second, DNSChallenges: dns}}
 	work := controlstate.ACMEOrderWork{
-		ID: "issuance_1", CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01",
+		ID: "issuance_1", CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01",
 		State: "authorizing", OrderURL: api.order.URL,
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
-			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "dns-01",
 			ChallengeURL: challengeURL, State: "presented",
 		}},
 	}
 	if err := worker.advance(t.Context(), api, &work, now); err != nil || api.acceptCalls != 0 ||
 		work.Authorizations[0].State != "presented" || !work.AvailableAt.Equal(now.Add(time.Second)) {
-		t.Fatalf("challenge accepted before ingress: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
+		t.Fatalf("challenge accepted before DNS propagation: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
 	}
-	ready = true
+	dns.verified = true
 	if err := worker.advance(t.Context(), api, &work, now.Add(time.Second)); err != nil || api.acceptCalls != 1 ||
 		work.Authorizations[0].State != "validating" {
-		t.Fatalf("challenge was not accepted after ingress: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
+		t.Fatalf("challenge was not accepted after DNS propagation: work=%+v accepts=%d error=%v", work, api.acceptCalls, err)
 	}
 }
 
@@ -186,20 +185,20 @@ func TestPublicURLWorkerReportsChallengeWhenOrderInvalidatesBeforeAuthorizationP
 			URL: authorizationURL, Status: "invalid",
 			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
 			Challenges: []acmeclient.Challenge{{
-				Type: "tls-alpn-01", URL: challengeURL, Status: "invalid",
+				Type: "dns-01", URL: challengeURL, Status: "invalid",
 				Error: &acmeclient.Problem{Type: "urn:ietf:params:acme:error:connection", Detail: "connection refused"},
 			}},
 		},
 	}
 	work := controlstate.ACMEOrderWork{
-		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", State: "authorizing",
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01", State: "authorizing",
 		OrderURL: api.order.URL,
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
-			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "tls-alpn-01",
+			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "dns-01",
 			ChallengeURL: challengeURL, State: "validating",
 		}},
 	}
-	worker := &PublicURLWorker{config: PublicURLConfig{PollInterval: time.Second}}
+	worker := &PublicURLWorker{config: PublicURLConfig{PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{}}}
 	err := worker.advance(t.Context(), api, &work, now)
 	if err == nil || !strings.Contains(err.Error(), "ACME order became invalid: authorization for") ||
 		!strings.Contains(err.Error(), "urn:ietf:params:acme:error:connection: connection refused") {
@@ -543,13 +542,13 @@ func TestPublicURLWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T
 					return acmeclient.Authorization{
 						URL: url, Status: "pending",
 						Identifier: acmeclient.Identifier{Type: "dns", Value: test.identifier},
-						Challenges: []acmeclient.Challenge{{Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
+						Challenges: []acmeclient.Challenge{{Type: "dns-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
 					}, nil
 				},
 			}
-			worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second}}
+			worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{}}}
 			work := controlstate.ACMEOrderWork{
-				CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01",
+				CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01",
 				OrderURL: api.order.URL, State: "authorizing",
 			}
 			err := worker.advance(t.Context(), api, &work, now)
@@ -564,13 +563,13 @@ func TestPublicURLWorkerRejectsMismatchedAndDuplicateAuthorizations(t *testing.T
 func TestPublicURLWorkerReusedAuthorizationNeedsNoChallenge(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
-	for _, method := range []certificateidentity.ChallengeMethod{certificateidentity.ChallengeDNS01, certificateidentity.ChallengeTLSALPN01} {
+	for _, method := range []certificateidentity.ChallengeMethod{certificateidentity.ChallengeDNS01} {
 		t.Run(string(method), func(t *testing.T) {
 			authorization := acmeclient.Authorization{
 				URL: "https://acme.example.test/authz/reused", Status: "valid",
 				Identifier: acmeclient.Identifier{Type: "dns", Value: "member.example.test"},
 				Expires:    timePointer(now.Add(time.Hour)),
-				Challenges: []acmeclient.Challenge{{Type: "tls-alpn-01", Token: "old-token"}},
+				Challenges: []acmeclient.Challenge{{Type: "http-01", Token: "old-token"}},
 			}
 			work, err := authorizationWork(&acmeStub{}, authorization, method, nil, now)
 			if err != nil {
@@ -641,9 +640,9 @@ func TestPublicURLWorkerRejectsExpiredPresentedAuthorization(t *testing.T) {
 		Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
 		Authorizations: []string{"https://acme.example.test/authorization/1"},
 	}}
-	worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second}}
+	worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{}}}
 	work := controlstate.ACMEOrderWork{
-		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01",
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01",
 		OrderURL: api.order.URL, State: "authorizing",
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
 			Identifier: hostname, AuthorizationURL: api.order.Authorizations[0], State: "presented", ExpiresAt: &expires,
@@ -672,9 +671,9 @@ func TestPublicURLWorkerRejectsFutureDatedCertificate(t *testing.T) {
 		},
 		certificatePEM: certificatePEM,
 	}
-	worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second}}
+	worker := &PublicURLWorker{config: PublicURLConfig{Profile: "tlsserver", PollInterval: time.Second, DNSChallenges: &dnsChallengesStub{}}}
 	work := controlstate.ACMEOrderWork{
-		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01", CSRDER: csrDER,
+		CertificateIdentifiers: []string{hostname}, ChallengeMethod: "dns-01", CSRDER: csrDER,
 		OrderURL: api.order.URL, State: "finalizing",
 	}
 	if err := worker.advance(t.Context(), api, &work, now); err == nil {
@@ -704,10 +703,10 @@ type dnsChallengesStub struct {
 
 type certificateMilestoneRecorder struct{ milestones []string }
 
-func (*certificateMilestoneRecorder) ObserveCertificateWork(string, observability.CertificateWorkOutcome, time.Duration) {
+func (*certificateMilestoneRecorder) ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration) {
 }
 
-func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(milestone string, _ time.Duration) {
+func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(_, milestone string, _ time.Duration) {
 	r.milestones = append(r.milestones, milestone)
 }
 

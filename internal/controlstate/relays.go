@@ -228,7 +228,8 @@ func (d *Database) ClaimPublisherConnection(
 	request PublisherConnectionClaimRequest,
 	now time.Time,
 ) (result ClaimedPublisherConnection, retErr error) {
-	defer d.observeOperation("ClaimPublisherConnection", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ClaimPublisherConnection")
+	defer func() { finish(retErr) }()
 	if err := validatePublisherConnectionClaim(request); err != nil {
 		return ClaimedPublisherConnection{}, err
 	}
@@ -320,7 +321,8 @@ func (d *Database) MarkPublisherConnectionReady(
 	request PublisherConnectionClaimRequest,
 	now time.Time,
 ) (result ClaimedPublisherConnection, retErr error) {
-	defer d.observeOperation("MarkPublisherConnectionReady", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "MarkPublisherConnectionReady")
+	defer func() { finish(retErr) }()
 	return d.markPublisherConnectionReady(ctx, request, now)
 }
 

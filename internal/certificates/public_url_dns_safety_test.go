@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -97,14 +98,13 @@ func TestPublicURLWorkerUnconfiguredDNSDefersDurableCleanupIntent(t *testing.T) 
 	}
 }
 
-func TestPublicURLWorkerUnconfiguredDNSContinuesWithTLSALPNOrder(t *testing.T) {
+func TestPublicURLWorkerUnconfiguredDNSDefersEveryOrder(t *testing.T) {
 	for _, phase := range []string{"pending", "canceled"} {
 		t.Run(phase, func(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Second)
 			_, dnsWork := dnsSafetyOrder(t, phase, now)
 			api, tlsWork := dnsSafetyOrder(t, "pending", now)
 			dnsWork.ID, tlsWork.ID = "order_dns", "order_tls"
-			tlsWork.ChallengeMethod = "tls-alpn-01"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			claims := 0
@@ -129,6 +129,9 @@ func TestPublicURLWorkerUnconfiguredDNSContinuesWithTLSALPNOrder(t *testing.T) {
 				}
 			}
 			var logs bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&logs)
+			defer log.SetOutput(previous)
 			worker, err := NewPublicURLWorker(store, PublicURLConfig{WorkerID: "worker_test", Profile: "tlsserver", HTTPClient: &http.Client{}, IdleInterval: time.Millisecond, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 			if err != nil {
 				t.Fatal(err)
@@ -138,10 +141,10 @@ func TestPublicURLWorkerUnconfiguredDNSContinuesWithTLSALPNOrder(t *testing.T) {
 			if err := worker.Run(ctx); err != nil {
 				t.Fatalf("DNS failure stopped the worker: %v", err)
 			}
-			if ctx.Err() != context.Canceled || store.saves != 2 || store.saved.ID != tlsWork.ID || store.saved.State != "authorizing" || api.newOrderCalls != 1 {
-				t.Fatalf("TLS-ALPN work did not advance before cancellation: context %v, saves %d, work %#v, ACME calls %d", ctx.Err(), store.saves, store.saved, api.newOrderCalls)
+			if ctx.Err() != context.Canceled || store.saves != 2 || store.saved.ID != tlsWork.ID || store.saved.State != "failed" || api.newOrderCalls != 0 {
+				t.Fatalf("unconfigured DNS issued a certificate: context %v, saves %d, work %#v, ACME calls %d", ctx.Err(), store.saves, store.saved, api.newOrderCalls)
 			}
-			if count := strings.Count(logs.String(), "reason=server.dns_config_invalid"); count != 1 ||
+			if count := strings.Count(logs.String(), "reason=server.dns_config_invalid"); count != 2 ||
 				strings.Contains(logs.String(), dnscontroller.ErrChallengesNotConfigured.Error()) {
 				t.Fatalf("safe certificate error logged %d times: %s", count, &logs)
 			}
@@ -301,12 +304,11 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 }
 
 type certificateStoreStub struct {
-	work           controlstate.ACMEOrderWork
-	saved          controlstate.ACMEOrderWork
-	saves          int
-	claim          func(context.Context) (controlstate.ACMEOrderWork, bool, error)
-	challengeReady func(context.Context) (bool, error)
-	save           func(controlstate.ACMEOrderWork)
+	work  controlstate.ACMEOrderWork
+	saved controlstate.ACMEOrderWork
+	saves int
+	claim func(context.Context) (controlstate.ACMEOrderWork, bool, error)
+	save  func(controlstate.ACMEOrderWork)
 }
 
 func (s *certificateStoreStub) ClaimACMEOrderWork(ctx context.Context, _ string, _ time.Time, _ time.Duration) (controlstate.ACMEOrderWork, bool, error) {
@@ -316,12 +318,6 @@ func (s *certificateStoreStub) ClaimACMEOrderWork(ctx context.Context, _ string,
 	work := s.work
 	work.Authorizations = append([]controlstate.ACMEAuthorizationWork(nil), work.Authorizations...)
 	return work, true, nil
-}
-func (s *certificateStoreStub) ACMEChallengeRoutingReady(ctx context.Context, _ string, _ time.Time) (bool, error) {
-	if s.challengeReady != nil {
-		return s.challengeReady(ctx)
-	}
-	return true, nil
 }
 func (s *certificateStoreStub) SaveACMEOrderWork(_ context.Context, work controlstate.ACMEOrderWork, _ time.Time) (controlstate.ACMEOrderWork, error) {
 	s.saves++

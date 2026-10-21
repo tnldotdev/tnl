@@ -21,6 +21,9 @@ SET contact_email = excluded.contact_email,
     updated_at = GREATEST(control.acme_accounts.updated_at, excluded.updated_at)
 RETURNING *;
 
+-- name: GetManagedCertificateDomainKind :one
+SELECT kind FROM control.domains WHERE id=sqlc.arg(domain_id);
+
 -- name: RotateACMEAccountKey :exec
 UPDATE control.acme_accounts
 SET account_key_ciphertext = sqlc.arg(account_key_ciphertext),
@@ -44,46 +47,6 @@ SET contact_email = sqlc.arg(contact_email),
 WHERE id = sqlc.arg(account_id)
 RETURNING *;
 
--- name: GetControlTLSCacheEntry :one
-SELECT cache_ciphertext, cache_storage_key_id
-FROM control.control_tls_cache
-WHERE directory_url = sqlc.arg(directory_url)
-  AND cache_key = sqlc.arg(cache_key);
-
--- name: PutControlTLSCacheEntry :exec
-INSERT INTO control.control_tls_cache (
-    directory_url,
-    cache_key,
-    cache_ciphertext,
-    cache_storage_key_id,
-    updated_at
-) VALUES (
-    sqlc.arg(directory_url),
-    sqlc.arg(cache_key),
-    sqlc.arg(cache_ciphertext),
-    sqlc.arg(cache_storage_key_id),
-    sqlc.arg(updated_at)
-)
-ON CONFLICT (directory_url, cache_key) DO UPDATE SET
-    cache_ciphertext = EXCLUDED.cache_ciphertext,
-    cache_storage_key_id = EXCLUDED.cache_storage_key_id,
-    updated_at = EXCLUDED.updated_at;
-
--- name: RotateControlTLSCacheEntry :exec
-UPDATE control.control_tls_cache
-SET cache_ciphertext = sqlc.arg(cache_ciphertext),
-    cache_storage_key_id = sqlc.arg(cache_storage_key_id),
-    updated_at = sqlc.arg(updated_at)
-WHERE directory_url = sqlc.arg(directory_url)
-  AND cache_key = sqlc.arg(cache_key)
-  AND cache_storage_key_id = sqlc.arg(previous_key_id)
-  AND cache_ciphertext = sqlc.arg(previous_ciphertext);
-
--- name: DeleteControlTLSCacheEntry :exec
-DELETE FROM control.control_tls_cache
-WHERE directory_url = sqlc.arg(directory_url)
-  AND cache_key = sqlc.arg(cache_key);
-
 -- name: GetPublishRunByTokenID :one
 SELECT *
 FROM control.publish_runs
@@ -98,7 +61,7 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
 -- name: LockCertificateIssuanceControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'certificate_issuance'
+WHERE operation = 'certificate_issuance'
 FOR SHARE;
 
 -- name: InsertACMEOrder :one
@@ -120,7 +83,7 @@ INSERT INTO control.acme_orders (
     available_at,
     created_at,
     updated_at
-) VALUES (
+) SELECT
     sqlc.arg(id),
     sqlc.arg(account_id),
     sqlc.arg(publish_run_id),
@@ -138,7 +101,11 @@ INSERT INTO control.acme_orders (
     sqlc.arg(created_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
-)
+FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id
+WHERE run.id = sqlc.arg(publish_run_id) AND run.public_url_id = sqlc.arg(public_url_id)
+  AND run.publish_run_number = sqlc.arg(publish_run_number) AND run.closed_at IS NULL
+  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol = 'http'
 RETURNING *;
 
 -- name: GetCertificateOrderDomainKind :one
@@ -163,47 +130,6 @@ SELECT *
 FROM control.acme_authorizations
 WHERE order_id = sqlc.arg(issuance_id)
 ORDER BY identifier;
-
--- name: MarkACMEAuthorizationsPresented :execrows
-UPDATE control.acme_authorizations
-SET state = 'presented',
-    authorization_revision = authorization_revision + 1,
-    presented_at = COALESCE(presented_at, sqlc.arg(presented_at)),
-    available_at = sqlc.arg(presented_at),
-    updated_at = GREATEST(updated_at, sqlc.arg(presented_at))
-WHERE order_id = sqlc.arg(issuance_id)
-  AND challenge_type = 'tls-alpn-01'
-  AND state = 'presenting';
-
--- name: WakeACMEOrder :exec
--- a publisher transition invalidates the worker's authorization snapshot.
--- call only after changing authorizations while holding the order lock.
-UPDATE control.acme_orders
-SET available_at = LEAST(available_at, sqlc.arg(available_at)),
-    work_owner = NULL,
-    work_expires_at = NULL,
-    updated_at = GREATEST(updated_at, sqlc.arg(available_at))
-WHERE id = sqlc.arg(issuance_id)
-  AND state IN ('authorizing', 'ready_to_finalize', 'finalizing');
-
--- name: CompleteACMEAuthorizationCleanup :execrows
-UPDATE control.acme_authorizations
-SET state = 'complete',
-    authorization_revision = authorization_revision + 1,
-    cleanup_completed_at = COALESCE(cleanup_completed_at, sqlc.arg(completed_at)),
-    updated_at = GREATEST(updated_at, sqlc.arg(completed_at))
-WHERE order_id = sqlc.arg(issuance_id)
-  AND challenge_type = 'tls-alpn-01'
-  AND state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning', 'failed');
-
--- name: GetActivePublishRunChallengeExpiry :one
-SELECT MIN(authorizations.expires_at)::timestamptz AS expires_at
-FROM control.acme_authorizations AS authorizations
-JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-WHERE orders.publish_run_id = sqlc.arg(publish_run_id)
-  AND authorizations.challenge_type = 'tls-alpn-01'
-  AND authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
-  AND authorizations.expires_at > sqlc.arg(now);
 
 -- name: LockACMEOrderForInstall :one
 SELECT orders.*
@@ -267,70 +193,17 @@ WITH candidate AS (
                 AND authorizations.challenge_type = 'dns-01'
                 AND authorizations.state IN ('valid', 'cleaning')
           )
-          OR orders.state IN ('failed', 'canceled') AND EXISTS (
+          OR orders.state IN ('failed', 'canceled') AND (orders.finalization_possible AND orders.not_after IS NULL OR EXISTS (
               SELECT 1
               FROM control.acme_authorizations AS authorizations
               WHERE authorizations.order_id = orders.id
                 AND authorizations.challenge_type = 'dns-01'
                 AND authorizations.state = 'cleaning'
-          )
+          ))
       )
       AND orders.available_at <= sqlc.arg(claimed_at)
+      AND (orders.retry_not_before IS NULL OR orders.retry_not_before<=sqlc.arg(claimed_at))
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= sqlc.arg(claimed_at))
-      -- an unexpired presented challenge waits for its current forwarding
-      -- projection, not unrelated publications. an expired authorization skips
-      -- this barrier so its worker can retire it without ingress. select the
-      -- latest event before testing kind/expiry so an older upsert cannot revive.
-      AND (
-          NOT EXISTS (
-              SELECT 1
-              FROM control.acme_authorizations AS authorizations
-              WHERE authorizations.order_id = orders.id
-                AND authorizations.challenge_type = 'tls-alpn-01'
-                AND authorizations.state = 'presented'
-          )
-          OR EXISTS (
-              SELECT 1
-              FROM control.acme_authorizations AS expired
-              WHERE expired.order_id = orders.id
-                AND expired.challenge_type = 'tls-alpn-01'
-                AND expired.state = 'presented'
-                AND expired.expires_at <= sqlc.arg(claimed_at)
-          )
-          OR EXISTS (
-              SELECT 1
-              FROM (
-                   SELECT events.id AS routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
-                  FROM control.ingress_routing_table_events AS events
-                  WHERE events.public_url_id = orders.public_url_id
-                    AND events.publish_run_number = orders.publish_run_number
-                    AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-                   ORDER BY events.id DESC
-                  LIMIT 1
-              ) AS challenge
-              WHERE challenge.event_kind = 'challenge_upsert'
-                AND challenge.public_url_expires_at > sqlc.arg(claimed_at)
-                AND EXISTS (
-                    SELECT 1
-                    FROM jsonb_to_recordset(
-                        (convert_from(challenge.projection, 'UTF8')::jsonb)->'publisher_connections'
-                    ) AS connections(lease_expires_at timestamptz)
-                    WHERE connections.lease_expires_at > sqlc.arg(claimed_at)
-                )
-                AND EXISTS (
-                    SELECT 1
-                    FROM control.ingress_leases AS ingresses
-                    WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
-                      AND NOT ingresses.draining
-                ) AND NOT EXISTS (
-                    SELECT 1
-                    FROM control.ingress_leases AS ingresses
-                    WHERE ingresses.lease_expires_at > sqlc.arg(claimed_at)
-                      AND NOT ingresses.draining
-                      AND ingresses.routing_table_revision < challenge.routing_table_revision
-                )
-          )
-      )
     ORDER BY orders.available_at, orders.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -345,51 +218,13 @@ FROM candidate
 WHERE orders.id = candidate.id
 RETURNING orders.*;
 
--- name: CheckACMEChallengeRoutingReady :one
--- claim-time checks can precede a publisher's challenge-ready transition.
--- recheck the current projection and every live ingress immediately before
--- asking the CA to validate, while the authorization is still presented.
-SELECT coalesce(
-    events.event_kind = 'challenge_upsert'
-    AND events.public_url_expires_at > sqlc.arg(checked_at)
-    AND EXISTS (
-        SELECT 1 FROM control.acme_authorizations AS authorizations
-        WHERE authorizations.order_id = orders.id
-          AND authorizations.challenge_type = 'tls-alpn-01'
-          AND authorizations.state = 'presented'
-    )
-    AND EXISTS (
-        SELECT 1 FROM jsonb_to_recordset(
-            (convert_from(events.projection, 'UTF8')::jsonb)->'publisher_connections'
-        ) AS connections(lease_expires_at timestamptz)
-        WHERE connections.lease_expires_at > sqlc.arg(checked_at)
-    )
-    AND EXISTS (
-        SELECT 1 FROM control.ingress_leases AS ingresses
-        WHERE ingresses.lease_expires_at > sqlc.arg(checked_at)
-          AND NOT ingresses.draining
-    )
-    AND NOT EXISTS (
-        SELECT 1 FROM control.ingress_leases AS ingresses
-        WHERE ingresses.lease_expires_at > sqlc.arg(checked_at)
-          AND NOT ingresses.draining
-           AND ingresses.routing_table_revision < events.id
-    ), false
-)::boolean AS ready
-FROM control.acme_orders AS orders
-JOIN control.ingress_routing_table_events AS events
-  ON events.public_url_id = orders.public_url_id AND events.publish_run_number = orders.publish_run_number
-WHERE orders.id = sqlc.arg(issuance_id)
-  AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-ORDER BY events.id DESC
-LIMIT 1;
-
 -- name: SaveACMEOrderWork :one
 UPDATE control.acme_orders
 SET state = sqlc.arg(state),
     order_revision = order_revision + 1,
     order_url = sqlc.narg(order_url),
     finalize_url = sqlc.narg(finalize_url),
+    finalization_possible = sqlc.arg(finalization_possible) OR sqlc.arg(state)::text IN ('ready_to_finalize','finalizing'),
     certificate_url = sqlc.narg(certificate_url),
     certificate_pem = sqlc.narg(certificate_pem),
     not_before = sqlc.narg(not_before),
@@ -397,6 +232,8 @@ SET state = sqlc.arg(state),
     renew_at = sqlc.narg(renew_at),
     available_at = sqlc.arg(available_at),
     last_error = sqlc.narg(last_error),
+    retry_not_before=CASE WHEN sqlc.narg(last_error)::text IS NOT NULL AND sqlc.arg(available_at)::timestamptz>sqlc.arg(completed_at)::timestamptz
+        THEN sqlc.arg(available_at)::timestamptz ELSE NULL END,
     work_owner = NULL,
     work_expires_at = NULL,
     updated_at = sqlc.arg(completed_at)
@@ -490,10 +327,6 @@ SET state = CASE
         ELSE 'canceled'
     END,
     authorization_revision = authorization_revision + 1,
-    cleanup_completed_at = CASE
-        WHEN challenge_type = 'tls-alpn-01' THEN COALESCE(cleanup_completed_at, sqlc.arg(canceled_at))
-        ELSE cleanup_completed_at
-    END,
     available_at = sqlc.arg(canceled_at),
     updated_at = GREATEST(authorizations.updated_at, sqlc.arg(canceled_at))
 FROM control.acme_orders AS orders
