@@ -51,6 +51,10 @@ VALUES($1,$2,$3,$4,$5,sqlc.narg(control_session_id),$6);
 UPDATE control.managed_http_grants SET revoked_at=COALESCE(revoked_at,sqlc.arg(now))
 WHERE id=sqlc.arg(id) AND private_service_id=sqlc.arg(private_service_id);
 
+-- name: ListManagedHTTPGrants :many
+SELECT id,kind,expires_at,revoked_at FROM control.managed_http_grants
+WHERE private_service_id=sqlc.arg(private_service_id) ORDER BY id;
+
 -- name: ManagedHTTPGrantPermission :one
 SELECT id,created_by_identity_id,control_session_id,expires_at FROM control.managed_http_grants
 WHERE private_service_id=sqlc.arg(private_service_id) AND kind=sqlc.arg(kind)

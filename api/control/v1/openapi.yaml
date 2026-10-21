@@ -155,6 +155,20 @@ paths:
         "302": { description: Redirect to the configured identity provider }
         default: { $ref: "#/components/responses/Problem" }
   /v1/private-services/{private_service_id}/http-grants:
+    get:
+      operationId: listManagedHTTPGrants
+      security: [{ bearerAuth: [] }]
+      description: Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          description: Exact managed subject credential summaries, without secrets or share URLs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ManagedHTTPGrantSummary" }
+        default: { $ref: "#/components/responses/Problem" }
     post:
       operationId: createManagedHTTPGrant
       security: [{ bearerAuth: [] }]
@@ -1123,15 +1137,7 @@ paths:
           content:
             {
               application/json:
-                {
-                  schema:
-                    {
-                      type: object,
-                      additionalProperties: false,
-                      required: [secret],
-                      properties: { secret: { type: string, minLength: 32, maxLength: 128 } },
-                    },
-                },
+                { schema: { $ref: "#/components/schemas/PrivateServiceInvitationCredential" } },
             },
         }
       responses:
@@ -2938,6 +2944,22 @@ components:
         secret: { type: string }
         share_url: { type: string, format: uri }
         expires_at: { type: string, format: date-time }
+    ManagedHTTPGrantSummary:
+      type: object
+      additionalProperties: false
+      required: [subject, id, kind, expires_at]
+      properties:
+        subject: { $ref: "#/components/schemas/HTTPAuthorizationSubject" }
+        id: { type: string, pattern: "^mhg_[A-Za-z0-9]{22}$" }
+        kind: { type: string, enum: [token, share] }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    PrivateServiceInvitationCredential:
+      type: object
+      additionalProperties: false
+      required: [secret]
+      properties:
+        secret: { type: string, minLength: 32, maxLength: 128 }
     ManagedHTTPCredential:
       type: object
       additionalProperties: false

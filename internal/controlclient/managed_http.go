@@ -40,3 +40,9 @@ func (c *Client) RevokeManagedHTTPGrant(ctx context.Context, service, id string)
 	})
 	return err
 }
+
+func (c *Client) ListManagedHTTPGrants(ctx context.Context, service string) ([]controlv1.ManagedHTTPGrantSummary, error) {
+	return requestWithAccess[[]controlv1.ManagedHTTPGrantSummary](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListManagedHTTPGrants(ctx, service, e...)
+	})
+}

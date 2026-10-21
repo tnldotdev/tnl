@@ -55,16 +55,19 @@ VALUES (sqlc.arg(id), sqlc.arg(private_service_id), sqlc.arg(team_id), sqlc.arg(
     sqlc.arg(request_digest), sqlc.arg(now), sqlc.arg(expires_at)) RETURNING *;
 
 -- name: AcceptPrivateServiceInvitation :one
--- a verified exact email is required even when a caller has checked it already.
+-- verified_actor_email comes only from the consumed configured-issuer assertion;
+-- control sessions retain their stored verified email check.
 UPDATE control.private_service_invitations invitation
 SET accepted_identity_id = sqlc.arg(identity_id), accepted_at = sqlc.arg(now)
 FROM control.private_services service, control.identities person
-WHERE invitation.token_digest = sqlc.arg(token_digest) AND invitation.revoked_at IS NULL
+WHERE invitation.id=sqlc.arg(id) AND invitation.private_service_id=sqlc.arg(private_service_id)
+    AND invitation.token_digest = sqlc.arg(token_digest) AND invitation.revoked_at IS NULL
     AND invitation.accepted_at IS NULL AND invitation.expires_at > sqlc.arg(now)
     AND service.id = invitation.private_service_id AND service.team_id = invitation.team_id
     AND service.enabled AND service.deleted_at IS NULL
     AND person.id = sqlc.arg(identity_id) AND person.disabled_at IS NULL
-    AND person.email_verified AND person.normalized_email = invitation.normalized_email
+    AND (sqlc.narg(verified_actor_email)::text=invitation.normalized_email
+        OR (sqlc.narg(verified_actor_email)::text IS NULL AND person.email_verified AND person.normalized_email = invitation.normalized_email))
 RETURNING invitation.*;
 
 -- name: RevokePrivateServiceInvitation :execrows
@@ -429,3 +432,20 @@ WITH permitted AS (
 )
 SELECT EXISTS (SELECT 1 FROM permitted)::boolean AS allowed,
     COALESCE((SELECT valid_until FROM permitted LIMIT 1), sqlc.arg(now)::timestamptz)::timestamptz AS valid_until;
+
+-- name: GetPrivateServiceSource :one
+SELECT l.project_key,l.source_fingerprint,l.service,l.worktree_key
+FROM control.local_project_services l WHERE l.private_service_id=sqlc.arg(private_service_id)
+UNION ALL
+SELECT a.project_key,p.source_fingerprint,a.service,s.placement_worktree_key AS worktree_key
+FROM control.applied_project_services a
+JOIN control.applied_projects p ON p.team_id=a.team_id AND p.project_key=a.project_key
+JOIN control.private_services s ON s.id=a.private_service_id
+WHERE a.private_service_id=sqlc.arg(private_service_id)
+LIMIT 1;
+
+-- name: LockPendingPrivateServiceInvitation :one
+SELECT * FROM control.private_service_invitations
+WHERE id=sqlc.arg(id) AND private_service_id=sqlc.arg(private_service_id)
+AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at>sqlc.arg(now)
+FOR UPDATE;

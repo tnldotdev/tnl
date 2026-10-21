@@ -3,8 +3,10 @@ package controlstate
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -19,7 +21,7 @@ func (d *Database) CreateManagedHTTPGrant(ctx context.Context, service, actor st
 	if input.Kind != "token" && input.Kind != "share" || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrPrivateServiceAccess
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return result, err
 	}
@@ -36,6 +38,15 @@ func (d *Database) CreateManagedHTTPGrant(ctx context.Context, service, actor st
 		return result, err
 	}
 	if _, _, err = privateVisitorAccess(ctx, tx, service, actor, now); err != nil {
+		if _, signed := serviceActor(ctx); signed && errors.Is(err, ErrPrivateServiceAccess) {
+			allowed, sourceErr := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: endpoint.TeamID, IdentityID: actor, SessionID: "", Now: timestamptz(now)})
+			if sourceErr != nil {
+				return result, sourceErr
+			}
+			if !allowed {
+				return result, ErrServiceSourceSignInRequired
+			}
+		}
 		return result, err
 	}
 	id, err := opaqueid.New("mhg_")
@@ -63,8 +74,29 @@ func (d *Database) CreateManagedHTTPGrant(ctx context.Context, service, actor st
 	return result, tx.Commit(ctx)
 }
 
+func (d *Database) ListManagedHTTPGrants(ctx context.Context, service, actor string, now time.Time) (result []controlv1.ManagedHTTPGrantSummary, retErr error) {
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(ctx, tx, "list managed HTTP grants", &retErr)()
+	_, err = lockManagedPrivateService(ctx, tx, service, actor)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := controlstatedb.New(tx).ListManagedHTTPGrants(ctx, service)
+	if err != nil {
+		return nil, err
+	}
+	result = make([]controlv1.ManagedHTTPGrantSummary, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, controlv1.ManagedHTTPGrantSummary{Subject: controlv1.HTTPAuthorizationSubject{Kind: "managed_service", Id: service}, Id: row.ID, Kind: controlv1.ManagedHTTPGrantSummaryKind(row.Kind), ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)})
+	}
+	return result, tx.Commit(ctx)
+}
+
 func (d *Database) RevokeManagedHTTPGrant(ctx context.Context, service, actor, id string, now time.Time) (retErr error) {
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}

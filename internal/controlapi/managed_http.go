@@ -152,3 +152,24 @@ func (h *handler) RevokeManagedHTTPGrant(w http.ResponseWriter, r *http.Request,
 	}
 	w.WriteHeader(204)
 }
+
+func (h *handler) ListManagedHTTPGrants(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
+	actor, ok := h.authorizeRouteReads(w, r)
+	if !ok {
+		return
+	}
+	store, ok := h.store.(interface {
+		ListManagedHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ManagedHTTPGrantSummary, error)
+	})
+	if !ok {
+		writeProblem(w, 503, controlv1.Unavailable, "managed HTTP grants are unavailable")
+		return
+	}
+	result, err := store.ListManagedHTTPGrants(r.Context(), service, actor.identityID, time.Now())
+	if err != nil {
+		privateVisitorError(w, "list managed HTTP grants", err)
+		return
+	}
+	writeJSON(w, 200, result)
+}

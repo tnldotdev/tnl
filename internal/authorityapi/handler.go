@@ -122,6 +122,7 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 		h.devices, _ = store.(DeviceStore)
 	}
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
+		response.Header().Set("Cache-Control", "no-store")
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 	}
 	routes := make(Routes)

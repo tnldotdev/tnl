@@ -459,6 +459,24 @@ func (e ManagedHTTPGrantKind) Valid() bool {
 	}
 }
 
+// Defines values for ManagedHTTPGrantSummaryKind.
+const (
+	ManagedHTTPGrantSummaryKindShare ManagedHTTPGrantSummaryKind = "share"
+	ManagedHTTPGrantSummaryKindToken ManagedHTTPGrantSummaryKind = "token"
+)
+
+// Valid indicates whether the value is a known member of the ManagedHTTPGrantSummaryKind enum.
+func (e ManagedHTTPGrantSummaryKind) Valid() bool {
+	switch e {
+	case ManagedHTTPGrantSummaryKindShare:
+		return true
+	case ManagedHTTPGrantSummaryKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OIDCAuthenticationFactsLoginFlow.
 const (
 	DeviceCode OIDCAuthenticationFactsLoginFlow = "device_code"
@@ -2247,6 +2265,20 @@ type ManagedHTTPGrant struct {
 // ManagedHTTPGrantKind defines model for ManagedHTTPGrant.Kind.
 type ManagedHTTPGrantKind string
 
+// ManagedHTTPGrantSummary defines model for ManagedHTTPGrantSummary.
+type ManagedHTTPGrantSummary struct {
+	ExpiresAt time.Time                   `json:"expires_at"`
+	Id        string                      `json:"id"`
+	Kind      ManagedHTTPGrantSummaryKind `json:"kind"`
+	RevokedAt *time.Time                  `json:"revoked_at,omitempty"`
+
+	// Subject An explicit authorization scope. A public URL grant never applies to a managed service, even when they have related names or owners.
+	Subject HTTPAuthorizationSubject `json:"subject"`
+}
+
+// ManagedHTTPGrantSummaryKind defines model for ManagedHTTPGrantSummary.Kind.
+type ManagedHTTPGrantSummaryKind string
+
 // ManagedHTTPVisitorRequest defines model for ManagedHTTPVisitorRequest.
 type ManagedHTTPVisitorRequest struct {
 	// Credential Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
@@ -2410,6 +2442,11 @@ type PrivateServiceInvitation struct {
 
 	// Secret Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.
 	Secret *string `json:"secret,omitempty"`
+}
+
+// PrivateServiceInvitationCredential defines model for PrivateServiceInvitationCredential.
+type PrivateServiceInvitationCredential struct {
+	Secret string `json:"secret"`
 }
 
 // PrivateServiceInvitationID defines model for PrivateServiceInvitationID.
@@ -3600,11 +3637,6 @@ type CreateShareParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// AcceptPrivateServiceInvitationJSONBody defines parameters for AcceptPrivateServiceInvitation.
-type AcceptPrivateServiceInvitationJSONBody struct {
-	Secret string `json:"secret"`
-}
-
 // ListPrivateServicesParams defines parameters for ListPrivateServices.
 type ListPrivateServicesParams struct {
 	TeamId TeamIDQuery           `form:"team_id" json:"team_id"`
@@ -3831,7 +3863,7 @@ type CreateShareJSONRequestBody = CreateShareRequest
 type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
 
 // AcceptPrivateServiceInvitationJSONRequestBody defines body for AcceptPrivateServiceInvitation for application/json ContentType.
-type AcceptPrivateServiceInvitationJSONRequestBody AcceptPrivateServiceInvitationJSONBody
+type AcceptPrivateServiceInvitationJSONRequestBody = PrivateServiceInvitationCredential
 
 // CreatePrivateServiceJSONRequestBody defines body for CreatePrivateService for application/json ContentType.
 type CreatePrivateServiceJSONRequestBody = CreatePrivateServiceRequest
@@ -4416,6 +4448,11 @@ type ClientInterface interface {
 
 	// RevokePrivateServiceGrant performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
 	RevokePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListManagedHTTPGrants performs a GET /v1/private-services/{private_service_id}/http-grants (the `ListManagedHTTPGrants` operationId) request.
+	//
+	// Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
+	ListManagedHTTPGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateManagedHTTPGrantWithBody performs a POST /v1/private-services/{private_service_id}/http-grants (the `CreateManagedHTTPGrant` operationId) request,
 	// with any type of body and a specified content type.
@@ -6012,6 +6049,21 @@ func (c *Client) CreatePrivateServiceGrant(ctx context.Context, privateServiceId
 // RevokePrivateServiceGrant performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
 func (c *Client) RevokePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePrivateServiceGrantRequest(c.Server, privateServiceId, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListManagedHTTPGrants performs a GET /v1/private-services/{private_service_id}/http-grants (the `ListManagedHTTPGrants` operationId) request.
+//
+// Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
+func (c *Client) ListManagedHTTPGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListManagedHTTPGrantsRequest(c.Server, privateServiceId)
 	if err != nil {
 		return nil, err
 	}
@@ -10114,6 +10166,40 @@ func NewRevokePrivateServiceGrantRequest(server string, privateServiceId Private
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListManagedHTTPGrantsRequest constructs an http.Request for the ListManagedHTTPGrants method
+func NewListManagedHTTPGrantsRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/http-grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -15313,6 +15399,13 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*RevokePrivateServiceGrantResponse, error)
 
+	// ListManagedHTTPGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/http-grants (the `ListManagedHTTPGrants` operationId) request.
+	//
+	// Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListManagedHTTPGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListManagedHTTPGrantsResponse, error)
+
 	// CreateManagedHTTPGrantWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/http-grants (the `CreateManagedHTTPGrant` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -18008,6 +18101,54 @@ func (r RevokePrivateServiceGrantResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokePrivateServiceGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListManagedHTTPGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]ManagedHTTPGrantSummary
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListManagedHTTPGrantsResponse) GetJSON200() *[]ManagedHTTPGrantSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListManagedHTTPGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListManagedHTTPGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListManagedHTTPGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListManagedHTTPGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListManagedHTTPGrantsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23307,6 +23448,19 @@ func (c *ClientWithResponses) RevokePrivateServiceGrantWithResponse(ctx context.
 	return ParseRevokePrivateServiceGrantResponse(rsp)
 }
 
+// ListManagedHTTPGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/http-grants (the `ListManagedHTTPGrants` operationId) request.
+//
+// Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListManagedHTTPGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListManagedHTTPGrantsResponse, error) {
+	rsp, err := c.ListManagedHTTPGrants(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListManagedHTTPGrantsResponse(rsp)
+}
+
 // CreateManagedHTTPGrantWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/http-grants (the `CreateManagedHTTPGrant` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -26423,6 +26577,39 @@ func ParseRevokePrivateServiceGrantResponse(rsp *http.Response) (*RevokePrivateS
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListManagedHTTPGrantsResponse parses an HTTP response from a ListManagedHTTPGrantsWithResponse call
+func ParseListManagedHTTPGrantsResponse(rsp *http.Response) (*ListManagedHTTPGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListManagedHTTPGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []ManagedHTTPGrantSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -29801,6 +29988,9 @@ type ServerInterface interface {
 	// (DELETE /v1/private-services/{private_service_id}/grants/{grant_id})
 	RevokePrivateServiceGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID)
 
+	// (GET /v1/private-services/{private_service_id}/http-grants)
+	ListManagedHTTPGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
 	// (POST /v1/private-services/{private_service_id}/http-grants)
 	CreateManagedHTTPGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
 
@@ -31259,6 +31449,32 @@ func (siw *ServerInterfaceWrapper) RevokePrivateServiceGrant(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokePrivateServiceGrant(w, r, privateServiceId, grantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListManagedHTTPGrants operation middleware
+func (siw *ServerInterfaceWrapper) ListManagedHTTPGrants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListManagedHTTPGrants(w, r, privateServiceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34749,6 +34965,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/client-certificate", wrapper.IssueWorkloadServiceClientCertificate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/managed-login", wrapper.BeginManagedBrowserLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services/{private_service_id}/http-grants", wrapper.ListManagedHTTPGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/http-grants", wrapper.CreateManagedHTTPGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}/http-grants/{grant_id}", wrapper.RevokeManagedHTTPGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}/http-authorize", wrapper.AuthorizeManagedHTTPVisitor)

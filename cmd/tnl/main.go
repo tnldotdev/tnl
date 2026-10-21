@@ -51,7 +51,7 @@ type cli struct {
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
-	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
+	Share       shareCommand     `cmd:"" help:"Manage public URL shares and exact-service access." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
@@ -798,6 +798,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runShareInviteList(ctx, flags.Share.Invite.List, stdout, stderr)
 	case "share invite revoke <url> <invitation-id>":
 		return runShareInviteRevoke(ctx, flags.Share.Invite.Revoke, stdout, stderr)
+	case "share service invite create <name>":
+		return runServiceShareInviteCreate(ctx, flags.Share.Service.Invite.Create, project, stdout, stderr)
+	case "share service invite accept <secret>":
+		return runServiceShareInviteAccept(ctx, flags.Share.Service.Invite.Accept, stdout, stderr)
+	case "share service list <name>":
+		return runServiceShareList(ctx, flags.Share.Service.List, project, stdout, stderr)
+	case "share service revoke <name> <access-id>":
+		return runServiceShareRevoke(ctx, flags.Share.Service.Revoke, project, stdout, stderr)
+	case "share service link create <name>":
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, "share", stdout, stderr)
+	case "share service token create <name>":
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, "token", stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":

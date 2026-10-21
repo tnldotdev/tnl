@@ -347,6 +347,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
+  go:test:integration:service-access:
+    desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./cmd/tnl -run='^TestIntegration(ServiceActor|PrivateServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:publisher-egress:
     desc: Check signed publisher runtime egress and trusted proxy evidence in disposable PostgreSQL
     cmds:

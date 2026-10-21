@@ -267,12 +267,15 @@ const (
 	Forbidden             ProblemCode = "forbidden"
 	Internal              ProblemCode = "internal"
 	InvalidRequest        ProblemCode = "invalid_request"
+	ManagerRequired       ProblemCode = "manager_required"
 	NameUnavailable       ProblemCode = "name_unavailable"
 	NotFound              ProblemCode = "not_found"
 	PolicyRevisionStale   ProblemCode = "policy_revision_stale"
 	RateLimited           ProblemCode = "rate_limited"
+	SourceSignInRequired  ProblemCode = "source_sign_in_required"
 	Unauthenticated       ProblemCode = "unauthenticated"
 	Unavailable           ProblemCode = "unavailable"
+	VerifiedEmailRequired ProblemCode = "verified_email_required"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -290,6 +293,8 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case InvalidRequest:
 		return true
+	case ManagerRequired:
+		return true
 	case NameUnavailable:
 		return true
 	case NotFound:
@@ -298,9 +303,13 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case RateLimited:
 		return true
+	case SourceSignInRequired:
+		return true
 	case Unauthenticated:
 		return true
 	case Unavailable:
+		return true
+	case VerifiedEmailRequired:
 		return true
 	default:
 		return false
@@ -824,7 +833,19 @@ type MembershipPage struct {
 }
 
 // PrivateServiceID defines model for PrivateServiceID.
-type PrivateServiceID = string
+type PrivateServiceID = externalRef0.PrivateServiceID
+
+// PrivateServiceInvitationCredential defines model for PrivateServiceInvitationCredential.
+type PrivateServiceInvitationCredential = externalRef0.PrivateServiceInvitationCredential
+
+// PrivateServiceInvitationPreview defines model for PrivateServiceInvitationPreview.
+type PrivateServiceInvitationPreview struct {
+	ExpiresAt        time.Time        `json:"expires_at"`
+	Name             string           `json:"name"`
+	PrivateServiceId PrivateServiceID `json:"private_service_id"`
+	Protocol         string           `json:"protocol"`
+	TeamId           TeamID           `json:"team_id"`
+}
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -1016,6 +1037,9 @@ type CompanyActorToken = string
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
 
+// ServiceActorToken defines model for ServiceActorToken.
+type ServiceActorToken = string
+
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
@@ -1065,6 +1089,74 @@ type RecoverCompanyOwnerJSONBody struct {
 // ProvisionCompanyEligibilityParams defines parameters for ProvisionCompanyEligibility.
 type ProvisionCompanyEligibilityParams struct {
 	XTnlProvisioningToken string `json:"X-Tnl-Provisioning-Token"`
+}
+
+// AcceptWebsitePrivateServiceInvitationParams defines parameters for AcceptWebsitePrivateServiceInvitation.
+type AcceptWebsitePrivateServiceInvitationParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// PreviewWebsitePrivateServiceInvitationParams defines parameters for PreviewWebsitePrivateServiceInvitation.
+type PreviewWebsitePrivateServiceInvitationParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// GetWebsitePrivateServiceParams defines parameters for GetWebsitePrivateService.
+type GetWebsitePrivateServiceParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// ListWebsitePrivateServiceGrantsParams defines parameters for ListWebsitePrivateServiceGrants.
+type ListWebsitePrivateServiceGrantsParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// RevokeWebsitePrivateServiceGrantParams defines parameters for RevokeWebsitePrivateServiceGrant.
+type RevokeWebsitePrivateServiceGrantParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// ListWebsiteManagedHTTPGrantsParams defines parameters for ListWebsiteManagedHTTPGrants.
+type ListWebsiteManagedHTTPGrantsParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// CreateWebsiteManagedHTTPGrantParams defines parameters for CreateWebsiteManagedHTTPGrant.
+type CreateWebsiteManagedHTTPGrantParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// RevokeWebsiteManagedHTTPGrantParams defines parameters for RevokeWebsiteManagedHTTPGrant.
+type RevokeWebsiteManagedHTTPGrantParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// ListWebsitePrivateServiceInvitationsParams defines parameters for ListWebsitePrivateServiceInvitations.
+type ListWebsitePrivateServiceInvitationsParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// InviteWebsitePrivateServiceVisitorParams defines parameters for InviteWebsitePrivateServiceVisitor.
+type InviteWebsitePrivateServiceVisitorParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// RevokeWebsitePrivateServiceInvitationParams defines parameters for RevokeWebsitePrivateServiceInvitation.
+type RevokeWebsitePrivateServiceInvitationParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
 
 // ListCompanyAdmissionsParams defines parameters for ListCompanyAdmissions.
@@ -1157,6 +1249,14 @@ type SetCompanyMembershipDecisionParams struct {
 	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
 }
 
+// ListWebsitePrivateServicesParams defines parameters for ListWebsitePrivateServices.
+type ListWebsitePrivateServicesParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
 // CreateTeamParams defines parameters for CreateTeam.
 type CreateTeamParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -1225,6 +1325,18 @@ type AcceptServiceInvitationJSONRequestBody = ServiceInvitationRequest
 
 // PreviewServiceInvitationJSONRequestBody defines body for PreviewServiceInvitation for application/json ContentType.
 type PreviewServiceInvitationJSONRequestBody = ServiceInvitationRequest
+
+// AcceptWebsitePrivateServiceInvitationJSONRequestBody defines body for AcceptWebsitePrivateServiceInvitation for application/json ContentType.
+type AcceptWebsitePrivateServiceInvitationJSONRequestBody = PrivateServiceInvitationCredential
+
+// PreviewWebsitePrivateServiceInvitationJSONRequestBody defines body for PreviewWebsitePrivateServiceInvitation for application/json ContentType.
+type PreviewWebsitePrivateServiceInvitationJSONRequestBody = PrivateServiceInvitationCredential
+
+// CreateWebsiteManagedHTTPGrantJSONRequestBody defines body for CreateWebsiteManagedHTTPGrant for application/json ContentType.
+type CreateWebsiteManagedHTTPGrantJSONRequestBody = externalRef0.CreateManagedHTTPGrantRequest
+
+// InviteWebsitePrivateServiceVisitorJSONRequestBody defines body for InviteWebsitePrivateServiceVisitor for application/json ContentType.
+type InviteWebsitePrivateServiceVisitorJSONRequestBody = externalRef0.CreatePrivateServiceInvitationRequest
 
 // DecideCompanyAdmissionJSONRequestBody defines body for DecideCompanyAdmission for application/json ContentType.
 type DecideCompanyAdmissionJSONRequestBody DecideCompanyAdmissionJSONBody
@@ -1573,6 +1685,63 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
 	PreviewServiceInvitation(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AcceptWebsitePrivateServiceInvitationWithBody performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	AcceptWebsitePrivateServiceInvitationWithBody(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptWebsitePrivateServiceInvitation performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AcceptWebsitePrivateServiceInvitation(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, body AcceptWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewWebsitePrivateServiceInvitationWithBody performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	PreviewWebsitePrivateServiceInvitationWithBody(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewWebsitePrivateServiceInvitation performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	PreviewWebsitePrivateServiceInvitation(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, body PreviewWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWebsitePrivateService performs a GET /v1/service/private-services/{private_service_id} (the `GetWebsitePrivateService` operationId) request.
+	GetWebsitePrivateService(ctx context.Context, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWebsitePrivateServiceGrants performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+	ListWebsitePrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeWebsitePrivateServiceGrant performs a DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id} (the `RevokeWebsitePrivateServiceGrant` operationId) request.
+	RevokeWebsitePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params *RevokeWebsitePrivateServiceGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWebsiteManagedHTTPGrants performs a GET /v1/service/private-services/{private_service_id}/http-grants (the `ListWebsiteManagedHTTPGrants` operationId) request.
+	ListWebsiteManagedHTTPGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsiteManagedHTTPGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWebsiteManagedHTTPGrantWithBody performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+	CreateWebsiteManagedHTTPGrantWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWebsiteManagedHTTPGrant performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+	CreateWebsiteManagedHTTPGrant(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, body CreateWebsiteManagedHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeWebsiteManagedHTTPGrant performs a DELETE /v1/service/private-services/{private_service_id}/http-grants/{grant_id} (the `RevokeWebsiteManagedHTTPGrant` operationId) request.
+	RevokeWebsiteManagedHTTPGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWebsitePrivateServiceInvitations performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+	ListWebsitePrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InviteWebsitePrivateServiceVisitorWithBody performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	InviteWebsitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InviteWebsitePrivateServiceVisitor performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	InviteWebsitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeWebsitePrivateServiceInvitation performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
+	RevokeWebsitePrivateServiceInvitation(ctx context.Context, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 	ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1648,6 +1817,11 @@ type ClientInterface interface {
 	// SetCompanyMembershipDecision performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
 	// Takes a body of the `application/json` content type.
 	SetCompanyMembershipDecision(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWebsitePrivateServices performs a GET /v1/service/teams/{team_id}/private-services (the `ListWebsitePrivateServices` operationId) request.
+	//
+	// Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
+	ListWebsitePrivateServices(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams for the authenticated identity
 	//
@@ -2410,6 +2584,213 @@ func (c *Client) PreviewServiceInvitation(ctx context.Context, body PreviewServi
 	return c.Client.Do(req)
 }
 
+// AcceptWebsitePrivateServiceInvitationWithBody performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AcceptWebsitePrivateServiceInvitationWithBody(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptWebsitePrivateServiceInvitationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptWebsitePrivateServiceInvitation performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AcceptWebsitePrivateServiceInvitation(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, body AcceptWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptWebsitePrivateServiceInvitationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewWebsitePrivateServiceInvitationWithBody performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) PreviewWebsitePrivateServiceInvitationWithBody(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewWebsitePrivateServiceInvitationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewWebsitePrivateServiceInvitation performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) PreviewWebsitePrivateServiceInvitation(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, body PreviewWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewWebsitePrivateServiceInvitationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWebsitePrivateService performs a GET /v1/service/private-services/{private_service_id} (the `GetWebsitePrivateService` operationId) request.
+func (c *Client) GetWebsitePrivateService(ctx context.Context, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWebsitePrivateServiceRequest(c.Server, privateServiceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWebsitePrivateServiceGrants performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+func (c *Client) ListWebsitePrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWebsitePrivateServiceGrantsRequest(c.Server, privateServiceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeWebsitePrivateServiceGrant performs a DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id} (the `RevokeWebsitePrivateServiceGrant` operationId) request.
+func (c *Client) RevokeWebsitePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params *RevokeWebsitePrivateServiceGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeWebsitePrivateServiceGrantRequest(c.Server, privateServiceId, grantId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWebsiteManagedHTTPGrants performs a GET /v1/service/private-services/{private_service_id}/http-grants (the `ListWebsiteManagedHTTPGrants` operationId) request.
+func (c *Client) ListWebsiteManagedHTTPGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsiteManagedHTTPGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWebsiteManagedHTTPGrantsRequest(c.Server, privateServiceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWebsiteManagedHTTPGrantWithBody performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+func (c *Client) CreateWebsiteManagedHTTPGrantWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWebsiteManagedHTTPGrantRequestWithBody(c.Server, privateServiceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWebsiteManagedHTTPGrant performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+func (c *Client) CreateWebsiteManagedHTTPGrant(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, body CreateWebsiteManagedHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWebsiteManagedHTTPGrantRequest(c.Server, privateServiceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeWebsiteManagedHTTPGrant performs a DELETE /v1/service/private-services/{private_service_id}/http-grants/{grant_id} (the `RevokeWebsiteManagedHTTPGrant` operationId) request.
+func (c *Client) RevokeWebsiteManagedHTTPGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeWebsiteManagedHTTPGrantRequest(c.Server, privateServiceId, grantId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWebsitePrivateServiceInvitations performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+func (c *Client) ListWebsitePrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWebsitePrivateServiceInvitationsRequest(c.Server, privateServiceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InviteWebsitePrivateServiceVisitorWithBody performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) InviteWebsitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInviteWebsitePrivateServiceVisitorRequestWithBody(c.Server, privateServiceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InviteWebsitePrivateServiceVisitor performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) InviteWebsitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInviteWebsitePrivateServiceVisitorRequest(c.Server, privateServiceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeWebsitePrivateServiceInvitation performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
+func (c *Client) RevokeWebsitePrivateServiceInvitation(ctx context.Context, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeWebsitePrivateServiceInvitationRequest(c.Server, privateServiceId, invitationId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 func (c *Client) ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListCompanyAdmissionsRequest(c.Server, teamId, params)
@@ -2636,6 +3017,21 @@ func (c *Client) SetCompanyMembershipDecisionWithBody(ctx context.Context, teamI
 // Takes a body of the `application/json` content type.
 func (c *Client) SetCompanyMembershipDecision(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetCompanyMembershipDecisionRequest(c.Server, teamId, membershipId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWebsitePrivateServices performs a GET /v1/service/teams/{team_id}/private-services (the `ListWebsitePrivateServices` operationId) request.
+//
+// Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
+func (c *Client) ListWebsitePrivateServices(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWebsitePrivateServicesRequest(c.Server, teamId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3930,6 +4326,591 @@ func NewPreviewServiceInvitationRequestWithBody(server string, contentType strin
 	return req, nil
 }
 
+// NewAcceptWebsitePrivateServiceInvitationRequest calls the generic AcceptWebsitePrivateServiceInvitation builder with application/json body
+func NewAcceptWebsitePrivateServiceInvitationRequest(server string, params *AcceptWebsitePrivateServiceInvitationParams, body AcceptWebsitePrivateServiceInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcceptWebsitePrivateServiceInvitationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewAcceptWebsitePrivateServiceInvitationRequestWithBody constructs an http.Request for the AcceptWebsitePrivateServiceInvitation method, with any body, and a specified content type
+func NewAcceptWebsitePrivateServiceInvitationRequestWithBody(server string, params *AcceptWebsitePrivateServiceInvitationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-service-invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewPreviewWebsitePrivateServiceInvitationRequest calls the generic PreviewWebsitePrivateServiceInvitation builder with application/json body
+func NewPreviewWebsitePrivateServiceInvitationRequest(server string, params *PreviewWebsitePrivateServiceInvitationParams, body PreviewWebsitePrivateServiceInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreviewWebsitePrivateServiceInvitationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewPreviewWebsitePrivateServiceInvitationRequestWithBody constructs an http.Request for the PreviewWebsitePrivateServiceInvitation method, with any body, and a specified content type
+func NewPreviewWebsitePrivateServiceInvitationRequestWithBody(server string, params *PreviewWebsitePrivateServiceInvitationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-service-invitations/preview")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetWebsitePrivateServiceRequest constructs an http.Request for the GetWebsitePrivateService method
+func NewGetWebsitePrivateServiceRequest(server string, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListWebsitePrivateServiceGrantsRequest constructs an http.Request for the ListWebsitePrivateServiceGrants method
+func NewListWebsitePrivateServiceGrantsRequest(server string, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokeWebsitePrivateServiceGrantRequest constructs an http.Request for the RevokeWebsitePrivateServiceGrant method
+func NewRevokeWebsitePrivateServiceGrantRequest(server string, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params *RevokeWebsitePrivateServiceGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/grants/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListWebsiteManagedHTTPGrantsRequest constructs an http.Request for the ListWebsiteManagedHTTPGrants method
+func NewListWebsiteManagedHTTPGrantsRequest(server string, privateServiceId PrivateServiceID, params *ListWebsiteManagedHTTPGrantsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/http-grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateWebsiteManagedHTTPGrantRequest calls the generic CreateWebsiteManagedHTTPGrant builder with application/json body
+func NewCreateWebsiteManagedHTTPGrantRequest(server string, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, body CreateWebsiteManagedHTTPGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateWebsiteManagedHTTPGrantRequestWithBody(server, privateServiceId, params, "application/json", bodyReader)
+}
+
+// NewCreateWebsiteManagedHTTPGrantRequestWithBody constructs an http.Request for the CreateWebsiteManagedHTTPGrant method, with any body, and a specified content type
+func NewCreateWebsiteManagedHTTPGrantRequestWithBody(server string, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/http-grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokeWebsiteManagedHTTPGrantRequest constructs an http.Request for the RevokeWebsiteManagedHTTPGrant method
+func NewRevokeWebsiteManagedHTTPGrantRequest(server string, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/http-grants/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListWebsitePrivateServiceInvitationsRequest constructs an http.Request for the ListWebsitePrivateServiceInvitations method
+func NewListWebsitePrivateServiceInvitationsRequest(server string, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/invitations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewInviteWebsitePrivateServiceVisitorRequest calls the generic InviteWebsitePrivateServiceVisitor builder with application/json body
+func NewInviteWebsitePrivateServiceVisitorRequest(server string, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInviteWebsitePrivateServiceVisitorRequestWithBody(server, privateServiceId, params, "application/json", bodyReader)
+}
+
+// NewInviteWebsitePrivateServiceVisitorRequestWithBody constructs an http.Request for the InviteWebsitePrivateServiceVisitor method, with any body, and a specified content type
+func NewInviteWebsitePrivateServiceVisitorRequestWithBody(server string, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/invitations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		var headerParam1 string
+
+		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam1)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokeWebsitePrivateServiceInvitationRequest constructs an http.Request for the RevokeWebsitePrivateServiceInvitation method
+func NewRevokeWebsitePrivateServiceInvitationRequest(server string, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "invitation_id", invitationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/private-services/%s/invitations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewListCompanyAdmissionsRequest constructs an http.Request for the ListCompanyAdmissions method
 func NewListCompanyAdmissionsRequest(server string, teamId string, params *ListCompanyAdmissionsParams) (*http.Request, error) {
 	var err error
@@ -4469,6 +5450,80 @@ func NewSetCompanyMembershipDecisionRequestWithBody(server string, teamId string
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListWebsitePrivateServicesRequest constructs an http.Request for the ListWebsitePrivateServices method
+func NewListWebsitePrivateServicesRequest(server string, teamId TeamID, params *ListWebsitePrivateServicesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/private-services", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	if params != nil {
 
@@ -5529,6 +6584,85 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
 	PreviewServiceInvitationWithResponse(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error)
 
+	// AcceptWebsitePrivateServiceInvitationWithBodyWithResponse performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AcceptWebsitePrivateServiceInvitationWithBodyWithResponse(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptWebsitePrivateServiceInvitationResponse, error)
+
+	// AcceptWebsitePrivateServiceInvitationWithResponse performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AcceptWebsitePrivateServiceInvitationWithResponse(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, body AcceptWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptWebsitePrivateServiceInvitationResponse, error)
+
+	// PreviewWebsitePrivateServiceInvitationWithBodyWithResponse performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PreviewWebsitePrivateServiceInvitationWithBodyWithResponse(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewWebsitePrivateServiceInvitationResponse, error)
+
+	// PreviewWebsitePrivateServiceInvitationWithResponse performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	PreviewWebsitePrivateServiceInvitationWithResponse(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, body PreviewWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewWebsitePrivateServiceInvitationResponse, error)
+
+	// GetWebsitePrivateServiceWithResponse performs a GET /v1/service/private-services/{private_service_id} (the `GetWebsitePrivateService` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetWebsitePrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams, reqEditors ...RequestEditorFn) (*GetWebsitePrivateServiceResponse, error)
+
+	// ListWebsitePrivateServiceGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListWebsitePrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceGrantsResponse, error)
+
+	// RevokeWebsitePrivateServiceGrantWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id} (the `RevokeWebsitePrivateServiceGrant` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeWebsitePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params *RevokeWebsitePrivateServiceGrantParams, reqEditors ...RequestEditorFn) (*RevokeWebsitePrivateServiceGrantResponse, error)
+
+	// ListWebsiteManagedHTTPGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/http-grants (the `ListWebsiteManagedHTTPGrants` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListWebsiteManagedHTTPGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsiteManagedHTTPGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsiteManagedHTTPGrantsResponse, error)
+
+	// CreateWebsiteManagedHTTPGrantWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateWebsiteManagedHTTPGrantWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteManagedHTTPGrantResponse, error)
+
+	// CreateWebsiteManagedHTTPGrantWithResponse performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+	CreateWebsiteManagedHTTPGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, body CreateWebsiteManagedHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteManagedHTTPGrantResponse, error)
+
+	// RevokeWebsiteManagedHTTPGrantWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/http-grants/{grant_id} (the `RevokeWebsiteManagedHTTPGrant` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeWebsiteManagedHTTPGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams, reqEditors ...RequestEditorFn) (*RevokeWebsiteManagedHTTPGrantResponse, error)
+
+	// ListWebsitePrivateServiceInvitationsWithResponse performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListWebsitePrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceInvitationsResponse, error)
+
+	// InviteWebsitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	InviteWebsitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error)
+
+	// InviteWebsitePrivateServiceVisitorWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	InviteWebsitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error)
+
+	// RevokeWebsitePrivateServiceInvitationWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeWebsitePrivateServiceInvitationWithResponse(ctx context.Context, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams, reqEditors ...RequestEditorFn) (*RevokeWebsitePrivateServiceInvitationResponse, error)
+
 	// ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -5618,6 +6752,13 @@ type ClientWithResponsesInterface interface {
 	// SetCompanyMembershipDecisionWithResponse performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	SetCompanyMembershipDecisionWithResponse(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCompanyMembershipDecisionResponse, error)
+
+	// ListWebsitePrivateServicesWithResponse performs a GET /v1/service/teams/{team_id}/private-services (the `ListWebsitePrivateServices` operationId) request.
+	//
+	// Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListWebsitePrivateServicesWithResponse(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServicesResponse, error)
 
 	// ListTeamsWithResponse List teams for the authenticated identity
 	//
@@ -6792,6 +7933,513 @@ func (r PreviewServiceInvitationResponse) ContentType() string {
 	return ""
 }
 
+type AcceptWebsitePrivateServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *externalRef0.PrivateServiceGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcceptWebsitePrivateServiceInvitationResponse) GetJSON200() *externalRef0.PrivateServiceGrant {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcceptWebsitePrivateServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcceptWebsitePrivateServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcceptWebsitePrivateServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcceptWebsitePrivateServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcceptWebsitePrivateServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PreviewWebsitePrivateServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceInvitationPreview
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreviewWebsitePrivateServiceInvitationResponse) GetJSON200() *PrivateServiceInvitationPreview {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreviewWebsitePrivateServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PreviewWebsitePrivateServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreviewWebsitePrivateServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreviewWebsitePrivateServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreviewWebsitePrivateServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetWebsitePrivateServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *externalRef0.PrivateService
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWebsitePrivateServiceResponse) GetJSON200() *externalRef0.PrivateService {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetWebsitePrivateServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWebsitePrivateServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWebsitePrivateServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWebsitePrivateServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWebsitePrivateServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListWebsitePrivateServiceGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]externalRef0.PrivateServiceGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWebsitePrivateServiceGrantsResponse) GetJSON200() *[]externalRef0.PrivateServiceGrant {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWebsitePrivateServiceGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWebsitePrivateServiceGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWebsitePrivateServiceGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWebsitePrivateServiceGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWebsitePrivateServiceGrantsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeWebsitePrivateServiceGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeWebsitePrivateServiceGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeWebsitePrivateServiceGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeWebsitePrivateServiceGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeWebsitePrivateServiceGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeWebsitePrivateServiceGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListWebsiteManagedHTTPGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]externalRef0.ManagedHTTPGrantSummary
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWebsiteManagedHTTPGrantsResponse) GetJSON200() *[]externalRef0.ManagedHTTPGrantSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWebsiteManagedHTTPGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWebsiteManagedHTTPGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWebsiteManagedHTTPGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWebsiteManagedHTTPGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWebsiteManagedHTTPGrantsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateWebsiteManagedHTTPGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *externalRef0.ManagedHTTPGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateWebsiteManagedHTTPGrantResponse) GetJSON201() *externalRef0.ManagedHTTPGrant {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateWebsiteManagedHTTPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateWebsiteManagedHTTPGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateWebsiteManagedHTTPGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateWebsiteManagedHTTPGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateWebsiteManagedHTTPGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeWebsiteManagedHTTPGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeWebsiteManagedHTTPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeWebsiteManagedHTTPGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeWebsiteManagedHTTPGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeWebsiteManagedHTTPGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeWebsiteManagedHTTPGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListWebsitePrivateServiceInvitationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]externalRef0.PrivateServiceInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWebsitePrivateServiceInvitationsResponse) GetJSON200() *[]externalRef0.PrivateServiceInvitation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWebsitePrivateServiceInvitationsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWebsitePrivateServiceInvitationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWebsitePrivateServiceInvitationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWebsitePrivateServiceInvitationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWebsitePrivateServiceInvitationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type InviteWebsitePrivateServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *externalRef0.PrivateServiceInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r InviteWebsitePrivateServiceVisitorResponse) GetJSON201() *externalRef0.PrivateServiceInvitation {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r InviteWebsitePrivateServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r InviteWebsitePrivateServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InviteWebsitePrivateServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InviteWebsitePrivateServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InviteWebsitePrivateServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeWebsitePrivateServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeWebsitePrivateServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeWebsitePrivateServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeWebsitePrivateServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeWebsitePrivateServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeWebsitePrivateServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListCompanyAdmissionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7190,6 +8838,54 @@ func (r SetCompanyMembershipDecisionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetCompanyMembershipDecisionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListWebsitePrivateServicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *externalRef0.PrivateServicePage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWebsitePrivateServicesResponse) GetJSON200() *externalRef0.PrivateServicePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWebsitePrivateServicesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWebsitePrivateServicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWebsitePrivateServicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWebsitePrivateServicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWebsitePrivateServicesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8535,6 +10231,175 @@ func (c *ClientWithResponses) PreviewServiceInvitationWithResponse(ctx context.C
 	return ParsePreviewServiceInvitationResponse(rsp)
 }
 
+// AcceptWebsitePrivateServiceInvitationWithBodyWithResponse performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcceptWebsitePrivateServiceInvitationWithBodyWithResponse(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptWebsitePrivateServiceInvitationResponse, error) {
+	rsp, err := c.AcceptWebsitePrivateServiceInvitationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptWebsitePrivateServiceInvitationResponse(rsp)
+}
+
+// AcceptWebsitePrivateServiceInvitationWithResponse performs a POST /v1/service/private-service-invitations/accept (the `AcceptWebsitePrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcceptWebsitePrivateServiceInvitationWithResponse(ctx context.Context, params *AcceptWebsitePrivateServiceInvitationParams, body AcceptWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptWebsitePrivateServiceInvitationResponse, error) {
+	rsp, err := c.AcceptWebsitePrivateServiceInvitation(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptWebsitePrivateServiceInvitationResponse(rsp)
+}
+
+// PreviewWebsitePrivateServiceInvitationWithBodyWithResponse performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PreviewWebsitePrivateServiceInvitationWithBodyWithResponse(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewWebsitePrivateServiceInvitationResponse, error) {
+	rsp, err := c.PreviewWebsitePrivateServiceInvitationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewWebsitePrivateServiceInvitationResponse(rsp)
+}
+
+// PreviewWebsitePrivateServiceInvitationWithResponse performs a POST /v1/service/private-service-invitations/preview (the `PreviewWebsitePrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PreviewWebsitePrivateServiceInvitationWithResponse(ctx context.Context, params *PreviewWebsitePrivateServiceInvitationParams, body PreviewWebsitePrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewWebsitePrivateServiceInvitationResponse, error) {
+	rsp, err := c.PreviewWebsitePrivateServiceInvitation(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewWebsitePrivateServiceInvitationResponse(rsp)
+}
+
+// GetWebsitePrivateServiceWithResponse performs a GET /v1/service/private-services/{private_service_id} (the `GetWebsitePrivateService` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetWebsitePrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams, reqEditors ...RequestEditorFn) (*GetWebsitePrivateServiceResponse, error) {
+	rsp, err := c.GetWebsitePrivateService(ctx, privateServiceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWebsitePrivateServiceResponse(rsp)
+}
+
+// ListWebsitePrivateServiceGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListWebsitePrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceGrantsResponse, error) {
+	rsp, err := c.ListWebsitePrivateServiceGrants(ctx, privateServiceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWebsitePrivateServiceGrantsResponse(rsp)
+}
+
+// RevokeWebsitePrivateServiceGrantWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id} (the `RevokeWebsitePrivateServiceGrant` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeWebsitePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params *RevokeWebsitePrivateServiceGrantParams, reqEditors ...RequestEditorFn) (*RevokeWebsitePrivateServiceGrantResponse, error) {
+	rsp, err := c.RevokeWebsitePrivateServiceGrant(ctx, privateServiceId, grantId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeWebsitePrivateServiceGrantResponse(rsp)
+}
+
+// ListWebsiteManagedHTTPGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/http-grants (the `ListWebsiteManagedHTTPGrants` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListWebsiteManagedHTTPGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsiteManagedHTTPGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsiteManagedHTTPGrantsResponse, error) {
+	rsp, err := c.ListWebsiteManagedHTTPGrants(ctx, privateServiceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWebsiteManagedHTTPGrantsResponse(rsp)
+}
+
+// CreateWebsiteManagedHTTPGrantWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateWebsiteManagedHTTPGrantWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteManagedHTTPGrantResponse, error) {
+	rsp, err := c.CreateWebsiteManagedHTTPGrantWithBody(ctx, privateServiceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWebsiteManagedHTTPGrantResponse(rsp)
+}
+
+// CreateWebsiteManagedHTTPGrantWithResponse performs a POST /v1/service/private-services/{private_service_id}/http-grants (the `CreateWebsiteManagedHTTPGrant` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+func (c *ClientWithResponses) CreateWebsiteManagedHTTPGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreateWebsiteManagedHTTPGrantParams, body CreateWebsiteManagedHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteManagedHTTPGrantResponse, error) {
+	rsp, err := c.CreateWebsiteManagedHTTPGrant(ctx, privateServiceId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWebsiteManagedHTTPGrantResponse(rsp)
+}
+
+// RevokeWebsiteManagedHTTPGrantWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/http-grants/{grant_id} (the `RevokeWebsiteManagedHTTPGrant` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeWebsiteManagedHTTPGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams, reqEditors ...RequestEditorFn) (*RevokeWebsiteManagedHTTPGrantResponse, error) {
+	rsp, err := c.RevokeWebsiteManagedHTTPGrant(ctx, privateServiceId, grantId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeWebsiteManagedHTTPGrantResponse(rsp)
+}
+
+// ListWebsitePrivateServiceInvitationsWithResponse performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListWebsitePrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceInvitationsResponse, error) {
+	rsp, err := c.ListWebsitePrivateServiceInvitations(ctx, privateServiceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWebsitePrivateServiceInvitationsResponse(rsp)
+}
+
+// InviteWebsitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) InviteWebsitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error) {
+	rsp, err := c.InviteWebsitePrivateServiceVisitorWithBody(ctx, privateServiceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInviteWebsitePrivateServiceVisitorResponse(rsp)
+}
+
+// InviteWebsitePrivateServiceVisitorWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) InviteWebsitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error) {
+	rsp, err := c.InviteWebsitePrivateServiceVisitor(ctx, privateServiceId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInviteWebsitePrivateServiceVisitorResponse(rsp)
+}
+
+// RevokeWebsitePrivateServiceInvitationWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeWebsitePrivateServiceInvitationWithResponse(ctx context.Context, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams, reqEditors ...RequestEditorFn) (*RevokeWebsitePrivateServiceInvitationResponse, error) {
+	rsp, err := c.RevokeWebsitePrivateServiceInvitation(ctx, privateServiceId, invitationId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeWebsitePrivateServiceInvitationResponse(rsp)
+}
+
 // ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -8719,6 +10584,19 @@ func (c *ClientWithResponses) SetCompanyMembershipDecisionWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseSetCompanyMembershipDecisionResponse(rsp)
+}
+
+// ListWebsitePrivateServicesWithResponse performs a GET /v1/service/teams/{team_id}/private-services (the `ListWebsitePrivateServices` operationId) request.
+//
+// Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListWebsitePrivateServicesWithResponse(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServicesResponse, error) {
+	rsp, err := c.ListWebsitePrivateServices(ctx, teamId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWebsitePrivateServicesResponse(rsp)
 }
 
 // ListTeamsWithResponse List teams for the authenticated identity
@@ -9738,6 +11616,357 @@ func ParsePreviewServiceInvitationResponse(rsp *http.Response) (*PreviewServiceI
 	return response, nil
 }
 
+// ParseAcceptWebsitePrivateServiceInvitationResponse parses an HTTP response from a AcceptWebsitePrivateServiceInvitationWithResponse call
+func ParseAcceptWebsitePrivateServiceInvitationResponse(rsp *http.Response) (*AcceptWebsitePrivateServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcceptWebsitePrivateServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest externalRef0.PrivateServiceGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePreviewWebsitePrivateServiceInvitationResponse parses an HTTP response from a PreviewWebsitePrivateServiceInvitationWithResponse call
+func ParsePreviewWebsitePrivateServiceInvitationResponse(rsp *http.Response) (*PreviewWebsitePrivateServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreviewWebsitePrivateServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceInvitationPreview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWebsitePrivateServiceResponse parses an HTTP response from a GetWebsitePrivateServiceWithResponse call
+func ParseGetWebsitePrivateServiceResponse(rsp *http.Response) (*GetWebsitePrivateServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWebsitePrivateServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest externalRef0.PrivateService
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListWebsitePrivateServiceGrantsResponse parses an HTTP response from a ListWebsitePrivateServiceGrantsWithResponse call
+func ParseListWebsitePrivateServiceGrantsResponse(rsp *http.Response) (*ListWebsitePrivateServiceGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWebsitePrivateServiceGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []externalRef0.PrivateServiceGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeWebsitePrivateServiceGrantResponse parses an HTTP response from a RevokeWebsitePrivateServiceGrantWithResponse call
+func ParseRevokeWebsitePrivateServiceGrantResponse(rsp *http.Response) (*RevokeWebsitePrivateServiceGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeWebsitePrivateServiceGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListWebsiteManagedHTTPGrantsResponse parses an HTTP response from a ListWebsiteManagedHTTPGrantsWithResponse call
+func ParseListWebsiteManagedHTTPGrantsResponse(rsp *http.Response) (*ListWebsiteManagedHTTPGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWebsiteManagedHTTPGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []externalRef0.ManagedHTTPGrantSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateWebsiteManagedHTTPGrantResponse parses an HTTP response from a CreateWebsiteManagedHTTPGrantWithResponse call
+func ParseCreateWebsiteManagedHTTPGrantResponse(rsp *http.Response) (*CreateWebsiteManagedHTTPGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateWebsiteManagedHTTPGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest externalRef0.ManagedHTTPGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeWebsiteManagedHTTPGrantResponse parses an HTTP response from a RevokeWebsiteManagedHTTPGrantWithResponse call
+func ParseRevokeWebsiteManagedHTTPGrantResponse(rsp *http.Response) (*RevokeWebsiteManagedHTTPGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeWebsiteManagedHTTPGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListWebsitePrivateServiceInvitationsResponse parses an HTTP response from a ListWebsitePrivateServiceInvitationsWithResponse call
+func ParseListWebsitePrivateServiceInvitationsResponse(rsp *http.Response) (*ListWebsitePrivateServiceInvitationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWebsitePrivateServiceInvitationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []externalRef0.PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInviteWebsitePrivateServiceVisitorResponse parses an HTTP response from a InviteWebsitePrivateServiceVisitorWithResponse call
+func ParseInviteWebsitePrivateServiceVisitorResponse(rsp *http.Response) (*InviteWebsitePrivateServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InviteWebsitePrivateServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest externalRef0.PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeWebsitePrivateServiceInvitationResponse parses an HTTP response from a RevokeWebsitePrivateServiceInvitationWithResponse call
+func ParseRevokeWebsitePrivateServiceInvitationResponse(rsp *http.Response) (*RevokeWebsitePrivateServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeWebsitePrivateServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListCompanyAdmissionsResponse parses an HTTP response from a ListCompanyAdmissionsWithResponse call
 func ParseListCompanyAdmissionsResponse(rsp *http.Response) (*ListCompanyAdmissionsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10006,6 +12235,39 @@ func ParseSetCompanyMembershipDecisionResponse(rsp *http.Response) (*SetCompanyM
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListWebsitePrivateServicesResponse parses an HTTP response from a ListWebsitePrivateServicesWithResponse call
+func ParseListWebsitePrivateServicesResponse(rsp *http.Response) (*ListWebsitePrivateServicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWebsitePrivateServicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest externalRef0.PrivateServicePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -10679,6 +12941,39 @@ type ServerInterface interface {
 	// (POST /v1/service/invitations/preview)
 	PreviewServiceInvitation(w http.ResponseWriter, r *http.Request)
 
+	// (POST /v1/service/private-service-invitations/accept)
+	AcceptWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, params AcceptWebsitePrivateServiceInvitationParams)
+
+	// (POST /v1/service/private-service-invitations/preview)
+	PreviewWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, params PreviewWebsitePrivateServiceInvitationParams)
+
+	// (GET /v1/service/private-services/{private_service_id})
+	GetWebsitePrivateService(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params GetWebsitePrivateServiceParams)
+
+	// (GET /v1/service/private-services/{private_service_id}/grants)
+	ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params ListWebsitePrivateServiceGrantsParams)
+
+	// (DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id})
+	RevokeWebsitePrivateServiceGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, grantId externalRef0.PrivateServiceGrantID, params RevokeWebsitePrivateServiceGrantParams)
+
+	// (GET /v1/service/private-services/{private_service_id}/http-grants)
+	ListWebsiteManagedHTTPGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params ListWebsiteManagedHTTPGrantsParams)
+
+	// (POST /v1/service/private-services/{private_service_id}/http-grants)
+	CreateWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params CreateWebsiteManagedHTTPGrantParams)
+
+	// (DELETE /v1/service/private-services/{private_service_id}/http-grants/{grant_id})
+	RevokeWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, grantId string, params RevokeWebsiteManagedHTTPGrantParams)
+
+	// (GET /v1/service/private-services/{private_service_id}/invitations)
+	ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params ListWebsitePrivateServiceInvitationsParams)
+
+	// (POST /v1/service/private-services/{private_service_id}/invitations)
+	InviteWebsitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params InviteWebsitePrivateServiceVisitorParams)
+
+	// (DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id})
+	RevokeWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params RevokeWebsitePrivateServiceInvitationParams)
+
 	// (GET /v1/service/teams/{team_id}/company-admissions)
 	ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, teamId string, params ListCompanyAdmissionsParams)
 
@@ -10705,6 +13000,9 @@ type ServerInterface interface {
 
 	// (PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision)
 	SetCompanyMembershipDecision(w http.ResponseWriter, r *http.Request, teamId string, membershipId string, params SetCompanyMembershipDecisionParams)
+
+	// (GET /v1/service/teams/{team_id}/private-services)
+	ListWebsitePrivateServices(w http.ResponseWriter, r *http.Request, teamId TeamID, params ListWebsitePrivateServicesParams)
 	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -11176,6 +13474,632 @@ func (siw *ServerInterfaceWrapper) PreviewServiceInvitation(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PreviewServiceInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptWebsitePrivateServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AcceptWebsitePrivateServiceInvitationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptWebsitePrivateServiceInvitation(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewWebsitePrivateServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) PreviewWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PreviewWebsitePrivateServiceInvitationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewWebsitePrivateServiceInvitation(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWebsitePrivateService operation middleware
+func (siw *ServerInterfaceWrapper) GetWebsitePrivateService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetWebsitePrivateServiceParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWebsitePrivateService(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWebsitePrivateServiceGrants operation middleware
+func (siw *ServerInterfaceWrapper) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWebsitePrivateServiceGrantsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebsitePrivateServiceGrants(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeWebsitePrivateServiceGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokeWebsitePrivateServiceGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId externalRef0.PrivateServiceGrantID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeWebsitePrivateServiceGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeWebsitePrivateServiceGrant(w, r, privateServiceId, grantId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWebsiteManagedHTTPGrants operation middleware
+func (siw *ServerInterfaceWrapper) ListWebsiteManagedHTTPGrants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWebsiteManagedHTTPGrantsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebsiteManagedHTTPGrants(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateWebsiteManagedHTTPGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreateWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateWebsiteManagedHTTPGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateWebsiteManagedHTTPGrant(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeWebsiteManagedHTTPGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokeWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeWebsiteManagedHTTPGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeWebsiteManagedHTTPGrant(w, r, privateServiceId, grantId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWebsitePrivateServiceInvitations operation middleware
+func (siw *ServerInterfaceWrapper) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWebsitePrivateServiceInvitationsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebsitePrivateServiceInvitations(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InviteWebsitePrivateServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) InviteWebsitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InviteWebsitePrivateServiceVisitorParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InviteWebsitePrivateServiceVisitor(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeWebsitePrivateServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) RevokeWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "invitation_id" -------------
+	var invitationId externalRef0.PrivateServiceInvitationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invitation_id", r.PathValue("invitation_id"), &invitationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokeWebsitePrivateServiceInvitationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeWebsitePrivateServiceInvitation(w, r, privateServiceId, invitationId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11716,6 +14640,73 @@ func (siw *ServerInterfaceWrapper) SetCompanyMembershipDecision(w http.ResponseW
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetCompanyMembershipDecision(w, r, teamId, membershipId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWebsitePrivateServices operation middleware
+func (siw *ServerInterfaceWrapper) ListWebsitePrivateServices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWebsitePrivateServicesParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebsitePrivateServices(w, r, teamId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -12409,6 +15400,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/private-services", wrapper.ListWebsitePrivateServices)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}", wrapper.GetWebsitePrivateService)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/grants", wrapper.ListWebsitePrivateServiceGrants)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/grants/{grant_id}", wrapper.RevokeWebsitePrivateServiceGrant)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/invitations", wrapper.ListWebsitePrivateServiceInvitations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/invitations", wrapper.InviteWebsitePrivateServiceVisitor)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/invitations/{invitation_id}", wrapper.RevokeWebsitePrivateServiceInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/private-service-invitations/preview", wrapper.PreviewWebsitePrivateServiceInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/private-service-invitations/accept", wrapper.AcceptWebsitePrivateServiceInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants", wrapper.ListWebsiteManagedHTTPGrants)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants", wrapper.CreateWebsiteManagedHTTPGrant)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants/{grant_id}", wrapper.RevokeWebsiteManagedHTTPGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/github", wrapper.ExchangeGitHubWorkload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/renew", wrapper.RenewWorkloadSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/workload-sessions/{session_id}", wrapper.RevokeWorkloadSession)

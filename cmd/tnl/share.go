@@ -27,12 +27,13 @@ import (
 )
 
 type shareCommand struct {
-	Invite shareInviteCommand `cmd:"" help:"Invite a verified-email visitor without team membership."`
-	Link   linkShareCommand   `cmd:"" help:"Create a browser share link."`
-	Token  tokenShareCommand  `cmd:"" help:"Create a share token for an HTTP client."`
-	Team   teamShareCommand   `cmd:"" help:"Share the preview with its team."`
-	List   shareListCommand   `cmd:"" help:"List access for the selected team."`
-	Revoke shareRevokeCommand `cmd:"" help:"Revoke a share by ID."`
+	Service serviceShareCommand `cmd:"" help:"Manage access to one configured service or exact service ID."`
+	Invite  shareInviteCommand  `cmd:"" help:"Invite a verified-email visitor without team membership."`
+	Link    linkShareCommand    `cmd:"" help:"Create a browser share link."`
+	Token   tokenShareCommand   `cmd:"" help:"Create a share token for an HTTP client."`
+	Team    teamShareCommand    `cmd:"" help:"Share the preview with its team."`
+	List    shareListCommand    `cmd:"" help:"List access for the selected team."`
+	Revoke  shareRevokeCommand  `cmd:"" help:"Revoke a share by ID."`
 }
 
 type teamShareCommand struct {

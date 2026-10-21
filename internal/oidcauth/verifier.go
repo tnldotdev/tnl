@@ -32,6 +32,7 @@ type Identity struct {
 	Nonce                  string
 	ExpiresAt              time.Time
 	AssertionDigest        [32]byte
+	AssertionID            string
 	ClientID               string
 	IssuedAt               time.Time
 	TeamContexts           []TeamContext
@@ -174,6 +175,7 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 	}
 	var claims struct {
 		Name              string        `json:"name"`
+		AssertionID       string        `json:"jti"`
 		PreferredUsername string        `json:"preferred_username"`
 		Email             string        `json:"email"`
 		EmailVerified     bool          `json:"email_verified"`
@@ -230,7 +232,8 @@ func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw str
 		return Identity{}, ErrUnauthenticated
 	}
 	return Identity{
-		Issuer: token.Issuer, Subject: token.Subject, DisplayName: displayName,
+		AssertionID: claims.AssertionID,
+		Issuer:      token.Issuer, Subject: token.Subject, DisplayName: displayName,
 		NormalizedEmail: email, EmailVerified: claims.EmailVerified, Nonce: claims.Nonce,
 		ExpiresAt: token.Expiry.UTC(), AssertionDigest: sha256.Sum256([]byte(raw)),
 		TeamContexts:    claims.TeamContexts,

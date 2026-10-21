@@ -571,6 +571,18 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Share.Invite.List.remoteFlags, false)
 	case "share invite revoke <url> <invitation-id>":
 		apply(&flags.Share.Invite.Revoke.remoteFlags, false)
+	case "share service invite create <name>":
+		return project.applyServiceShare(&flags.Share.Service.Invite.Create.serviceShareSelection)
+	case "share service invite accept <secret>":
+		apply(&flags.Share.Service.Invite.Accept.remoteFlags, false)
+	case "share service list <name>":
+		return project.applyServiceShare(&flags.Share.Service.List.serviceShareSelection)
+	case "share service revoke <name> <access-id>":
+		return project.applyServiceShare(&flags.Share.Service.Revoke.serviceShareSelection)
+	case "share service link create <name>":
+		return project.applyServiceShare(&flags.Share.Service.Link.Create.serviceShareSelection)
+	case "share service token create <name>":
+		return project.applyServiceShare(&flags.Share.Service.Token.Create.serviceShareSelection)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share token create <url>":

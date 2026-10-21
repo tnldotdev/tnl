@@ -270,7 +270,76 @@ connection and bytes; a closed upstream is final, including for GETs. HTTP
 streaming and upgrades do not replay requests. `target.tls` remains independent
 of the managed service certificate and visitor authentication.
 
+## manage exact-service access from the cli
+
+Use `tnl share service` for a configured service key or an immutable `psvc_` ID:
+
+```console
+tnl share service invite create orders --email reviewer@example.com --expires-in 4h
+tnl share service invite accept "$INVITATION_SECRET"
+tnl share service list orders
+tnl share service list psvc_SERVICE --output=json
+tnl share service revoke orders psivt_INVITATION
+tnl share service revoke orders psgr_GRANT
+```
+
+Creation requires exactly one explicit deadline: `--expires-in` accepts durations
+such as `4h` or `7d`; `--expires-at` accepts an RFC3339 timestamp. Invitations last
+at most 30 days. Acceptance keeps that deadline and requires the matching
+signed-in verified email. It creates one identity grant for that service, never
+a team membership, team grant, or publisher-group grant. Revoking an invitation
+also revokes its accepted grant. Revoking a `psgr_` ID through this command checks
+that it is an identity grant; declared team grants belong to project configuration.
+
+Configured keys select one entry from the current team's manager inventory by
+exact project key, source fingerprint, configuration key, and worktree key.
+Local services use the current worktree realization; applied services use an
+empty worktree key. Selection does not require a visit grant. The CLI rechecks
+the same source binding on its immutable-ID manager read before managing access.
+Missing or ambiguous bindings fail instead of selecting a saved name or another
+project's friendly name. `name` overrides do not change the configuration key
+used here. Named publishers' HTTP `publicURL` policies still select managed
+services. Local `publicURL` declarations use the existing `tnl share invite`,
+`link`, and `token` commands with a public URL.
+`--server` and `--team` retain their usual explicit selection rules; `--no-config`
+with an exact service ID works outside the project.
+
+All management operations use the current signed-in person's control session;
+control checks current owner/admin permission. Accepting an invitation needs no
+membership in the service's team. List returns exact-service grants and
+invitations, including accepted, expired, and revoked records. Human output
+includes identity and invitation IDs, states, and deadlines. JSON includes
+`schema_version: 1`, `private_service_id`, `grants`, and `invitations`; it never
+includes invitation secrets. Managed HTTP summaries appear in `http_grants`
+without their token or share secret. The list covers stored grants, not an enumeration
+of current team members or all effective access decisions.
+
+Creation prints the one-time secret as a raw stdout value. `--output=json`
+returns the creation model, including its secret. Acceptance, listing, and
+revocation use the shared human renderer by default and support JSON. Finite
+results go to stdout; authentication prompts and errors go to stderr.
+
 ## create managed http tokens and shares
+
+For a publicly reachable managed HTTP service, the CLI exposes the existing
+bounded HTTP credential operations:
+
+```console
+tnl share service token create web --expires-in 1h
+tnl share service link create web --expires-at 2026-10-21T12:00:00Z
+tnl share service revoke web mhg_GRANT
+```
+
+These commands require exactly one deadline and enforce the server's seven-day
+maximum. They require `protocol: http` and a public managed endpoint; private
+connector access uses identity invitations. Human-mode creation prints only the
+raw token or share URL; `--output=json` returns the API creation model. The CLI
+checks the exact `managed_service` subject, service ID, credential kind, and
+deadline before printing it. Share URLs must retain the managed hostname and
+allocated port. A public URL grant cannot substitute for this managed service.
+`tnl share service list` includes managed HTTP credential IDs, kinds, deadlines,
+and revocation state without returning their secrets. Use the exact `mhg_` ID
+from creation or the list for revocation.
 
 A current service manager can create a bounded credential through the control
 API. These credentials use the explicit `managed_service` subject and `mhg_`

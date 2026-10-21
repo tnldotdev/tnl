@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/serviceaccess"
 	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -66,41 +66,7 @@ func privateVisitorError(w http.ResponseWriter, operation string, err error) {
 }
 
 func privateRecord(record controlstate.PrivateServiceRecord) controlv1.PrivateService {
-	result := controlv1.PrivateService{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
-		Enabled: record.Enabled, CreatedAt: record.CreatedAt}
-	protocol := controlv1.PrivateServiceProtocol(record.Protocol)
-	result.Protocol, result.PublisherPool, result.TrustRevision = protocol, record.PublisherPool, record.TrustRevision
-	result.ManagedTls = managedTLSResponse(record.ManagedTLS)
-	if h := record.HTTPLimits; h != nil {
-		result.HttpLimits = &controlv1.ProjectHTTPApplicationLimits{Total: h.Total, Concurrency: h.Concurrency}
-		if r := h.Rate; r != nil {
-			result.HttpLimits.Rate = &controlv1.ProjectApplicationRate{Count: r.Count, Per: r.Per, Burst: r.Burst}
-		}
-	}
-	if record.DomainID != "" {
-		result.DomainId = &record.DomainID
-	}
-	if record.Placement != nil {
-		p := record.Placement
-		result.Placement = &controlv1.PrivateServicePlacement{}
-		if p.DomainID != "" {
-			result.Placement.DomainId = &p.DomainID
-		}
-		if p.WorktreeKey != "" {
-			result.Placement.WorktreeKey = &p.WorktreeKey
-		}
-		if p.WorktreeLabel != "" {
-			result.Placement.WorktreeLabel = &p.WorktreeLabel
-		}
-	}
-	if record.Source != nil {
-		s := record.Source
-		result.Source = &controlv1.LocalServiceSource{ProjectKey: s.ProjectKey, SourceFingerprint: s.SourceFingerprint, Service: s.Service, WorktreeKey: s.WorktreeKey}
-	}
-	if record.TLS != nil {
-		result.TargetTls = privateTLSResponse(record.TLS)
-	}
-	return result
+	return serviceaccess.Service(record)
 }
 
 func managedTLSResponse(value *controlstate.ManagedServiceTLS) *controlv1.ManagedServiceTLS {
@@ -108,17 +74,6 @@ func managedTLSResponse(value *controlstate.ManagedServiceTLS) *controlv1.Manage
 		return nil
 	}
 	return &controlv1.ManagedServiceTLS{Hostname: value.Hostname, Port: value.Port, Public: value.Public}
-}
-
-func privateTLSResponse(t *controlstate.PrivateServiceTLS) *controlv1.PrivateServiceTLS {
-	if t == nil {
-		return nil
-	}
-	result := &controlv1.PrivateServiceTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest}
-	if t.PEM != "" {
-		result.Pem = &t.PEM
-	}
-	return result
 }
 
 func privateTLSInput(t *controlv1.PrivateServiceTLS) *controlstate.PrivateServiceTLS {
@@ -261,16 +216,7 @@ func (h *handler) DeletePrivateService(w http.ResponseWriter, r *http.Request, i
 }
 
 func privateGrant(grant controlstate.PrivateServiceGrant) controlv1.PrivateServiceGrant {
-	result := controlv1.PrivateServiceGrant{Id: grant.ID, PrivateServiceId: grant.PrivateServiceID,
-		Kind: controlv1.PrivateServiceGrantKind(grant.Kind), CreatedAt: grant.CreatedAt,
-		ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
-	if grant.IdentityID != "" {
-		result.IdentityId = &grant.IdentityID
-	}
-	if grant.InvitationID != "" {
-		result.InvitationId = &grant.InvitationID
-	}
-	return result
+	return serviceaccess.Grant(grant)
 }
 
 func (h *handler) CreatePrivateServiceGrant(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ controlv1.CreatePrivateServiceGrantParams) {
@@ -325,13 +271,7 @@ func (h *handler) RevokePrivateServiceGrant(w http.ResponseWriter, r *http.Reque
 }
 
 func privateInvitation(invitation controlstate.PrivateServiceInvitation) controlv1.PrivateServiceInvitation {
-	result := controlv1.PrivateServiceInvitation{Id: invitation.ID, PrivateServiceId: invitation.PrivateServiceID,
-		Email: openapi_types.Email(invitation.Email), ExpiresAt: invitation.ExpiresAt,
-		AcceptedAt: invitation.AcceptedAt, RevokedAt: invitation.RevokedAt}
-	if invitation.Secret != "" {
-		result.Secret = &invitation.Secret
-	}
-	return result
+	return serviceaccess.Invitation(invitation)
 }
 
 func (h *handler) InvitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ controlv1.InvitePrivateServiceVisitorParams) {
@@ -371,7 +311,7 @@ func (h *handler) ListPrivateServiceInvitations(w http.ResponseWriter, r *http.R
 }
 
 func (h *handler) AcceptPrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
-	var body controlv1.AcceptPrivateServiceInvitationJSONBody
+	var body controlv1.PrivateServiceInvitationCredential
 	if decodeJSON(w, r, &body) != nil || len(body.Secret) < 32 {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid private service invitation secret")
 		return

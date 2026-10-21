@@ -159,7 +159,7 @@ func (d *Database) CreatePrivateServiceGrant(ctx context.Context, serviceID, act
 }
 
 func (d *Database) ListPrivateServiceGrants(ctx context.Context, serviceID, actorID string) (result []PrivateServiceGrant, retErr error) {
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func (d *Database) RevokePrivateServiceGrant(ctx context.Context, serviceID, act
 	if !opaqueid.Valid(grantID, opaqueid.PrivateServiceGrantPrefix) {
 		return ErrPrivateServiceAccess
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
@@ -214,6 +214,9 @@ func privateServiceRecord(row controlstatedb.ControlPrivateService) PrivateServi
 }
 
 func privateServiceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
+	if _, signed := serviceActor(ctx); signed {
+		return serviceActorManager(ctx, tx, teamID, actorID, time.Now())
+	}
 	var current bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.teams team
 		JOIN control.team_memberships member ON member.team_id = team.id
@@ -352,7 +355,7 @@ func (d *Database) ListPrivateServices(ctx context.Context, teamID, actorID, aft
 	if after != "" && !opaqueid.Valid(after, opaqueid.PrivateServicePrefix) {
 		return nil, "", ErrPrivateServiceAccess
 	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return nil, "", err
 	}
@@ -371,7 +374,11 @@ func (d *Database) ListPrivateServices(ctx context.Context, teamID, actorID, aft
 			next = rows[index-1].ID
 			break
 		}
-		result = append(result, privateServiceRecord(row))
+		record := privateServiceRecord(row)
+		if err = privateServiceSource(ctx, controlstatedb.New(tx), &record); err != nil {
+			return nil, "", err
+		}
+		result = append(result, record)
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, "", err
@@ -383,25 +390,45 @@ func (d *Database) GetPrivateService(ctx context.Context, serviceID, actorID str
 	if !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) {
 		return result, ErrPrivateServiceAccess
 	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "get private service", &retErr)()
-	row, err := controlstatedb.New(tx).GetPrivateService(ctx, serviceID)
+	var row controlstatedb.ControlPrivateService
+	if _, signed := serviceActor(ctx); signed {
+		row, err = lockManagedPrivateService(ctx, tx, serviceID, actorID)
+	} else {
+		row, err = controlstatedb.New(tx).GetPrivateService(ctx, serviceID)
+		if err == nil {
+			err = privateServiceManager(ctx, tx, row.TeamID, actorID)
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PrivateServiceRecord{}, ErrPrivateServiceAccess
 	} else if err != nil {
 		return PrivateServiceRecord{}, err
 	}
-	if err = privateServiceManager(ctx, tx, row.TeamID, actorID); err != nil {
-		return PrivateServiceRecord{}, err
-	}
 	result = privateServiceRecord(row)
+	if err = privateServiceSource(ctx, controlstatedb.New(tx), &result); err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return PrivateServiceRecord{}, err
 	}
 	return result, nil
+}
+
+func privateServiceSource(ctx context.Context, q *controlstatedb.Queries, record *PrivateServiceRecord) error {
+	source, err := q.GetPrivateServiceSource(ctx, text(record.ID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	record.Source = &LocalServiceSource{ProjectKey: source.ProjectKey, SourceFingerprint: source.SourceFingerprint, Service: source.Service, WorktreeKey: source.WorktreeKey}
+	return nil
 }
 
 func (d *Database) DeletePrivateService(ctx context.Context, serviceID, actorID string, now time.Time) (retErr error) {

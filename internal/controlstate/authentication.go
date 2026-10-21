@@ -88,6 +88,7 @@ type OIDCIdentity struct {
 	NormalizedEmail        string
 	EmailVerified          bool
 	AssertionDigest        [32]byte
+	AssertionID            string
 	AssertionExpiry        time.Time
 	TeamContexts           []oidcauth.TeamContext
 	Nonce                  string

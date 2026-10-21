@@ -562,6 +562,8 @@ control and standalone serve the authority API at the control URL.
 OIDC providers prove identity; control owns current memberships and publishing
 decisions. the hosted website uses the narrow
 [hosted integration](hosted-integration.md) for its team picker and invitations.
+the [signed-human service bridge](service-access.md) reuses exact-service grants
+and invitations, with fresh operation-bound assertions and current authorization.
 
 organization teams can require a control-owned company identity connection.
 control keeps managed eligibility separate from manual membership decisions and

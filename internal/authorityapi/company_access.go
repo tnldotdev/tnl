@@ -1,16 +1,12 @@
 package authorityapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -57,45 +53,16 @@ func companyError(w http.ResponseWriter, operation string, err error) {
 }
 
 func companyOIDCIdentity(i oidcauth.Identity) controlstate.OIDCIdentity {
-	return controlstate.OIDCIdentity{Issuer: i.Issuer, Subject: i.Subject, DisplayName: i.DisplayName, NormalizedEmail: i.NormalizedEmail, EmailVerified: i.EmailVerified, AssertionDigest: i.AssertionDigest, AssertionExpiry: i.ExpiresAt, TeamContexts: i.TeamContexts, Nonce: i.Nonce, ClientID: i.ClientID, IssuedAt: i.IssuedAt, AuthenticatedAt: i.AuthenticatedAt, TenantID: i.TenantID, HostedDomain: i.HostedDomain, Groups: i.Groups}
+	return controlstate.OIDCIdentity{Issuer: i.Issuer, Subject: i.Subject, DisplayName: i.DisplayName, NormalizedEmail: i.NormalizedEmail, EmailVerified: i.EmailVerified, AssertionDigest: i.AssertionDigest, AssertionID: i.AssertionID, AssertionExpiry: i.ExpiresAt, TeamContexts: i.TeamContexts, Nonce: i.Nonce, ClientID: i.ClientID, IssuedAt: i.IssuedAt, AuthenticatedAt: i.AuthenticatedAt, TenantID: i.TenantID, HostedDomain: i.HostedDomain, Groups: i.Groups}
 }
 
 func (h *handler) companyOwner(w http.ResponseWriter, r *http.Request, body any) (companyAccessStore, bool) {
-	if !h.authenticateWebService(w, r) {
+	i, nonce, ok := h.verifiedHumanRequest(w, r, body, controlstate.CompanyActorNonce, false)
+	if !ok {
 		return nil, false
 	}
 	s, ok := h.companyStore(w)
 	if !ok {
-		return nil, false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	raw, err := io.ReadAll(r.Body)
-	if err != nil || body == nil && len(raw) != 0 {
-		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid company request")
-		return nil, false
-	}
-	if body != nil {
-		if err = httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), body); err != nil {
-			writeProblem(w, 400, authorityv1.InvalidRequest, "invalid company request")
-			return nil, false
-		}
-	}
-	if h.config.OIDCVerifier == nil {
-		writeAuthenticationUnavailable(w, "verify company owner", nil)
-		return nil, false
-	}
-	i, err := h.config.OIDCVerifier.Verify(r.Context(), r.Header.Get("X-Tnl-Actor-Token"))
-	if err != nil {
-		companyError(w, "verify company owner", err)
-		return nil, false
-	}
-	if i.Issuer != h.config.OIDCIssuer || i.ClientID != h.config.OIDCClientID || h.config.OIDCClientID == "" {
-		writeBearerProblem(w)
-		return nil, false
-	}
-	nonce := controlstate.CompanyActorNonce(r.Method, r.URL.EscapedPath(), raw)
-	if i.Nonce != nonce {
-		writeBearerProblem(w)
 		return nil, false
 	}
 	*r = *r.WithContext(controlstate.WithCompanyActorProof(r.Context(), companyOIDCIdentity(i), nonce))

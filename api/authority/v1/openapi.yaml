@@ -9,6 +9,216 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/service/teams/{team_id}/private-services:
+    parameters:
+      - { $ref: "#/components/parameters/TeamID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: listWebsitePrivateServices
+      security: [{ webServiceAuth: [] }]
+      description: Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Saved services, including managed HTTP, with source context
+          content:
+            application/json:
+              schema:
+                { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServicePage" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: getWebsitePrivateService
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Exact currently manageable saved service
+          content:
+            application/json:
+              schema: { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateService" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/grants:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: listWebsitePrivateServiceGrants
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Exact service grants, including expired and revoked records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/grants/{grant_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+      - {
+          name: grant_id,
+          in: path,
+          required: true,
+          schema:
+            { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrantID" },
+        }
+    delete:
+      operationId: revokeWebsitePrivateServiceGrant
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "204": { description: Exact grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/invitations:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: listWebsitePrivateServiceInvitations
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Exact service invitations without secrets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  {
+                    $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitation",
+                  }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: inviteWebsitePrivateServiceVisitor
+      security: [{ webServiceAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/CreatePrivateServiceInvitationRequest",
+              }
+      responses:
+        "201":
+          description: Exact service invitation; secret returned only at creation
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitation",
+                }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/invitations/{invitation_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+      - {
+          name: invitation_id,
+          in: path,
+          required: true,
+          schema:
+            {
+              $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitationID",
+            },
+        }
+    delete:
+      operationId: revokeWebsitePrivateServiceInvitation
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "204": { description: Exact invitation and its accepted grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-service-invitations/preview:
+    post:
+      operationId: previewWebsitePrivateServiceInvitation
+      security: [{ webServiceAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServiceActorToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceInvitationCredential" }
+      responses:
+        "200":
+          description: Bounded exact service and deadline for the matching verified recipient; does not accept
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceInvitationPreview" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-service-invitations/accept:
+    post:
+      operationId: acceptWebsitePrivateServiceInvitation
+      security: [{ webServiceAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/ServiceActorToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceInvitationCredential" }
+      responses:
+        "200":
+          description: Existing exact-service identity grant, retaining the invitation deadline
+          content:
+            application/json:
+              schema:
+                { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/http-grants:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: listWebsiteManagedHTTPGrants
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Secretless credential summaries for this exact managed service
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  {
+                    $ref: "../../control/v1/openapi.yaml#/components/schemas/ManagedHTTPGrantSummary",
+                  }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createWebsiteManagedHTTPGrant
+      security: [{ webServiceAuth: [] }]
+      description: Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../../control/v1/openapi.yaml#/components/schemas/CreateManagedHTTPGrantRequest",
+              }
+      responses:
+        "201":
+          description: Exact managed subject and one-time secret
+          content:
+            application/json:
+              schema: { $ref: "../../control/v1/openapi.yaml#/components/schemas/ManagedHTTPGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/private-services/{private_service_id}/http-grants/{grant_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+      - { name: grant_id, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: revokeWebsiteManagedHTTPGrant
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "204": { description: Exact managed HTTP credential revoked }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/workload-sessions/github:
     post:
       operationId: exchangeGitHubWorkload
@@ -919,6 +1129,17 @@ components:
       scheme: bearer
       bearerFormat: OAuth access token
   parameters:
+    PrivateServiceID:
+      name: private_service_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/PrivateServiceID" }
+    ServiceActorToken:
+      name: X-Tnl-Actor-Token
+      in: header
+      required: true
+      description: Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+      schema: { type: string }
     CompanyActorToken:
       name: X-Tnl-Actor-Token
       in: header
@@ -977,6 +1198,18 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PrivateServiceInvitationCredential:
+      $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitationCredential"
+    PrivateServiceInvitationPreview:
+      type: object
+      additionalProperties: false
+      required: [private_service_id, team_id, name, protocol, expires_at]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        name: { type: string }
+        protocol: { type: string }
+        expires_at: { type: string, format: date-time }
     GitHubWorkloadExchange:
       type: object
       additionalProperties: false
@@ -1239,8 +1472,7 @@ components:
             description: Unix seconds of actual company authentication; not token refresh time,
           }
     PrivateServiceID:
-      type: string
-      pattern: "^psvc_[A-Za-z0-9]{22}$"
+      $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceID"
     TeamFeedbackPolicy:
       type: object
       additionalProperties: false
@@ -1856,6 +2088,9 @@ components:
               invalid_request,
               unauthenticated,
               forbidden,
+              manager_required,
+              source_sign_in_required,
+              verified_email_required,
               not_found,
               conflict,
               rate_limited,

@@ -16,24 +16,37 @@ const acceptPrivateServiceInvitation = `-- name: AcceptPrivateServiceInvitation 
 UPDATE control.private_service_invitations invitation
 SET accepted_identity_id = $1, accepted_at = $2
 FROM control.private_services service, control.identities person
-WHERE invitation.token_digest = $3 AND invitation.revoked_at IS NULL
+WHERE invitation.id=$3 AND invitation.private_service_id=$4
+    AND invitation.token_digest = $5 AND invitation.revoked_at IS NULL
     AND invitation.accepted_at IS NULL AND invitation.expires_at > $2
     AND service.id = invitation.private_service_id AND service.team_id = invitation.team_id
     AND service.enabled AND service.deleted_at IS NULL
     AND person.id = $1 AND person.disabled_at IS NULL
-    AND person.email_verified AND person.normalized_email = invitation.normalized_email
+    AND ($6::text=invitation.normalized_email
+        OR ($6::text IS NULL AND person.email_verified AND person.normalized_email = invitation.normalized_email))
 RETURNING invitation.id, invitation.private_service_id, invitation.team_id, invitation.normalized_email, invitation.token_digest, invitation.created_by_identity_id, invitation.idempotency_key, invitation.request_digest, invitation.created_at, invitation.expires_at, invitation.accepted_at, invitation.accepted_identity_id, invitation.revoked_at
 `
 
 type AcceptPrivateServiceInvitationParams struct {
-	IdentityID  pgtype.Text
-	Now         pgtype.Timestamptz
-	TokenDigest []byte
+	IdentityID         pgtype.Text
+	Now                pgtype.Timestamptz
+	ID                 string
+	PrivateServiceID   string
+	TokenDigest        []byte
+	VerifiedActorEmail pgtype.Text
 }
 
-// a verified exact email is required even when a caller has checked it already.
+// verified_actor_email comes only from the consumed configured-issuer assertion;
+// control sessions retain their stored verified email check.
 func (q *Queries) AcceptPrivateServiceInvitation(ctx context.Context, arg AcceptPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error) {
-	row := q.db.QueryRow(ctx, acceptPrivateServiceInvitation, arg.IdentityID, arg.Now, arg.TokenDigest)
+	row := q.db.QueryRow(ctx, acceptPrivateServiceInvitation,
+		arg.IdentityID,
+		arg.Now,
+		arg.ID,
+		arg.PrivateServiceID,
+		arg.TokenDigest,
+		arg.VerifiedActorEmail,
+	)
 	var i ControlPrivateServiceInvitation
 	err := row.Scan(
 		&i.ID,
@@ -453,6 +466,37 @@ func (q *Queries) GetPrivateService(ctx context.Context, id string) (ControlPriv
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getPrivateServiceSource = `-- name: GetPrivateServiceSource :one
+SELECT l.project_key,l.source_fingerprint,l.service,l.worktree_key
+FROM control.local_project_services l WHERE l.private_service_id=$1
+UNION ALL
+SELECT a.project_key,p.source_fingerprint,a.service,s.placement_worktree_key AS worktree_key
+FROM control.applied_project_services a
+JOIN control.applied_projects p ON p.team_id=a.team_id AND p.project_key=a.project_key
+JOIN control.private_services s ON s.id=a.private_service_id
+WHERE a.private_service_id=$1
+LIMIT 1
+`
+
+type GetPrivateServiceSourceRow struct {
+	ProjectKey        string
+	SourceFingerprint string
+	Service           string
+	WorktreeKey       string
+}
+
+func (q *Queries) GetPrivateServiceSource(ctx context.Context, privateServiceID pgtype.Text) (GetPrivateServiceSourceRow, error) {
+	row := q.db.QueryRow(ctx, getPrivateServiceSource, privateServiceID)
+	var i GetPrivateServiceSourceRow
+	err := row.Scan(
+		&i.ProjectKey,
+		&i.SourceFingerprint,
+		&i.Service,
+		&i.WorktreeKey,
 	)
 	return i, err
 }
@@ -1158,6 +1202,40 @@ func (q *Queries) ListPrivateServicesForTeam(ctx context.Context, arg ListPrivat
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPendingPrivateServiceInvitation = `-- name: LockPendingPrivateServiceInvitation :one
+SELECT id, private_service_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.private_service_invitations
+WHERE id=$1 AND private_service_id=$2
+AND revoked_at IS NULL AND accepted_at IS NULL AND expires_at>$3
+FOR UPDATE
+`
+
+type LockPendingPrivateServiceInvitationParams struct {
+	ID               string
+	PrivateServiceID string
+	Now              pgtype.Timestamptz
+}
+
+func (q *Queries) LockPendingPrivateServiceInvitation(ctx context.Context, arg LockPendingPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error) {
+	row := q.db.QueryRow(ctx, lockPendingPrivateServiceInvitation, arg.ID, arg.PrivateServiceID, arg.Now)
+	var i ControlPrivateServiceInvitation
+	err := row.Scan(
+		&i.ID,
+		&i.PrivateServiceID,
+		&i.TeamID,
+		&i.NormalizedEmail,
+		&i.TokenDigest,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedIdentityID,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const lockPrivateService = `-- name: LockPrivateService :one

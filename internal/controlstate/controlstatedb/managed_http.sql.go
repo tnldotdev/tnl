@@ -174,6 +174,43 @@ func (q *Queries) InsertManagedHTTPGrant(ctx context.Context, arg InsertManagedH
 	return err
 }
 
+const listManagedHTTPGrants = `-- name: ListManagedHTTPGrants :many
+SELECT id,kind,expires_at,revoked_at FROM control.managed_http_grants
+WHERE private_service_id=$1 ORDER BY id
+`
+
+type ListManagedHTTPGrantsRow struct {
+	ID        string
+	Kind      string
+	ExpiresAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListManagedHTTPGrants(ctx context.Context, privateServiceID string) ([]ListManagedHTTPGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listManagedHTTPGrants, privateServiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListManagedHTTPGrantsRow
+	for rows.Next() {
+		var i ListManagedHTTPGrantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedHTTPAppliedConfiguration = `-- name: ManagedHTTPAppliedConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key

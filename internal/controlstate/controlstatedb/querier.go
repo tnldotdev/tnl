@@ -11,7 +11,8 @@ import (
 )
 
 type Querier interface {
-	// a verified exact email is required even when a caller has checked it already.
+	// verified_actor_email comes only from the consumed configured-issuer assertion;
+	// control sessions retain their stored verified email check.
 	AcceptPrivateServiceInvitation(ctx context.Context, arg AcceptPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error)
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitorInvitationParams) error
@@ -202,6 +203,7 @@ type Querier interface {
 	// starting a run requires its exact authenticated publisher, grant and key.
 	GetPrivateRunPublisherIdentity(ctx context.Context, arg GetPrivateRunPublisherIdentityParams) ([]byte, error)
 	GetPrivateService(ctx context.Context, id string) (ControlPrivateService, error)
+	GetPrivateServiceSource(ctx context.Context, privateServiceID pgtype.Text) (GetPrivateServiceSourceRow, error)
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
 	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
@@ -331,6 +333,7 @@ type Querier interface {
 	// fetch bounded metadata; exact replays load histogram payloads separately.
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
+	ListManagedHTTPGrants(ctx context.Context, privateServiceID string) ([]ListManagedHTTPGrantsRow, error)
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPrivateServiceConnectionSlots(ctx context.Context, privateRunID string) ([]ControlPrivateServiceConnectionSlot, error)
@@ -412,6 +415,7 @@ type Querier interface {
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
+	LockPendingPrivateServiceInvitation(ctx context.Context, arg LockPendingPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error)
 	LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error)
 	LockPrivateService(ctx context.Context, id string) (ControlPrivateService, error)
 	LockPrivateServiceRoutingClock(ctx context.Context) (int64, error)
