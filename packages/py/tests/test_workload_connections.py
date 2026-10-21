@@ -14,6 +14,47 @@ import tnl
 from tnl import _connections, _workload
 
 
+@pytest.mark.parametrize("denied", [False, True])
+def test_inactive_manifest_policies_do_not_exhaust_the_process_lifetime_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, denied: bool
+) -> None:
+    for cache in ("_sessions", "_contexts", "_identities", "_policy_locks"):
+        monkeypatch.setattr(_connections, cache, {})
+    monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
+    contexts = 0
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal contexts
+        if args[0] == "context":
+            contexts += 1
+            return {"schema": 1, "config_digest": f"{contexts:064x}"}
+        assert args[0] == "identity"
+        if denied:
+            raise tnl.TnlError("sdk.workload_denied", "assertion rejected")
+        return {
+            "schema": 1,
+            "binding": "a" * 64,
+            "assertion_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+
+    monkeypatch.setattr(_connections, "_command", command)
+    for index in range(40):
+        selection = _workload.Selection("job", str(tmp_path / "manifest"), "assertion", str(index))
+        if denied:
+            with pytest.raises(tnl.TnlError) as error:
+                _connections._workload_session(str(tmp_path), selection)
+            assert error.value.code == "sdk.workload_denied"
+        else:
+            session = _connections._workload_session(str(tmp_path), selection)
+            # a live policy still reuses only its control-verified identity.
+            assert _connections._workload_session(str(tmp_path), selection) is session
+            session.close()
+    assert contexts == 40
+    assert not _connections._contexts
+    assert not _connections._identities
+    assert not _connections._policy_locks
+
+
 def test_rotating_assertions_and_services_share_only_control_verified_owners(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

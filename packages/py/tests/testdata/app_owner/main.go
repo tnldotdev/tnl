@@ -31,10 +31,14 @@ func main() {
 
 func run() error {
 	metadataOnly := flag.Bool("tnl-metadata", false, "emit the native assignment and exit")
+	invocations := flag.Bool("tnl-invocations", false, "serve invocation reply-loss and drain gates")
 	port := flag.Int("tnl-port", 25443, "allocated HTTP port")
 	public := flag.Bool("tnl-public", true, "HTTP endpoint exposure")
 	omit := flag.Bool("tnl-omit-service", false, "omit the selected service's metadata")
 	flag.Parse()
+	if *invocations {
+		return serveInvocations()
+	}
 	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "member.example", Services: map[string]projectmeta.Service{}}
 	for _, entry := range []struct {
 		name, protocol string
