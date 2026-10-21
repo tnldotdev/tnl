@@ -52,9 +52,7 @@ const (
 	ServiceNotConfigured                Reason = "TNL_CLIENT_SERVICE_NOT_CONFIGURED"
 	InvalidTunnelFlags                  Reason = "TNL_CLIENT_INVALID_TUNNEL_FLAGS"
 	ConnectModeInvalid                  Reason = "TNL_CLIENT_CONNECT_MODE_INVALID"
-	ConnectNativeModeRequired           Reason = "TNL_CLIENT_CONNECT_NATIVE_MODE_REQUIRED"
 	ConnectStdioProtocolInvalid         Reason = "TNL_CLIENT_CONNECT_STDIO_PROTOCOL_INVALID"
-	ConnectOutputModeInvalid            Reason = "TNL_CLIENT_CONNECT_OUTPUT_MODE_INVALID"
 	ConnectProtocolMismatch             Reason = "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH"
 	ConnectServerRootsUnavailable       Reason = "TNL_CLIENT_CONNECT_SERVER_ROOTS_UNAVAILABLE"
 	ConnectAccessRequired               Reason = "TNL_CLIENT_CONNECT_ACCESS_REQUIRED"
@@ -285,17 +283,9 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "connect options select incompatible modes",
 		Action: "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json", Retry: RetryAfterChange,
 	},
-	ConnectNativeModeRequired: {
-		Class: Invalid, Message: "public HTTP and database connections print native instructions and exit",
-		Action: "run tnl connect NAME without --install, --detach, --foreground, or --listen", Retry: RetryAfterChange,
-	},
 	ConnectStdioProtocolInvalid: {
 		Class: Invalid, Message: "--stdio requires a service with the approved tcp protocol",
 		Action: "omit --stdio for native HTTP and database clients; no flag changes the service's authentication", Retry: RetryAfterChange,
-	},
-	ConnectOutputModeInvalid: {
-		Class: Invalid, Message: "--output=json is only available for finite public HTTP and database instructions",
-		Action: "omit --output=json when running a listener or an opaque stream", Retry: RetryAfterChange,
 	},
 	ConnectProtocolMismatch: {
 		Class: Invalid, Message: "--protocol differs from the approved service protocol",

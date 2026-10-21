@@ -275,20 +275,6 @@
       "action": "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json"
     },
     {
-      "code": "TNL_CLIENT_CONNECT_NATIVE_MODE_REQUIRED",
-      "slug": "connect-native-mode-required",
-      "class": "invalid",
-      "message": "public HTTP and database connections print native instructions and exit",
-      "action": "run tnl connect NAME without --install, --detach, --foreground, or --listen"
-    },
-    {
-      "code": "TNL_CLIENT_CONNECT_OUTPUT_MODE_INVALID",
-      "slug": "connect-output-mode-invalid",
-      "class": "invalid",
-      "message": "--output=json is only available for finite public HTTP and database instructions",
-      "action": "omit --output=json when running a listener or an opaque stream"
-    },
-    {
       "code": "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH",
       "slug": "connect-protocol-mismatch",
       "class": "invalid",

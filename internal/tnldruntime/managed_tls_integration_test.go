@@ -135,7 +135,7 @@ func TestIntegrationManagedTLSProductionPath(t *testing.T) {
 			connectorCtx, stopConnector := context.WithCancel(t.Context())
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				connectorDone <- tcpconnect.Serve(connectorCtx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, Ready: func() error { close(connectorReady); return nil }})
+				connectorDone <- tcpconnect.Serve(connectorCtx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()

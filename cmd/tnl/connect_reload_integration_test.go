@@ -151,10 +151,10 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 					t.Fatal("connector not ready")
 				}
 				if detached {
-					status, err := detachedRequest(person, detachedID, "status")
-					if err != nil || status != fmt.Sprintf("ready %d", os.Getpid()) {
-						t.Fatalf("detached readiness or PID changed: %q %v", status, err)
-					}
+					workflowWait(t, time.Second, func() bool {
+						status, err := detachedRequest(person, detachedID, "status")
+						return err == nil && status == fmt.Sprintf("ready %d", os.Getpid())
+					})
 				}
 			}
 			waitReady()

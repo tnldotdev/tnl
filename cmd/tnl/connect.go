@@ -22,7 +22,7 @@ import (
 )
 
 type connectCommand struct {
-	Start          connectStartCommand     `cmd:"" default:"withargs" help:"Connect by approved service protocol and access; start is optional and disambiguates command names."`
+	Start          connectStartCommand     `cmd:"" default:"withargs" help:"Make an approved service available locally until stopped; start is optional and disambiguates command names."`
 	Available      connectAvailableCommand `cmd:"" help:"List services this identity can visit."`
 	List           connectListCommand      `cmd:"" help:"List installed local connectors."`
 	Stop           connectJobCommand       `cmd:"" help:"Stop an installed connector without revoking access."`
@@ -47,7 +47,7 @@ type connectStartCommand struct {
 	SystemStateDir  string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
 	DetachedChild   string           `name:"detached-child" hidden:""`
 	Stdio           bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
-	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Finite public HTTP/database connection instructions."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
 	project         projectConfiguration
 	detach          func() error
 }
@@ -71,9 +71,6 @@ func validateConnectMode(flags connectStartCommand) error {
 	}
 	if (flags.KubeUserConfig == "") != (flags.KubeUser == "") || flags.KubeTokenFile != "" && flags.KubeUser != "" {
 		return publisherCLIError("select --kube-token-file, or both --kube-user-config and --kube-user")
-	}
-	if flags.Detach && flags.Output == statusOutputJSON {
-		return connectModeError(failure.ConnectOutputModeInvalid)
 	}
 	if flags.System {
 		return publisherCLIError("connectors use the user supervisor; --system is only for explicit publishers")
@@ -112,18 +109,12 @@ func validateConnectServiceMode(flags connectStartCommand, service controlv1.Pri
 	if flags.Stdio && service.Protocol != controlv1.Tcp {
 		return connectModeError(failure.ConnectStdioProtocolInvalid)
 	}
-	if finiteConnectService(service) {
-		if flags.Install || flags.Detach || flags.Foreground || flags.Listen != "" || flags.DetachedChild != "" {
-			return connectModeError(failure.ConnectNativeModeRequired)
-		}
-	} else if flags.Output == statusOutputJSON && config.ProtocolName(service.Protocol) != config.ProtocolKubernetes {
-		return connectModeError(failure.ConnectOutputModeInvalid)
-	}
 	return nil
 }
 
-func finiteConnectService(service controlv1.PrivateService) bool {
-	return service.ManagedTls != nil && service.ManagedTls.Public && service.Protocol != controlv1.Tcp
+// named publishers' public_url blocks are managed HTTP policy, not public URLs.
+func isConnectPublicURL(service config.Service) bool {
+	return config.PublisherName(service) == "local" && config.IsPublicService(service)
 }
 
 func privateServiceSelection(services []controlv1.PrivateService, name, team string) (controlv1.PrivateService, error) {
@@ -165,7 +156,7 @@ func configuredConnectService(project projectConfiguration, name string) (string
 		if key != name && config.ServiceName(key, service) != name {
 			continue
 		}
-		if config.IsPublicService(service) {
+		if isConnectPublicURL(service) {
 			publicMatch = true
 			continue
 		}
@@ -315,22 +306,6 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 	if err := validateConnectServiceMode(flags, service); err != nil {
 		return err
 	}
-	if finiteConnectService(service) {
-		material, err := ensureConnectCertificate(ctx, session, service.Id)
-		if err != nil {
-			return err
-		}
-		profile, err := serviceConnectionProfile(service, &material)
-		if err != nil {
-			return err
-		}
-		if profile.Protocol == config.ProtocolKubernetes {
-			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, ""); err != nil {
-				return err
-			}
-		}
-		return writeNativeConnection(output, profile, flags.Output, "")
-	}
 	if flags.Detach {
 		if flags.detach == nil {
 			return publisherCLIError("detached connector launcher is unavailable")
@@ -394,29 +369,27 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		Server: session.authenticated.ServerEndpoint, PrivateServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
 		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision}
 	job.ManagedTLS = service.ManagedTls
+	writeReady := func(job publisherjob.Job, destination io.Writer) error {
+		profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: job.PrivateServiceID, Protocol: controlv1.PrivateServiceProtocol(job.Protocol), Enabled: true, ManagedTls: job.ManagedTLS}, job.Target)
+		if err != nil {
+			return err
+		}
+		if job.Protocol == config.ProtocolKubernetes {
+			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
+				return err
+			}
+		}
+		detachedConnectorPrepared(ctx, profile)
+		return writeNativeConnection(destination, profile, flags.Output, job.Target)
+	}
 	if flags.Install {
 		if err := registry.InstallConnector(ctx, job); err != nil {
 			return err
 		}
-		if job.Protocol == config.ProtocolKubernetes {
-			profile, err := serviceConnectionProfile(service, nil)
-			if err != nil {
-				return err
-			}
-			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
-				return err
-			}
-			if err := writeNativeConnection(output, profile, flags.Output, job.Target); err != nil {
-				return err
-			}
-			if flags.Output == statusOutputJSON {
-				return nil
-			}
+		if err := waitInstalledConnectorReady(ctx, registry, job.ID); err != nil {
+			return err
 		}
-		if listener != nil {
-			_ = listener.Close()
-		}
-		return writeSystemJobs(ctx, registry, output, "tnl connect", job.ID)
+		return writeReady(job, output)
 	}
 	return runPrivateConnectorLifecycle(ctx, listener, job, requestedProtocol, privateConnectorLifecycle{
 		services: session.authenticated.Control,
@@ -427,27 +400,10 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 			return servePrivateConnector(ctx, session, listener, job, ready)
 		},
 		ready: func(job publisherjob.Job) error {
-			if job.Protocol != config.ProtocolTCP {
-				endpoint := *job.ManagedTLS
-				_, port, _ := net.SplitHostPort(job.Target)
-				endpoint.Port, _ = strconv.Atoi(port)
-				profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: job.PrivateServiceID, Protocol: controlv1.PrivateServiceProtocol(job.Protocol), Enabled: true, ManagedTls: &endpoint}, nil)
-				if err != nil {
-					return err
-				}
-				if job.Protocol == config.ProtocolKubernetes {
-					if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
-						return err
-					}
-					if flags.Output == statusOutputJSON {
-						return writeNativeConnection(output, profile, flags.Output, job.Target)
-					}
-				}
-				return writeNativeConnection(diagnostics, profile, statusOutputHuman, job.Target)
+			if flags.Output == statusOutputJSON {
+				return writeReady(job, output)
 			}
-			return writeHumanFrame(diagnostics, "tnl connect", "ready", "", clioutput.Fields(
-				clioutput.Field{Label: "name", Value: job.Name}, clioutput.Field{Label: "private service ID", Value: job.PrivateServiceID},
-				clioutput.Field{Label: "listen", Value: job.Target}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)}))
+			return writeReady(job, diagnostics)
 		},
 	})
 }
@@ -482,8 +438,11 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 	for {
 		detachedPublicationStarting(ctx)
 		err := lifecycle.serve(ctx, listener, job, func() error {
+			if err := lifecycle.ready(job); err != nil {
+				return err
+			}
 			detachedPublicationReady(ctx)
-			return lifecycle.ready(job)
+			return nil
 		})
 		_ = listener.Close()
 		if !tcpconnect.IsMetadataReload(err) {
@@ -500,9 +459,6 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 		service, err := privateServiceIDSelection(services, job.PrivateServiceID, "")
 		if err != nil {
 			return err
-		}
-		if finiteConnectService(service) {
-			return connectModeError(failure.ConnectNativeModeRequired)
 		}
 		if requestedProtocol != "" && requestedProtocol != string(service.Protocol) {
 			return connectModeError(failure.ConnectProtocolMismatch)
@@ -534,21 +490,32 @@ func connectConfiguration(ctx context.Context, session *teamSession, job publish
 	var serviceTLS *tls.Config
 	if job.ManagedTLS != nil {
 		serviceTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: job.ManagedTLS.Hostname}
-		if job.ManagedTLS.Public && job.Protocol == config.ProtocolTCP {
-			if _, err := ensureConnectCertificate(ctx, session, job.PrivateServiceID); err != nil {
-				return tcpconnect.Config{}, err
-			}
-			serviceTLS.GetClientCertificate = func(info *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-				material, err := ensureConnectCertificate(info.Context(), session, job.PrivateServiceID)
-				if err != nil {
-					return nil, err
-				}
-				return &material.Certificate, nil
-			}
-		}
 	}
 	return tcpconnect.Config{Control: control, PrivateServiceID: job.PrivateServiceID,
 		IdentityID: job.IdentityID, Protocol: string(job.Protocol), TrustRevision: job.TrustRevision, ManagedTLS: job.ManagedTLS, ServiceTLS: serviceTLS}, nil
+}
+
+func waitInstalledConnectorReady(ctx context.Context, registry *publisherjob.Registry, id string) error {
+	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		jobs, err := registry.List(bounded)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			if job.ID == id && job.Status.State == "ready" {
+				return nil
+			}
+		}
+		select {
+		case <-bounded.Done():
+			return failure.Wrap("wait for installed connector", failure.ConnectionUnavailable, context.Cause(bounded))
+		case <-tick.C:
+		}
+	}
 }
 
 func runInstalledConnector(ctx context.Context, job publisherjob.Job, ready func() error) error {

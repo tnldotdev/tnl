@@ -111,18 +111,27 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		switch operation {
 		case "status":
 			_ = json.NewEncoder(w).Encode(state)
-		case "connect":
+		case "connect", "prepared":
 			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
 			defer done()
 			stop := context.AfterFunc(lifetime, done)
 			defer stop()
 			connection, err := backend.Connect(bounded, request.Service)
 			if err != nil {
+				if errors.Is(err, ErrExpired) {
+					w.WriteHeader(410)
+					_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
+					return
+				}
 				w.WriteHeader(503)
 				_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(connection)
+			if operation == "prepared" {
+				_ = json.NewEncoder(w).Encode(Prepared{Schema: Schema, PublicRuntime: state.PublicRuntime, Connection: connection})
+			} else {
+				_ = json.NewEncoder(w).Encode(connection)
+			}
 		case "kube-credential":
 			provider, ok := backend.(interface {
 				Credential(context.Context, string) (credentialv1.ExecCredential, error)

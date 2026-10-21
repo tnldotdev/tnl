@@ -55,6 +55,10 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	if err != nil {
 		return failure.Wrap("declare project types", failure.ProjectConfigInvalid, err)
 	}
+	python, err := projectmeta.PythonFacade(project.Config, project.Selection.Path)
+	if err != nil {
+		return failure.Wrap("declare Python project types", failure.ProjectConfigInvalid, err)
+	}
 	bundle, err := publisherdeployment.Generate(project.Config, source, declarations)
 	if err != nil {
 		return failure.Wrap("render project artifacts", failure.ProjectConfigInvalid, err)
@@ -64,6 +68,9 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 		state, err = "current", bundle.Check(directory)
 	} else {
 		err = bundle.Write(directory)
+	}
+	if err == nil {
+		err = projectmeta.WritePythonFacade(directory, python, flags.Generate.Check)
 	}
 	if err != nil {
 		reason := failure.PublisherDeploymentWriteFailed

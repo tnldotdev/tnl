@@ -59,6 +59,22 @@ type privateObservation struct {
 	header  tunnelv1.PrivateForwardingHeader
 }
 
+// readiness is one admitted TLS-only visitor. consume its observation before
+// correlating later application sockets with their exact ingress/relay paths.
+func connectorReadinessObservation(t *testing.T, opened <-chan privateObservation) privateObservation {
+	t.Helper()
+	select {
+	case probe := <-opened:
+		if probe.header.Connector == nil {
+			t.Fatal("connector readiness bypassed stream admission")
+		}
+		return probe
+	case <-time.After(time.Second):
+		t.Fatal("connector reported ready without a verified visitor stream")
+		return privateObservation{}
+	}
+}
+
 // shorten only the server's scheduling hint for this smoke workload. every
 // authorization, denial and hard validity deadline still comes from control.
 type acceleratedPrivateRecheck struct{ ingress.PrivateControl }
@@ -347,6 +363,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("visitor did not authenticate both ingresses")
 			}
+			connectorReadinessObservation(t, opened)
 			var boundSessions, distinctIngresses, readyRelays, distinctRelays int
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT ingress_id) FROM control.private_connector_sessions WHERE device_id=$1 AND bound_at IS NOT NULL`, device.Subject.DeviceID).Scan(&boundSessions, &distinctIngresses); err != nil || boundSessions != 2 || distinctIngresses != 2 {
 				t.Fatalf("visitor did not bind two ingress identities: %d/%d %v", boundSessions, distinctIngresses, err)

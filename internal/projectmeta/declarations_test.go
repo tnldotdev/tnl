@@ -59,9 +59,11 @@ tnl.connect("missing");
 const connection = await tnl.connect("db");
 connection.ssl.servername satisfies string;
 connection.ssl.rejectUnauthorized satisfies true;
-connection.ssl.key satisfies string | undefined;
 connection.ssl.ca satisfies string | undefined;
-connection.ssl.cert satisfies string | undefined;
+// @ts-expect-error native admission never exports an application client key.
+connection.ssl.key;
+// @ts-expect-error native admission never exports an application client certificate.
+connection.ssl.cert;
 // @ts-expect-error optional factory services remain optional.
 tnl.services.worker.protocol;
 `

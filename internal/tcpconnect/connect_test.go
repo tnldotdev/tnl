@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -16,10 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
+	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -47,6 +50,8 @@ type connectorFixture struct {
 	config           Config
 	reuseIDs         [2]string
 	assignments      [2]atomic.Int64
+	startupOpened    int64
+	denied           atomic.Bool
 }
 
 func connectorID(t *testing.T, prefix string) string {
@@ -62,6 +67,9 @@ func (f *connectorFixture) PrivateConnectorSigner(context.Context, string) (Sign
 	return f.device, nil
 }
 func (f *connectorFixture) ResolvePrivateService(context.Context, string) (Run, error) {
+	if f.denied.Load() {
+		return Run{}, failure.Wrap("resolve service", failure.ServerDenied, io.ErrClosedPipe)
+	}
 	f.mu.Lock()
 	run := f.run
 	f.mu.Unlock()
@@ -209,6 +217,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		t.Fatal("two ingress sessions did not become ready")
 	}
 	f.localAddress = listener.Addr().String()
+	f.startupOpened = f.opened.Swap(0)
 	return f
 }
 
@@ -216,11 +225,10 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 	for _, invalid := range []bool{false, true} {
 		t.Run(map[bool]string{false: "verified", true: "wrong certificate"}[invalid], func(t *testing.T) {
 			f := newConfiguredConnectorFixture(t, "tls_tcp", "", func(f *connectorFixture, c *Config) {
-				c.Preflight = true
 				f.wantStartupError = invalid
 				f.wrongCertificate.Store(invalid)
 			})
-			if f.opened.Load() != 1 || f.application.Load() != 0 {
+			if f.startupOpened != 1 || f.application.Load() != 0 {
 				t.Fatal("readiness did not verify exactly one stream without application bytes")
 			}
 			if invalid {
@@ -286,6 +294,32 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 	if f.wrongCertificate.Load() {
 		certificate = f.badCertificate
 	}
+	switch run.Protocol {
+	case "postgres":
+		var request [8]byte
+		if _, err := io.ReadFull(stream, request[:]); err != nil || request != targettransport.PostgresSSLRequest {
+			return
+		}
+		if _, err := stream.Write([]byte{'S'}); err != nil {
+			return
+		}
+	case "mysql":
+		// protocol-10 greeting with CLIENT_PROTOCOL_41, CLIENT_SSL and secure
+		// connection support; no authentication exchange follows the TLS probe.
+		payload := append([]byte{10}, []byte("8.0-fixture\x00")...)
+		payload = append(payload, 1, 0, 0, 0)
+		payload = append(payload, []byte("12345678")...)
+		payload = append(payload, 0, 0, 0x8a, 45, 2, 0, 0, 0)
+		payload = append(payload, make([]byte, 11)...)
+		payload = append(payload, []byte("abcdefghijkl\x00")...)
+		greeting := append([]byte{byte(len(payload)), 0, 0, 0}, payload...)
+		if _, err := stream.Write(greeting); err != nil {
+			return
+		}
+		if _, err := targettransport.ReadMySQLPacket(stream, 64<<10); err != nil {
+			return
+		}
+	}
 	secure := tls.Server(stream, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
 	if secure.HandshakeContext(ctx) != nil {
 		return
@@ -325,14 +359,84 @@ func (f *connectorFixture) local(t *testing.T) net.Conn {
 	}
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	if f.config.Protocol != "tcp" {
-		secure := tls.Client(conn, f.config.ServiceTLS.Clone())
-		if err := secure.Handshake(); err != nil {
+		transport := targettransport.Transport{Protocol: config.ProtocolName(f.config.Protocol), TLS: f.config.ServiceTLS.Clone()}
+		if f.config.Protocol == "mysql" {
+			greeting, err := targettransport.ReadMySQLPacket(conn, 64<<10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := targettransport.MySQLSSLRequest(greeting)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Write(request); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var secured net.Conn
+		var err error
+		if f.config.Protocol == "mysql" {
+			secured, err = transport.Handshake(t.Context(), conn)
+		} else {
+			secured, err = transport.Secure(t.Context(), conn)
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
-		conn = secure
+		conn = secured
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
+}
+
+func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		for _, protocol := range []string{"http", "postgres", "mysql", "tcp", "kubernetes"} {
+			for _, transport := range []string{"quic", "tls-tcp"} {
+				for _, outcome := range []string{"ready", "wrong-tls", "denied"} {
+					t.Run(fmt.Sprintf("public=%v/%s/%s/%s", public, protocol, transport, outcome), func(t *testing.T) {
+						f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, c *Config) {
+							c.Protocol, f.run.Protocol = protocol, protocol
+							f.run.ManagedTLS.Public = public
+							f.wantStartupError = outcome != "ready"
+							f.wrongCertificate.Store(outcome == "wrong-tls")
+							f.denied.Store(outcome == "denied")
+						})
+						if f.application.Load() != 0 || f.assignments[0].Load() != 1 || f.assignments[1].Load() != 1 {
+							t.Fatal("readiness sent application bytes or bypassed the two assigned paths")
+						}
+						if outcome != "ready" {
+							reason, _ := failure.ReasonOf(f.serveErr)
+							if outcome == "wrong-tls" && reason != failure.ConnectionTLSRejected || outcome == "denied" && (reason != failure.ServerDenied || !errors.Is(f.serveErr, io.ErrClosedPipe)) {
+								t.Fatalf("readiness lost its failure classification or cause: %v", f.serveErr)
+							}
+							return
+						}
+						if f.startupOpened != 1 || f.config.ManagedTLS.Public != public || f.config.ServiceTLS.ServerName != "db.example" {
+							t.Fatal("readiness did not verify the approved endpoint unchanged")
+						}
+						local := f.local(t)
+						_, _ = local.Write([]byte("native"))
+						got := make([]byte, 6)
+						if _, err := io.ReadFull(local, got); err != nil || string(got) != "native" {
+							t.Fatal("native bytes", err)
+						}
+						// a new local stream must recheck access after readiness.
+						f.denied.Store(true)
+						denied, err := net.DialTimeout("tcp", f.localAddress, time.Second)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer denied.Close()
+						_ = denied.SetDeadline(time.Now().Add(time.Second))
+						if _, err := denied.Read(make([]byte, 1)); err == nil || f.opened.Load() != 1 {
+							t.Fatal("revoked access opened a stream")
+						}
+					})
+				}
+			}
+		}
+	}
 }
 
 func TestConnectorTwoAuthenticatedMuxPathsAndSurvivingIngress(t *testing.T) {
@@ -546,7 +650,7 @@ func TestConnectorRejectsStaleApprovedRevisionBeforeOpeningStream(t *testing.T) 
 			conn := f.local(t)
 			_, _ = conn.Write([]byte("fresh"))
 			got := make([]byte, 5)
-			if _, err := io.ReadFull(conn, got); err != nil || string(got) != "fresh" || f.opened.Load() != 2 {
+			if _, err := io.ReadFull(conn, got); err != nil || string(got) != "fresh" || f.opened.Load() != 3 {
 				t.Fatalf("fresh runner reused old traffic: %q streams=%d err=%v", got, f.opened.Load(), err)
 			}
 		})

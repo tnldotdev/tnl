@@ -120,7 +120,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		files := map[string][]byte{}
-		for _, name := range []string{"manifest.json", "project.d.ts", manifest.DocumentationPath, manifest.Publishers[0].TemplatePath, manifest.Publishers[0].ParametersExamplePath} {
+		for _, name := range []string{"manifest.json", "project.d.ts", "python/pyproject.toml", "python/tnl_project/__init__.py", "python/tnl_project/py.typed", manifest.DocumentationPath, manifest.Publishers[0].TemplatePath, manifest.Publishers[0].ParametersExamplePath} {
 			data, err := os.ReadFile(filepath.Join(directory, publisherdeployment.DefaultOutputDir, name))
 			if err != nil {
 				t.Fatal(err)
@@ -142,7 +142,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal("local metadata not ignored")
 		}
 		tracked := generationGit(t, directory, "ls-files", "--others", "--exclude-standard", ".tnl/generated")
-		if len(strings.Fields(string(tracked))) != 5 {
+		if len(strings.Fields(string(tracked))) != 8 {
 			t.Fatalf("generated outputs are not trackable: %s", tracked)
 		}
 		if err := runCommand("generate", "--output-dir", "infrastructure/generated"); err != nil {

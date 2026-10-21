@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,25 +40,28 @@ import (
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
-// this runs the built native owner, real TLS with client authentication, and the
-// built npm root in separate processes. no saved human state or network service
-// outside these local fixtures participates.
-func TestIntegrationConnectionNativeSDKHTTP(t *testing.T) {
+// this runs the built native owner and verifies TLS through its admitted ingress
+// streams. no saved human state or service outside these local fixtures participates.
+func TestIntegrationConnectionNativeOwnerHTTP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeSDK(t, "", "http")
+	runConnectionNativeOwner(t, "", "http", true)
 }
 
-func TestIntegrationConnectionNativeSDKKubernetes(t *testing.T) {
+func TestIntegrationConnectionNativeOwnerKubernetes(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeSDK(t, "", "kubernetes")
+	runConnectionNativeOwner(t, "", "kubernetes", true)
 }
 
 func TestIntegrationConnectionDrizzleKit(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeSDK(t, testutil.NewDisposablePostgresDatabaseURL(t, "connection_drizzle"), "postgres")
+	for _, public := range []bool{true, false} {
+		t.Run(map[bool]string{true: "public", false: "private"}[public], func(t *testing.T) {
+			runConnectionNativeOwner(t, testutil.NewDisposablePostgresDatabaseURL(t, "connection_drizzle"), "postgres", public)
+		})
+	}
 }
 
-func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
+func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public bool) {
 	t.Helper()
 	serviceName := "api"
 	if databaseURL != "" {
@@ -86,7 +90,8 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverLeaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), DNSNames: []string{"localhost"}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	const managedHostname = "service.example.test"
+	serverLeaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), DNSNames: []string{"localhost", managedHostname}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	serverDER, err := x509.CreateCertificate(rand.Reader, serverLeaf, ca, serverPublic, caKey)
 	if err != nil {
 		t.Fatal(err)
@@ -94,8 +99,8 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	pair := tls.Certificate{Certificate: [][]byte{serverDER, caDER}, PrivateKey: serverKey}
 	var visits atomic.Int32
 	application := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(r.TLS.PeerCertificates) == 0 {
-			t.Error("no workload client certificate")
+		if len(r.TLS.PeerCertificates) != 0 {
+			t.Error("connector requested an application client certificate")
 			return
 		}
 		if r.URL.Path == "/hang" {
@@ -107,16 +112,16 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 			t.Error("fetch changed the application request")
 		}
 		visits.Add(1)
-		w.Header().Set("X-Certificate-Serial", r.TLS.PeerCertificates[0].SerialNumber.String())
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(201)
 		_, _ = w.Write(data)
 	}))
-	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots}
+	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}, ClientAuth: tls.NoClientCert}
 	application.StartTLS()
 	defer application.Close()
 	_, portString, _ := net.SplitHostPort(application.Listener.Addr().String())
 	port, _ := strconv.Atoi(portString)
+	providerAddress := application.Listener.Addr().String()
 	if databaseURL != "" {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
@@ -124,6 +129,7 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 		}
 		defer listener.Close()
 		port = listener.Addr().(*net.TCPAddr).Port
+		providerAddress = listener.Addr().String()
 		backend, err := url.Parse(databaseURL)
 		if err != nil {
 			t.Fatal(err)
@@ -164,8 +170,16 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
 	sessionID, _ := opaqueid.New("wls_")
+	privateRun, _ := opaqueid.New(opaqueid.PrivateRunPrefix)
+	allocated, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port = allocated.Addr().(*net.TCPAddr).Port
+	_ = allocated.Close()
+	assignments, trusts := connectionIngressFixture(t, ca, caKey, caPEM, service, sessionID, providerAddress)
 	var revoked atomic.Bool
-	var certificateSerial atomic.Int64
+	var certificateRequests atomic.Int64
 	var current authorityv1.WorkloadSession
 	var clientPublic ed25519.PublicKey
 	var exchangeAttempts atomic.Int32
@@ -205,30 +219,21 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "managed_tls": map[string]any{"hostname": "localhost", "port": port, "public": true}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "managed_tls": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
+		case strings.HasSuffix(r.URL.Path, "/run"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"private_service_id": service, "private_run_id": privateRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "managed_tls": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
+		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"subject": current.Subject, "assignments": assignments})
+		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
+			parts := strings.Split(r.URL.Path, "/")
+			_ = json.NewEncoder(w).Encode(trusts[parts[len(parts)-2]])
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
-			var request controlv1.IssueWorkloadServiceClientCertificateJSONBody
-			if json.NewDecoder(r.Body).Decode(&request) != nil {
-				w.WriteHeader(400)
-				return
-			}
-			csr, err := x509.ParseCertificateRequest(request.Csr)
-			if err != nil || csr.CheckSignature() != nil || !csr.PublicKey.(ed25519.PublicKey).Equal(clientPublic) {
-				w.WriteHeader(400)
-				return
-			}
-			expires := time.Now().Add(35 * time.Second).Truncate(time.Second)
-			identity, _ := url.Parse("tnl://workload-client/" + service + "/" + sessionID)
-			leaf := &x509.Certificate{SerialNumber: big.NewInt(certificateSerial.Add(1) + 3), NotBefore: time.Now().Add(-time.Second), NotAfter: expires, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, URIs: []*url.URL{identity}}
-			der, err := x509.CreateCertificate(rand.Reader, leaf, ca, csr.PublicKey, caKey)
-			if err != nil {
-				t.Error(err)
-				w.WriteHeader(500)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(controlv1.ServiceClientCertificate{PrivateServiceId: service, CertificatePem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), ExpiresAt: expires})
+			certificateRequests.Add(1)
+			w.WriteHeader(403)
 		case r.Method == "DELETE":
-			revoked.Store(true)
+			if strings.HasPrefix(r.URL.Path, "/v1/workload-sessions/") {
+				revoked.Store(true)
+			}
 			w.WriteHeader(204)
 		default:
 			w.WriteHeader(404)
@@ -246,7 +251,7 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publishers": map[string]any{"remote": map[string]any{"public": true}}, "services": map[string]any{serviceName: map[string]any{"publisher": "remote", "protocol": protocol, "target": targetDefinition}}, "ci": map[string]any{"test": map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "ref": "refs/heads/main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
+	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publishers": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher": "remote", "protocol": protocol, "target": targetDefinition}}, "ci": map[string]any{"test": map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "ref": "refs/heads/main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
 	data, _ := json.Marshal(config)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
 		t.Fatal(err)
@@ -317,28 +322,63 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	if bytes.Contains(encoded, []byte("BEGIN")) || bytes.Contains(encoded, []byte("fixture-assertion")) {
 		t.Fatal("startup disclosed credentials")
 	}
-	module, err := filepath.Abs("../../packages/ts/dist/index.js")
-	if err != nil {
+	// a prepared read must use the existing owner even after configuration and
+	// Git disappear; only startup may evaluate these inputs or authenticate.
+	if err := os.Remove(filepath.Join(root, "tnl.json")); err != nil {
 		t.Fatal(err)
 	}
-	script := `const {tnl}=await import(process.argv[1]); const c=await tnl.connect('api'); const response=await c.fetch(new Request(c.url+'/echo',{method:'POST',headers:{Authorization:'Bearer application-only'},body:'streamed-body'})); if(response.status!==201||await response.text()!=='streamed-body'||!response.url.endsWith('/echo'))throw Error('fetch contract'); const abort=new AbortController();const pending=c.fetch(c.url+'/hang',{signal:abort.signal});setTimeout(()=>abort.abort(),50);try{await pending;throw Error('abort ignored')}catch(e){if(!abort.signal.aborted)throw e} if(tnl.services.api.hostname!=='localhost'||JSON.stringify({api:tnl.services.api}).includes('PRIVATE KEY'))throw Error('metadata boundary');`
-	script += `await new Promise(resolve=>setTimeout(resolve,6000));const rotated=await c.fetch(new Request(c.url+'/echo',{method:'POST',headers:{Authorization:'Bearer application-only'},body:'streamed-body'}));if(await rotated.text()!=='streamed-body'||rotated.headers.get('X-Certificate-Serial')===response.headers.get('X-Certificate-Serial'))throw Error('client certificate did not rotate');`
-	script += `if(tnl.services.web.hostname!=='web.member.example')throw Error('browser snapshot was replaced');`
-	args := []string{"--input-type=module", "-e", script, "file://" + module}
-	var privateInput []byte
+	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	var prepared connectionruntime.Prepared
+	if err := connectionruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.PrivateHandle, "--service", serviceName)), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := prepared.Connection
+	if prepared.Schema != 1 || prepared.PublicRuntime.Services[serviceName].Hostname != managedHostname || prepared.PublicRuntime.Services[serviceName].Public != public {
+		t.Fatal("prepared read did not preserve the owner's public metadata")
+	}
+	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != port || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
+		t.Fatal("prepared snapshot lost local dialing, managed TLS identity, or credential-free admission")
+	}
+	preparedJSON, _ := json.Marshal(snapshot)
+	if bytes.Contains(preparedJSON, []byte(`"cert"`)) || bytes.Contains(preparedJSON, []byte(`"key"`)) {
+		t.Fatal("prepared connection exported application client credentials")
+	}
+	if protocol == "http" {
+		transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: snapshot.SSL.ServerName}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(snapshot.Host, strconv.Itoa(snapshot.Port)))
+		}}
+		defer transport.CloseIdleConnections()
+		client := &http.Client{Transport: transport}
+		for range 2 {
+			request, _ := http.NewRequestWithContext(t.Context(), "POST", snapshot.URL+"/echo", strings.NewReader("streamed-body"))
+			request.Header.Set("Authorization", "Bearer application-only")
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if response.StatusCode != 201 || string(body) != "streamed-body" {
+				t.Fatal("HTTP stream changed")
+			}
+		}
+	}
 	if protocol == "kubernetes" {
-		script = `const {tnl}=await import(process.argv[1]);const connection=await tnl.connect('cluster');if(!connection.server.startsWith('https://localhost:')||connection.context!=='tnl:shop/cluster'||!connection.kubeconfig)throw Error('kubernetes connection shape');`
-		args = []string{"--input-type=module", "-e", script, "file://" + module}
 		var credential credentialv1.ExecCredential
 		if err := json.Unmarshal(call(nil, "kube-credential", "--handle", state.PrivateHandle, "--service", serviceName), &credential); err != nil {
 			t.Fatal(err)
 		}
-		if credential.APIVersion != "client.authentication.k8s.io/v1" || credential.Status == nil || credential.Status.Token != "fixture-cluster-token" || credential.Status.ClientCertificateData == "" || credential.Status.ClientKeyData == "" || credential.Status.ExpirationTimestamp == nil {
+		if credential.APIVersion != "client.authentication.k8s.io/v1" || credential.Status == nil || credential.Status.Token != "fixture-cluster-token" || credential.Status.ClientCertificateData != "" || credential.Status.ClientKeyData != "" || credential.Status.ExpirationTimestamp == nil {
 			t.Fatal("native Kubernetes helper did not compose its credentials")
 		}
 		data, err := os.ReadFile(state.Kubeconfig)
 		if err != nil || bytes.Contains(data, []byte("PRIVATE KEY")) || bytes.Contains(data, []byte("fixture-cluster-token")) {
 			t.Fatal("session kubeconfig persisted credential material")
+		}
+		if !bytes.Contains(data, []byte("https://127.0.0.1:"+strconv.Itoa(port))) || !bytes.Contains(data, []byte("tls-server-name: "+managedHostname)) {
+			t.Fatal("kubeconfig lost separate dial host and TLS identity", string(data))
 		}
 	}
 	if databaseURL != "" {
@@ -347,14 +387,6 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 			t.Fatal(err)
 		}
 		password, _ := backend.User.Password()
-		credentials, _ := json.Marshal(map[string]string{"user": backend.User.Username(), "password": password, "database": strings.TrimPrefix(backend.Path, "/")})
-		// drizzle-kit's current config loader is synchronous CommonJS. preload its
-		// exact config module in this process after awaiting the SDK; TLS material
-		// stays in memory rather than being serialized into a temporary config.
-		marker := filepath.Join(root, "drizzle.config.cjs")
-		if err := os.WriteFile(marker, []byte("module.exports = {};\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
 		if err := os.MkdirAll(filepath.Join(root, "migrations/meta"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -364,25 +396,28 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 		if err := os.WriteFile(filepath.Join(root, "migrations/0000_sdk.sql"), []byte("CREATE TABLE sdk_migration (id integer PRIMARY KEY);"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		kit, err := filepath.Abs("../../node_modules/drizzle-kit/bin.cjs")
+		fixture, err := filepath.Abs("../../packages/ts/fixtures/connections/installed-drizzle.ts")
 		if err != nil {
 			t.Fatal(err)
 		}
-		script = `const {tnl}=await import(process.argv[1]);const {createRequire,Module}=await import('node:module');const {readFileSync}=await import('node:fs');const require=createRequire(process.argv[3]);const config=new Module(process.argv[2]);config.exports={dialect:'postgresql',out:process.cwd()+'/migrations',dbCredentials:{...await tnl.connect('database'),...JSON.parse(readFileSync(0,'utf8'))}};require.cache[process.argv[2]]=config;const kit=process.argv[3];process.argv=[process.execPath,kit,'migrate','--config',process.argv[2]];require(kit);`
-		args = []string{"--input-type=module", "-e", script, "file://" + module, marker, kit}
-		privateInput = credentials
+		node := exec.CommandContext(t.Context(), "node", fixture, binary)
+		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.PrivateHandle, "DB_USER="+backend.User.Username(), "DB_PASSWORD="+password, "DB_NAME="+strings.TrimPrefix(backend.Path, "/"))
+		if output, err := node.CombinedOutput(); err != nil {
+			t.Fatalf("installed Drizzle Kit: %v %s", err, output)
+		}
 	}
-	node := exec.CommandContext(t.Context(), "node", args...)
-	node.Dir = root
-	node.Env = append(env, "TNL_CONNECTION_HANDLE="+state.PrivateHandle)
-	if protocol == "http" {
-		node.Env = append(node.Env, `TNL_PROJECT_RUNTIME={"dev":true,"namespace":"member.example","services":{"web":{"namespace":"member.example","hostname":"web.member.example","url":"https://web.member.example","protocol":"http","port":443,"public":true}}}`)
+	if protocol == "http" || protocol == "kubernetes" {
+		fixture, err := filepath.Abs("../../packages/ts/fixtures/connections/installed-drizzle.ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := exec.CommandContext(t.Context(), "node", fixture, binary, protocol)
+		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.PrivateHandle)
+		if output, err := node.CombinedOutput(); err != nil {
+			t.Fatalf("native SDK runtime: %v %s", err, output)
+		}
 	}
-	node.Stdin = bytes.NewReader(privateInput)
-	if output, err := node.CombinedOutput(); err != nil {
-		t.Fatalf("real SDK: %v %s", err, output)
-	}
-	if protocol == "http" && visits.Load() != 2 {
+	if protocol == "http" && visits.Load() != 4 || protocol == "kubernetes" && visits.Load() != 1 {
 		t.Fatal("SDK requests were not delivered exactly once")
 	}
 	if databaseURL != "" {
@@ -407,6 +442,9 @@ func runConnectionNativeSDK(t *testing.T, databaseURL, protocol string) {
 	}
 	if exchangeAttempts.Load() != 2 {
 		t.Fatal("lost exchange response was not recovered by the same owner")
+	}
+	if certificateRequests.Load() != 0 {
+		t.Fatal("native owner requested application certificates")
 	}
 	// cleanup is already joined; avoid a second stop with an expired handle.
 	state.PrivateHandle = ""

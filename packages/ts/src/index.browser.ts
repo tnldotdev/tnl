@@ -2,6 +2,9 @@ import { parseRuntimePayload } from "./internal/runtime.js";
 import { serviceMetadata } from "./internal/service_metadata.js";
 import type { TnlRuntime } from "./index.js";
 import { TnlError } from "./errors.js";
+import { awaitableConnection } from "./internal/awaitable_connection.js";
+export type * from "./project.js";
+export type { TnlRuntime, TnlProjectConfig } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
@@ -24,7 +27,14 @@ export const tnl = Object.freeze({
   async open(): Promise<never> {
     throw new TnlError("sdk.configuration_invalid");
   },
-  async connect(): Promise<never> {
-    throw new TnlError("sdk.connection_server_only");
+  connect() {
+    return awaitableConnection(
+      () => {
+        throw new TnlError("sdk.connection_server_only");
+      },
+      async () => {
+        throw new TnlError("sdk.connection_server_only");
+      },
+    );
   },
 }) as unknown as TnlRuntime;

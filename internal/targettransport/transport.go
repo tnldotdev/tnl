@@ -140,6 +140,22 @@ func (t Transport) Preflight(ctx context.Context, address string) (result error)
 		return failure.Wrap("connect to target", failure.TargetUnavailable, err)
 	}
 	defer backend.Close()
+	return t.PreflightConnection(setup, backend)
+}
+
+// PreflightConnection verifies an already admitted stream without login or
+// application bytes. the caller owns the connection and closes it afterward.
+func (t Transport) PreflightConnection(ctx context.Context, backend net.Conn) (result error) {
+	defer func() {
+		if ctx.Err() != nil {
+			result = context.Cause(ctx)
+		}
+	}()
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	setup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	stop := context.AfterFunc(setup, func() { _ = backend.Close() })
 	defer stop()
 	deadline, _ := setup.Deadline()
@@ -167,7 +183,7 @@ func (t Transport) Preflight(ctx context.Context, address string) (result error)
 		_, err = t.Handshake(setup, backend)
 		return err
 	}
-	_, err = t.Secure(setup, backend)
+	_, err := t.Secure(setup, backend)
 	return err
 }
 

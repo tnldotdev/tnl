@@ -16,6 +16,17 @@ declare const database: TnlConnectionRegistry["postgres"];
 tnl.port satisfies number;
 tnl.dev satisfies boolean;
 const service = tnl.services.anyService;
+// @ts-expect-error ungenerated metadata is read-only too.
+tnl.services.anyService = undefined;
+const connection = tnl.connect("any-service");
+// @ts-expect-error an ungenerated service has a protocol union, never any.
+void connection.ssl;
+if ("ssl" in connection) {
+  connection.host satisfies "127.0.0.1";
+  connection.ssl.rejectUnauthorized satisfies true;
+  // @ts-expect-error narrowing a SQL connection does not add HTTP settings.
+  void connection.fetch;
+}
 if (service) {
   service.hostname satisfies string;
   service.port satisfies number;

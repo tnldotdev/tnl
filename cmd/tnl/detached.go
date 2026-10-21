@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,8 +39,9 @@ type detachedStopCommand struct {
 type detachedControlKey struct{}
 
 type detachedControl struct {
-	mu    sync.Mutex
-	state string
+	mu         sync.Mutex
+	state      string
+	connection *nativeConnectionProfile
 }
 
 func (c *detachedControl) set(state string) {
@@ -65,6 +67,14 @@ func detachedPublicationStarting(ctx context.Context) {
 func detachedPublicationReady(ctx context.Context) {
 	if control, ok := ctx.Value(detachedControlKey{}).(*detachedControl); ok {
 		control.set("ready")
+	}
+}
+
+func detachedConnectorPrepared(ctx context.Context, profile nativeConnectionProfile) {
+	if control, ok := ctx.Value(detachedControlKey{}).(*detachedControl); ok {
+		control.mu.Lock()
+		defer control.mu.Unlock()
+		control.connection = &profile
 	}
 }
 
@@ -162,6 +172,12 @@ func serveDetachedWithOptions(ctx context.Context, root, id string, options clie
 				switch strings.TrimSpace(string(request[:n])) {
 				case "status":
 					_, _ = fmt.Fprintf(conn, "%s %d\n", control.get(), os.Getpid())
+				case "connection":
+					control.mu.Lock()
+					if control.state == "ready" && control.connection != nil {
+						_ = json.NewEncoder(conn).Encode(control.connection)
+					}
+					control.mu.Unlock()
 				case "stop":
 					control.set("stopping")
 					_, _ = io.WriteString(conn, "stopping\n")
@@ -177,29 +193,36 @@ func serveDetachedWithOptions(ctx context.Context, root, id string, options clie
 }
 
 func detachedRequest(root, id, request string) (string, error) {
+	data, err := detachedRequestData(root, id, request, 64)
+	return strings.TrimSpace(string(data)), err
+}
+
+func detachedRequestData(root, id, request string, limit int64) ([]byte, error) {
 	path, err := detachedSocket(root, id)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || !ownedByCurrentUser(info) {
-		return "", failure.Wrap("inspect detached publication", failure.ClientStateUnavailable, errors.New("unsafe detached socket"))
+		return nil, failure.Wrap("inspect detached publication", failure.ClientStateUnavailable, errors.New("unsafe detached socket"))
 	}
 	conn, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 	if _, err := io.WriteString(conn, request+"\n"); err != nil {
-		return "", err
+		return nil, err
 	}
-	var response [64]byte
-	n, err := conn.Read(response[:])
-	return strings.TrimSpace(string(response[:n])), err
+	data, err := io.ReadAll(io.LimitReader(conn, limit+1))
+	if len(data) > int(limit) {
+		return nil, failure.Wrap("inspect detached publication", failure.ServerResponseInvalid, errors.New("detached response exceeds limit"))
+	}
+	return data, err
 }
 
 func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, titles ...string) error {
@@ -239,7 +262,31 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 	if len(titles) != 0 {
 		command = titles[0]
 	}
+	if command == "tnl connect" {
+		return awaitDetachedCommandReady(ctx, cmd, root, id, 30*time.Second, func(_ string) error {
+			mode := statusOutputHuman
+			for i, arg := range args {
+				if arg == "--output=json" || arg == "--output" && i+1 < len(args) && args[i+1] == "json" {
+					mode = statusOutputJSON
+				}
+			}
+			return writeDetachedConnection(root, id, mode, output)
+		})
+	}
 	return awaitDetachedCommand(ctx, cmd, root, id, 30*time.Second, output, command)
+}
+
+func writeDetachedConnection(root, id string, mode statusOutputMode, output io.Writer) error {
+	data, err := detachedRequestData(root, id, "connection", 128<<10)
+	if err != nil {
+		return err
+	}
+	var profile nativeConnectionProfile
+	if json.Unmarshal(data, &profile) != nil || profile.Schema != 1 || !profile.ConnectorRequired {
+		return failure.Wrap("read detached connection", failure.ServerResponseInvalid, errors.New("invalid prepared connection"))
+	}
+	profile.DetachedID = id
+	return writeNativeConnection(output, profile, mode, net.JoinHostPort(profile.Host, strconv.Itoa(profile.Port)))
 }
 
 func detachedStatus(root, id string) (string, string, error) {
@@ -264,6 +311,12 @@ func awaitDetached(ctx context.Context, cmd *exec.Cmd, root, id string, timeout 
 }
 
 func awaitDetachedCommand(ctx context.Context, cmd *exec.Cmd, root, id string, timeout time.Duration, output io.Writer, command string) error {
+	return awaitDetachedCommandReady(ctx, cmd, root, id, timeout, func(pid string) error {
+		return writeHumanFrame(output, command, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: "ready"}))
+	})
+}
+
+func awaitDetachedCommandReady(ctx context.Context, cmd *exec.Cmd, root, id string, timeout time.Duration, ready func(string) error) error {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	deadline := time.NewTimer(timeout)
@@ -303,7 +356,7 @@ func awaitDetachedCommand(ctx context.Context, cmd *exec.Cmd, root, id string, t
 				return failure.Wrap("start detached publication", failure.DetachedStartFailed, errors.New("detached process exited before publication was ready"))
 			default:
 			}
-			if err := writeHumanFrame(output, command, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: state})); err != nil {
+			if err := ready(pid); err != nil {
 				cleanup()
 				return err
 			}

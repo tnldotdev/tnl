@@ -1,6 +1,7 @@
 package connectionruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -184,7 +185,7 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	if request.Schema != Schema || request.Directory != h.Directory || request.ConfigDigest != h.ConfigDigest {
 		return ErrUnauthorized
 	}
-	if operation != "status" && operation != "connect" && operation != "stop" && operation != "kube-credential" {
+	if operation != "status" && operation != "connect" && operation != "prepared" && operation != "stop" && operation != "kube-credential" {
 		return ErrInvalid
 	}
 	data, err := json.Marshal(request)
@@ -193,7 +194,7 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	}
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "POST", h.URL+"/v1/connections/"+operation, bytesReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", h.URL+"/v1/connections/"+operation, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

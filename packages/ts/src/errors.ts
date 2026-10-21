@@ -8,6 +8,7 @@ export type TnlErrorCode =
   | "sdk.configuration_invalid"
   | "sdk.service_unprepared"
   | "sdk.connection_unavailable"
+  | "sdk.connection_unprepared"
   | "sdk.connection_server_only"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
@@ -75,6 +76,12 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "later",
     message: "the native connection owner is unavailable; prepare connections again",
+  },
+  "sdk.connection_unprepared": {
+    class: "unavailable",
+    retry: "after_change",
+    message:
+      "connection settings are not prepared; await tnl.connect first or set TNL_CONNECTION_HANDLE to a prepared native handle",
   },
   "sdk.connection_server_only": {
     class: "unavailable",

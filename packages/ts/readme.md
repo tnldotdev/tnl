@@ -48,6 +48,67 @@ not silently use another identity. Enrollment keys belong to setup, not the
 SDK. The native publisher keeps its signing key private; project metadata and
 status contain no credentials.
 
+## native connections
+
+Use `tnl.connect` from Node or Bun to reach a configured service:
+
+```ts
+import { tnl } from "@tnldotdev/tnl";
+
+const database = tnl.connect("database");
+const settings = await database;
+const credentials = {
+  ...settings,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+};
+```
+
+The immediate handle is awaitable. Awaiting prepares only the requested service
+and returns a plain, read-only settings snapshot. PostgreSQL and MySQL settings
+contain only `host: "127.0.0.1"`, the actual local `port`, and
+`ssl: { servername, rejectUnauthorized: true, ca? }`. The native connector owns
+admission and client certificates, including for public services. The application
+supplies its database account settings. `tnl.services` keeps the managed hostname
+and public port.
+
+Property reads and `{ ...database }` work synchronously after an awaited preparation
+in this process, or when `TNL_CONNECTION_HANDLE` selects a prepared native owner.
+This supports an ordinary Drizzle Kit config without top-level await:
+
+```ts
+import { tnl } from "@tnldotdev/tnl";
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  dbCredentials: {
+    ...tnl.connect("database"),
+    user: process.env.DB_USER!,
+    password: process.env.DB_PASSWORD!,
+    database: process.env.DB_NAME!,
+  },
+});
+```
+
+Generate project declarations with `tnl generate` for exact service names and
+protocol-specific results. Without declarations, narrow the returned protocol
+union before using protocol-specific settings. Synchronous reads validate the
+prepared owner and current project configuration; they never start an owner or
+sign in. An unprepared read fails with `sdk.connection_unprepared`.
+
+Each spread reads one coherent snapshot. Await the handle again to revalidate
+the owner and expiry before creating a new client; an existing driver keeps its
+previous snapshot. The awaitable `then` method is nonenumerable, and expiry and
+protocol bookkeeping are not driver options.
+
+HTTP settings contain `{ url, fetch }`. The URL retains the managed HTTPS origin;
+the origin-restricted `fetch` dispatcher dials loopback with verified TLS and the
+managed SNI and Host. TCP returns `{ host, port }`; Kubernetes returns
+`{ server, kubeconfig, context }`. Browser connection reads and awaits fail with
+`sdk.connection_server_only`.
+
 Read the [quickstart](https://tnl.dev/docs),
 [Next.js and Vite setup](https://tnl.dev/docs/frameworks),
 [project configuration](https://tnl.dev/docs/configuration), and

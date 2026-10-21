@@ -50,17 +50,20 @@ void tnl.services.db.metadata;
 // @ts-expect-error unknown connection name.
 tnl.connect("missing");
 const db = await tnl.connect("db");
-db.host satisfies string;
+db.host satisfies "127.0.0.1";
 db.port satisfies number;
 db.ssl.rejectUnauthorized satisfies true;
 db.ssl.servername satisfies string;
 db.ssl.ca satisfies string | undefined;
-db.ssl.cert satisfies string | undefined;
-db.ssl.key satisfies string | undefined;
-// @ts-expect-error private admission does not promise a client certificate.
-db.ssl.cert satisfies string;
+// @ts-expect-error the connector owns application certificates.
+void db.ssl.cert;
+// @ts-expect-error the connector owns application keys.
+void db.ssl.key;
+// @ts-expect-error native settings are read-only.
+db.port = 5432;
+// @ts-expect-error TLS verification is read-only.
+db.ssl.servername = "other.example";
 const mysql = await tnl.connect("mysql");
-mysql.ssl.key satisfies string | undefined;
 mysql.ssl.servername satisfies string;
 mysql.ssl.rejectUnauthorized satisfies true;
 const cluster = await tnl.connect("cluster");
@@ -82,3 +85,28 @@ type Union = TnlProjectFromConfig<{
 }>;
 declare const union: Union;
 union.services.choice.protocol satisfies "postgres" | "mysql";
+
+const immediate = tnl.connect("db");
+immediate.host satisfies "127.0.0.1";
+immediate satisfies PromiseLike<TnlConnectionRegistry["postgres"]>;
+({ ...immediate, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
+// @ts-expect-error metadata is read-only.
+tnl.services.db.port = 5432;
+
+type Optional = TnlProjectFromConfig<{
+  services: { database: { protocol: "postgres" } | undefined };
+  aliases: { dashboard: { service: "api" } | undefined };
+  webhooks: { events?: { service: "api"; path: "/events"; methods: readonly ["POST"] } };
+}>;
+declare const optional: Optional;
+// @ts-expect-error an explicitly undefined service stays optional.
+void optional.services.database.protocol;
+if (optional.services.database) optional.services.database.protocol satisfies "postgres";
+// @ts-expect-error an explicitly undefined origin stays optional.
+void optional.aliases.dashboard.url;
+if (optional.aliases.dashboard) optional.aliases.dashboard.service satisfies "api";
+if (optional.webhooks.events) {
+  optional.webhooks.events.methods satisfies readonly ["POST"];
+  // @ts-expect-error nested metadata is read-only.
+  optional.webhooks.events.methods[0] = "POST";
+}

@@ -11,11 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
+	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -75,9 +77,6 @@ type Config struct {
 	// authoritative; target trust is owned only by the publisher.
 	TrustRevision int64
 	Ready         func() error
-	// Preflight verifies one opaque visitor's managed TLS before Ready, using
-	// these same ingress paths without sending application bytes.
-	Preflight bool
 	// infrastructure trust is independent of the optional target CA bundle.
 	TransportTLS   *tls.Config
 	MaxConnections int
@@ -168,7 +167,7 @@ func Serve(ctx context.Context, listener net.Listener, config Config) (result er
 	if !ok || !address.IP.IsLoopback() {
 		return ErrPrivateConnection
 	}
-	return serveConnections(ctx, config, address, false, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
+	return serveConnections(ctx, config, false, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
 		return serveLoopback(ctx, listener, config.MaxConnections, config.Ready, func(ctx context.Context, local net.Conn) { _ = forward(ctx, local) })
 	})
 }
@@ -183,14 +182,14 @@ func Stream(ctx context.Context, local net.Conn, config Config) error {
 	defer local.Close()
 	stop := context.AfterFunc(ctx, func() { _ = local.Close() })
 	defer stop()
-	return serveConnections(ctx, config, nil, true, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
+	return serveConnections(ctx, config, true, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
 		return forward(ctx, local)
 	})
 }
 
 type connectionConsumer func(context.Context, func(context.Context, net.Conn) error) error
 
-func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, single bool, consume connectionConsumer) (result error) {
+func serveConnections(ctx context.Context, config Config, single bool, consume connectionConsumer) (result error) {
 	if config.Control == nil || !opaqueid.Valid(config.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		(config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix)) || !validProtocol(config.Protocol) || config.TrustRevision < 1 {
 		return ErrPrivateConnection
@@ -210,11 +209,7 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 	if closer, ok := config.Control.(interface{ Close() error }); ok {
 		defer func() { result = errors.Join(result, closer.Close()) }()
 	}
-	if config.ManagedTLS != nil && config.ManagedTLS.Public && config.Protocol == "tcp" {
-		return serveDirectTCP(ctx, address, config, consume)
-	}
-	if config.ManagedTLS.Public {
-		// public native protocols never fall back to connector admission.
+	if config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
 		return ErrPrivateConnection
 	}
 	serveCtx, cancel := context.WithCancelCause(ctx)
@@ -232,7 +227,8 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 	paths, err := tunnel.NewSlots(serveCtx, tunnel.SlotsConfig{Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, signer.Subject, slot)
 		if err != nil {
-			if single {
+			_, definition, known := failure.Describe(err)
+			if single || known && definition.Retry != failure.RetryLater {
 				cancel(err)
 			}
 			return nil, err
@@ -331,6 +327,8 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 			return err
 		}
 	}
+	startup := time.NewTimer(30 * time.Second)
+	defer startup.Stop()
 	for {
 		ready, changed := paths.Snapshot()
 		if ready[0] != nil && ready[1] != nil {
@@ -343,6 +341,8 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 			}
 			return context.Cause(serveCtx)
 		case <-changed:
+		case <-startup.C:
+			return failure.Wrap("prepare connector paths", failure.ConnectionUnavailable, context.DeadlineExceeded)
 		}
 	}
 	var next atomic.Uint64
@@ -386,8 +386,14 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 			}
 			defer provider.Close()
 			if local == nil {
-				// the readiness probe ends after openPrivate verifies managed TLS.
-				return nil
+				// opaque TLS is already verified by openPrivate. native protocols
+				// negotiate their own TLS through this same admitted stream.
+				if config.Protocol == "tcp" {
+					return nil
+				}
+				verification := config.ServiceTLS.Clone()
+				verification.ServerName = run.ManagedTLS.Hostname
+				return (targettransport.Transport{Protocol: serviceconfig.ProtocolName(config.Protocol), TLS: verification}).PreflightConnection(forwardCtx, provider)
 			}
 			connectionCtx, cancelConnection := context.WithCancel(forwardCtx)
 			defer cancelConnection()
@@ -400,21 +406,23 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 		}
 		return ErrPrivateConnection
 	}
-	if config.Preflight {
-		if config.Protocol != "tcp" {
-			return ErrPrivateConnection
-		}
+	if !single {
 		probe, cancel := context.WithTimeout(serveCtx, 10*time.Second)
 		err := forward(probe, nil)
 		cancel()
 		if err != nil {
 			reason := failure.ConnectionUnavailable
 			var certificateError *tls.CertificateVerificationError
-			if errors.As(err, &certificateError) {
+			reasonOf, _ := failure.ReasonOf(err)
+			if reasonOf == failure.ServerDenied {
+				return err
+			}
+			if errors.As(err, &certificateError) || reasonOf == failure.TargetTLSRejected {
 				reason = failure.ConnectionTLSRejected
 			}
 			return failure.Wrap("verify native service TLS", reason, err)
 		}
+		next.Store(0)
 	}
 	return consume(serveCtx, forward)
 }

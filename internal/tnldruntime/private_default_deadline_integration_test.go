@@ -120,6 +120,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("connector did not become ready")
 	}
+	connectorReadinessObservation(t, opened)
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)

@@ -22,22 +22,7 @@ func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output 
 	if err != nil {
 		return err
 	}
-	var issue kubeconfig.IssueCertificate
-	if profile.Public && profile.Certificate == nil {
-		issue = func(ctx context.Context) (kubeconfig.CertificateFiles, error) {
-			session, err := openTeamSession(ctx, remoteFlags{ServerURL: profile.Owner.ControlURL, StateDir: profile.StateDir}, "tnl connect", io.Discard)
-			if err != nil {
-				return kubeconfig.CertificateFiles{}, err
-			}
-			defer session.Close()
-			if profile.IdentityID == "" || profile.IdentityID != session.identity.Identity.Id {
-				return kubeconfig.CertificateFiles{}, kubeconfig.ErrCredential
-			}
-			material, err := ensureConnectCertificate(ctx, session, profile.Owner.ServiceID)
-			return kubeconfig.CertificateFiles{CertificateFile: material.CertificateFile, KeyFile: material.KeyFile}, err
-		}
-	}
-	credential, err := kubeconfig.Credential(ctx, profile, issue)
+	credential, err := kubeconfig.Credential(ctx, profile, nil)
 	if err != nil {
 		return err
 	}
@@ -109,7 +94,7 @@ func prepareKubernetesConnection(ctx context.Context, session *teamSession, flag
 	if listen != "" {
 		server = "https://" + listen
 	}
-	prepared, err := kubeconfig.PrepareConnection(ctx, plan, kubeconfig.Options{Owner: owner, ProjectLabel: projectLabel, Service: serviceLabel, Namespace: flags.Namespace, Server: server, TLSServerName: profile.Hostname, Helper: helper}, kubeconfig.Profile{Owner: owner, StateDir: session.database.Root(), IdentityID: session.identity.Identity.Id, Public: profile.Public, Source: source})
+	prepared, err := kubeconfig.PrepareConnection(ctx, plan, kubeconfig.Options{Owner: owner, ProjectLabel: projectLabel, Service: serviceLabel, Namespace: flags.Namespace, Server: server, TLSServerName: profile.Hostname, Helper: helper}, kubeconfig.Profile{Owner: owner, StateDir: session.database.Root(), IdentityID: session.identity.Identity.Id, Source: source})
 	if err != nil {
 		return err
 	}

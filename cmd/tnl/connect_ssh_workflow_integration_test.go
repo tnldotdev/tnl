@@ -155,11 +155,8 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.private_connector_sessions`).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
-			if endpoint.Public && after != before {
-				t.Fatal("public SSH created private connector assignments")
-			}
-			if !endpoint.Public && after <= before {
-				t.Fatal("private SSH skipped connector authentication")
+			if after <= before {
+				t.Fatal("SSH skipped connector authentication")
 			}
 		})
 	}

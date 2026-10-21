@@ -1,6 +1,7 @@
 package privatepublisher
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,12 +10,17 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -51,6 +57,71 @@ func managedTestCertificate(t *testing.T, host string) (tls.Certificate, *tls.Co
 	roots := x509.NewCertPool()
 	roots.AddCert(parsed)
 	return tls.Certificate{Certificate: [][]byte{der, root}, PrivateKey: leafKey}, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: host}
+}
+
+func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
+	for _, public := range []bool{false, true} {
+		for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolKubernetes} {
+			t.Run(fmt.Sprintf("public=%v/%s", public, protocol), func(t *testing.T) {
+				target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") != "Bearer cluster-only" {
+						t.Error("application authentication changed")
+					}
+					_, _ = io.WriteString(w, "loopback connector")
+				}))
+				defer target.Close()
+				p, bound, ref, verification := privateFixture(t, target.Listener.Addr().String())
+				p.managedPublic, p.managedProtocol = public, protocol
+				roots := x509.NewCertPool()
+				roots.AddCert(target.Certificate())
+				p.managedTargetTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: target.Certificate().DNSNames[0]}
+				var err error
+				p.managedHTTPRequests, err = publisher.NewManagedHTTPRequestLimits(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				client, server := net.Pipe()
+				defer client.Close()
+				_ = client.SetDeadline(time.Now().Add(5 * time.Second))
+				done := make(chan error, 1)
+				go func() { defer server.Close(); done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref)) }()
+				proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+				if _, err := client.Write(proxy); err != nil {
+					t.Fatal(err)
+				}
+				secure := tls.Client(client, verification)
+				if err := secure.HandshakeContext(ctx); err != nil {
+					t.Fatal(err)
+				}
+				request, _ := http.NewRequest("GET", "https://127.0.0.1:15432/api/v1/pods", nil)
+				request.Header.Set("Authorization", "Bearer cluster-only")
+				request.Close = true
+				if err := request.Write(secure); err != nil {
+					t.Fatal(err)
+				}
+				response, err := http.ReadResponse(bufio.NewReader(secure), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(response.Body)
+				response.Body.Close()
+				if err != nil || response.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "loopback connector" {
+					t.Fatalf("loopback authority rejected: %d %q %v", response.StatusCode, body, err)
+				}
+				_ = client.Close()
+				select {
+				case <-done:
+				case <-ctx.Done():
+					t.Fatal("connector publisher did not join")
+				}
+				if p.managedPublic != public || p.managedHostname != verification.ServerName {
+					t.Fatal("connector changed approved public endpoint metadata")
+				}
+			})
+		}
+	}
 }
 
 func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.PrivatePublisherConnectionRef, *tls.Config) {

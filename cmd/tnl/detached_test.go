@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var detachedHelperRoot = flag.String("tnl-detached-child-root", "", "private state root for detached process test")
@@ -38,7 +40,61 @@ func TestDetachedChildProcess(t *testing.T) {
 		detachedPublicationStarting(ctx)
 		detachedPublicationReady(ctx)
 	}
+	if protocol, ok := strings.CutPrefix(*detachedHelperMode, "connection-"); ok {
+		detachedPublicationStarting(ctx)
+		profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.PrivateServiceProtocol(protocol), ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "approved.example.test", Port: 25443, Public: true}}, "127.0.0.1:15432")
+		if err != nil {
+			t.Fatal(err)
+		}
+		detachedConnectorPrepared(ctx, profile)
+		time.Sleep(100 * time.Millisecond)
+		detachedPublicationReady(ctx)
+	}
 	<-ctx.Done()
+}
+
+func TestDetachedConnectorReturnsPreparedAddressForEveryProtocol(t *testing.T) {
+	for _, protocol := range []string{"http", "postgres", "mysql", "tcp", "kubernetes"} {
+		t.Run(protocol, func(t *testing.T) {
+			root, err := os.MkdirTemp("/tmp", "tnl-detached-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(root) })
+			root, err = filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Join(root, "state")
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + state, "-tnl-detached-child-mode=connection-" + protocol})
+			if err != nil {
+				t.Fatal(err)
+			}
+			const id = "abcdef0123456789abcdef01"
+			var output bytes.Buffer
+			err = awaitDetachedCommandReady(t.Context(), cmd, state, id, 5*time.Second, func(string) error { return writeDetachedConnection(state, id, statusOutputJSON, &output) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _, _ = detachedRequest(state, id, "stop") }()
+			var profile nativeConnectionProfile
+			if json.Unmarshal(output.Bytes(), &profile) != nil || string(profile.Protocol) != protocol || profile.Host != "127.0.0.1" || profile.Port != 15432 || profile.Hostname != "approved.example.test" || !profile.Public || !profile.ConnectorRequired || profile.DetachedID != id {
+				t.Fatal("detached command omitted prepared local instructions", output.String())
+			}
+			status, _, err := detachedStatus(state, id)
+			if err != nil || status != "ready" {
+				t.Fatal("detached command exited before readiness", status, err)
+			}
+			if _, err := detachedRequest(state, id, "stop"); err != nil {
+				t.Fatal(err)
+			}
+			workflowWait(t, 3*time.Second, func() bool { _, err := os.Lstat(filepath.Join(state, "d", id)); return os.IsNotExist(err) })
+		})
+	}
 }
 
 func TestDetachedHandshakeWaitsForReadyAndReapsStartupFailures(t *testing.T) {

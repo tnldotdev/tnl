@@ -18,14 +18,14 @@ const credentials = {
 ```
 
 the application supplies SQL account settings. the result contains `host`,
-`port`, and `ssl: {servername, rejectUnauthorized: true, ca?, cert?, key?}`.
-private connections omit application client certificates; public connections
-return a current native certificate snapshot. `ca` is omitted so the driver uses
-its normal server roots. the client-certificate issuer is never a server root.
-obtain another snapshot after its certificate expires.
+`port`, and `ssl: {servername, rejectUnauthorized: true, ca?}`. every service uses
+an authenticated loopback connector, including services with public endpoints.
+`host` is `127.0.0.1`; `port` is the actual listener port; `ssl.servername` is the
+approved managed hostname. no snapshot contains an application client certificate
+or key. `ca` is omitted so the driver uses its normal server roots.
 
 HTTP returns `{url, fetch}`. its dedicated Undici dispatcher checks the managed
-origin, uses current native mTLS material, limits active requests to 64, and
+origin, dials the loopback listener with the managed TLS server name, limits active requests to 64, and
 bounds requests and response bodies to 30 seconds or the credential deadline.
 it preserves ordinary `Request`, body, `Response`, redirect, and cancellation
 handling. redirects outside the managed origin fail. application `Authorization`
@@ -34,8 +34,8 @@ headers are passed through; tnl adds no application bearer token.
 opaque TCP returns the loopback TLS helper's `{host, port}`. the helper owns
 outer managed TLS, so applications must not add a second managed TLS layer.
 Kubernetes returns `{server, kubeconfig, context}`. the native helper composes
-the cluster bearer token and current tnl mTLS certificate into one exec
-credential. local preparation uses `PlanLocal` without selecting a global
+the cluster bearer token into an exec credential. its kubeconfig uses a loopback
+`server` and managed `tls-server-name`. local preparation uses `PlanLocal` without selecting a global
 context; CI uses one private `PlanSession` file and returns it separately for
 the action to export as `KUBECONFIG`. contexts use `tnl:shop/cluster` and the
 existing ownership-based qualification rule.
@@ -51,6 +51,7 @@ version` and normal generated help retain their existing contracts.
 /absolute/tnl runtime connections context --directory /checkout/shop --ci migrate
 /absolute/tnl runtime connections start --directory /checkout/shop --ci migrate --runner-temp /runner/temp
 /absolute/tnl runtime connections status --handle /runner/temp/tnl-connections-.../handle.json
+/absolute/tnl runtime connections read --handle /runner/temp/tnl-connections-.../handle.json --service database
 /absolute/tnl runtime connections stop --handle /runner/temp/tnl-connections-.../handle.json
 ```
 
@@ -123,14 +124,58 @@ it contains a random IPC proof, loopback URL, project fingerprint, executable,
 and deadline. it contains no JWT, workload credential, human credential, or TLS
 key. the workload lease renews every 30 seconds within its fixed execution
 deadline; failed renewal stops every helper. local SDK preparation uses an
-existing human sign-in, prepares one owner for the project's managed services,
+existing human sign-in, passes `--service NAME` to prepare only the requested service,
 and stops it on app exit or its bounded parent/deadline check.
 
-private listeners bind `127.0.0.1` at the allocated managed service port.
+all listeners bind `127.0.0.1` at the allocated managed service port.
 collision is an error; the owner never chooses a replacement port. HTTP and
 database readiness performs verified native TLS negotiation without logging in
-or issuing an SQL query. public native protocols connect directly; opaque TCP
-uses the native outer-TLS helper.
+or issuing an SQL query. opaque TCP uses the native outer-TLS helper. the service's
+approved public setting, hostname, and port remain unchanged in browser-safe
+metadata; private connection snapshots describe the local listener separately.
+
+`read --handle FILE --service NAME` synchronously reads the current prepared
+schema-1 wrapper through the existing owner's `prepared` IPC operation. it pairs
+`public_runtime` with `connection` under the same owner's operation lock.
+it does not start an owner, evaluate configuration, or authenticate. only the
+handle path and service name appear in argv; the capability stays in the private
+handle and HTTP header. the operation is bounded to five seconds and expired
+handles, owners, or snapshots fail with `TNL_CLIENT_CONNECTION_EXPIRED`. callers
+must prepare again after expiration; a read never replaces the owner.
+
+```json
+{
+  "schema": 1,
+  "public_runtime": {
+    "dev": false,
+    "namespace": "production.shop.example",
+    "services": {
+      "database": {
+        "protocol": "postgres",
+        "namespace": "production.shop.example",
+        "hostname": "database.production.shop.example",
+        "port": 25443,
+        "public": true
+      }
+    }
+  },
+  "connection": {
+    "schema": 1,
+    "protocol": "postgres",
+    "host": "127.0.0.1",
+    "port": 25443,
+    "ssl": { "servername": "database.production.shop.example", "rejectUnauthorized": true },
+    "expires_at": "2026-10-20T18:00:00Z"
+  }
+}
+```
+
+HTTP and Kubernetes snapshots add `url: "https://MANAGED_HOST:ALLOCATED_PORT"`.
+Kubernetes also adds absolute `kubeconfig` and owned `context` values. opaque TCP
+omits `ssl` and `url` because tnl owns its outer TLS. HTTP origin and local dial
+address must be handled independently by the SDK dispatcher. the Kubernetes
+client's `server` is the loopback HTTPS address from `host` and `port`, matching
+the kubeconfig; its `tls-server-name` remains `ssl.servername`.
 
 ## action consumer example
 
@@ -188,18 +233,20 @@ the handle selects a numeric loopback HTTP origin. `Authorization: Bearer
 contains `{schema: 1, directory, config_digest, service?}` and must match the
 canonical selected project. requests, responses, headers, reads, and operations
 are bounded. handle reads reject symlinks, wrong ownership, loose permissions,
-and expiration. the Node SDK recomputes current project context through the
-handle's exact executable before using it, including when an action prepared it.
+and expiration. Node and Python use their installed native binary to read the
+existing owner's exact scope, including when an action prepared it. reads do not
+recompute project context or resolve an executable from handle contents.
 `TNL_PROJECT_RUNTIME` never directs a file read.
 
 | method | path                              | result                                             |
 | ------ | --------------------------------- | -------------------------------------------------- |
 | POST   | `/v1/connections/status`          | the nonsecret startup/status shape                 |
 | POST   | `/v1/connections/connect`         | private current connection snapshot                |
+| POST   | `/v1/connections/prepared`        | same-owner public metadata and private snapshot    |
 | POST   | `/v1/connections/kube-credential` | composed Kubernetes exec credential                |
 | POST   | `/v1/connections/stop`            | stop acknowledgement; CLI waits for joined cleanup |
 
-only `connect` and `kube-credential` return native TLS material, on private IPC. snapshots
+`connect` returns prepared connection options on private IPC. snapshots
 include `schema`, protocol, host, port, `expires_at`, protocol-specific fields,
 and optional `ssl`. Kubernetes's helper is pinned to the same executable and
 handle. stopping closes listeners and streams, joins connector workers, removes
@@ -215,17 +262,14 @@ trust revision, protocol, and managed TLS endpoint. no human ID substitutes for
 a workload. closing a service adapter releases only its own assignments; the
 owner retains session renewal/revocation.
 
-the native owner generates one ephemeral key and supplies it through
-`workloadclient.NewWithKey`. the transport adapter still exposes only an opaque
-TLS signer. the owner pairs each validated current service/session certificate
-with its retained key for protected IPC snapshots; no generic key-export API or
-credential file is involved. preparation checks the pair before reporting ready.
-certificates stay within the fixed session window; admission also checks the
-renewable lease.
+the native owner generates one ephemeral signing key for workload exchange and
+connector proofs. current authorization retains the exact workload service set,
+fixed execution deadline, and renewable lease. no human device represents a workload.
 
-opaque private TCP sets `tcpconnect.Config.Preflight`. before reporting ready,
-the connector opens one authorized stream through its existing ingress paths,
-verifies managed TLS, and closes it without sending application bytes. a TLS
+before reporting ready, every connector opens one authorized stream through its
+existing ingress paths, verifies managed TLS with the approved protocol, and
+closes it without sending application bytes. native HTTP, PostgreSQL, MySQL, and
+Kubernetes keep their native TLS bytes for later local clients. a TLS
 rejection fails startup. Kubernetes defaults use control's saved `KubernetesAuth`
 hint, including workload inventory, rather than unapplied local selectors.
 
@@ -235,13 +279,15 @@ mise exec -- task go:test:integration:connections
 mise exec -- task js:check
 ```
 
-the first target covers private IPC lifecycle and real native-process SDK HTTPS,
-including mTLS, standard body/response behavior, cancellation, certificate
-rotation, lost exchange response recovery, and revocation. it also checks the
-Kubernetes SDK result, composed native exec credential, and session-file cleanup.
+the first target covers private IPC lifecycle and real native-process connector
+HTTPS, lost exchange response recovery, prepared reads, and revocation. it also
+checks loopback Kubernetes server identity, native exec credentials, and
+session-file cleanup.
 the integration target creates and removes digest-pinned disposable PostgreSQL
-and runs actual Drizzle Kit migration through a public native TLS endpoint.
-Drizzle Kit 0.31's synchronous CommonJS config loader uses an in-memory preload
-in this fixture after awaiting `tnl.connect`; no credential-bearing config file
-is generated. routine TypeScript tests check both public and private SQL option
+and runs actual Drizzle Kit migrations for public and private managed endpoints.
+the fixture packs matching native and launcher tarballs, installs them with pnpm,
+and runs `pnpm exec drizzle-kit migrate` using an ordinary synchronous config
+that spreads `tnl.connect("database")`. it verifies the created table through the
+installed SDK and directly in PostgreSQL. the same installed-package path checks
+HTTP managed origins and local Kubernetes settings. the SDK owner tests SQL option
 shapes, malformed/expired snapshots, opaque TCP, and browser rejection.

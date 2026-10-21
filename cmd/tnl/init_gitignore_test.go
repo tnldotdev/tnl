@@ -103,7 +103,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 				}
 			}
 			initIgnoreGit(t, root, "add", ".tnl/generated/example.ts", ".tnl/config.json")
-			if files := initIgnoreGit(t, root, "ls-files", "--", ".tnl"); files != ".tnl/config.json\n.tnl/generated/example.ts\n.tnl/generated/manifest.json\n.tnl/generated/project.d.ts\n.tnl/generated/readme.md\n" {
+			if files := initIgnoreGit(t, root, "ls-files", "--", ".tnl"); files != ".tnl/config.json\n.tnl/generated/example.ts\n.tnl/generated/manifest.json\n.tnl/generated/project.d.ts\n.tnl/generated/python/pyproject.toml\n.tnl/generated/python/tnl_project/__init__.py\n.tnl/generated/python/tnl_project/py.typed\n.tnl/generated/readme.md\n" {
 				t.Fatalf("trackable files = %q", files)
 			}
 		})

@@ -4,7 +4,7 @@ import { managedFetch, parseConnection } from "./src/internal/connection.js";
 const database = {
   schema: 1,
   protocol: "postgres",
-  host: "database.team.example",
+  host: "127.0.0.1",
   port: 15432,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   ssl: { servername: "database.team.example", rejectUnauthorized: true },
@@ -53,10 +53,10 @@ describe("private connection snapshots", () => {
     },
   );
   test.each(["postgres", "mysql"])(
-    "accepts a fresh %s public credential snapshot only as a pair",
+    "rejects application credentials in %s connector options",
     (protocol) => {
       const ssl = { ...database.ssl, cert: "current-certificate", key: "current-key" };
-      expect(parseConnection({ ...database, protocol, ssl }).ssl).toEqual(ssl);
+      expect(() => parseConnection({ ...database, protocol, ssl })).toThrow();
       for (const partial of [
         { ...database.ssl, cert: "cert" },
         { ...database.ssl, key: "key" },
@@ -67,17 +67,40 @@ describe("private connection snapshots", () => {
   test("rejects stale, widened, unverified, malformed, and credential-bearing endpoint data", () => {
     for (const value of [
       { ...database, schema: 2 },
+      { ...database, host: "database.team.example" },
       { ...database, expires_at: new Date(0).toISOString() },
       { ...database, expires_at: "invalid" },
       { ...database, port: "15432" },
       { ...database, user: "never-gathered" },
       { ...database, ssl: { ...database.ssl, rejectUnauthorized: false } },
-      { ...database, ssl: { ...database.ssl, servername: "other.example" } },
+      { ...database, ssl: { ...database.ssl, servername: "127.0.0.1" } },
       { ...database, ssl: { ...database.ssl, ca: { secret: true } } },
       { ...database, ssl: { ...database.ssl, key: "x".repeat(128 * 1024) } },
       { ...database, ssl: { ...database.ssl, unexpected: true } },
     ])
       expect(() => parseConnection(value)).toThrow();
+  });
+  test("freezes local snapshots and keeps HTTP URLs on the managed origin", () => {
+    const snapshot = parseConnection({
+      ...database,
+      protocol: "http",
+      url: "https://database.team.example:8443",
+    });
+    expect(snapshot).toMatchObject({
+      host: "127.0.0.1",
+      port: 15432,
+      url: "https://database.team.example:8443",
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.ssl)).toBe(true);
+    for (const url of [
+      "http://database.team.example",
+      "https://127.0.0.1:15432",
+      "https://database.team.example/secret",
+      "https://database.team.example/?token=secret",
+      "https://user:secret@database.team.example",
+    ])
+      expect(() => parseConnection({ ...database, protocol: "http", url })).toThrow();
   });
   test("opaque TCP returns only the outer-TLS helper, with no application TLS options", () => {
     const { ssl: _ssl, ...endpoint } = database;
@@ -89,7 +112,15 @@ describe("private connection snapshots", () => {
   });
   test("browser connect rejects with an owned server-only diagnostic", async () => {
     const { tnl } = await import("./src/index.browser.js");
-    await expect(tnl.connect("database" as never)).rejects.toMatchObject({
+    const handle = tnl.connect("database");
+    expect(Object.getOwnPropertyDescriptor(handle, "then")?.enumerable).toBe(false);
+    expect(() => ({ ...handle })).toThrow(
+      expect.objectContaining({ code: "sdk.connection_server_only" }),
+    );
+    await expect(handle).rejects.toMatchObject({
+      code: "sdk.connection_server_only",
+    });
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({
       code: "sdk.connection_server_only",
     });
   });

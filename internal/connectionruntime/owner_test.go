@@ -40,8 +40,8 @@ func (b *fixtureBackend) Connect(ctx context.Context, name string) (Connection, 
 	if name != "database" {
 		return Connection{}, ErrInvalid
 	}
-	n := b.credential.Add(1)
-	return Connection{Schema: 1, Protocol: "postgres", Host: "db.example", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true, Cert: strings.Repeat("c", int(n)), Key: "private-snapshot"}}, nil
+	b.credential.Add(1)
+	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}}, nil
 }
 func (b *fixtureBackend) Renew(context.Context) (time.Time, error) { return b.deadline, nil }
 func (b *fixtureBackend) Close(context.Context) error              { b.closed.Store(true); return nil }
@@ -78,9 +78,16 @@ func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 		if err := Call(t.Context(), state.PrivateHandle, "connect", request, &snapshot); err != nil {
 			t.Fatal(err)
 		}
-		if snapshot.SSL == nil || len(snapshot.SSL.Cert) != i {
-			t.Fatal("credential snapshot was cached")
+		if snapshot.SSL == nil || snapshot.Host != "127.0.0.1" || snapshot.SSL.ServerName != "db.example" || int(b.credential.Load()) != i {
+			t.Fatal("prepared snapshot was cached or lost its managed identity")
 		}
+	}
+	var prepared Prepared
+	if err := Call(t.Context(), state.PrivateHandle, "prepared", request, &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Schema != Schema || prepared.Connection.SSL == nil || prepared.PublicRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName || prepared.Connection.Host != "127.0.0.1" || b.credential.Load() != 3 {
+		t.Fatal("prepared read did not pair the same owner's metadata and fresh connection")
 	}
 	wrong := request
 	wrong.Directory += "-other"

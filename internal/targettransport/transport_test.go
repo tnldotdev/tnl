@@ -172,3 +172,20 @@ func TestTargetTransportRejectsTrustBypassesAndPreservesCancellation(t *testing.
 		t.Fatal("malformed greeting accepted", err)
 	}
 }
+
+func TestPreflightConnectionPreservesCancellationCause(t *testing.T) {
+	for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolTCP, config.ProtocolPostgres, config.ProtocolMySQL, config.ProtocolKubernetes} {
+		t.Run(string(protocol), func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cause := errors.New("owner stopped during native negotiation")
+			cancel(cause)
+			err := (Transport{Protocol: protocol, TLS: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "service.example.test"}}).PreflightConnection(ctx, client)
+			if !errors.Is(err, cause) {
+				t.Fatalf("native negotiation lost its owner cancellation: %v", err)
+			}
+		})
+	}
+}

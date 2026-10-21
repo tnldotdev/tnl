@@ -45,7 +45,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Database and service boundaries           | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
 | CI workload authority and saved selectors | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub fixtures, without live GitHub or AWS                           |
 | CI workload visitor transports            | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
-| Native connection owner and Node SDK      | `task go:test:connections`                                   | Built npm package; local TLS fixtures and native subprocesses, without a human sign-in                               |
+| Native connection owner and prepared IPC  | `task go:test:connections`                                   | Local TLS fixtures and native subprocesses, without a human sign-in                                                  |
 | Drizzle Kit and native connection options | `task go:test:integration:connections`                       | Docker; Task owns disposable PostgreSQL and a real Drizzle Kit migration                                             |
 | Private services and groups               | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
 | Publisher egress evidence                 | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
@@ -59,7 +59,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Public Route 53 and ACME staging          | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                              |
 | Fuzz targets                              | `task go:test:fuzz`                                          | Go toolchain                                                                                                         |
 | npm exports and tarballs                  | `pnpm run pack`                                              | Built package dependencies                                                                                           |
-| Python ASGI and socket contract           | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`                                                  |
+| Python ASGI and socket contract           | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real native owner, and wheel source/type-marker checks         |
 | Local release snapshot                    | `task package`                                               | Builds and checks packages; does not publish                                                                         |
 | Deployed release check                    | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
 
@@ -132,6 +132,10 @@ framework versions.
 
 Run `mise exec -- task py:check` for Ruff, mypy, and pytest. The Python
 distribution source is under `packages/py/`; uv uses its committed `uv.lock`.
+The test Task builds the native CLI and a local connection owner, then exercises
+the prepared-read contract and verified Python TLS without a sign-in or database.
+`task py:package-check` verifies wheel sources and the `py.typed` marker without
+building release artifacts.
 After `task release:snapshot`, `task py:build` verifies four platform wheels
 against those artifacts. The ASGI tests cover
 lifespan startup, streamed responses, WebSockets, private HTTP bounds,

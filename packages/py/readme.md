@@ -27,3 +27,11 @@ one app service; the working directory selects the project, not the service.
 
 See the [Python ASGI guide](https://tnl.dev/docs/publish#publish-a-python-asgi-app)
 for FastAPI, visitor policy, limits, streaming, and WebSocket examples.
+
+Use `db = await tnl.connect("database")` to prepare a declared service through
+the native connection runtime. With `TNL_CONNECTION_HANDLE` already prepared,
+`tnl.connect("database").snapshot()` reads its current settings synchronously.
+Run `tnl generate` and add `./.tnl/generated/python` as a project-local editable
+dependency to use exact static service types with `from tnl_project import tnl`.
+See the [Python connection boundary](connections.md) for lifecycle, TLS,
+database-client adapters, and the generic TypeScript-factory boundary.

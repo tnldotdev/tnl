@@ -47,7 +47,9 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			t.Parallel()
 			opened := make(chan privateObservation, 256)
 			f, issuer := newWorkloadTransportFixture(t, opened)
-			ingresses := [2]*daemon{startSeparatedPrivateIngress(t, f, 0, transport, opened), startSeparatedPrivateIngress(t, f, 1, transport, opened)}
+			for slot := range 2 {
+				startSeparatedPrivateIngress(t, f, slot, transport, opened)
+			}
 			echo := startPrivateEchoTarget(t)
 			httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Tnl-Access-Token") != "" {
@@ -117,7 +119,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			assertWorkloadConnectorProof(t, job, byName["private-tcp"], transport)
 			stopRenew := renewRuntimeWorkload(t, job, session.ExpiresAt)
-			paths := openWorkloadPaths(t, f, job, byName, ingresses[0].ingresses[0].private, pg)
+			paths := openWorkloadPaths(t, f, job, byName, pg)
 			paths.step(t, 0)
 			unrenewed, err := workloadclient.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
@@ -129,7 +131,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, ingresses[1].ingresses[0].private, pg)
+			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg)
 			unrenewedPaths.step(t, 0)
 			// a second ephemeral key cannot steal the execution or reuse its cert.
 			other, err := workloadclient.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
@@ -145,7 +147,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", "test", issuer.Sign(t, claims), keys); err != nil {
 				t.Fatal(err)
 			}
-			revokedPaths := openWorkloadPaths(t, f, other, byName, ingresses[1].ingresses[0].private, pg)
+			revokedPaths := openWorkloadPaths(t, f, other, byName, pg)
 			revokedPaths.step(t, 0)
 			if err = other.Revoke(t.Context()); err != nil {
 				t.Fatal(err)
@@ -413,7 +415,7 @@ type workloadRuntimePaths struct {
 	database    *pgx.Conn
 }
 
-func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workloadclient.Client, services map[string]string, direct *ingress.PrivateConnector, pg *pgx.ConnConfig) *workloadRuntimePaths {
+func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workloadclient.Client, services map[string]string, pg *pgx.ConnConfig) *workloadRuntimePaths {
 	t.Helper()
 	p := &workloadRuntimePaths{}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
@@ -430,48 +432,34 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workloadcl
 		verification.ServerName = run.ManagedTLS.Hostname
 		var address string
 		var dial func(context.Context, string, string) (net.Conn, error)
-		if !run.ManagedTLS.Public {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			address = listener.Addr().String()
-			ctx, cancel := context.WithCancel(t.Context())
-			ready, done := make(chan struct{}), make(chan error, 1)
-			go func() {
-				done <- tcpconnect.Serve(ctx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, ManagedTLS: run.ManagedTLS, ServiceTLS: verification, Ready: func() error { close(ready); return nil }})
-			}()
-			t.Cleanup(func() {
-				cancel()
-				select {
-				case <-done:
-				case <-time.After(10 * time.Second):
-					t.Error("workload connector did not join")
-				}
-			})
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address = listener.Addr().String()
+		ctx, cancel := context.WithCancel(t.Context())
+		ready, done := make(chan struct{}), make(chan error, 1)
+		go func() {
+			done <- tcpconnect.Serve(ctx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, ManagedTLS: run.ManagedTLS, ServiceTLS: verification, Ready: func() error { close(ready); return nil }})
+		}()
+		t.Cleanup(func() {
+			cancel()
 			select {
-			case <-ready:
-			case err := <-done:
-				done <- err
-				t.Fatal(err)
+			case <-done:
 			case <-time.After(10 * time.Second):
-				t.Fatal("workload connector not ready")
+				t.Error("workload connector did not join")
 			}
-			dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, address)
-			}
-		} else {
-			_ = control.(interface{ Close() error }).Close()
-			certificate, err := job.ClientTLSCertificate(t.Context(), service)
-			if err != nil {
-				t.Fatal(err)
-			}
-			session, _ := job.Session()
-			if certificate.Leaf.NotAfter.Before(session.ExpiresAt.Add(-time.Second)) {
-				t.Fatal("workload certificate clipped to initial lease")
-			}
-			verification.Certificates = []tls.Certificate{certificate}
-			dial = workloadDirectDialer(t, direct, run.ManagedTLS.Port)
+		})
+		select {
+		case <-ready:
+		case err := <-done:
+			done <- err
+			t.Fatal(err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("workload connector not ready")
+		}
+		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
 		}
 		if name == "db" {
 			cfg := pg.Copy()
@@ -488,13 +476,6 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workloadcl
 			conn, err := dial(t.Context(), "tcp", "")
 			if err != nil {
 				t.Fatal(err)
-			}
-			if run.ManagedTLS.Public {
-				secure := tls.Client(conn, verification)
-				if err = secure.HandshakeContext(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				conn = secure
 			}
 			p.connections = append(p.connections, conn)
 			t.Cleanup(func() { _ = conn.Close() })
@@ -588,10 +569,17 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	if _, err := p.database.Exec(ctx, "SELECT 1"); err == nil {
-		t.Fatal("denied PostgreSQL remained active")
+	for {
+		ctx, cancel := context.WithDeadline(t.Context(), minTime(deadline, time.Now().Add(3*time.Second)))
+		_, err := p.database.Exec(ctx, "SELECT 1")
+		cancel()
+		if err != nil {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("PostgreSQL exceeded revocation/expiry bound")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

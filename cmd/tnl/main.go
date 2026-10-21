@@ -39,7 +39,7 @@ type cli struct {
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Connect     connectCommand   `cmd:"" help:"Connect to a service with native instructions or an authenticated helper." group:"start"`
+	Connect     connectCommand   `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand   `cmd:"" help:"Manage installed publications." group:"operate"`
 	Detached    detachedCommand  `cmd:"" help:"Inspect and stop detached publications." group:"operate"`

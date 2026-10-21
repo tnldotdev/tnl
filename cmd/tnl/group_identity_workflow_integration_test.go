@@ -291,7 +291,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, err := serviceConnectionProfile(selected, nil)
+			native, err := serviceConnectionProfile(selected, "127.0.0.1:25443")
 			if err != nil || native.Hostname == oldHostname || native.ServiceID != service.Id {
 				t.Fatal("source-bound native profile kept old hostname or changed identity", err)
 			}

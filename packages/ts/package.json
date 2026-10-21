@@ -35,8 +35,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "browser": "./dist/index.browser.js",
+      "browser": {
+        "import": "./dist/index.browser.js",
+        "require": "./dist/index.browser.cjs",
+        "default": "./dist/index.browser.js"
+      },
       "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
       "default": "./dist/index.js"
     },
     "./config": {
@@ -59,7 +64,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --project tsconfig.json",
+    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/build-ts-bridges.ts",
     "clean": "node ../../scripts/clean-package.ts",
     "prepack": "pnpm run build"
   },

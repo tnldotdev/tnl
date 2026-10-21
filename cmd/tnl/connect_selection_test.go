@@ -151,6 +151,11 @@ func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 	if _, err := configuredConnectService(project, name); err == nil {
 		t.Fatal("public service key fell back to another project's friendly name")
 	}
+	group := "production"
+	project.Config.Services["orders"] = config.Service{Publisher: &group, Tunnel: &config.Tunnel{}}
+	if selected, err := configuredConnectService(project, name); err != nil || selected != name {
+		t.Fatal("named managed HTTP policy was mistaken for a public URL", err)
+	}
 	definition, ok := failure.DefinitionFor(failure.LocalPrivateServiceUnavailable)
 	if !ok || !strings.Contains(definition.Action, "tnl publish") || definition.Retry != failure.RetryAfterChange {
 		t.Fatal("missing realization has no actionable publisher diagnostic")

@@ -56,40 +56,43 @@ tnl connect orders --output=json
 ssh -o 'ProxyCommand=tnl connect shell --stdio' alice@shell.production.example.com
 ```
 
-`tnl connect NAME` selects its mode from the trusted service metadata:
+`tnl connect NAME` checks the current identity's access, binds a loopback listener,
+establishes two authenticated ingress paths, verifies the publisher's managed
+TLS, then prints the local address and native client instructions. it stays alive
+until stopped. public endpoint reachability does not change this sequence or
+cause certificate export. HTTP, PostgreSQL, MySQL, opaque TCP, and Kubernetes
+all use connector admission without application client certificates.
 
-| service                         | command result                                                                                                                     |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| private HTTP, PostgreSQL, MySQL | authenticated loopback connector and native client instructions; no application client certificate                                 |
-| public PostgreSQL, MySQL        | prepare or revalidate client credentials, print native instructions, then exit                                                     |
-| public HTTP                     | prepare or revalidate client credentials, print the allocated-port HTTPS URL and certificate-authenticated curl command, then exit |
-| private opaque TCP              | authenticated connector and verified TLS helper                                                                                    |
-| public opaque TCP               | direct mTLS helper; no private connector assignments                                                                               |
-| opaque TCP with `--stdio`       | one stream on stdin/stdout, through the corresponding private or public path; no listener                                          |
+the default listener is `127.0.0.1` at the allocated service port. `--listen`
+overrides its loopback address and port; `--detach` runs the same connector
+independently of the terminal. neither changes the approved managed hostname,
+port, or public setting. readiness negotiates managed TLS without an application
+request, database login, or SQL query. opaque TCP uses tnl's verified TLS helper;
+other native clients negotiate TLS through the connector themselves.
 
-Native instructions include the server-assigned hostname and port, verified TLS
-settings and a usable command. Public native results include stable certificate
-and key paths and their expiry, never key bytes or database credentials. They
-do not launch a database client, listener, connector session or background task.
-The default listener port is the same allocated port on both access paths,
-including HTTP. `--listen` explicitly overrides a listener's loopback address.
+the local dial address and managed TLS identity are separate:
 
-PostgreSQL uses `sslmode=verify-full`, `sslrootcert=system`,
-`gssencmode=disable` and `channel_binding=disable` across publisher TLS termination.
-MySQL uses `VERIFY_IDENTITY` and an explicit server CA bundle: the selected
-`SSL_CERT_FILE`, or a standard system PEM bundle. This is server WebPKI trust,
-not the client-certificate issuer. Missing roots fail preflight before credential
-issuance or listener startup. Curl uses HTTPS with its ordinary server roots.
-The direct HTTP request frontend still owns certificate authentication and
-browser sign-in; generating instructions does not replace that frontend.
+- curl uses an HTTPS URL with the approved managed hostname and allocated port, plus
+  `--connect-to` to dial the loopback listener independently of public DNS.
+- PostgreSQL uses the managed `host` and local port with loopback `hostaddr`,
+  `sslmode=verify-full`, `sslrootcert=system`, `gssencmode=disable`, and
+  `channel_binding=disable` across publisher TLS termination.
+- MySQL uses the managed hostname with `VERIFY_IDENTITY` and an explicit server
+  CA bundle. the instructions require an exact `/etc/hosts` mapping from that
+  name to the listener before running standard `mysql`. `--host=localhost`
+  cannot verify a certificate for the managed hostname. tnl does not edit hosts
+  files. roots come from `SSL_CERT_FILE` or a standard system PEM bundle.
+- Kubernetes writes a loopback `server` and the managed `tls-server-name` to its
+  owned kubeconfig context. the cluster bearer token remains independent of tnl
+  connector admission.
 
-`--output=json` is available for finite public HTTP/database results. The result
-retains the native connection fields and command argv, with `tls`, optional
-`url`, and optional `server_ca_file` fields. Listener and stdio modes reject it.
-`--install` and `--detach` remain listener modes; finite native commands reject
-them, `--foreground`, and `--listen` before preparing credentials or launching
-anything. `--protocol`, when supplied, is only an equality constraint against
-approved metadata. No flag selects weaker authentication.
+`--output=json` prints a schema-1 ready connection profile and retains the
+foreground listener. `host` and `port` identify the listener; `hostname` is the
+approved TLS identity, `managed_port` is its allocated port, and `public` preserves endpoint reachability. profiles include
+`connector_required: true`, `authentication: "connector"`, client command argv,
+and protocol-specific instructions. detached profiles also include `detached_id`
+for `tnl detached stop ID`. stdio rejects JSON output and listener lifecycle
+options. `--protocol` is only an equality constraint against approved metadata.
 
 There are no `connect profile` or `connect setup` subcommands, or certificate
 opt-in flags. `profile` and `setup` are ordinary service names. For names that
@@ -97,25 +100,13 @@ collide with remaining commands (`start`, `available`, `list`, `stop`, `remove`)
 use `tnl connect start NAME` or the service ID. Extra arguments never select a
 different service silently. All modes use the same source-bound project lookup.
 
-`tnl connect api` prepares HTTPS client credentials and prints finite instructions.
-Direct HTTP accepts them as an optional alternative to a current browser sign-in,
-managed share, or managed HTTP token. Preparing credentials does not change the
-service's reachability.
-The client-state owner retains the pending CSR across an uncertain response,
-keeps a stable private key across renewal, and exports private mode-0600 files
-at stable paths. It separately retains the successful issuance CSR and posts it
-on every preparation, including while the leaf is cached. Control rechecks the
-device, current access and company proof, then binds that same certificate to
-the current control session. Revalidation does not issue another certificate;
-renewal creates a new CSR with the stable key. Rejected, mismatched or undurable
-responses never return exported paths or replace the last durable files. A
-substituted or symlinked key path fails rather than being overwritten.
+`inventory`, `profile`, and `setup` are ordinary service names. named publishers'
+`publicURL` blocks configure managed HTTP policy and remain eligible for connect;
+local public URL declarations use their separate public URL workflow.
 
-Opaque clients such as OpenSSH use `tnl connect` as a TLS helper. On the public
-path the helper presents the client certificate directly to ingress; it does
-not allocate private connector assignments or fall back to them. On the private
-path its authenticated connector session remains sufficient. OpenSSH still
-verifies the target host key and authenticates the target account.
+opaque clients such as OpenSSH can use `tnl connect NAME --stdio` for one stream
+through the same authenticated connector paths, without a listener. OpenSSH
+still verifies the target host key and authenticates the target account.
 
 Stdio stdout contains only application bytes. Diagnostics use stderr. Sign in
 explicitly with `tnl auth login` (and the selected team when needed) before using

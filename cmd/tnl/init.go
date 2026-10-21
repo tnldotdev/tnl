@@ -106,6 +106,11 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err := runGenerate(ctx, cli{ConfigPath: plan.configPath, Generate: generateCommand{OutputDir: ".tnl/generated"}}, io.Discard); err != nil {
 		return err
 	}
+	pythonUpdated, pythonActions, err := wirePythonProject(ctx, plan.root, flags.NoInstall)
+	if err != nil {
+		return err
+	}
+	plan.actions = append(plan.actions, pythonActions...)
 	var typeUpdates []string
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		types, err := wireProjectTypeIncludes(projectConfiguration{
@@ -118,7 +123,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		typeUpdates = types.updated
 	}
 	state := "already configured"
-	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated || len(typeUpdates) != 0 {
+	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated || pythonUpdated || len(typeUpdates) != 0 {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -146,6 +151,9 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
 	}
 	fields = append(fields, clioutput.Field{Label: "types", Value: filepath.Join(plan.root, projectmeta.GeneratedDirectoryName, projectmeta.DeclarationsName)})
+	if pythonUpdated || len(pythonActions) != 0 {
+		fields = append(fields, clioutput.Field{Label: "python", Value: filepath.Join(plan.root, projectmeta.GeneratedDirectoryName, projectmeta.PythonDirectoryName)})
+	}
 	fields = append(fields, clioutput.Field{Label: "ignore", Value: tnlLocalIgnoreRule})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/x509"
 	"encoding/json"
 	"io"
@@ -11,9 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -27,78 +24,61 @@ type connectionAuthentication string
 
 const (
 	connectionConnector connectionAuthentication = "connector"
-	connectionMTLS      connectionAuthentication = "mtls"
 )
 
-type connectionClientCertificate struct {
-	CertificateFile string    `json:"certificate_file"`
-	KeyFile         string    `json:"key_file"`
-	ExpiresAt       time.Time `json:"expires_at"`
-}
-
 type nativeConnectionProfile struct {
-	ServiceID         string                       `json:"private_service_id"`
-	Protocol          config.ProtocolName          `json:"protocol"`
-	Hostname          string                       `json:"hostname"`
-	Port              int                          `json:"port"`
-	Public            bool                         `json:"public"`
-	ConnectorRequired bool                         `json:"connector_required"`
-	Authentication    connectionAuthentication     `json:"authentication"`
-	ClientCertificate *connectionClientCertificate `json:"client_certificate,omitempty"`
-	Command           []string                     `json:"command"`
-	URL               string                       `json:"url,omitempty"`
-	TLS               string                       `json:"tls"`
-	ServerCAFile      string                       `json:"server_ca_file,omitempty"`
-	Kubeconfig        *kubeconfig.Result           `json:"kubeconfig,omitempty"`
-	Namespace         string                       `json:"namespace,omitempty"`
+	Schema            int                      `json:"schema"`
+	ServiceID         string                   `json:"private_service_id"`
+	Protocol          config.ProtocolName      `json:"protocol"`
+	Hostname          string                   `json:"hostname"`
+	ManagedPort       int                      `json:"managed_port"`
+	Host              string                   `json:"host"`
+	Port              int                      `json:"port"`
+	Public            bool                     `json:"public"`
+	ConnectorRequired bool                     `json:"connector_required"`
+	Authentication    connectionAuthentication `json:"authentication"`
+	Instructions      []string                 `json:"instructions,omitempty"`
+	DetachedID        string                   `json:"detached_id,omitempty"`
+	Command           []string                 `json:"command"`
+	URL               string                   `json:"url,omitempty"`
+	TLS               string                   `json:"tls"`
+	ServerCAFile      string                   `json:"server_ca_file,omitempty"`
+	Kubeconfig        *kubeconfig.Result       `json:"kubeconfig,omitempty"`
+	Namespace         string                   `json:"namespace,omitempty"`
 }
 
-func serviceConnectionProfile(service controlv1.PrivateService, material *clientstate.ServiceClientMaterial) (nativeConnectionProfile, error) {
-	profile := nativeConnectionProfile{ServiceID: service.Id, Protocol: config.ProtocolName(service.Protocol)}
+func serviceConnectionProfile(service controlv1.PrivateService, listen string) (nativeConnectionProfile, error) {
+	profile := nativeConnectionProfile{Schema: 1, ServiceID: service.Id, Protocol: config.ProtocolName(service.Protocol)}
 	if err := validateProfileService(service); err != nil {
 		return profile, err
 	}
 	endpoint := service.ManagedTls
 	hostname := endpoint.Hostname
-	profile.Hostname, profile.Port, profile.Public = hostname, endpoint.Port, endpoint.Public
-	profile.ConnectorRequired = !profile.Public || profile.Protocol == config.ProtocolTCP
+	address, err := connectListen(listen)
+	if err != nil {
+		return profile, err
+	}
+	host, port, _ := net.SplitHostPort(address)
+	profile.Hostname, profile.Public = hostname, endpoint.Public
+	profile.ManagedPort = endpoint.Port
+	profile.Host, profile.Port = host, 0
+	profile.Port, _ = strconv.Atoi(port)
+	profile.ConnectorRequired = true
 	profile.Authentication = connectionConnector
-	if profile.Public {
-		profile.Authentication = connectionMTLS
-	}
-	if !profile.Public && material != nil {
-		return profile, publisherCLIError("private clients use connector authentication without an application client certificate")
-	}
-	if material != nil {
-		if material.CertificateFile == "" || material.KeyFile == "" || !material.ExpiresAt.After(time.Now()) {
-			return profile, publisherCLIError("service client certificate is unavailable or expired; run tnl connect again")
-		}
-		profile.ClientCertificate = &connectionClientCertificate{CertificateFile: material.CertificateFile, KeyFile: material.KeyFile, ExpiresAt: material.ExpiresAt}
-	}
-	if profile.Authentication == connectionMTLS && profile.ClientCertificate == nil {
-		return profile, publisherCLIError("public service requires a client certificate; run tnl connect again")
-	}
-	address := net.JoinHostPort(hostname, strconv.Itoa(endpoint.Port))
+	managedAddress := net.JoinHostPort(hostname, port)
+	managedOrigin := net.JoinHostPort(hostname, strconv.Itoa(endpoint.Port))
 	switch profile.Protocol {
 	case config.ProtocolKubernetes:
 		profile.TLS = "HTTPS; managed tnl hostname; system roots; independent cluster CA verification by publisher"
-		profile.URL = "https://" + address
+		profile.URL = "https://" + managedOrigin
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
-		profile.URL = "https://" + address + "/"
-		profile.Command = []string{"curl"}
-		if material != nil {
-			profile.Command = append(profile.Command, "--cert", material.CertificateFile, "--key", material.KeyFile)
-		}
-		profile.Command = append(profile.Command, profile.URL)
+		profile.URL = "https://" + managedOrigin + "/"
+		profile.Command = []string{"curl", "--connect-to", managedOrigin + ":" + address, profile.URL}
 	case config.ProtocolPostgres:
 		profile.TLS = "PostgreSQL SSLRequest; verify-full; system roots"
-		query := url.Values{"sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
-		if material != nil {
-			query.Set("sslcert", material.CertificateFile)
-			query.Set("sslkey", material.KeyFile)
-		}
-		endpoint := url.URL{Scheme: "postgresql", Host: address, Path: "/", RawQuery: query.Encode()}
+		query := url.Values{"hostaddr": {host}, "sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
+		endpoint := url.URL{Scheme: "postgresql", Host: managedAddress, Path: "/", RawQuery: query.Encode()}
 		profile.Command = []string{"psql", endpoint.String()}
 	case config.ProtocolMySQL:
 		roots, err := nativeMySQLRoots()
@@ -107,13 +87,11 @@ func serviceConnectionProfile(service controlv1.PrivateService, material *client
 		}
 		profile.TLS = "MySQL SSLRequest; VERIFY_IDENTITY; system CA bundle"
 		profile.ServerCAFile = roots
-		profile.Command = []string{"mysql", "--host=" + hostname, "--port=" + strconv.Itoa(endpoint.Port), "--ssl-mode=VERIFY_IDENTITY", "--ssl-ca=" + roots}
-		if material != nil {
-			profile.Command = append(profile.Command, "--ssl-cert="+material.CertificateFile, "--ssl-key="+material.KeyFile)
-		}
+		profile.Instructions = []string{"before running mysql, map the exact managed hostname to the listener in /etc/hosts:", host + " " + hostname, "mysql verifies the managed hostname; --host=localhost would verify the wrong identity"}
+		profile.Command = []string{"mysql", "--protocol=TCP", "--host=" + hostname, "--port=" + port, "--ssl-mode=VERIFY_IDENTITY", "--ssl-ca=" + roots}
 	case config.ProtocolTCP:
 		profile.TLS = "tnl verifies the service hostname before opaque bytes"
-		profile.Command = []string{"tnl", "connect", "start", service.Id, "--stdio"}
+		profile.Command = []string{"nc", host, port}
 	}
 	return profile, nil
 }
@@ -158,29 +136,22 @@ func validateProfileService(service controlv1.PrivateService) error {
 	return nil
 }
 
-func ensureConnectCertificate(ctx context.Context, session *teamSession, service string) (clientstate.ServiceClientMaterial, error) {
-	identity := session.identity.Identity.Id
-	device, err := session.store.EnsureEnrolledVisitorDevice(ctx, identity, session.authenticated.Control.EnrollVisitorDevice)
-	if err != nil {
-		return clientstate.ServiceClientMaterial{}, err
-	}
-	return session.store.EnsureServiceClientCertificate(ctx, identity, service, device.ID, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return session.authenticated.Control.IssueServiceClientCertificate(ctx, service, device.ID, csr)
-	})
-}
-
 func writeNativeConnection(output io.Writer, profile nativeConnectionProfile, mode statusOutputMode, listen string) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(profile)
 	}
 	fields := []clioutput.Field{{Label: "service", Value: profile.ServiceID}, {Label: "protocol", Value: string(profile.Protocol)}, {Label: "hostname", Value: profile.Hostname}, {Label: "port", Value: strconv.Itoa(profile.Port)}, {Label: "TLS", Value: profile.TLS}, {Label: "authentication", Value: string(profile.Authentication)}}
-	footer := "connect directly with the native client"
+	footer := "keep tnl running while using the service"
 	if listen != "" {
 		fields = append(fields, clioutput.Field{Label: "listen", Value: listen})
 		footer = "keep tnl running while using the service"
 	}
 	if profile.URL != "" {
 		fields = append(fields, clioutput.Field{Label: "url", Value: profile.URL})
+	}
+	if profile.DetachedID != "" {
+		fields = append(fields, clioutput.Field{Label: "detached ID", Value: profile.DetachedID})
+		footer = "stop with tnl detached stop " + profile.DetachedID
 	}
 	if profile.ServerCAFile != "" {
 		fields = append(fields, clioutput.Field{Label: "server CA", Value: profile.ServerCAFile})
@@ -194,12 +165,14 @@ func writeNativeConnection(output io.Writer, profile nativeConnectionProfile, mo
 			footer = "context name was qualified to preserve an existing installation"
 		}
 	}
-	if material := profile.ClientCertificate; material != nil {
-		fields = append(fields, clioutput.Field{Label: "certificate", Value: material.CertificateFile}, clioutput.Field{Label: "key file", Value: material.KeyFile}, clioutput.Field{Label: "expires", Value: material.ExpiresAt.UTC().Format(time.RFC3339)})
-	}
 	command := make([]string, len(profile.Command))
 	for i, argument := range profile.Command {
 		command[i] = "'" + strings.ReplaceAll(argument, "'", "'\\''") + "'"
 	}
-	return writeHumanFrame(output, "tnl connect", "ready", footer, clioutput.Fields(fields...), clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
+	blocks := []clioutput.Block{clioutput.Fields(fields...)}
+	for _, instruction := range profile.Instructions {
+		blocks = append(blocks, clioutput.Text(instruction))
+	}
+	blocks = append(blocks, clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
+	return writeHumanFrame(output, "tnl connect", "ready", footer, blocks...)
 }

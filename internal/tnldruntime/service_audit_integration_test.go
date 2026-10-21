@@ -185,6 +185,8 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("visitor did not bind two ingresses")
 			}
+			probe := connectorReadinessObservation(t, opened)
+			visitorIDs := []string{probe.header.VisitorConnectionID}
 			var connections []net.Conn
 			t.Cleanup(func() {
 				for _, c := range connections {
@@ -210,6 +212,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 				select {
 				case seen := <-opened:
 					ids[seen.ingress] = seen.header.VisitorConnectionID
+					visitorIDs = append(visitorIDs, seen.header.VisitorConnectionID)
 				case <-time.After(time.Second):
 					t.Fatal("private stream not forwarded")
 				}
@@ -233,7 +236,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
 				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.private_visitor_streams WHERE private_service_id=$1 AND closed_at IS NOT NULL`, service.Id).Scan(&count)
-				return count == 2, err
+				return count == 3, err
 			})
 			for _, runtime := range runtimes {
 				flush, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -243,7 +246,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 					t.Fatal("private audit flush", err)
 				}
 			}
-			for _, visitorID := range ids {
+			for _, visitorID := range visitorIDs {
 				var count int
 				err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events WHERE service_id=$1 AND visitor_connection_id=$2 AND event_type IN('connection.open','connection.close') AND actor_identity_id=$3 AND publisher_identity_id=$4 AND device_id IS NOT NULL AND source_ip='127.0.0.1'`, service.Id, visitorID, person.Identity.Id, identity.ClientId).Scan(&count)
 				if err != nil || count != 2 {

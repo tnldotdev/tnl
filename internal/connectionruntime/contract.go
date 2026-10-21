@@ -4,7 +4,6 @@ package connectionruntime
 
 import (
 	"context"
-	"crypto/tls"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"io"
@@ -66,15 +65,14 @@ type TLSOptions struct {
 	ServerName         string `json:"servername"`
 	RejectUnauthorized bool   `json:"rejectUnauthorized"`
 	CA                 string `json:"ca,omitempty"`
-	Cert               string `json:"cert,omitempty"`
-	Key                string `json:"key,omitempty"`
 }
 
 func (TLSOptions) String() string   { return "private native TLS options" }
 func (TLSOptions) GoString() string { return "private native TLS options" }
 
-// Connection is sent only over capability-authenticated IPC. credentials are
-// fresh snapshots; callers must reconnect after ExpiresAt, never cache on disk.
+// Connection is sent only over capability-authenticated IPC. Host is always the
+// local dial address; SSL.ServerName and URL retain the approved managed name.
+// connector admission never exports an application client certificate or key.
 type Connection struct {
 	Schema     int         `json:"schema"`
 	Protocol   string      `json:"protocol"`
@@ -89,6 +87,17 @@ type Connection struct {
 
 func (Connection) String() string   { return "private native connection" }
 func (Connection) GoString() string { return "private native connection" }
+
+// Prepared pairs one owner's public metadata with its current private snapshot.
+// readers never re-evaluate project configuration, Git, or authentication.
+type Prepared struct {
+	Schema        int                        `json:"schema"`
+	PublicRuntime projectmeta.PublicMetadata `json:"public_runtime"`
+	Connection    Connection                 `json:"connection"`
+}
+
+func (Prepared) String() string   { return "private prepared connection" }
+func (Prepared) GoString() string { return "private prepared connection" }
 
 type Status struct {
 	Schema        int                        `json:"schema"`
@@ -137,8 +146,4 @@ func (c Context) Validate() error {
 		seen[name] = true
 	}
 	return nil
-}
-
-func TLSMaterial(pair tls.Certificate, serverName string, expires time.Time) (TLSOptions, error) {
-	return tlsMaterial(pair, serverName, expires)
 }

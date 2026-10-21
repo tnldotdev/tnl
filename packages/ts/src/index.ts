@@ -1,4 +1,5 @@
 import { developmentPort } from "./internal/port.js";
+import { createRequire } from "node:module";
 import { serviceMetadata } from "./internal/service_metadata.js";
 import {
   parseRuntimePayload,
@@ -12,6 +13,7 @@ import type { LocalHTTPServer } from "./internal/register.js";
 import type { FetchHandler } from "./internal/fetch_types.js";
 import type {
   TnlConnection,
+  TnlConnectionHandle,
   TnlProjectFromConfig,
   TnlResolvedConfig,
   TnlServiceNames,
@@ -31,7 +33,11 @@ type Config = TnlProjectConfig extends { config: infer Input }
   ? TnlResolvedConfig<Input>
   : { services: Record<string, { protocol: keyof TnlProtocolRegistry }> };
 type RegisteredTnlProject = keyof TnlProjectConfig extends never
-  ? { services: Record<string, TnlService<{ protocol: keyof TnlProtocolRegistry }> | undefined> }
+  ? {
+      services: Readonly<
+        Record<string, TnlService<{ protocol: keyof TnlProtocolRegistry }> | undefined>
+      >;
+    }
   : TnlProjectFromConfig<Config>;
 
 export type TnlRuntime = Readonly<
@@ -44,7 +50,7 @@ export type TnlRuntime = Readonly<
       open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
       connect<Name extends TnlServiceNames<Config>>(
         name: Name,
-      ): Promise<TnlConnection<Config, Name>>;
+      ): TnlConnectionHandle<TnlConnection<Config, Name>>;
     }
 >;
 
@@ -67,6 +73,7 @@ const serializedRuntime =
 // the parser validates the runtime shape; generated project declarations supply
 // project-specific service names and literals unavailable to this shared module.
 let runtime = parseRuntimePayload(serializedRuntime);
+const loadConnection = createRequire(import.meta.url);
 export const tnl = Object.freeze({
   ...runtime,
   get services() {
@@ -90,18 +97,20 @@ export const tnl = Object.freeze({
     const { openServer, openFetch } = await import("./internal/open.js");
     return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
   },
-  async connect(name: string) {
+  connect(name: string) {
     if (typeof process === "undefined" || typeof process.versions?.node !== "string")
       throw new TnlError("sdk.connection_server_only");
-    const { connectService } = await import("./internal/connection.js");
-    const prepared = await connectService(name);
-    runtime =
-      runtime === undefined
-        ? prepared.project
-        : parseProjectRuntime(
-            { ...runtime, services: { ...runtime.services, ...prepared.project.services } },
-            "connected project runtime",
-          );
-    return prepared.connection;
+    const { connectionHandle } = loadConnection(
+      "./internal/connection.cjs",
+    ) as typeof import("./internal/connection.js");
+    return connectionHandle(name, (project) => {
+      runtime =
+        runtime === undefined
+          ? project
+          : parseProjectRuntime(
+              { ...runtime, services: { ...runtime.services, ...project.services } },
+              "connected project runtime",
+            );
+    });
   },
 }) as unknown as TnlRuntime;

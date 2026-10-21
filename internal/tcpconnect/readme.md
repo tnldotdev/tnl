@@ -47,10 +47,12 @@ HTTP, PostgreSQL and MySQL clients use verified native server TLS through the
 connector. Their instructions name the managed service hostname, not localhost or
 the target certificate. Opaque applications use `ServiceTLS` as a verified TLS
 helper. PostgreSQL retains `channel_binding=disable` across publisher TLS
-termination. Direct database connections require mTLS; a public opaque helper
-presents its service client certificate directly without private assignments.
-Public native protocols are rejected by the connector runner rather than falling
-back to private admission. A single stream never reloads metadata or reopens an
+termination. public and private managed endpoints use these same connector
+assignments; the approved public setting and hostname are never rewritten.
+`ServiceTLS` must verify the managed name without an application client certificate.
+before reporting readiness, `Serve` opens one admitted stream and performs the
+protocol's TLS negotiation without login or application bytes. both ingress
+sessions must already be authenticated. a single stream never reloads metadata or reopens an
 application connection. Both stream-copy directions and slot workers join on exit.
 
 Publisher-to-target negotiation belongs to `internal/targettransport` and

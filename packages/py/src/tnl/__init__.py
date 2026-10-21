@@ -1,7 +1,23 @@
-"""publish Python ASGI applications through the app-owned tnl runtime."""
+"""publish Python ASGI apps and connect services through the native tnl runtime."""
 
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
+from ._connections import (
+    Connection,
+    ConnectionHandle,
+    HTTPConnection,
+    HTTPConnectionHandle,
+    KubernetesConnection,
+    KubernetesConnectionHandle,
+    MySQLConnection,
+    MySQLConnectionHandle,
+    PostgresConnection,
+    PostgresConnectionHandle,
+    Project,
+    TCPConnection,
+    TCPConnectionHandle,
+    connect,
+)
 from ._handler import handler
 from ._protocol import (
     InvalidResponse,
@@ -12,6 +28,19 @@ from ._protocol import (
 
 __all__ = [
     "AccessPolicy",
+    "Connection",
+    "ConnectionHandle",
+    "HTTPConnection",
+    "HTTPConnectionHandle",
+    "KubernetesConnection",
+    "KubernetesConnectionHandle",
+    "MySQLConnection",
+    "MySQLConnectionHandle",
+    "PostgresConnection",
+    "PostgresConnectionHandle",
+    "Project",
+    "TCPConnection",
+    "TCPConnectionHandle",
     "InvalidResponse",
     "Limits",
     "NativeUnavailable",
@@ -22,6 +51,7 @@ __all__ = [
     "Tunnel",
     "Server",
     "handler",
+    "connect",
     "open",
     "prepare",
     "run",

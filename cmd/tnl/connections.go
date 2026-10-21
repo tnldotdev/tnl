@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connectionruntime"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -34,6 +35,7 @@ type connectionsCommand struct {
 	Start          connectionsStartOptions   `cmd:""`
 	Serve          connectionsServeOptions   `cmd:"" hidden:""`
 	Status         connectionsHandleOptions  `cmd:""`
+	Read           connectionsReadOptions    `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
 	Stop           connectionsHandleOptions  `cmd:""`
 	KubeCredential connectionsKubeOptions    `cmd:"" hidden:""`
 }
@@ -66,6 +68,10 @@ type connectionsHandleOptions struct {
 	Output string `name:"output" enum:"json" default:"json"`
 }
 type connectionsKubeOptions struct {
+	connectionsHandleOptions `embed:""`
+	Service                  string `name:"service" required:""`
+}
+type connectionsReadOptions struct {
 	connectionsHandleOptions `embed:""`
 	Service                  string `name:"service" required:""`
 }
@@ -122,7 +128,7 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 	services := slices.Clone(options.Service)
 	if options.CI == "" && len(services) == 0 {
 		for name, service := range project.Config.Services {
-			if !config.IsPublicService(service) {
+			if !isConnectPublicURL(service) {
 				services = append(services, name)
 			}
 		}
@@ -146,7 +152,7 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 	}
 	slices.Sort(services)
 	for _, name := range services {
-		if _, ok := project.Config.Services[name]; !ok {
+		if service, ok := project.Config.Services[name]; !ok || isConnectPublicURL(service) {
 			return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrInvalid
 		}
 		effective, err := project.EffectiveService(name)
@@ -204,7 +210,7 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	}()
 	switch command {
 	case "runtime connections capabilities":
-		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "start", "status", "stop", "connect", "kube-credential"}, "workload_private": true, "opaque_private_preflight": true, "team_names": "applied_binding"})
+		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "start", "status", "stop", "connect", "read", "kube-credential"}, "workload_private": true, "opaque_private_preflight": true, "team_names": "applied_binding"})
 	case "runtime connections context":
 		_, scope, err := connectionProject(ctx, flags.Context)
 		if err != nil {
@@ -215,6 +221,8 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return startConnections(ctx, flags.Start, os.Stdin, output)
 	case "runtime connections serve":
 		return serveConnectionsOwner(ctx, flags.Serve, os.Stdin, output)
+	case "runtime connections read":
+		return readPreparedConnection(ctx, flags.Read, output)
 	case "runtime connections status", "runtime connections stop":
 		options := flags.Status
 		operation := "status"
@@ -249,6 +257,29 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return runConnectionKubeCredential(ctx, flags.KubeCredential, output)
 	}
 	return connectionruntime.ErrInvalid
+}
+
+func readPreparedConnection(ctx context.Context, options connectionsReadOptions, output io.Writer) error {
+	if !naming.ValidServiceName(options.Service) {
+		return connectionruntime.ErrInvalid
+	}
+	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	handle, err := connectionruntime.ReadHandle(options.Handle)
+	if err != nil {
+		return err
+	}
+	var prepared connectionruntime.Prepared
+	if err := connectionruntime.Call(bounded, options.Handle, "prepared", connectionruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: options.Service}, &prepared); err != nil {
+		return err
+	}
+	if prepared.Schema != connectionruntime.Schema || prepared.Connection.Schema != connectionruntime.Schema {
+		return connectionruntime.ErrInvalid
+	}
+	if !prepared.Connection.ExpiresAt.After(time.Now()) {
+		return connectionruntime.ErrExpired
+	}
+	return json.NewEncoder(output).Encode(prepared)
 }
 
 // wait for joined drain/revocation, not merely the stop acknowledgement.

@@ -406,7 +406,9 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConn
 		}
 	}
 	authority := ""
-	if b.prepared.managedPublic {
+	// direct visitors use the exact managed origin. admitted connector clients
+	// can use a loopback authority, including an owned kubeconfig's local server.
+	if b.prepared.managedPublic && header.Direct != nil {
 		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.managedPort)))
 	}
 	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.managedHTTPRequests,
