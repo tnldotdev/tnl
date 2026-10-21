@@ -2,10 +2,7 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // DurationBucketsSeconds returns independent boundaries shared by operation,
@@ -16,27 +13,24 @@ func DurationBucketsSeconds() []float64 {
 }
 
 func durationOutcome(err error) string {
-	switch {
-	case err == nil:
-		return "success"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	default:
-		return "error"
-	}
+	return ErrorOutcome(err).String()
 }
 
 // ObserveOperation records only the fixed application operations below. nil
 // metrics are useful for callers that do not run a process metrics listener.
 func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Duration) {
+	m.ObserveOperationContext(context.Background(), operation, err, elapsed)
+}
+
+// ObserveOperationContext attaches a measured interval to the caller's span and
+// metric exemplar context. use it instead of adding a second span at this boundary.
+func (m *Metrics) ObserveOperationContext(ctx context.Context, operation string, err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
-	var histogram *prometheus.HistogramVec
+	var histogram *histogram
 	switch operation {
-	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot",
+	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot", "RefreshPortPoolMetrics",
 		"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
 		"ReadIngressRoutingTableEvents", "ReportIngressUsage", "RenewIngress",
 		"ClaimPublisherConnection", "MarkPublisherConnectionReady":
@@ -53,24 +47,28 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 	default:
 		return
 	}
-	histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+	name := operationName(operation) // the switch above is the closed operation boundary.
+	ctx, finish := m.completedOperation(ctx, name, elapsed)
+	histogram.With(Operation.Dimension(name), OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, elapsed.Seconds())
+	finish(err)
 }
 
 // ObserveDatabaseQuery accepts only names sanitized by the controlstate tracer:
 // compiled sqlc operations, transaction commands, or the fixed "unknown" label.
-func (m *Metrics) ObserveDatabaseQuery(operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseQuery(operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
 	outcome := durationOutcome(err)
-	m.databaseQueryDuration.WithLabelValues(operation, outcome).Observe(elapsed.Seconds())
+	m.databaseQueryDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
+	m.completedSpan("database."+operation.operation(), outcome, elapsed)
 	if err != nil {
-		phase := "query"
-		switch operation {
+		phase := operationName("query")
+		switch operation.String() {
 		case "begin", "commit", "rollback":
-			phase = operation
+			phase = operation.operation()
 		}
-		m.databaseFailures.WithLabelValues(phase, outcome).Inc()
+		m.databaseFailures.With(Operation.Dimension(phase), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
@@ -78,17 +76,16 @@ func (m *Metrics) ObserveDatabaseAcquire(err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
-	outcome := durationOutcome(err)
-	m.databaseAcquireDuration.WithLabelValues(outcome).Observe(elapsed.Seconds())
+	m.databaseAcquireDuration.With(OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
 	if err != nil {
-		m.databaseFailures.WithLabelValues("acquire", outcome).Inc()
+		m.databaseFailures.With(Operation.Dimension("acquire"), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
 // ObserveDatabaseGuard records a driver-observed guard interval. outcome is the
 // transaction-ending command's outcome, not the application operation's outcome.
-func (m *Metrics) ObserveDatabaseGuard(operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseGuard(operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m != nil {
-		m.databaseGuardDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+		m.databaseGuardDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
 	}
 }
