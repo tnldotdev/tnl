@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgproto3"
+
 	"github.com/tnldotdev/tnl/internal/connectionruntime"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
@@ -74,6 +76,7 @@ func run() error {
 	flags.SetOutput(io.Discard)
 	lifetime := flags.Duration("tnl-lifetime", 5*time.Minute, "owner deadline")
 	listenAddress := flags.String("tnl-listen-address", "127.0.0.1:0", "loopback listener")
+	postgresAuth := flags.Bool("tnl-postgres-auth", false, "serve a minimal PostgreSQL password handshake")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
 	}
@@ -112,14 +115,14 @@ func run() error {
 	}
 	defer stream.Close()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
-	go echo(stream, nil)
-	go echo(listener, tlsConfig)
+	go echo(stream, nil, false)
+	go echo(listener, tlsConfig, *postgresAuth)
 	scope := connectionruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "project", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
 	b := &backend{expires: expires, ca: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), port: listener.Addr().(*net.TCPAddr).Port, streamPort: stream.Addr().(*net.TCPAddr).Port, listeners: []net.Listener{listener, stream}}
 	return connectionruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
 }
 
-func echo(listener net.Listener, tlsConfig *tls.Config) {
+func echo(listener net.Listener, tlsConfig *tls.Config, postgresAuth bool) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -138,7 +141,38 @@ func echo(listener net.Listener, tlsConfig *tls.Config) {
 				}
 				conn = tls.Server(conn, tlsConfig)
 			}
+			if postgresAuth {
+				postgresHandshake(conn)
+				return
+			}
 			_, _ = io.CopyN(conn, conn, 4)
 		}(conn)
 	}
+}
+
+func postgresHandshake(conn net.Conn) {
+	// qualify libpq's dial/SNI/trust options without pretending this fixture is
+	// a database or the production publisher's SCRAM/channel-binding forwarder.
+	backend := pgproto3.NewBackend(conn, conn)
+	message, err := backend.ReceiveStartupMessage()
+	if _, ok := message.(*pgproto3.StartupMessage); err != nil || !ok {
+		return
+	}
+	backend.Send(&pgproto3.AuthenticationCleartextPassword{})
+	if backend.Flush() != nil {
+		return
+	}
+	message, err = backend.Receive()
+	password, ok := message.(*pgproto3.PasswordMessage)
+	if err != nil || !ok || password.Password != "fixture-password" {
+		return
+	}
+	backend.Send(&pgproto3.AuthenticationOk{})
+	backend.Send(&pgproto3.ParameterStatus{Name: "server_version", Value: "17.0"})
+	backend.Send(&pgproto3.ParameterStatus{Name: "client_encoding", Value: "UTF8"})
+	backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+	if backend.Flush() != nil {
+		return
+	}
+	_, _ = backend.Receive() // libpq Terminate after a successful connection.
 }

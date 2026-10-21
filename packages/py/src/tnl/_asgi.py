@@ -34,15 +34,34 @@ _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 
 
+async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
+    """defer caller cancellation until the owned cleanup task has finished."""
+    canceled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as cause:
+            canceled = cause
+        except BaseException:
+            break
+    try:
+        result = task.result()
+    except BaseException as cause:
+        if canceled is not None and not isinstance(cause, asyncio.CancelledError):
+            raise BaseExceptionGroup("cleanup and cancellation failed", [canceled, cause]) from None
+        raise
+    if canceled is not None:
+        raise canceled
+    return result
+
+
 class _OwnedServer(uvicorn.Server):
     tunnel: Tunnel | None = None
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
-        try:
-            if self.tunnel is not None:
-                await self.tunnel.unregister()
-        finally:
-            await super().shutdown(sockets)
+        if self.tunnel is not None:
+            await self.tunnel.unregister()
+        await super().shutdown(sockets)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +182,8 @@ class Tunnel:
         if server_url is not None:
             self._payload["server_url"] = server_url
         self._registration: dict[str, object] | None = None
+        self._registration_uncertain = False
+        self._initial_registration: asyncio.Task[None] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
         if ip is not None:
@@ -172,6 +193,8 @@ class Tunnel:
         self._closed = False
         self._closing_event = asyncio.Event()
         self._close_lock = asyncio.Lock()
+        self._cleanup_task: asyncio.Task[None] | None = None
+        self._close_complete = False
         self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
@@ -198,26 +221,64 @@ class Tunnel:
             self._endpoint = await self._native.start(
                 self._directory, invocation_id=self._id, state_dir=self._state_dir
             )
+            await self._acknowledge_registration()
+
+    async def _acknowledge_registration(self) -> None:
+        assert self._endpoint is not None
+        # native may commit before the reply is lost. keep the exact invocation,
+        # owner, PID, target, and policy until its idempotent reply is reconciled.
+        self._registration_uncertain = True
+        try:
             self._registration = parse_registration(
                 await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
                 self._owner,
                 self._target,
             )
+        except (NativeUnavailable, InvalidResponse, asyncio.CancelledError):
+            raise
+        except TnlError:
+            self._registration_uncertain = False
+            raise
+        self._registration_uncertain = False
 
     async def start(self) -> None:
-        await self._register()
+        self._initial_registration = asyncio.create_task(self._register())
+        await asyncio.shield(self._initial_registration)
         self._monitor = asyncio.create_task(self._follow())
         await self._ready
 
     async def unregister(self) -> None:
+        await _join_cleanup(asyncio.create_task(self._unregister()))
+
+    async def _unregister(self) -> None:
         if not self._closed:
             self._fail(TnlError("sdk.listener_failed", "ASGI listener stopped during publication"))
+        if self._initial_registration is not None:
+            try:
+                await self._initial_registration
+            except TnlError:
+                pass
         async with self._registration_lock:
-            if self._registration is not None and self._endpoint is not None:
+            for attempt in range(3):
                 try:
-                    await self._native.request(self._endpoint, "unregister", self._registration)
-                except RegistrationLost:
-                    pass
+                    if self._registration_uncertain:
+                        await self._acknowledge_registration()
+                    break
+                except NativeUnavailable:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(0.1)
+            if self._registration is not None and self._endpoint is not None:
+                for attempt in range(3):
+                    try:
+                        await self._native.request(self._endpoint, "unregister", self._registration)
+                        break
+                    except RegistrationLost:
+                        break
+                    except NativeUnavailable:
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(0.1)
                 self._registration = None
 
     def _observe(self, status: Status) -> None:
@@ -288,18 +349,22 @@ class Tunnel:
         await asyncio.shield(self._finished)
 
     async def close(self) -> None:
+        if self._cleanup_task is None or (self._cleanup_task.done() and not self._close_complete):
+            self._cleanup_task = asyncio.create_task(self._close())
+        await _join_cleanup(self._cleanup_task)
+
+    async def _close(self) -> None:
         async with self._close_lock:
-            if self._closed:
+            if self._close_complete:
                 return
             self._closed = True
             self._closing_event.set()
             if self._monitor is not None:
                 await self._monitor
+            # an error retains the listener and registration for a later close
+            # retry. only a joined native cleanup may stop the application's ASGI.
+            await self.unregister()
             cleanup: list[Exception] = []
-            try:
-                await self.unregister()
-            except TnlError as cause:
-                cleanup.append(cause)
             self._server.tunnel = None
             self._server.should_exit = True
             try:
@@ -315,6 +380,7 @@ class Tunnel:
                     pass
             finally:
                 self._listener.close()
+            self._close_complete = True
             if not self._finished.done():
                 if cleanup:
                     self._finished.set_exception(cleanup[0])
@@ -431,11 +497,15 @@ async def open(
         yield tunnel
     except BaseException as primary:
         try:
-            await asyncio.shield(tunnel.close())
+            await tunnel.close()
         except BaseException as cleanup:
+            if isinstance(primary, asyncio.CancelledError) and isinstance(
+                cleanup, asyncio.CancelledError
+            ):
+                raise primary from None
             raise BaseExceptionGroup(
                 "ASGI operation and cleanup failed", [primary, cleanup]
             ) from None
         raise
     else:
-        await asyncio.shield(tunnel.close())
+        await tunnel.close()

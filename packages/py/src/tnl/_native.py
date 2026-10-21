@@ -34,7 +34,7 @@ def _read_endpoint(file: str, service: str | None, invocation_id: str | None) ->
     parent = path.parent.lstat()
     if not stat.S_ISDIR(parent.st_mode) or parent.st_mode & 0o077 or parent.st_uid != os.getuid():
         raise InvalidResponse()
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         info = os.fstat(descriptor)
         if (

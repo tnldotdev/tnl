@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -14,9 +16,64 @@ import tnl
 from tnl import _connections, _workload
 
 
-@pytest.mark.parametrize("denied", [False, True])
+def test_policy_reclamation_pins_identity_waiters_and_preserves_active_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for cache in ("_sessions", "_contexts", "_identities", "_policy_locks"):
+        monkeypatch.setattr(_connections, cache, {})
+    monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
+    identifying, release = threading.Event(), threading.Event()
+    contexts = 0
+    pause = False
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal contexts
+        if args[0] == "context":
+            contexts += 1
+            return {"schema": 1, "config_digest": f"{contexts:064x}"}
+        assert args[0] == "identity"
+        if pause:
+            identifying.set()
+            assert release.wait(5)
+        return {"schema": 1, "binding": "a" * 64}
+
+    monkeypatch.setattr(_connections, "_command", command)
+    selection = _workload.Selection("job", str(tmp_path / "manifest"), "", "first")
+    original = _connections._workload_session(str(tmp_path), selection)
+    pause = True
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(_connections._workload_session, str(tmp_path), selection)
+        assert identifying.wait(5)
+        second = pool.submit(_connections._workload_session, str(tmp_path), selection)
+        original.close()
+        release.set()
+        current = first.result(timeout=5)
+        assert second.result(timeout=5) is current
+    assert contexts == 1  # closing while identity selection runs cannot evict its context/lock.
+    current.close()
+    assert not _connections._policy_locks and not _connections._contexts
+    pause = False
+    active = [
+        _connections._workload_session(
+            str(tmp_path), _workload.Selection("job", selection.manifest, "", str(index))
+        )
+        for index in range(32)
+    ]
+    next_selection = _workload.Selection("job", selection.manifest, "", "next")
+    with pytest.raises(tnl.TnlError) as error:
+        _connections._workload_session(str(tmp_path), next_selection)
+    assert error.value.code == "sdk.connection_unavailable"
+    active.pop().close()
+    active.append(_connections._workload_session(str(tmp_path), next_selection))
+    assert len(_connections._contexts) == 32
+    for session in active:
+        session.close()
+    assert not _connections._contexts and not _connections._policy_locks
+
+
+@pytest.mark.parametrize("failure", [None, "denied", "expired", "schema"])
 def test_inactive_manifest_policies_do_not_exhaust_the_process_lifetime_limit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, denied: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
 ) -> None:
     for cache in ("_sessions", "_contexts", "_identities", "_policy_locks"):
         monkeypatch.setattr(_connections, cache, {})
@@ -29,21 +86,30 @@ def test_inactive_manifest_policies_do_not_exhaust_the_process_lifetime_limit(
             contexts += 1
             return {"schema": 1, "config_digest": f"{contexts:064x}"}
         assert args[0] == "identity"
-        if denied:
+        if failure == "denied":
             raise tnl.TnlError("sdk.workload_denied", "assertion rejected")
         return {
-            "schema": 1,
+            "schema": True if failure == "schema" else 1,
             "binding": "a" * 64,
-            "assertion_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "assertion_expires_at": (
+                datetime.now(UTC) + timedelta(hours=-1 if failure == "expired" else 1)
+            ).isoformat(),
         }
 
     monkeypatch.setattr(_connections, "_command", command)
     for index in range(40):
         selection = _workload.Selection("job", str(tmp_path / "manifest"), "assertion", str(index))
-        if denied:
+        if failure is not None:
             with pytest.raises(tnl.TnlError) as error:
                 _connections._workload_session(str(tmp_path), selection)
-            assert error.value.code == "sdk.workload_denied"
+            assert (
+                error.value.code
+                == {
+                    "denied": "sdk.workload_denied",
+                    "expired": "sdk.connection_expired",
+                    "schema": "sdk.connection_invalid",
+                }[failure]
+            )
         else:
             session = _connections._workload_session(str(tmp_path), selection)
             # a live policy still reuses only its control-verified identity.

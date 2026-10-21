@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 import selectors
@@ -18,6 +19,61 @@ import pytest
 
 import tnl
 from tnl import _connections
+
+
+def test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options(
+    tmp_path: Path,
+    native_connections: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if importlib.util.find_spec("psycopg") is None:
+        pytest.skip("optional installed psycopg/libpq qualification; no SDK driver dependency")
+    psycopg = importlib.import_module("psycopg")
+    binary, owner = native_connections
+    monkeypatch.setattr(_connections, "native_binary", lambda: binary)
+    with subprocess.Popen(
+        [str(owner), "-tnl-postgres-auth", str(tmp_path), str(binary)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ) as process:
+        assert process.stdout is not None
+        handle = None
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                assert selector.select(10)
+            status = json.loads(process.stdout.readline())
+            monkeypatch.setenv("TNL_CONNECTION_HANDLE", status["private_handle"])
+            handle = tnl.connect("database", directory=tmp_path)
+            db = handle.snapshot()
+            assert isinstance(db, tnl.PostgresConnection) and db.ca is not None
+            root = tmp_path / "root.pem"
+            root.write_text(db.ca)
+            root.chmod(0o600)
+            options = {
+                "host": db.server_hostname,
+                "hostaddr": db.host,
+                "port": db.port,
+                "sslmode": "verify-full",
+                "sslrootcert": str(root),
+                "channel_binding": "disable",
+                "gssencmode": "disable",
+                "user": "fixture",
+                "dbname": "fixture",
+                "password": "fixture-password",
+                "connect_timeout": 3,
+            }
+            with psycopg.connect(**options) as connection:
+                assert connection.pgconn.ssl_in_use
+            with pytest.raises(psycopg.OperationalError):
+                psycopg.connect(**{**options, "host": "wrong.example.test"})
+            with pytest.raises(psycopg.OperationalError):
+                psycopg.connect(**{**options, "channel_binding": "require"})
+        finally:
+            if handle is not None:
+                handle.close()
+            process.terminate()
+            process.wait(timeout=10)
 
 
 def assert_port_reusable(port: int) -> None:

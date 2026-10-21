@@ -21,6 +21,12 @@ Pass `publisher_file="/absolute/private/publisher.json"` or
 fails instead of falling back to another identity. The native publisher keeps
 its signing key private; it never enters app metadata or status.
 
+Context exit joins native publication cleanup before stopping ASGI. Cancellation
+also waits for an in-flight registration and cleanup; a lost registration reply
+is reconciled using the same invocation identity. If `await tunnel.close()` fails,
+the listener stays running so cleanup can be retried rather than dropping active
+requests before the native publisher has drained.
+
 For a configured app service, `tnl.run("myapp:app")` registers the listener
 after Uvicorn binds it. Pass `service="api"` when the project has more than
 one app service; the working directory selects the project, not the service.

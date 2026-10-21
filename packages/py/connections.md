@@ -60,6 +60,9 @@ Native code owns handle-file permissions, configuration/credential binding,
 authorization, listener setup, renewal, and cleanup. Python passes no secrets in
 arguments and discards native diagnostic output rather than exposing provider
 details. stdout is bounded to 128 KiB and each command to 65 seconds.
+The command deadline includes stdin backpressure, stdout reads, and process exit;
+failed commands kill and reap their child. Private request input is also bounded
+to 128 KiB. Canceling an async caller leaves its bounded worker to finish.
 
 Each async workload call reacquires its source assertion. Only exact assertion
 bytes with a control-confirmed binding and expiry may reuse identity selection.
@@ -83,6 +86,13 @@ native owner monitors the Python parent process. Canceling an await does not
 kill a shared startup needed by other callers; it finishes in its worker thread
 and retains those same cleanup boundaries. Imports perform no discovery,
 authentication, process startup, or environment mutation.
+
+Sessions belong to the Python process that created them. After `fork()`, inherited
+handles fail closed, inherited exit hooks cannot stop the parent's native owner,
+and new handles use fresh locks and IPC. Create and await handles in each serving
+worker. Inactive workload policy contexts are reclaimed when their sessions close
+or identity selection fails; the 32-policy bound applies to active selections and
+sessions rather than every manifest hash the process has seen.
 
 Snapshots have `expires_at`. Read another snapshot before opening a new client
 connection; expired material fails closed. Human owner lifetime follows the
@@ -162,12 +172,17 @@ their raw socket as direct TLS. These snapshots are deliberately not arbitrary
 
 - psycopg/libpq can separate the dial address from the verified hostname. Use
   `host=db.server_hostname`, `hostaddr=db.host`, `port=db.port`, and
-  `sslmode="verify-full"`. libpq does not accept a Python `SSLContext`. When
+  `sslmode="verify-full"`, `channel_binding="disable"`, and
+  `gssencmode="disable"`. libpq does not accept a Python `SSLContext`. When
   `db.ca` is present, supply its PEM through a caller-owned private temporary
   `sslrootcert` file for the full lifetime of the connection or pool. When it is
   absent, use `sslrootcert="system"` on libpq versions supporting system roots,
   or an explicit trusted root file on older versions. Database/user/password
   remain the application's settings.
+  PostgreSQL SCRAM channel binding cannot cross the publisher's separate TLS
+  connections; disabling it retains certificate and hostname verification.
+  `gssencmode="disable"` selects PostgreSQL TLS negotiation rather than GSS
+  encryption. This API does not disable either option on the application's behalf.
 - PyMySQL accepts an `SSLContext` but uses its dial `host` for TLS hostname
   verification. Passing `host=db.host` would verify `127.0.0.1`, not the managed
   hostname. This API does not provide a drop-in PyMySQL/mysqlclient adapter;
@@ -199,6 +214,18 @@ This local fixture uses the real native IPC owner and native CLI read operation,
 an ephemeral certificate, PostgreSQL SSLRequest negotiation, and a real TLS
 socket. It checks failed hostname verification, opaque TCP settings, and unsafe
 handle permissions without contacting a deployed server.
+
+When psycopg is already installed in the test environment, the optional
+`test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options`
+also uses actual libpq, the real native prepared-read operation, and the fixture's
+PostgreSQL password/TLS handshake. It checks the managed hostname with a loopback
+dial address, verified trust, the explicit options above, and rejection of an
+incorrect hostname or required channel binding. It does not qualify SQL, SCRAM
+authentication through a publisher, pooling, or other Python database drivers.
+The locked SDK test dependencies do not install psycopg; the test reports a skip
+when it is absent.
+Local qualification used Python 3.13.9, psycopg 3.2.9's binary implementation,
+and libpq 17.5 on macOS arm64.
 
 For configured-app metadata and Uvicorn registration, run:
 

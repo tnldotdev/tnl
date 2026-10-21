@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Generator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, Literal, cast
@@ -234,34 +234,54 @@ def _prepared(value: object, service: str) -> Connection:
 
 
 def _command(binary: Path, *arguments: str, input_value: object = None) -> object:
-    """bound stdout in memory and time; never print native stderr or responses."""
+    """bound both pipes and exit by one deadline; never expose native output."""
     try:
+        deadline = time.monotonic() + _TIMEOUT
+        encoded = b"" if input_value is None else json.dumps(input_value).encode()
+        if len(encoded) > _MAX_BYTES:
+            raise _error("invalid")
         with subprocess.Popen(
             [str(binary), "--no-telemetry", "runtime", "connections", *arguments],
             stdin=subprocess.PIPE if input_value is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            bufsize=0,
         ) as child:
-            if input_value is not None:
-                assert child.stdin is not None
-                child.stdin.write(json.dumps(input_value).encode())
-                child.stdin.close()
-            assert child.stdout is not None
             try:
-                deadline = time.monotonic() + _TIMEOUT
+                assert child.stdout is not None
                 data = bytearray()
                 with selectors.DefaultSelector() as selector:
+                    os.set_blocking(child.stdout.fileno(), False)
                     selector.register(child.stdout, selectors.EVENT_READ)
-                    while True:
+                    pending = memoryview(encoded)
+                    if child.stdin is not None:
+                        os.set_blocking(child.stdin.fileno(), False)
+                        selector.register(child.stdin, selectors.EVENT_WRITE)
+                    while selector.get_map():
                         remaining = deadline - time.monotonic()
-                        if remaining <= 0 or not selector.select(remaining):
+                        if remaining <= 0:
                             raise _error("unavailable")
-                        chunk = os.read(child.stdout.fileno(), 8192)
-                        if not chunk:
-                            break
-                        data.extend(chunk)
-                        if len(data) > _MAX_BYTES:
-                            raise _error("invalid")
+                        for key, _ in selector.select(remaining):
+                            try:
+                                if key.fileobj is child.stdin:
+                                    assert child.stdin is not None
+                                    try:
+                                        written = os.write(key.fd, pending[:4096])
+                                        pending = pending[written:]
+                                    except BrokenPipeError:
+                                        pending = pending[len(pending) :]
+                                    if not pending:
+                                        selector.unregister(child.stdin)
+                                        child.stdin.close()
+                                else:
+                                    chunk = os.read(key.fd, 8192)
+                                    if not chunk:
+                                        selector.unregister(child.stdout)
+                                    data.extend(chunk)
+                                    if len(data) > _MAX_BYTES:
+                                        raise _error("invalid")
+                            except BlockingIOError:
+                                continue
                 child.wait(timeout=max(0.001, deadline - time.monotonic()))
                 if child.returncode:
                     raise _error("unavailable")
@@ -280,6 +300,7 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
 class _Session:
     def __init__(self, directory: str, service: str, mounted: str | None) -> None:
         self.directory = directory
+        self.creator_pid = os.getpid()
         self.service = service
         self.mounted = mounted
         self.handle = mounted
@@ -291,6 +312,7 @@ class _Session:
         self.lock = threading.RLock()
         self.ipc: OwnerIPC | None = None
         self.context: object = None
+        self.policies: set[tuple[str, str, str]] = set()
 
     def read(
         self,
@@ -299,6 +321,8 @@ class _Session:
         service: str | None = None,
         selection: Selection | None = None,
     ) -> Connection:
+        if self.creator_pid != os.getpid():
+            raise _error("closed")
         with self.lock:
             name = service or self.service
             started = False
@@ -421,6 +445,8 @@ class _Session:
                 raise
 
     def _stop_owner(self) -> None:
+        if self.creator_pid != os.getpid():
+            raise _error("closed")
         assert self.binary is not None and self.handle is not None
         stopped = _object(
             _command(self.binary, "stop", "--handle", self.handle), {"schema", "state"}
@@ -438,6 +464,9 @@ class _Session:
         atexit.unregister(self._cleanup)
 
     def close(self) -> None:
+        # check before acquiring a lock possibly held by a vanished parent thread.
+        if self.creator_pid != os.getpid():
+            return
         with self.lock:
             if self.closed:
                 return
@@ -451,6 +480,10 @@ class _Session:
                 key = (self.directory, self.service, self.mounted)
                 if _sessions.get(key) is self:
                     del _sessions[key]
+                for token, (scope, _) in list(_identities.items()):
+                    if token[0] == self.directory and scope == self.service:
+                        del _identities[token]
+                _prune_policies()
             atexit.unregister(self._cleanup)
 
     def _cleanup(self) -> None:
@@ -465,7 +498,45 @@ _sessions: dict[tuple[str, str, str | None], _Session] = {}
 _sessions_lock = threading.Lock()
 _contexts: dict[tuple[str, str, str], object] = {}
 _identities: dict[tuple[str, str, str, str], tuple[str, datetime]] = {}
-_policy_locks: dict[tuple[str, str, str], threading.Lock] = {}
+
+
+@dataclass
+class _PolicyLock:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    users: int = 0
+
+
+_policy_locks: dict[tuple[str, str, str], _PolicyLock] = {}
+
+
+def _after_fork() -> None:
+    global _sessions_lock
+    # close only this process's duplicate socket descriptors, without IPC or any
+    # inherited locks. existing handle/atexit references are fenced by creator PID.
+    for session in _sessions.values():
+        if session.ipc is not None:
+            session.ipc.discard_inherited()
+    _sessions.clear()
+    _contexts.clear()
+    _identities.clear()
+    _policy_locks.clear()
+    _sessions_lock = threading.Lock()
+
+
+os.register_at_fork(after_in_child=_after_fork)
+
+
+def _prune_policies() -> None:
+    # callers hold _sessions_lock. users includes threads waiting on a policy,
+    # so removing an inactive policy cannot create two concurrent identity locks.
+    active = {policy for session in _sessions.values() for policy in session.policies}
+    for policy, entry in list(_policy_locks.items()):
+        if not entry.users and policy not in active:
+            del _policy_locks[policy]
+            _contexts.pop(policy, None)
+            for token in list(_identities):
+                if token[:3] == policy:
+                    del _identities[token]
 
 
 def _workload_session(directory: str, selection: Selection) -> _Session:
@@ -480,10 +551,16 @@ def _workload_session(directory: str, selection: Selection) -> _Session:
         if policy not in _policy_locks:
             if len(_policy_locks) >= 32:
                 raise _error("unavailable")
-            _policy_locks[policy] = threading.Lock()
-        lock = _policy_locks[policy]
-    with lock:
-        return _identify_workload_session(directory, selection, policy, identity_key)
+            _policy_locks[policy] = _PolicyLock()
+        entry = _policy_locks[policy]
+        entry.users += 1
+    try:
+        with entry.lock:
+            return _identify_workload_session(directory, selection, policy, identity_key)
+    finally:
+        with _sessions_lock:
+            entry.users -= 1
+            _prune_policies()
 
 
 def _identify_workload_session(
@@ -507,10 +584,12 @@ def _identify_workload_session(
         "--workload-manifest",
         selection.manifest,
     ]
-    context = _contexts.get(policy)
+    with _sessions_lock:
+        context = _contexts.get(policy)
     if context is None:
         context = _command(binary, "context", *arguments)
-        _contexts[policy] = context
+        with _sessions_lock:
+            _contexts[policy] = context
     identity = _object(
         _command(
             binary,
@@ -522,11 +601,17 @@ def _identify_workload_session(
     )
     binding = _text(identity.get("binding"))
     if (
-        identity.get("schema") != 1
+        type(identity.get("schema")) is not int
+        or identity["schema"] != 1
         or len(binding) != 64
         or any(c not in "0123456789abcdef" for c in binding)
     ):
         raise _error("invalid")
+    expiry = (
+        _expiry(identity["assertion_expires_at"])
+        if selection.assertion and "assertion_expires_at" in identity
+        else None
+    )
     scope = json.dumps([binding, context], sort_keys=True)
     key = (directory, scope, None)
     with _sessions_lock:
@@ -537,8 +622,8 @@ def _identify_workload_session(
             session = _Session(*key)
             session.context = context
             _sessions[key] = session
-        if selection.assertion and "assertion_expires_at" in identity:
-            expiry = _expiry(identity["assertion_expires_at"])
+        session.policies.add(policy)
+        if expiry is not None:
             for token, (_, until) in list(_identities.items()):
                 if until <= datetime.now(UTC):
                     del _identities[token]
@@ -574,7 +659,7 @@ class ConnectionHandle[C: Connection]:
         return cast(C, connection)
 
     async def _prepare(self) -> C:
-        if self._session.closed:
+        if self._session.creator_pid != os.getpid() or self._session.closed:
             raise _error("closed")
         selection = None
         if uses_workload():
