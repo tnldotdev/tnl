@@ -137,17 +137,19 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 		warm += n
 	}
 	mu.Unlock()
-	if cold != 4 || warm != cold {
-		t.Fatalf("control budget cold=%d warm_delta=%d, want 4/0", cold, warm-cold)
+	if cold != 5 || warm != cold {
+		t.Fatalf("control budget cold=%d warm_delta=%d, want 5/0", cold, warm-cold)
 	}
 	if len(b.prepared) != 1 {
 		t.Fatal("unrequested sibling opened a listener")
 	}
 	b.prepared["db"].sessionID = "wls_" + strings.Repeat("o", 22)
+	b.publishLocked()
 	if _, err := b.Prepared("db"); !errors.Is(err, connectionruntime.ErrUnprepared) {
 		t.Fatal("old-session adapter inherited a replacement session deadline", err)
 	}
 	b.prepared["db"].sessionID = id
+	b.publishLocked()
 	if err := b.UseAssertion(t.Context(), "rotated"); err != nil {
 		t.Fatal(err)
 	}

@@ -97,7 +97,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	if provider, ok := backend.(interface{ Done() <-chan error }); ok {
 		failed = provider.Done()
 	}
-	var operationMu sync.Mutex
+	var stateMu sync.Mutex
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return observability.Independent(lifetime) }, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
 	server.Handler = observability.LocalRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -119,9 +119,10 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "stopping"})
 			return
 		}
-		operationMu.Lock()
-		defer operationMu.Unlock()
-		if lifetime.Err() != nil || !expires.After(time.Now()) {
+		stateMu.Lock()
+		current := state
+		stateMu.Unlock()
+		if lifetime.Err() != nil || !current.ExpiresAt.After(time.Now()) {
 			w.WriteHeader(410)
 			_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
 			return
@@ -148,9 +149,9 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			if provider, ok := backend.(interface {
 				PublicRuntime() projectmeta.PublicMetadata
 			}); ok {
-				state.PublicRuntime = provider.PublicRuntime()
+				current.PublicRuntime = provider.PublicRuntime()
 			}
-			_ = json.NewEncoder(w).Encode(state)
+			_ = json.NewEncoder(w).Encode(current)
 		case "connect", "prepare", "prepared":
 			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
 			defer done()
@@ -182,27 +183,29 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				}
 			}
 			if err != nil {
-				if errors.Is(err, ErrUnprepared) {
-					w.WriteHeader(425)
-					_, _ = io.WriteString(w, `{"code":"connections.unprepared"}`)
-					return
-				}
-				if errors.Is(err, ErrExpired) {
-					w.WriteHeader(410)
-					_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
-					return
-				}
-				w.WriteHeader(503)
-				_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
+				writeConnectionFailure(w, err)
 				return
 			}
 			if operation != "connect" {
 				if provider, ok := backend.(interface {
+					SnapshotFor(string, string) (Prepared, error)
+				}); ok {
+					// pair metadata, transport identity and assertion proof from one
+					// immutable publication, even if another request replaces a session.
+					prepared, err := provider.SnapshotFor(request.Service, request.Assertion)
+					if err != nil {
+						writeConnectionFailure(w, err)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(prepared)
+					return
+				}
+				if provider, ok := backend.(interface {
 					PublicRuntime() projectmeta.PublicMetadata
 				}); ok {
-					state.PublicRuntime = provider.PublicRuntime()
+					current.PublicRuntime = provider.PublicRuntime()
 				}
-				result := Prepared{Schema: Schema, PublicRuntime: state.PublicRuntime, Connection: connection}
+				result := Prepared{Schema: Schema, PublicRuntime: current.PublicRuntime, Connection: connection}
 				if provider, ok := backend.(interface{ Verification() *AssertionVerification }); ok {
 					result.Verification = provider.Verification()
 				}
@@ -244,9 +247,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		_ = server.Shutdown(shutdown)
 		done()
 		_ = server.Close()
-		operationMu.Lock()
 		closeBackend()
-		operationMu.Unlock()
 		<-serverDone
 		if !errors.Is(serveError, http.ErrServerClosed) {
 			result = errors.Join(result, serveError)
@@ -290,15 +291,29 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			if err != nil {
 				return err
 			}
-			operationMu.Lock()
+			stateMu.Lock()
 			if !next.After(time.Now()) || next.After(expires) {
-				operationMu.Unlock()
+				stateMu.Unlock()
 				return ErrExpired
 			}
 			expires = next
 			state.ExpiresAt = next
 			deadline.Reset(time.Until(next))
-			operationMu.Unlock()
+			stateMu.Unlock()
 		}
+	}
+}
+
+func writeConnectionFailure(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrUnprepared):
+		w.WriteHeader(425)
+		_, _ = io.WriteString(w, `{"code":"connections.unprepared"}`)
+	case errors.Is(err, ErrExpired):
+		w.WriteHeader(410)
+		_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
+	default:
+		w.WriteHeader(503)
+		_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
 	}
 }

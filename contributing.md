@@ -82,6 +82,12 @@ For native client trace propagation and bounded flush, run
 `task go:test:client-tracing` and `task js:test:client-tracing` through `mise exec --`.
 The existing connection tier also checks the real CLI-to-detached-owner trace chain.
 
+For native owner concurrency and shutdown, run `task go:test:owner-lifecycle -- -race`.
+`task go:test:integration:owner-lifecycle` owns disposable PostgreSQL and checks
+one native owner serving real HTTP and PostgreSQL while another request stalls.
+Prepared reads publish metadata and transport identity together; they never wait
+for another service's preparation or an assertion exchange.
+
 For public HTTP live authorization, run `task go:test:live-authorization`, then
 `task go:test:live-authorization -- -race`. These use deterministic clocks for
 long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.

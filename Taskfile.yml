@@ -325,6 +325,18 @@ tasks:
     cmds:
       - go test -race -v ./cmd/tnl -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
 
+  go:test:owner-lifecycle:
+    desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
+    vars:
+      RUN: '{{default "Test(Connection|DeviceIssued|ConnectorAssignmentConflict|AssignmentCleanup)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} -v ./internal/connectionruntime ./internal/tcpconnect ./internal/clientauth ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
+
+  go:test:integration:owner-lifecycle:
+    desc: Check a real shared HTTP/PostgreSQL owner while a sibling stalls, using disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectionSharedOwnerStalledSibling$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+
   go:test:invocations:
     desc: Check ad-hoc registration, real SQLite workers, limits and allocation cleanup locally
     cmds:
