@@ -205,6 +205,18 @@ first-ready timestamp so one reconnected relay can restore availability. Relay
 lease expiry excludes that relay without expiring another surviving slot or
 replaying existing visitors.
 
+A relay can repeat the exact connected claim after losing control's response,
+using the same connection ID, assignment revision, credential, and process lease.
+The relay reserves local ownership before calling control and retains it through
+disconnect, so a duplicate handshake cannot close the owner's connection. A
+different process cannot recover that claim, and a ready connection cannot be
+claimed again. If its credential expires before readiness, heartbeat replaces
+that never-ready assignment and fences late readiness or disconnect calls from
+the old handshake. A ready sibling retains its assignment and streams even after
+its original claim credential expires. Public and private claims share each relay
+process's connection capacity; control checks their combined count under the
+selected lease lock.
+
 ## authenticate the connector and each stream
 
 `internal/tcpconnect` enrolls a local device signing key for the signed-in
@@ -411,6 +423,8 @@ expires sooner than the normal interval. An explicit denial closes both ends.
 Successful checks return a `valid_until` bounded by the applicable grants, run,
 ingress and live relay deadlines, with a hard two-minute cap. Unavailable control
 cannot extend that deadline. Stream-copy workers join before ingress releases capacity.
+Selection, initial admission, and rechecks also stop at the managed service
+certificate's deadline; a missing or expired certificate denies a recheck.
 
 Connector-session expiry prevents new streams on that mux; it does not revoke
 already admitted streams. The connector obtains another authenticated path

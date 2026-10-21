@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +29,94 @@ import (
 )
 
 func privateRelayID(prefix string) string { return prefix + strings.Repeat("a", 22) }
+
+type privateClaimControlStub struct {
+	ControlClient
+	claims     atomic.Int64
+	claim      func()
+	disconnect func()
+}
+
+func (c *privateClaimControlStub) ClaimPrivatePublisherConnection(_ context.Context, id string, body relayv1.PrivatePublisherConnectionClaim) (relayv1.PrivatePublisherConnection, error) {
+	if c.claims.Add(1) == 1 && c.claim != nil {
+		c.claim()
+	}
+	return relayv1.PrivatePublisherConnection{PrivateServiceId: body.PrivateServiceId, PrivateRunId: body.PrivateRunId, RunNumber: body.RunNumber,
+		PublisherConnectionId: id, ConnectionAssignmentRevision: body.ConnectionAssignmentRevision, RelayServiceId: "relay-a"}, nil
+}
+
+func (*privateClaimControlStub) ReadyPrivatePublisherConnection(context.Context, string, relayv1.PrivatePublisherConnectionTransition) (relayv1.PrivatePublisherConnection, error) {
+	return relayv1.PrivatePublisherConnection{}, nil
+}
+
+func (c *privateClaimControlStub) DisconnectPrivatePublisherConnection(context.Context, string, relayv1.PrivatePublisherConnectionTransition) error {
+	if c.disconnect != nil {
+		c.disconnect()
+	}
+	return nil
+}
+
+func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	client := &privateClaimControlStub{claim: func() { close(entered); <-release }}
+	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+	registry := NewPrivateRegistry()
+	acceptor := &PrivatePublisherAcceptor{Select: func(string) (PrivatePublisherTarget, bool) {
+		return PrivatePublisherTarget{Control: controller, Registry: registry}, true
+	}}
+	ref := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 1,
+		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
+	message := tunnelv1.Message{Role: tunnelv1.Publisher, PrivateConnection: &ref, Credential: "credential"}
+	type result struct {
+		claim *privateClaim
+		err   error
+	}
+	first := make(chan result, 1)
+	go func() { claim, err := acceptor.claim(t.Context(), message); first <- result{claim, err} }()
+	relayAwait(t, entered)
+	duplicates := func() {
+		t.Helper()
+		done := make(chan error, 8)
+		for range 8 {
+			go func() { _, err := acceptor.claim(t.Context(), message); done <- err }()
+		}
+		for range 8 {
+			if err := relayAwait(t, done); err == nil {
+				t.Error("duplicate handshake acquired pending claim")
+			}
+		}
+	}
+	duplicates()
+	if client.claims.Load() != 1 {
+		t.Errorf("duplicate handshake reached control %d times", client.claims.Load())
+	}
+	unblock()
+	owner := relayAwait(t, first)
+	if owner.err != nil {
+		t.Fatal(owner.err)
+	}
+	// keep the local guard until the owner's final control disconnect finishes.
+	disconnecting, finish := make(chan struct{}), make(chan struct{})
+	unblockDisconnect := sync.OnceFunc(func() { close(finish) })
+	t.Cleanup(unblockDisconnect)
+	client.disconnect = func() { close(disconnecting); <-finish }
+	outer := &PublisherAcceptor{readyDelta: func(int) {}, connectionExited: func(bool) {}}
+	done := make(chan error, 1)
+	go func() { done <- owner.claim.serve(t.Context(), nil, outer, func(error) {}) }()
+	relayAwait(t, disconnecting)
+	duplicates()
+	unblockDisconnect()
+	if err := relayAwait(t, done); err == nil {
+		t.Fatal("missing tunnel session was accepted")
+	}
+	recovered, err := acceptor.claim(t.Context(), message)
+	if err != nil {
+		t.Fatalf("failed handshake retained local owner: %v", err)
+	}
+	registry.release(recovered)
+}
 
 func privateRelayPair(t *testing.T, hello tunnelv1.Message) (*tunnel.Session, *tunnel.Session) {
 	t.Helper()

@@ -149,10 +149,11 @@ func (q *Queries) CountOpenPublishRunAssignmentsByRelayService(ctx context.Conte
 
 const countRelayActiveConnections = `-- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.publish_run_connection_slots
+FROM control.publisher_service_connection_slots
 WHERE connected_relay_id = $1
   AND connected_relay_run_id = $2
   AND connected_relay_lease_revision = $3
+  AND session_open
   AND state IN ('connected', 'ready', 'draining')
 `
 

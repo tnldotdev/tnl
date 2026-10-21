@@ -450,6 +450,16 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tcpconnect -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:private-claims:
+    desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/relay -run='^TestIntegrationPrivate(ClaimCommittedResponseLoss|ClaimExpiredResponseRecovery|MixedProcessClaimCapacity|VisitorCertificateDeadline)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:relay:
+    desc: Check routine relay behavior with races
+    cmds:
+      - go test -race ./internal/relay
+
   go:test:integration:cli:
     desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
     vars:

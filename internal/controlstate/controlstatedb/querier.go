@@ -351,8 +351,8 @@ type Querier interface {
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPrivateServiceConnectionSlots(ctx context.Context, privateRunID string) ([]ControlPrivateServiceConnectionSlot, error)
-	// never modify a connected or ready slot that still has its matching live
-	// relay lease. its streams and assignment remain owned by that relay.
+	// replace expired never-ready claims even with a live relay lease.
+	// ready slots retain ownership and streams while their matching lease is live.
 	ListPrivateServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListPrivateServiceConnectionSlotsNeedingReplacementParams) ([]ControlPrivateServiceConnectionSlot, error)
 	ListPrivateServiceGrants(ctx context.Context, arg ListPrivateServiceGrantsParams) ([]ControlPrivateServiceGrant, error)
 	ListPrivateServiceInvitations(ctx context.Context, arg ListPrivateServiceInvitationsParams) ([]ControlPrivateServiceInvitation, error)
