@@ -1318,6 +1318,12 @@ type ListWebsitePrivateServicesParams struct {
 	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
 
+// AuthorizeWebsiteTeamUsageParams defines parameters for AuthorizeWebsiteTeamUsage.
+type AuthorizeWebsiteTeamUsageParams struct {
+	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
+}
+
 // CreateTeamParams defines parameters for CreateTeam.
 type CreateTeamParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -1899,6 +1905,11 @@ type ClientInterface interface {
 	//
 	// Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
 	ListWebsitePrivateServices(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeWebsiteTeamUsage performs a GET /v1/service/teams/{team_id}/usage-authorization (the `AuthorizeWebsiteTeamUsage` operationId) request.
+	//
+	// Authorize one website usage read for any current active team member, including a personal-team owner. Requires a fresh configured-issuer assertion with auth_time, a unique jti and nonce using the tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped path, raw query and empty body. Control consumes the assertion and rechecks identity, membership and current company source/eligibility. Success grants no service management or visitor credential and is not reusable authorization. No saved service or inventory read is required.
+	AuthorizeWebsiteTeamUsage(ctx context.Context, teamId TeamID, params *AuthorizeWebsiteTeamUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams for the authenticated identity
 	//
@@ -3135,6 +3146,21 @@ func (c *Client) SetCompanyMembershipDecision(ctx context.Context, teamId string
 // Current owner/admin inventory for this exact team, with current company source checks. Cursor is included in the signed request target.
 func (c *Client) ListWebsitePrivateServices(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListWebsitePrivateServicesRequest(c.Server, teamId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AuthorizeWebsiteTeamUsage performs a GET /v1/service/teams/{team_id}/usage-authorization (the `AuthorizeWebsiteTeamUsage` operationId) request.
+//
+// Authorize one website usage read for any current active team member, including a personal-team owner. Requires a fresh configured-issuer assertion with auth_time, a unique jti and nonce using the tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped path, raw query and empty body. Control consumes the assertion and rechecks identity, membership and current company source/eligibility. Success grants no service management or visitor credential and is not reusable authorization. No saved service or inventory read is required.
+func (c *Client) AuthorizeWebsiteTeamUsage(ctx context.Context, teamId TeamID, params *AuthorizeWebsiteTeamUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeWebsiteTeamUsageRequest(c.Server, teamId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5781,6 +5807,53 @@ func NewListWebsitePrivateServicesRequest(server string, teamId TeamID, params *
 	return req, nil
 }
 
+// NewAuthorizeWebsiteTeamUsageRequest constructs an http.Request for the AuthorizeWebsiteTeamUsage method
+func NewAuthorizeWebsiteTeamUsageRequest(server string, teamId TeamID, params *AuthorizeWebsiteTeamUsageParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/usage-authorization", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewListTeamsRequest constructs an http.Request for the ListTeams method
 func NewListTeamsRequest(server string) (*http.Request, error) {
 	var err error
@@ -7096,6 +7169,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListWebsitePrivateServicesWithResponse(ctx context.Context, teamId TeamID, params *ListWebsitePrivateServicesParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServicesResponse, error)
+
+	// AuthorizeWebsiteTeamUsageWithResponse performs a GET /v1/service/teams/{team_id}/usage-authorization (the `AuthorizeWebsiteTeamUsage` operationId) request.
+	//
+	// Authorize one website usage read for any current active team member, including a personal-team owner. Requires a fresh configured-issuer assertion with auth_time, a unique jti and nonce using the tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped path, raw query and empty body. Control consumes the assertion and rechecks identity, membership and current company source/eligibility. Success grants no service management or visitor credential and is not reusable authorization. No saved service or inventory read is required.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AuthorizeWebsiteTeamUsageWithResponse(ctx context.Context, teamId TeamID, params *AuthorizeWebsiteTeamUsageParams, reqEditors ...RequestEditorFn) (*AuthorizeWebsiteTeamUsageResponse, error)
 
 	// ListTeamsWithResponse List teams for the authenticated identity
 	//
@@ -9256,6 +9336,47 @@ func (r ListWebsitePrivateServicesResponse) ContentType() string {
 	return ""
 }
 
+type AuthorizeWebsiteTeamUsageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AuthorizeWebsiteTeamUsageResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AuthorizeWebsiteTeamUsageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthorizeWebsiteTeamUsageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthorizeWebsiteTeamUsageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AuthorizeWebsiteTeamUsageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListTeamsResponseDefaultHeaders the declared response headers of an HTTP default response for ListTeams
 type ListTeamsResponseDefaultHeaders struct {
 	WWWAuthenticate string
@@ -11069,6 +11190,19 @@ func (c *ClientWithResponses) ListWebsitePrivateServicesWithResponse(ctx context
 	return ParseListWebsitePrivateServicesResponse(rsp)
 }
 
+// AuthorizeWebsiteTeamUsageWithResponse performs a GET /v1/service/teams/{team_id}/usage-authorization (the `AuthorizeWebsiteTeamUsage` operationId) request.
+//
+// Authorize one website usage read for any current active team member, including a personal-team owner. Requires a fresh configured-issuer assertion with auth_time, a unique jti and nonce using the tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped path, raw query and empty body. Control consumes the assertion and rechecks identity, membership and current company source/eligibility. Success grants no service management or visitor credential and is not reusable authorization. No saved service or inventory read is required.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AuthorizeWebsiteTeamUsageWithResponse(ctx context.Context, teamId TeamID, params *AuthorizeWebsiteTeamUsageParams, reqEditors ...RequestEditorFn) (*AuthorizeWebsiteTeamUsageResponse, error) {
+	rsp, err := c.AuthorizeWebsiteTeamUsage(ctx, teamId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeWebsiteTeamUsageResponse(rsp)
+}
+
 // ListTeamsWithResponse List teams for the authenticated identity
 //
 // Returns a wrapper object for the known response body format(s).
@@ -12802,6 +12936,35 @@ func ParseListWebsitePrivateServicesResponse(rsp *http.Response) (*ListWebsitePr
 	return response, nil
 }
 
+// ParseAuthorizeWebsiteTeamUsageResponse parses an HTTP response from a AuthorizeWebsiteTeamUsageWithResponse call
+func ParseAuthorizeWebsiteTeamUsageResponse(rsp *http.Response) (*AuthorizeWebsiteTeamUsageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthorizeWebsiteTeamUsageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamsResponse parses an HTTP response from a ListTeamsWithResponse call
 func ParseListTeamsResponse(rsp *http.Response) (*ListTeamsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13590,6 +13753,9 @@ type ServerInterface interface {
 
 	// (GET /v1/service/teams/{team_id}/private-services)
 	ListWebsitePrivateServices(w http.ResponseWriter, r *http.Request, teamId TeamID, params ListWebsitePrivateServicesParams)
+
+	// (GET /v1/service/teams/{team_id}/usage-authorization)
+	AuthorizeWebsiteTeamUsage(w http.ResponseWriter, r *http.Request, teamId TeamID, params AuthorizeWebsiteTeamUsageParams)
 	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -15348,6 +15514,60 @@ func (siw *ServerInterfaceWrapper) ListWebsitePrivateServices(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// AuthorizeWebsiteTeamUsage operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeWebsiteTeamUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AuthorizeWebsiteTeamUsageParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken ServiceActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeWebsiteTeamUsage(w, r, teamId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTeams operation middleware
 func (siw *ServerInterfaceWrapper) ListTeams(w http.ResponseWriter, r *http.Request) {
 
@@ -16072,6 +16292,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/usage-authorization", wrapper.AuthorizeWebsiteTeamUsage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/private-services", wrapper.ListWebsitePrivateServices)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}", wrapper.GetWebsitePrivateService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/grants", wrapper.ListWebsitePrivateServiceGrants)

@@ -240,6 +240,11 @@ tasks:
     cmds:
       - go test -race ./internal/oidcauth ./internal/authorityapi ./internal/authorityclient ./internal/clientauth ./internal/clientstate ./internal/credentials ./internal/tnldconfig
 
+  go:test:team-usage:
+    desc: Check signed website usage authorization and safe failure classification
+    cmds:
+      - go test -race -v ./internal/authorityapi -run='^TestWebsiteTeamUsage' -count=1
+
   go:test:live-authorization:
     desc: Check public HTTP decision caching and live request authorization
     vars:

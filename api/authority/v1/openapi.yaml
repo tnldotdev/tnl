@@ -9,6 +9,25 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/service/teams/{team_id}/usage-authorization:
+    parameters:
+      - { $ref: "#/components/parameters/TeamID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: authorizeWebsiteTeamUsage
+      security: [{ webServiceAuth: [] }]
+      description: >-
+        Authorize one website usage read for any current active team member,
+        including a personal-team owner. Requires a fresh configured-issuer
+        assertion with auth_time, a unique jti and nonce using the
+        tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped
+        path, raw query and empty body. Control consumes the assertion and
+        rechecks identity, membership and current company source/eligibility.
+        Success grants no service management or visitor credential and is not
+        reusable authorization. No saved service or inventory read is required.
+      responses:
+        "204": { description: This usage read is currently authorized; do not cache }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/service/teams/{team_id}/private-services:
     parameters:
       - { $ref: "#/components/parameters/TeamID" }
