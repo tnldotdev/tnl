@@ -1,0 +1,19 @@
+{
+  "name": "@tnldotdev/connect-action",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "typecheck": "pnpm build && pnpm typecheck:run",
+    "typecheck:run": "tsc --project tsconfig.json",
+    "test": "pnpm build && pnpm test:run",
+    "test:run": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.45.0"
+  }
+}

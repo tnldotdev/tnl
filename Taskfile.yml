@@ -601,6 +601,44 @@ tasks:
     cmds:
       - pnpm exec vitest run scripts/install.test.ts
 
+  connect:check:
+    desc: Build and check the GitHub connection action without cloud access
+    cmds:
+      - pnpm --filter @tnldotdev/connect-action build
+      - pnpm --filter @tnldotdev/connect-action typecheck:run
+      - pnpm --filter @tnldotdev/connect-action test:run
+      - pnpm exec oxlint --deny-warnings connect/src connect/test connect/scripts
+      - pnpm exec oxfmt --check connect
+      - actionlint connect/test/workflow.yml
+      - zizmor connect/action.yml connect/test/workflow.yml
+
+  connect:generate-check:
+    desc: Regenerate and compare the committed action bundles
+    cmds:
+      - pnpm --filter @tnldotdev/connect-action build
+      - git diff --exit-code HEAD -- connect/dist
+      - test -z "$(git ls-files --others --exclude-standard -- connect/dist)"
+
+  connect:fixture:prepare:
+    desc: Prepare the local action workflow fixture
+    cmds:
+      - node connect/test/workflow.ts prepare
+
+  connect:fixture:observe:
+    desc: Verify a prepared action owner from a later workflow step
+    cmds:
+      - node connect/test/workflow.ts observe
+
+  connect:fixture:remove-original:
+    desc: Remove the fixture's original CLI to qualify action-owned cleanup
+    cmds:
+      - node connect/test/workflow.ts remove-original
+
+  connect:fixture:stop-oidc:
+    desc: Stop the local action workflow issuer
+    cmds:
+      - node connect/test/workflow.ts stop-oidc
+
   js:test:coverage:
     desc: Produce a diagnostic TypeScript coverage report
     cmds:

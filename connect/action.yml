@@ -1,0 +1,29 @@
+name: tnl connect
+description: Prepare native connections for one saved tnl CI policy across job steps
+author: tnldotdev
+inputs:
+  ci:
+    description: Required CI policy key from the project's tnl configuration
+    required: true
+  version:
+    description: Exact npm release version to install; otherwise use the installed project package
+    required: false
+  working-directory:
+    description: Project directory relative to the workspace
+    required: false
+    default: .
+  cli-path:
+    description: Explicit native tnl executable, relative to working-directory or absolute
+    required: false
+  services:
+    description: Newline-separated service keys narrowing the selected CI policy
+    required: false
+  timeout:
+    description: Startup timeout in seconds (1-300); does not change the workload deadline
+    required: false
+    default: "90"
+runs:
+  using: node24
+  main: dist/main/index.mjs
+  post: dist/post/index.mjs
+  post-if: always()

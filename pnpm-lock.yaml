@@ -99,6 +99,19 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
+  connect:
+    dependencies:
+      '@actions/core':
+        specifier: 3.0.1
+        version: 3.0.1
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@vercel/ncc':
+        specifier: 0.45.0
+        version: 0.45.0
+
   packages/ts:
     dependencies:
       undici:
@@ -128,6 +141,18 @@ importers:
         version: 8.3.1(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.1)(yaml@2.9.1)
 
 packages:
+
+  '@actions/core@3.0.1':
+    resolution: {integrity: sha512-a6d/Nwahm9fliVGRhdhofo40HjHQasUPusmc7vBfyky+7Z+P2A1J68zyFVaNcEclc/Se+eO595oAr5nwEIoIUA==}
+
+  '@actions/exec@3.0.0':
+    resolution: {integrity: sha512-6xH/puSoNBXb72VPlZVm7vQ+svQpFyA96qdDBvhB8eNZOE8LtPf9L4oAsfzK/crCL8YZ+19fKYVnM63Sl+Xzlw==}
+
+  '@actions/http-client@4.0.1':
+    resolution: {integrity: sha512-+Nvd1ImaOZBSoPbsUtEhv+1z99H12xzncCkz0a3RuehINE81FZSe2QTj3uvAPTcJX/SCzUQHQ0D1GrPMbrPitg==}
+
+  '@actions/io@3.0.2':
+    resolution: {integrity: sha512-nRBchcMM+QK1pdjO7/idu86rbJI5YHUKCvKs0KxnSYbVe3F51UfGxuZX4Qy/fWlp6l7gWFwIkrOzN+oUK03kfw==}
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
     resolution: {integrity: sha512-60vepv88RwcJtSHrD6MjIL6Ta3SOYbgfnkHb+ppAVK+o9mXprRtulx7VlRl3lN3bbvysAfCS7WMVfhUYemB0IQ==}
@@ -1658,6 +1683,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@vercel/ncc@0.45.0':
+    resolution: {integrity: sha512-8zPi1yO2mHpoKTD+e+Bf0ZT3e+sWHSOyGapm9s7b5R0gxJi3CiFTqmeQiMEyu6ejrz2s09M8JkEoUaTWjBJPQQ==}
+    hasBin: true
+
   '@vitest/coverage-v8@5.0.2':
     resolution: {integrity: sha512-3ffHBEi8DOOBLwIGBhOBZbRfYFYWjMUuxZicONdhuFEFEG5AVsMOSrVeuROskqnqpbOmEJwxM2eTVZ9N3a1t+A==}
     peerDependencies:
@@ -2681,6 +2710,10 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
+  tunnel@0.0.6:
+    resolution: {integrity: sha512-1h/Lnq9yajKY2PEbBadPXj3VxsDDu844OnaAo52UVmIzIvwwtBPIuNvkjuzBlTWpfJyUbG3ez0KSBibQkj4ojg==}
+    engines: {node: '>=0.6.11 <=0.7.0 || >=0.7.3'}
+
   type-fest@3.13.1:
     resolution: {integrity: sha512-tLq3bSNx+xSpwvAJnzrK0Ep5CLNWjvFTOp71URMaAEWBfRb9nnJiBoUe0tF8bI4ZFO3omgBR6NvnbzVUT3Ly4g==}
     engines: {node: '>=14.16'}
@@ -2699,6 +2732,10 @@ packages:
 
   undici-types@8.11.2:
     resolution: {integrity: sha512-iMVNmWZ0leK/goS6eXMizSzmm9CDWtyphwbaCms3DNLqRxDL+mMoNVcZMTyyVgXP0N+Z8neAMzDoUOUJL8veKg==}
+
+  undici@6.29.1:
+    resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
+    engines: {node: '>=18.17'}
 
   undici@7.30.1:
     resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
@@ -2866,6 +2903,22 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
+
+  '@actions/core@3.0.1':
+    dependencies:
+      '@actions/exec': 3.0.0
+      '@actions/http-client': 4.0.1
+
+  '@actions/exec@3.0.0':
+    dependencies:
+      '@actions/io': 3.0.2
+
+  '@actions/http-client@4.0.1':
+    dependencies:
+      tunnel: 0.0.6
+      undici: 6.29.1
+
+  '@actions/io@3.0.2': {}
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
     dependencies:
@@ -3817,6 +3870,8 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@vercel/ncc@0.45.0': {}
 
   '@vitest/coverage-v8@5.0.2(vitest@5.0.2)':
     dependencies:
@@ -4861,6 +4916,8 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
 
+  tunnel@0.0.6: {}
+
   type-fest@3.13.1: {}
 
   typed-openapi@4.1.0(openapi-types@12.1.3)(react@19.3.0)(supports-color@7.2.0):
@@ -4915,6 +4972,8 @@ snapshots:
   undici-types@6.21.0: {}
 
   undici-types@8.11.2: {}
+
+  undici@6.29.1: {}
 
   undici@7.30.1: {}
 

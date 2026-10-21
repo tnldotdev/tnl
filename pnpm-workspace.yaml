@@ -1,4 +1,5 @@
 packages:
+  - connect
   - packages/ts
 
 allowBuilds:

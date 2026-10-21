@@ -30,3 +30,7 @@ and apimachinery API types (Apache-2.0), developed by the Kubernetes Authors.
 
 The Node connection helper uses Undici (MIT), developed by the Undici team and
 contributors, for scoped native HTTPS dispatch without changing application headers.
+
+The GitHub connection action uses the official Actions toolkit (MIT), developed
+by GitHub, and Zod (MIT), developed by Colin McDonnell and contributors. The
+committed action bundles include their dependency license texts in connect/dist.

@@ -1,5 +1,6 @@
 {
   "ignorePatterns": [
+    "connect/dist/**",
     "api/observability/v1/vocabulary.json",
     "internal/feedbacktoolbar/toolbar.js",
     "deploy/publishers/fargate.yaml",

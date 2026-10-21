@@ -1,0 +1,53 @@
+# offline fixture: copy to .github/workflows when integrating action CI.
+# the loopback issuer is a fixture, so this job deliberately has no real OIDC grant.
+name: connect action fixture
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  connect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          runtime: node@22.23.2
+          require-lockfile: true
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+      - run: pnpm install --frozen-lockfile
+      - run: task connect:check
+      - run: task connect:generate-check
+      - id: fixture
+        run: node connect/test/workflow.ts prepare
+      - uses: ./connect # zizmor: ignore[self-repository] tests the checked-out bundle; pinned actionlint does not support $/ syntax
+        with:
+          ci: deploy
+          cli-path: ${{ steps.fixture.outputs.binary }}
+          working-directory: ${{ steps.fixture.outputs.project }}
+          services: database
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ steps.fixture.outputs.oidc }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: fixture-bearer
+          NO_PROXY: 127.0.0.1
+      - run: node connect/test/workflow.ts observe
+      - run: node connect/test/workflow.ts remove-original
+        env:
+          FIXTURE_ROOT: ${{ steps.fixture.outputs.root }}
+      - run: node connect/test/workflow.ts observe
+      - if: always() && steps.fixture.outcome == 'success'
+        run: node connect/test/workflow.ts stop-oidc
+        env:
+          FIXTURE_ROOT: ${{ steps.fixture.outputs.root }}
