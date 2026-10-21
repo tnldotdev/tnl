@@ -10,12 +10,16 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const (
-	Version          = 1
-	MaxControlBytes  = 64 << 10
-	MaxHeaderBytes   = 1 << 10
+	Version         = 1
+	MaxControlBytes = 64 << 10
+	// seven 256-byte identifiers may each need six JSON bytes per input byte.
+	// include the fixed keys, uint64 counters, timestamps and bounded traceparent.
+	MaxHeaderBytes   = 16 << 10
 	MaxCredentialLen = 4096
 )
 
@@ -65,15 +69,38 @@ type PublisherConnectionRef struct {
 	RelayServiceID               string `json:"relay_service_id"`
 }
 
+// PrivatePublisherConnectionRef identifies one private run assignment without
+// creating or referring to a public URL.
+type PrivatePublisherConnectionRef struct {
+	PrivateServiceID             string `json:"private_service_id"`
+	PrivateRunID                 string `json:"private_run_id"`
+	RunNumber                    uint64 `json:"run_number"`
+	PublisherConnectionID        string `json:"publisher_connection_id"`
+	ConnectionSlot               uint8  `json:"connection_slot"`
+	ConnectionAssignmentRevision uint64 `json:"connection_assignment_revision"`
+	RelayServiceID               string `json:"relay_service_id"`
+}
+
+func (r PrivatePublisherConnectionRef) Validate() error {
+	if !opaqueid.Valid(r.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
+		!opaqueid.Valid(r.PrivateRunID, opaqueid.PrivateRunPrefix) || r.RunNumber == 0 ||
+		!opaqueid.Valid(r.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || r.ConnectionSlot > 1 ||
+		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
+		return errors.New("tunnelv1: invalid private publisher connection reference")
+	}
+	return nil
+}
+
 // Message is a closed union of control-stream messages.
 type Message struct {
-	Type                MessageType             `json:"type"`
-	ProtocolVersion     uint32                  `json:"protocol_version"`
-	RequestID           string                  `json:"request_id,omitempty"`
-	Role                PeerRole                `json:"role,omitempty"`
-	Credential          string                  `json:"credential,omitempty"`
-	PublisherConnection *PublisherConnectionRef `json:"publisher_connection,omitempty"`
-	Code                ErrorCode               `json:"code,omitempty"`
+	Type                MessageType                    `json:"type"`
+	ProtocolVersion     uint32                         `json:"protocol_version"`
+	RequestID           string                         `json:"request_id,omitempty"`
+	Role                PeerRole                       `json:"role,omitempty"`
+	Credential          string                         `json:"credential,omitempty"`
+	PublisherConnection *PublisherConnectionRef        `json:"publisher_connection,omitempty"`
+	PrivateConnection   *PrivatePublisherConnectionRef `json:"private_connection,omitempty"`
+	Code                ErrorCode                      `json:"code,omitempty"`
 }
 
 type StreamKind string
@@ -81,39 +108,47 @@ type StreamKind string
 const (
 	VisitorStream            StreamKind = "visitor"
 	InternalForwardingStream StreamKind = "internal_forward"
+	PublisherAdmissionStream StreamKind = "publisher_admission"
+	IngressAdmissionStream   StreamKind = "ingress_admission"
+	PrivateVisitorStream     StreamKind = "private_visitor"
+	PrivateForwardingStream  StreamKind = "private_forward"
 )
 
 // VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
 type VisitorStreamHeader struct {
-	ProtocolVersion              uint32     `json:"protocol_version"`
-	Kind                         StreamKind `json:"kind"`
-	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	PublicURLID                  string     `json:"public_url_id"`
-	PublishRunID                 string     `json:"publish_run_id"`
-	PublishRunNumber             uint64     `json:"publish_run_number"`
-	PublisherConnectionID        string     `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
-	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
+	TraceContext                 TraceContext `json:"trace_context,omitzero"`
+	ProtocolVersion              uint32       `json:"protocol_version"`
+	Kind                         StreamKind   `json:"kind"`
+	VisitorConnectionID          string       `json:"visitor_connection_id"`
+	PublicURLID                  string       `json:"public_url_id"`
+	PublishRunID                 string       `json:"publish_run_id"`
+	PublishRunNumber             uint64       `json:"publish_run_number"`
+	PublisherConnectionID        string       `json:"publisher_connection_id"`
+	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
+	// AccessPending is trusted ingress state: this visitor has only bounded
+	// pending authorization capacity until an authenticated promotion is accepted.
+	AccessPending bool `json:"access_pending,omitempty"`
 }
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
 type InternalForwardingHeader struct {
-	ProtocolVersion              uint32     `json:"protocol_version"`
-	Kind                         StreamKind `json:"kind"`
-	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	PublicURLID                  string     `json:"public_url_id"`
-	PublishRunID                 string     `json:"publish_run_id"`
-	PublishRunNumber             uint64     `json:"publish_run_number"`
-	PublisherConnectionID        string     `json:"publisher_connection_id"`
-	ConnectionSlot               uint8      `json:"connection_slot"`
-	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
-	RelayServiceID               string     `json:"relay_service_id"`
-	RelayID                      string     `json:"relay_id"`
-	RelayRunID                   string     `json:"relay_run_id"`
-	RelayLeaseRevision           uint64     `json:"relay_lease_revision"`
-	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
-	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
-	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
+	TraceContext                 TraceContext `json:"trace_context,omitzero"`
+	ProtocolVersion              uint32       `json:"protocol_version"`
+	Kind                         StreamKind   `json:"kind"`
+	VisitorConnectionID          string       `json:"visitor_connection_id"`
+	PublicURLID                  string       `json:"public_url_id"`
+	PublishRunID                 string       `json:"publish_run_id"`
+	PublishRunNumber             uint64       `json:"publish_run_number"`
+	PublisherConnectionID        string       `json:"publisher_connection_id"`
+	ConnectionSlot               uint8        `json:"connection_slot"`
+	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
+	RelayServiceID               string       `json:"relay_service_id"`
+	RelayID                      string       `json:"relay_id"`
+	RelayRunID                   string       `json:"relay_run_id"`
+	RelayLeaseRevision           uint64       `json:"relay_lease_revision"`
+	PublicUrlExpiresAt           time.Time    `json:"public_url_expires_at"`
+	LeaseExpiresAt               time.Time    `json:"lease_expires_at"`
+	AccessPending                bool         `json:"access_pending,omitempty"`
 }
 
 type StreamResponseType string
@@ -210,30 +245,35 @@ func (m Message) Validate() error {
 			return err
 		}
 	}
+	if m.PrivateConnection != nil {
+		if err := m.PrivateConnection.Validate(); err != nil {
+			return err
+		}
+	}
 	if m.RequestID != "" && !validIdentifier(m.RequestID) {
 		return errors.New("tunnelv1: invalid request ID")
 	}
 	switch m.Type {
 	case Hello:
-		publisherHello := m.Role == Publisher && validCredential(m.Credential) && m.PublisherConnection != nil
-		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil
+		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.PrivateConnection != nil)
+		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.PrivateConnection == nil
 		if (!publisherHello && !ingressHello) || m.RequestID != "" || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello")
 		}
 	case HelloAccepted:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.Code != "" {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello_accepted")
 		}
 	case Ping, Pong, Drain, Draining, Drained:
-		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.Code != "" {
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || m.Code != "" {
 			return fmt.Errorf("tunnelv1: invalid %s", m.Type)
 		}
 	case GoAway:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || !validErrorCode(m.Code) {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid goaway")
 		}
 	case Error:
-		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || !validErrorCode(m.Code) {
+		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid error")
 		}
 	default:
@@ -252,6 +292,9 @@ func (r PublisherConnectionRef) Validate() error {
 }
 
 func (h VisitorStreamHeader) Validate() error {
+	if err := h.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if h.ProtocolVersion != Version || h.Kind != VisitorStream || !validIdentifier(h.VisitorConnectionID) ||
 		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 {
@@ -261,6 +304,9 @@ func (h VisitorStreamHeader) Validate() error {
 }
 
 func (h InternalForwardingHeader) Validate() error {
+	if err := h.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if h.ProtocolVersion != Version || h.Kind != InternalForwardingStream || !validIdentifier(h.VisitorConnectionID) ||
 		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionSlot > 1 || h.ConnectionAssignmentRevision == 0 ||
@@ -323,16 +369,8 @@ func writeJSONFrame(writer io.Writer, value any, limit int) error {
 }
 
 func readJSONFrame(reader io.Reader, value any, limit int) error {
-	var header [4]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return err
-	}
-	size := binary.BigEndian.Uint32(header[:])
-	if size == 0 || size > uint32(limit) {
-		return errors.New("tunnelv1: frame exceeds limit")
-	}
-	payload := make([]byte, size)
-	if _, err := io.ReadFull(reader, payload); err != nil {
+	payload, err := readFramePayload(reader, limit)
+	if err != nil {
 		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -344,4 +382,20 @@ func readJSONFrame(reader io.Reader, value any, limit int) error {
 		return errors.New("tunnelv1: trailing JSON value")
 	}
 	return nil
+}
+
+func readFramePayload(reader io.Reader, limit int) ([]byte, error) {
+	var header [4]byte
+	if _, err := io.ReadFull(reader, header[:]); err != nil {
+		return nil, err
+	}
+	size := binary.BigEndian.Uint32(header[:])
+	if size == 0 || size > uint32(limit) {
+		return nil, errors.New("tunnelv1: frame exceeds limit")
+	}
+	payload := make([]byte, size)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }

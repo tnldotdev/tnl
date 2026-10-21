@@ -192,9 +192,9 @@ export const BrowserAccessStatus = z.strictObject({
   preview_id: ResourceID,
   public_url_id: ResourceID,
   publish_run_number: z.number().int().min(1),
-  access_method: z.enum(["ip", "share", "team"]).optional(),
+  access_method: z.enum(["anonymous", "share", "team", "visitor"]).optional(),
   expires_at: z.iso.datetime().optional(),
-  reason: z.literal("TNL_IP_POLICY_DENIED").optional(),
+  reason: z.literal("TNL_VISITOR_ACCESS_DENIED").optional(),
 });
 
 export type BrowserFeedbackReportRequest = z.infer<typeof BrowserFeedbackReportRequest>;

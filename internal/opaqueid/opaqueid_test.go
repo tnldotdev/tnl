@@ -26,3 +26,28 @@ func TestNewAndValid(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateIdentifiersAreDistinctFromPublicURLsAndEachOther(t *testing.T) {
+	private := []string{
+		PrivateServicePrefix, PrivateRunPrefix, PrivateConnectorSessionPrefix,
+		PrivateServiceInvitationPrefix, PrivateServiceGrantPrefix,
+	}
+	for _, prefix := range private {
+		t.Run(prefix, func(t *testing.T) {
+			id, err := New(prefix)
+			if err != nil || !Valid(id, prefix) {
+				t.Fatalf("private ID %q: %v", id, err)
+			}
+			for _, other := range append([]string{PublicURLPrefix, PublishRunPrefix, InvitationPrefix}, private...) {
+				if other != prefix && Valid(id, other) {
+					t.Fatalf("%q accepted as %q", id, other)
+				}
+			}
+			for _, invalid := range []string{prefix, prefix + strings.Repeat("a", 21), prefix + strings.Repeat("a", 23), prefix + strings.Repeat("a", 21) + "-"} {
+				if Valid(invalid, prefix) {
+					t.Fatalf("invalid private ID %q accepted", invalid)
+				}
+			}
+		})
+	}
+}

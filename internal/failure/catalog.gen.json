@@ -114,6 +114,69 @@
       "action": "resume with tnl auth login wait \u003coperation-id\u003e"
     },
     {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_AUTHENTICATION",
+      "slug": "aws-bootstrap-authentication",
+      "class": "unauthenticated",
+      "message": "AWS credentials are missing, expired, or rejected",
+      "action": "renew the selected AWS credentials and retry bootstrap"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_DENIED",
+      "slug": "aws-bootstrap-denied",
+      "class": "forbidden",
+      "message": "AWS denied the publisher bootstrap operation",
+      "action": "check Secrets Manager and KMS permissions for the selected credentials"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_INVALID",
+      "slug": "aws-bootstrap-invalid",
+      "class": "invalid",
+      "message": "publisher deployment input is invalid or stale",
+      "action": "check the customer deployment file and run tnl generate for the current project"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_SCOPE",
+      "slug": "aws-bootstrap-scope",
+      "class": "conflict",
+      "message": "publisher deployment scope does not match the current project, team, or AWS account",
+      "action": "check the applied project, selected company, AWS profile, account and region"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_SECRET_CONFLICT",
+      "slug": "aws-bootstrap-secret-conflict",
+      "class": "conflict",
+      "message": "the identity secret name or container belongs to another operation",
+      "action": "check the exact secret ARN and deployment binding; select a new deployment only for a new replica identity"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_STATE_LOST",
+      "slug": "aws-bootstrap-state-lost",
+      "class": "conflict",
+      "message": "publisher bootstrap state or its protected key is missing",
+      "action": "restore the original client state before retrying this deployment; do not enroll replacement keys"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_THROTTLED",
+      "slug": "aws-bootstrap-throttled",
+      "class": "unavailable",
+      "message": "AWS throttled publisher bootstrap",
+      "action": "wait before retrying the same deployment"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_UNAVAILABLE",
+      "slug": "aws-bootstrap-unavailable",
+      "class": "unavailable",
+      "message": "AWS publisher bootstrap could not complete its request",
+      "action": "check network access and AWS service availability, then retry the same deployment"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_VERSION_CONFLICT",
+      "slug": "aws-bootstrap-version-conflict",
+      "class": "conflict",
+      "message": "the pinned secret version does not match this publisher identity",
+      "action": "restore the original secret version and protected client state; do not overwrite another identity"
+    },
+    {
       "code": "TNL_CLIENT_BROWSER_OPEN_FAILED",
       "slug": "browser-open-failed",
       "class": "unavailable",
@@ -126,6 +189,104 @@
       "class": "unavailable",
       "message": "the public URL certificate is not ready",
       "action": "leave the tunnel running while certificate issuance retries"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_CLEANUP_FAILED",
+      "slug": "connection-cleanup-failed",
+      "class": "unavailable",
+      "message": "the native connection owner stopped with a cleanup failure",
+      "action": "check the selected server's availability and revoke the workload session if it remains active"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_EXPIRED",
+      "slug": "connection-expired",
+      "class": "unavailable",
+      "message": "the native connection session has expired",
+      "action": "prepare connections again within the authorized execution window"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_HANDLE_INVALID",
+      "slug": "connection-handle-invalid",
+      "class": "invalid",
+      "message": "the private connection handle is not valid for this project or user",
+      "action": "prepare connections again from the selected project"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_PORT_IN_USE",
+      "slug": "connection-port-in-use",
+      "class": "conflict",
+      "message": "the service's allocated loopback port is already in use",
+      "action": "stop the process using that port and prepare connections again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_REQUEST_INVALID",
+      "slug": "connection-request-invalid",
+      "class": "invalid",
+      "message": "the native connection request is invalid",
+      "action": "check the connection schema, project configuration, and selected services"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TEAM_BINDING",
+      "slug": "connection-team-binding",
+      "class": "invalid",
+      "message": "the workload has no configured team selector",
+      "action": "set team in project configuration and run tnl generate"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TLS_REJECTED",
+      "slug": "connection-tls-rejected",
+      "class": "invalid",
+      "message": "the native service TLS certificate could not be verified",
+      "action": "check the managed service hostname and the client's server trust roots, then prepare connections again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TRANSPORT_MISSING",
+      "slug": "connection-transport-missing",
+      "class": "unavailable",
+      "message": "this binary does not include the required native connection transport",
+      "action": "use a tnl binary with the required connection capabilities"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_UNAVAILABLE",
+      "slug": "connection-unavailable",
+      "class": "unavailable",
+      "message": "the native connection owner could not prepare or maintain every selected service",
+      "action": "check service availability and prepare connections again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECT_ACCESS_REQUIRED",
+      "slug": "connect-access-required",
+      "class": "forbidden",
+      "message": "the current sign-in or device cannot access this service",
+      "action": "run tnl auth login --team \u003cteam\u003e to refresh company sign-in, and check device and service access before reconnecting"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECT_MODE_INVALID",
+      "slug": "connect-mode-invalid",
+      "class": "invalid",
+      "message": "connect options select incompatible modes",
+      "action": "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH",
+      "slug": "connect-protocol-mismatch",
+      "class": "invalid",
+      "message": "--protocol differs from the approved service protocol",
+      "action": "omit --protocol to use trusted service metadata; no flag changes the service's authentication"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECT_SERVER_ROOTS_UNAVAILABLE",
+      "slug": "connect-server-roots-unavailable",
+      "class": "not_found",
+      "message": "mysql needs a server CA bundle for VERIFY_IDENTITY",
+      "action": "install system CA certificates or set SSL_CERT_FILE to a trusted PEM bundle, then run tnl connect again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECT_STDIO_PROTOCOL_INVALID",
+      "slug": "connect-stdio-protocol-invalid",
+      "class": "invalid",
+      "message": "--stdio requires a service with the approved tcp protocol",
+      "action": "omit --stdio for native HTTP and database clients; no flag changes the service's authentication"
     },
     {
       "code": "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE",
@@ -175,6 +336,20 @@
       "class": "invalid",
       "message": "the built-in demo chooses its own public URL",
       "action": "remove --name or --public-url from tnl publish --demo"
+    },
+    {
+      "code": "TNL_CLIENT_DETACHED_NOT_FOUND",
+      "slug": "detached-not-found",
+      "class": "not_found",
+      "message": "the detached publication is not running",
+      "action": "run tnl detached list to see current publications"
+    },
+    {
+      "code": "TNL_CLIENT_DETACHED_START_FAILED",
+      "slug": "detached-start-failed",
+      "class": "unavailable",
+      "message": "the detached publication did not start",
+      "action": "run tnl publish without --detach to see the failure, then retry"
     },
     {
       "code": "TNL_CLIENT_DNS_PENDING",
@@ -275,6 +450,41 @@
       "action": "set packageManager to pnpm, npm, yarn, or bun, then run tnl init again"
     },
     {
+      "code": "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS",
+      "slug": "installed-job-ambiguous",
+      "class": "conflict",
+      "message": "more than one installed publication has this name",
+      "action": "run tnl service list and use the job ID for start, stop, or remove"
+    },
+    {
+      "code": "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING",
+      "slug": "installed-publisher-selection-missing",
+      "class": "not_found",
+      "message": "this service has no saved scoped publisher grant",
+      "action": "publish the service once to save its public URL, then enroll a publisher for that URL and retry --install with --enroll-key"
+    },
+    {
+      "code": "TNL_CLIENT_INSTALLED_PUBLISH_RUN_PENDING",
+      "slug": "installed-publish-run-pending",
+      "class": "unavailable",
+      "message": "the saved public URL's previous publish run is still closing",
+      "action": "leave the publisher running while control expires the previous run; stop any other publisher still serving this URL"
+    },
+    {
+      "code": "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE",
+      "slug": "installed-service-identity-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not determine the configured service's exact public hostname and team",
+      "action": "sign in to resolve the selected team and domain, or configure an exact tunnel.public_url and select its publisher explicitly"
+    },
+    {
+      "code": "TNL_CLIENT_INSTALLED_TARGET_MISSING",
+      "slug": "installed-target-missing",
+      "class": "invalid",
+      "message": "the configured service has no fixed target to install",
+      "action": "set this service's target to an address that remains valid after restart, then retry --install"
+    },
+    {
       "code": "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED",
       "slug": "integration-url-lease-expired",
       "class": "stale",
@@ -345,18 +555,11 @@
       "action": "check --public-url, --name, --allow-ip, and --concurrency"
     },
     {
-      "code": "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED",
-      "slug": "login-terminal-required",
-      "class": "invalid",
-      "message": "login-token authentication requires an interactive terminal",
-      "action": "run tnl auth login --login-token in a terminal or supply TNL_LOGIN_TOKEN"
-    },
-    {
-      "code": "TNL_CLIENT_LOGIN_TOKEN_INVALID",
-      "slug": "login-token-invalid",
-      "class": "unauthenticated",
-      "message": "the login token is invalid",
-      "action": "get a new login token for this server and retry"
+      "code": "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE",
+      "slug": "local-private-service-unavailable",
+      "class": "not_found",
+      "message": "the local private service is not available in this worktree",
+      "action": "start the app or run tnl publish with the configured service key, check visitor access, then retry tnl connect"
     },
     {
       "code": "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
@@ -371,6 +574,13 @@
       "class": "invalid",
       "message": "a target is required",
       "action": "pass an HTTP or HTTPS origin or local port, or set publish.target in the project configuration"
+    },
+    {
+      "code": "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID",
+      "slug": "observability-config-invalid",
+      "class": "invalid",
+      "message": "operational observability configuration is invalid",
+      "action": "correct the named OTEL setting or remove optional export configuration"
     },
     {
       "code": "TNL_CLIENT_OUTPUT_UNAVAILABLE",
@@ -394,11 +604,18 @@
       "action": "check the selected server, team, and project, then restart the app"
     },
     {
+      "code": "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE",
+      "slug": "private-publisher-unavailable",
+      "class": "unavailable",
+      "message": "the private TCP publisher is not connected to the relay service yet",
+      "action": "wait for private publisher relay support before installing this service"
+    },
+    {
       "code": "TNL_CLIENT_PROJECT_CONFIG_INVALID",
       "slug": "project-config-invalid",
       "class": "invalid",
       "message": "tnl could not use the project configuration",
-      "action": "run tnl config check and correct the reported setting"
+      "action": "run tnl check and correct the reported setting"
     },
     {
       "code": "TNL_CLIENT_PROJECT_CONFIG_MISSING",
@@ -408,18 +625,60 @@
       "action": "run tnl init or select a config file with --config"
     },
     {
-      "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_MISMATCH",
-      "slug": "publish-credential-mismatch",
-      "class": "invalid",
-      "message": "the saved public URL does not match this publication",
-      "action": "match TNL_PUBLIC_URL and TNL_TARGET to the saved URL, or update it with tnl url update"
+      "code": "TNL_CLIENT_PUBLISHER_CERTIFICATE_STATE_MISSING",
+      "slug": "publisher-certificate-state-missing",
+      "class": "not_found",
+      "message": "this replica's durable publisher certificate state is missing",
+      "action": "restore this replica's identity directory and select it with --identity-dir"
     },
     {
-      "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_REJECTED",
-      "slug": "publish-credential-rejected",
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID",
+      "slug": "publisher-deployment-invalid",
+      "class": "invalid",
+      "message": "publisher deployment artifacts are missing, stale, or unsafe",
+      "action": "run tnl generate with the same --output-dir; use regular files and directories without symlinks"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID",
+      "slug": "publisher-deployment-metadata-invalid",
+      "class": "invalid",
+      "message": "publisher deployment metadata is incomplete or invalid",
+      "action": "supply all TNL_DEPLOYMENT_* metadata fields from the generated deployment and use the provisioned instance"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED",
+      "slug": "publisher-deployment-write-failed",
+      "class": "invalid",
+      "message": "tnl could not write publisher deployment artifacts",
+      "action": "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED",
+      "slug": "publisher-enrollment-required",
       "class": "unauthenticated",
-      "message": "the public URL publish credential was rejected",
-      "action": "check TNL_CREDENTIAL or issue a replacement with tnl url credential create"
+      "message": "this publisher needs a new enrollment key",
+      "action": "request fresh enrollment for the saved public URL with tnl publisher enroll; set TNL_ENROLL_KEY and restart with the persistent state volume"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
+      "slug": "publisher-identity-state-invalid",
+      "class": "invalid",
+      "message": "the durable publisher identity files are unsafe, invalid or belong to another scope",
+      "action": "check the identity directory, permissions and replica ownership, or restore its valid files"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_UNAVAILABLE",
+      "slug": "publisher-identity-state-unavailable",
+      "class": "unavailable",
+      "message": "tnl could not use the durable publisher identity files",
+      "action": "check the identity directory's mount and available space, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_INSTALL_SOURCE_INVALID",
+      "slug": "publisher-install-source-invalid",
+      "class": "invalid",
+      "message": "tnl's installation files are missing or unsafe",
+      "action": "install tnl from a release archive with LICENSE, NOTICE and THIRD_PARTY_LICENSES.txt, then retry --install"
     },
     {
       "code": "TNL_CLIENT_SERVER_CONFLICT",
@@ -489,7 +748,14 @@
       "slug": "service-not-configured",
       "class": "not_found",
       "message": "the selected service is not configured",
-      "action": "run tnl config check or select a configured project service"
+      "action": "run tnl check or select a configured project service"
+    },
+    {
+      "code": "TNL_CLIENT_SERVICE_NOT_INSTALLED",
+      "slug": "service-not-installed",
+      "class": "not_found",
+      "message": "the selected tnl service is not installed or running",
+      "action": "log into your user session and run tnl service install, or run sudo tnl service install --system for headless publications"
     },
     {
       "code": "TNL_CLIENT_SHARE_INPUT_INVALID",
@@ -519,6 +785,83 @@
           "diagram_detail": "state directory access denied"
         }
       ]
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_AUTHENTICATION",
+      "slug": "target-discovery-authentication",
+      "class": "unauthenticated",
+      "message": "cloud target credentials are unavailable or rejected",
+      "action": "check the publisher's AWS credential chain"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_CHANGED",
+      "slug": "target-discovery-changed",
+      "class": "conflict",
+      "message": "cloud target resource or CA changed",
+      "action": "prepare a new publication"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_DENIED",
+      "slug": "target-discovery-denied",
+      "class": "forbidden",
+      "message": "cloud target discovery was denied",
+      "action": "allow the selected resource's Describe action on the publisher role"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_INVALID",
+      "slug": "target-discovery-invalid",
+      "class": "invalid",
+      "message": "cloud target selector or protocol is invalid",
+      "action": "check the assigned target declaration"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_METADATA",
+      "slug": "target-discovery-metadata",
+      "class": "invalid",
+      "message": "cloud target metadata or TLS trust is invalid",
+      "action": "check the selected resource before preparing another publication"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_NOT_FOUND",
+      "slug": "target-discovery-not-found",
+      "class": "not_found",
+      "message": "cloud target was not found",
+      "action": "check the declared region and resource identifier"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_NOT_READY",
+      "slug": "target-discovery-not-ready",
+      "class": "unavailable",
+      "message": "cloud target is not ready",
+      "action": "wait for the selected resource to become available"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_STALE",
+      "slug": "target-discovery-stale",
+      "class": "stale",
+      "message": "cloud target discovery is stale",
+      "action": "restore publisher access to AWS before opening new connections"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_UNAVAILABLE",
+      "slug": "target-discovery-unavailable",
+      "class": "unavailable",
+      "message": "cloud target discovery is unavailable",
+      "action": "retry when AWS is reachable"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_TLS_REJECTED",
+      "slug": "target-tls-rejected",
+      "class": "invalid",
+      "message": "target TLS could not be verified or negotiated",
+      "action": "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_UNAVAILABLE",
+      "slug": "target-unavailable",
+      "class": "unavailable",
+      "message": "the publisher could not reach the target",
+      "action": "check the target listener and publisher network connection, then retry"
     },
     {
       "code": "TNL_CLIENT_TEAM_NOT_FOUND",
@@ -610,6 +953,20 @@
       "class": "unavailable",
       "message": "the selected webhook receiver is not ready",
       "action": "start the configured service in this worktree and wait for its public URL to be ready"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE",
+      "slug": "workload-assertion-unavailable",
+      "class": "unauthenticated",
+      "message": "the workload provider assertion is unavailable",
+      "action": "check the selected workload's token file or provider acquisition callback"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_REPOSITORY_METADATA_UNAVAILABLE",
+      "slug": "workload-repository-metadata-unavailable",
+      "class": "invalid",
+      "message": "workload repository metadata is unavailable for first setup",
+      "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
     }
   ]
 }

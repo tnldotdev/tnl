@@ -64,12 +64,16 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("webhooks.%s: name must be one lowercase DNS label", name)
 		}
-		if endpoint.Service == "" && len(services) != 0 {
+		if endpoint.Service == "" {
 			return fmt.Errorf("webhooks.%s: service is required", name)
 		}
 		if endpoint.Service != "" {
 			if _, ok := services[endpoint.Service]; !ok {
 				return fmt.Errorf("webhooks.%s: service %q is not configured", name, endpoint.Service)
+			}
+			service := services[endpoint.Service]
+			if Protocol(service) != "http" || !IsPublicService(service) || PublisherName(service) != "local" {
+				return fmt.Errorf("webhooks.%s: service must be a local public HTTP service", name)
 			}
 		}
 		if !localproxy.ValidMountPrefix(endpoint.Path) {
