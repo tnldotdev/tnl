@@ -240,7 +240,7 @@ func (c *controlAdapter) releaseLocked(ctx context.Context, id string) error {
 		return nil
 	}
 	c.owned[id] = true
-	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finish, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := c.client.ReleaseVisitorIngressAssignment(finish, id); err != nil {
 		return err
@@ -260,12 +260,18 @@ func (c *controlAdapter) releaseLocked(ctx context.Context, id string) error {
 }
 
 func (c *controlAdapter) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.CloseContext(ctx)
+}
+
+func (c *controlAdapter) CloseContext(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
 	var result error
 	for id := range c.owned {
-		result = errors.Join(result, c.releaseLocked(context.Background(), id))
+		result = errors.Join(result, c.releaseLocked(ctx, id))
 	}
 	return result
 }
