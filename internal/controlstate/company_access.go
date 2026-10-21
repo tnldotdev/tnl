@@ -380,10 +380,10 @@ func (d *Database) SetCompanyMembershipDecision(ctx context.Context, p ControlPr
 	}
 	defer rollback(ctx, tx, "company membership decision", &retErr)()
 	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return err
-	}
 	if recovery {
+		if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+			return err
+		}
 		var companyTeam bool
 		if err = tx.QueryRow(ctx, `SELECT kind='organization' AND company_sign_in_required FROM control.teams WHERE id=$1`, team).Scan(&companyTeam); err != nil {
 			return err
@@ -400,6 +400,8 @@ func (d *Database) SetCompanyMembershipDecision(ctx context.Context, p ControlPr
 			return ErrAuthorityAccess
 		}
 	} else {
+		// signed owner checks take identity bootstrap before the team guard,
+		// matching reads and other company configuration operations.
 		a, ownerID, e := lockCompanyOwner(WithControlPrincipal(ctx, p), tx, q, p, team, now)
 		if e != nil {
 			return e

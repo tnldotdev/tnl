@@ -78,6 +78,26 @@ Authority mutations take a conflicting guard. A keyed transaction advisory lock
 comes before the team row so new readers cannot starve a waiting authority
 writer.
 
+signed company-owner operations take the existing identity-bootstrap guard
+before the team advisory guard and team row, including membership decisions.
+signed service managers use that same team advisory-before-row order even when
+their entry point already holds identity bootstrap. ordinary control-session
+apply does not take identity bootstrap and can overlap work on another team.
+
+apply and explicit publisher revocation choose their complete parent set under
+the team guard: private service IDs in order, then public URL IDs in order.
+apply includes named group services and existing local worktree realizations.
+publisher revocation locks its affected parents before locking the publisher
+identity; heartbeats already hold the public URL and run when checking that
+identity. new grants, runs, and realizations cannot extend these sets while the
+team guard is held.
+
+acquire those parent locks before the first mutation, including mutations whose
+triggers append audit facts. run closure and audit/routing publication must not
+leave a later service parent to lock: expiration can own that parent while
+waiting for the same audit or routing clock. unrelated service parents remain
+unlocked. new service rows belong only to the creating transaction.
+
 Publisher-connection claim and readiness operations share a keyed advisory guard
 and relay-service row guard. Claims use `NO KEY UPDATE` on the selected relay
 lease to serialize capacity checks. Readiness uses compatible `KEY SHARE`
