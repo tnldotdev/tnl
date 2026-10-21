@@ -314,6 +314,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 		t.Run(fmt.Sprintf("http2=%t", h2), func(t *testing.T) {
 			t.Parallel()
 			release := make(chan struct{})
+			streaming := make(chan struct{})
 			unblock := sync.OnceFunc(func() { close(release) })
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if _, err := io.Copy(io.Discard, r.Body); err != nil {
@@ -321,6 +322,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 				}
 				_, _ = io.WriteString(w, "first\n")
 				w.(http.Flusher).Flush()
+				close(streaming)
 				<-release
 				_, _ = io.WriteString(w, "second\n")
 			}))
@@ -333,10 +335,21 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer response.Body.Close()
+			wantProtocol := 1
+			if h2 {
+				wantProtocol = 2
+			}
+			if response.StatusCode != http.StatusOK || response.ProtoMajor != wantProtocol || response.Header.Get("Tnl-Error-Code") != "" {
+				t.Fatalf("long-response precondition = %s, %s, headers %v", response.Status, response.Proto, response.Header)
+			}
 			first := make([]byte, len("first\n"))
 			if _, err := io.ReadFull(response.Body, first); err != nil {
 				t.Fatal(err)
 			}
+			if string(first) != "first\n" {
+				t.Fatalf("long-response target prefix = %q", first)
+			}
+			awaitPublisherTest(t, streaming)
 			assertRouteOverloaded(t, singleConnectionRouteClient(t, route, true))
 			time.Sleep(2 * route.http.ReadTimeout)
 			unblock()

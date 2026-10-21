@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -45,8 +46,10 @@ func TestPublicURLTruncatedTargetBodyAbortsVisitorResponse(t *testing.T) {
 			defer finish(nil)
 			traceID := trace.SpanContextFromContext(owner).TraceID()
 			checked := make(chan struct{}, 1)
+			summaries := make(chan inspection.Summary, 1)
 			route, err := newTestPublicURLServer(PublicURLServerConfig{Context: owner, Hostname: "route.example", PublicURLID: "url-truncated", Target: upstream.URL,
-				Certificate: publicURLTestCertificate(t, "route.example"), AdmitRequest: func(r *http.Request) error {
+				ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
+				Certificate:    publicURLTestCertificate(t, "route.example"), AdmitRequest: func(r *http.Request) error {
 					if r.Context().Value(http.ServerContextKey) == nil || r.Context().Value(http.LocalAddrContextKey) == nil {
 						t.Error("visitor scope discarded net/http server context")
 					}
@@ -81,6 +84,10 @@ func TestPublicURLTruncatedTargetBodyAbortsVisitorResponse(t *testing.T) {
 				t.Fatalf("truncated target body completed cleanly or stalled: body=%q err=%v", body, readErr)
 			}
 			awaitPublisherTest(t, checked)
+			summary := awaitPublisherTest(t, summaries)
+			if summary.Status != 200 || summary.Result != inspection.ResultError || summary.Origin != "local_service" || summary.Path != "/truncated" {
+				t.Fatalf("truncated response inspection = %+v", summary)
+			}
 			families, err := metrics.Gather()
 			if err != nil {
 				t.Fatal(err)

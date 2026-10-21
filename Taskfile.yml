@@ -258,6 +258,11 @@ tasks:
     cmds:
       - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
 
+  go:test:http-streaming:
+    desc: Check native HTTP streaming, upload bounds, trailers and inspection over local wires
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/httpstream ./internal/localproxy ./internal/publisher -count=1 -timeout=3m
+
   go:test:integration:live-authorization:
     desc: Check browser and alias authorization in disposable PostgreSQL
     vars:
