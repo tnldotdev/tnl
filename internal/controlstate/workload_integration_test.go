@@ -80,7 +80,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err := d.CreateWorkloadIngressAssignments(ctx, first.Credential, service, "pair", now.Add(32*time.Second))
-	if err != nil || !reflect.DeepEqual(replayed, assignments) {
+	if err != nil || !sameStoredResponse(t, replayed, assignments) {
 		t.Fatal("handle replay changed transport lifetime", err)
 	}
 	expired := renewed.LeaseExpiresAt.Add(time.Second)
@@ -304,7 +304,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry, err := d.CreateWorkloadIngressAssignments(ctx, session.Credential, service.ID, "connect", now)
-	if err != nil || !reflect.DeepEqual(retry, assignments) {
+	if err != nil || !sameStoredResponse(t, retry, assignments) {
 		t.Fatal("assignment lost-reply instability", err)
 	}
 	source := netip.MustParseAddr("192.0.2.44")

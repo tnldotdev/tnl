@@ -100,7 +100,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			retry, err := d.RenamePublisherNamespace(t.Context(), request)
-			if err != nil || !reflect.DeepEqual(retry, renamed) {
+			if err != nil || !sameStoredResponse(t, retry, renamed) {
 				t.Errorf("lost-reply retry changed result: %v", err)
 			}
 		})
@@ -120,7 +120,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	retry, err := d.RenamePublisherNamespace(t.Context(), request)
-	if err != nil || !reflect.DeepEqual(retry, renamed) {
+	if err != nil || !sameStoredResponse(t, retry, renamed) {
 		t.Fatal("retry returned later state instead of original response", err)
 	}
 	// two different mutations race from the same revision. only one may commit.

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,14 +29,7 @@ type privateFixtureDNS struct {
 
 func newPrivateFixtureDNS(t *testing.T) *privateFixtureDNS {
 	t.Helper()
-	packet, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("tcp", packet.LocalAddr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	listener, packet := privateFixtureDNSListeners(t)
 	f := &privateFixtureDNS{address: packet.LocalAddr().String(), txt: map[string][]string{}, ip: map[string][]string{}}
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 		answer := new(dns.Msg)
@@ -66,6 +60,28 @@ func newPrivateFixtureDNS(t *testing.T) *privateFixtureDNS {
 		startOwnedDNSServer(t, server)
 	}
 	return f
+}
+
+// TCP and UDP have independent port allocations. keep both reservations until
+// their servers take ownership, retrying only a collision with the other protocol.
+func privateFixtureDNSListeners(t *testing.T) (net.Listener, net.PacketConn) {
+	t.Helper()
+	for range 32 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet, err := net.ListenPacket("udp", listener.Addr().String())
+		if err == nil {
+			return listener, packet
+		}
+		_ = listener.Close()
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			t.Fatal(err)
+		}
+	}
+	t.Fatal("reserve one DNS port for TCP and UDP")
+	return nil, nil
 }
 func (f *privateFixtureDNS) ReconcileChallenge(_ context.Context, r dnscontroller.ChallengeRecord) (dnscontroller.Zone, error) {
 	f.mu.Lock()

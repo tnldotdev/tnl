@@ -49,6 +49,9 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	base := filepath.Join(root, "compose.yaml")
 	configuration := fmt.Sprintf("services:\n  publisher:\n    image: %s\n    command: [sleep, infinity]\n    working_dir: /workspace\n    extra_hosts:\n      - control.127.0.0.1.nip.io:host-gateway\n      - relay.127.0.0.1.nip.io:host-gateway\n    environment:\n      SSL_CERT_FILE: /run/tnl/roots.pem\n      TNL_SERVER: https://control.127.0.0.1.nip.io:8445\n      TNL_STATE_DIR: /run/tnl/state/owner-state\n    volumes:\n      - %q\n      - %q\n      - %q\n      - publisher-state:/run/tnl/state\n  web:\n    image: %s\n    command: [/fixture/app]\n    volumes:\n      - %q\n  db:\n    image: %s\n    environment:\n      POSTGRES_PASSWORD: postgres\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U postgres -d postgres]\n      interval: 2s\n      timeout: 5s\n      retries: 10\nvolumes:\n  publisher-state:\n", image, fixture.tnlPath+":/usr/local/bin/tnl:ro", fixture.trustFile+":/run/tnl/roots.pem:ro", root+":/workspace", image, appBinary+":/fixture/app:ro", postgresImage)
 	configuration = strings.ReplaceAll(configuration, ":host-gateway", ":"+*composeHostAddress)
+	// the publisher runs as container root while CI owns the mounted repository
+	// as the runner user. trust only this fixture's exact checkout for Git reads.
+	configuration = strings.Replace(configuration, "      SSL_CERT_FILE:", "      GIT_CONFIG_COUNT: '1'\n      GIT_CONFIG_KEY_0: safe.directory\n      GIT_CONFIG_VALUE_0: /workspace\n      SSL_CERT_FILE:", 1)
 	if err := os.WriteFile(base, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
