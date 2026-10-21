@@ -326,11 +326,17 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				// check each request against the bounded, run-scoped decision,
 				// including requests on an already-promoted visitor connection.
 				serverPermitted := false
+				var authorized controlv1.HTTPVisitorResponse
+				var authorizedAt time.Time
+				var authorizationRequest *http.Request
 				browser := controlv1.BrowserAccessResponse{}
 				if !proof && config.BrowserAccess != nil {
-					decision, err := config.BrowserAccess.decision(request)
+					decision, checkedAt, err := config.BrowserAccess.currentDecision(request, false)
 					if err == nil {
-						serverPermitted = decision.VisitAllowed
+						serverPermitted = decision.VisitAllowed && decision.ValidUntil != nil && decision.ValidUntil.After(time.Now())
+						authorized = decision
+						authorizedAt = checkedAt
+						authorizationRequest = request.Clone(request.Context())
 						if decision.IdentityId != nil && decision.DisplayName != nil {
 							browser = controlv1.BrowserAccessResponse{IdentityId: *decision.IdentityId, DisplayName: *decision.DisplayName,
 								TeamMember: decision.TeamMember && decision.VisitAllowed, VisitAllowed: decision.VisitAllowed}
@@ -427,6 +433,16 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				defer release()
 				emitAudit()
+				if serverPermitted {
+					if !authorized.ValidUntil.After(time.Now()) {
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
+						return
+					}
+					guard, guarded := guardPublicHTTPRequest(response, request, authorizationRequest, config.BrowserAccess, authorized, authorizedAt)
+					defer guard.finish()
+					response = guard
+					request = guarded
+				}
 				handler.ServeHTTP(response, request)
 			})),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {

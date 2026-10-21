@@ -39,6 +39,7 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 
 func (s *browserAccessStub) AuthorizeHTTPVisitor(_ context.Context, _ string, request controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
 	result := controlv1.HTTPVisitorResponse{VisitAllowed: request.BrowserCookieSecret != nil && *request.BrowserCookieSecret == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && (s.member || s.invited), TeamMember: s.member}
+	result.ValidUntil = new(time.Now().Add(time.Minute))
 	if request.BrowserCookieSecret != nil {
 		id, name := "user-one", "Sam"
 		result.IdentityId, result.DisplayName = &id, &name

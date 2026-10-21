@@ -283,7 +283,7 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuth
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	if publicURL.Purpose != "app" || publicURL.ServiceProtocol != "http" {
+	if publicURL.Purpose != "app" && publicURL.Purpose != "alias" || publicURL.ServiceProtocol != "http" {
 		return "", "", "", false, time.Time{}, ErrPreviewAccess
 	}
 	if _, err := d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {

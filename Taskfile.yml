@@ -240,6 +240,20 @@ tasks:
     cmds:
       - go test -race ./internal/oidcauth ./internal/authorityapi ./internal/authorityclient ./internal/clientauth ./internal/clientstate ./internal/credentials ./internal/tnldconfig
 
+  go:test:live-authorization:
+    desc: Check public HTTP decision caching and live request authorization
+    vars:
+      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ManagedHTTPGuard)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
+
+  go:test:integration:live-authorization:
+    desc: Check browser and alias authorization in disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:auth:
     desc: Check control-owned OIDC browser approval and device polling in disposable PostgreSQL
     cmds:

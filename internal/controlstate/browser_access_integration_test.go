@@ -341,3 +341,56 @@ func browserTestControlSession(t *testing.T, d *Database, identityID string, now
 	}
 	return result
 }
+
+func TestIntegrationAliasOwnerBrowserHandoffs(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		name := "browser"
+		if native {
+			name = "native"
+		}
+		t.Run(name, func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "alias-browser-"+name)
+			request := oidcRouteRequest(t, d, now)
+			url := createTestPublicURL(t, d, request, now)
+			if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET purpose='alias' WHERE id=$1`, url.ID); err != nil {
+				t.Fatal(err)
+			}
+			auth := browserTestAuthentication(t, d, url.ID, now)
+			session := browserTestControlSession(t, d, request.ActingIdentityID, now)
+			var handoff BrowserHandoff
+			var err error
+			if native {
+				handoff, _, err = d.IssueControlBrowserHandoff(t.Context(), session.AccessToken, session.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, now)
+			} else {
+				binding := bytes.Repeat([]byte{7}, 32)
+				state, beginErr := d.BeginBrowserLogin(t.Context(), "", auth.PublicURLID, "/owner", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, nil, now)
+				if beginErr != nil {
+					t.Fatal(beginErr)
+				}
+				attempt, consumeErr := d.ConsumeBrowserLogin(t.Context(), state, binding, now)
+				if consumeErr != nil || attempt.PublishRunID != auth.PublishRunID {
+					t.Fatalf("alias login lost its original run: %+v, %v", attempt, consumeErr)
+				}
+				handoff, err = d.IssueBrowserHandoff(t.Context(), attempt, BrowserAccessSession{IdentityID: request.ActingIdentityID, DisplayName: "Owner", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(), AccessExpiresAt: session.AccessExpiresAt, ExpiresAt: session.RefreshExpiresAt}, now)
+			}
+			if err != nil {
+				t.Fatalf("alias owner handoff issuance: %v", err)
+			}
+			wrong := auth
+			wrong.PublishRunID = "pr_replacement"
+			if _, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), wrong, handoff.Token, now); err == nil {
+				t.Fatal("replacement run redeemed the alias handoff")
+			}
+			cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
+			if err != nil {
+				t.Fatalf("alias owner handoff redemption: %v", err)
+			}
+			if got, err := d.BrowserSession(t.Context(), auth.PublicURLID, cookie, now); err != nil || got.IdentityID != request.ActingIdentityID {
+				t.Fatalf("alias owner session: %+v, %v", got, err)
+			}
+			if _, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+				t.Fatalf("alias handoff replay: %v", err)
+			}
+		})
+	}
+}

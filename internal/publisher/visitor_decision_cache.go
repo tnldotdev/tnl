@@ -6,11 +6,14 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlclient"
 )
 
 const (
 	visitorDecisionLifetime = 2 * time.Minute
 	visitorDecisionRefresh  = 30 * time.Second
+	visitorDecisionRecheck  = visitorDecisionRefresh - 5*time.Second
 	visitorDecisionRetry    = 5 * time.Second
 	visitorDecisionCapacity = 4096
 )
@@ -23,13 +26,14 @@ type cachedVisitorDecision[T any] struct {
 }
 
 type visitorDecisionCall[T any] struct {
-	done  chan struct{}
-	value T
-	err   error
+	done      chan struct{}
+	value     T
+	checkedAt time.Time
+	err       error
 }
 
-// visitorDecisionCache keeps only positive, run-local decisions. errors may
-// reuse a previously checked result until its hard deadline, never beyond it.
+// visitorDecisionCache keeps only positive, run-local decisions. structured
+// unavailability may reuse the last success until its hard deadline.
 type visitorDecisionCache[T any] struct {
 	mu       sync.Mutex
 	revision int64
@@ -50,29 +54,32 @@ func (c *visitorDecisionCache[T]) invalidate(revision int64) {
 
 func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]byte,
 	load func(context.Context) (T, time.Time, bool, error)) (T, error) {
+	value, _, err := c.checkCurrent(ctx, key, false, load)
+	return value, err
+}
+
+func (c *visitorDecisionCache[T]) checkCurrent(ctx context.Context, key [sha256.Size]byte, refresh bool,
+	load func(context.Context) (T, time.Time, bool, error)) (T, time.Time, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
-		return zero, err
+		return zero, time.Time{}, err
 	}
 	now := time.Now()
 	c.mu.Lock()
 	revision := c.revision
 	entry, found := c.entries[key]
 	usable := found && now.Before(entry.validUntil)
-	if usable && now.Before(entry.refreshAfter) {
+	if !refresh && usable && now.Before(entry.refreshAfter) {
 		c.mu.Unlock()
-		return entry.value, nil
+		return entry.value, entry.checkedAt, nil
 	}
 	if call := c.active[key]; call != nil {
 		c.mu.Unlock()
-		if usable {
-			return entry.value, nil
-		}
 		select {
 		case <-ctx.Done():
-			return zero, ctx.Err()
+			return zero, time.Time{}, ctx.Err()
 		case <-call.done:
-			return call.value, call.err
+			return call.value, call.checkedAt, call.err
 		}
 	}
 	if c.active == nil {
@@ -83,6 +90,7 @@ func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]by
 	c.mu.Unlock()
 
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	checkedAt := now
 	value, expires, allowed, err := load(requestCtx)
 	cancel()
 	c.mu.Lock()
@@ -106,21 +114,22 @@ func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]by
 					c.evict(time.Now())
 				}
 				c.entries[key] = cachedVisitorDecision[T]{value: value, checkedAt: now,
-					refreshAfter: earlierDecisionTime(now.Add(visitorDecisionRefresh), until), validUntil: until}
+					refreshAfter: earlierDecisionTime(now.Add(visitorDecisionRecheck), until), validUntil: until}
 			}
 		}
-	} else if usable && time.Now().Before(entry.validUntil) {
+	} else if errors.Is(err, controlclient.ErrUnavailable) && usable && time.Now().Before(entry.validUntil) {
 		entry.refreshAfter = earlierDecisionTime(time.Now().Add(visitorDecisionRetry), entry.validUntil)
 		c.entries[key] = entry
 		value, err = entry.value, nil
+		checkedAt = entry.checkedAt
 	} else {
 		delete(c.entries, key)
 	}
 	delete(c.active, key)
-	call.value, call.err = value, err
+	call.value, call.checkedAt, call.err = value, checkedAt, err
 	close(call.done)
 	c.mu.Unlock()
-	return value, err
+	return value, checkedAt, err
 }
 
 func earlierDecisionTime(first, second time.Time) time.Time {

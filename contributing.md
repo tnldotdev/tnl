@@ -82,6 +82,12 @@ For native client trace propagation and bounded flush, run
 `task go:test:client-tracing` and `task js:test:client-tracing` through `mise exec --`.
 The existing connection tier also checks the real CLI-to-detached-owner trace chain.
 
+For public HTTP live authorization, run `task go:test:live-authorization`, then
+`task go:test:live-authorization -- -race`. These use deterministic clocks for
+long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
+`task go:test:integration:live-authorization` owns disposable PostgreSQL for
+browser and alias handoffs, current visitor authorization, and HTTP logout.
+
 Use `RUN` to select an integration test, for example:
 
 ```console

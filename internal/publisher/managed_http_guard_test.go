@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -17,6 +18,33 @@ import (
 type httpGuardControl struct {
 	ManagedHTTPControl
 	check func(context.Context) (controlv1.ServiceClientCertificateDecision, error)
+}
+
+func TestManagedHTTPGuardOnlyToleratesStructuredUnavailability(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		keep bool
+	}{
+		{"unavailable", controlclient.ErrUnavailable, true},
+		{"unauthenticated", controlclient.ErrUnauthenticated, false},
+		{"forbidden", &controlclient.ProblemError{Status: 403}, false},
+		{"invalid response", errors.New("invalid authority response"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g := newManagedHTTPGuard(ManagedHTTP{Control: httpGuardControl{check: func(context.Context) (controlv1.ServiceClientCertificateDecision, error) {
+				return controlv1.ServiceClientCertificateDecision{}, test.err
+			}}}, nil)
+			until := time.Now().Add(time.Minute)
+			g.update(controlv1.ManagedHTTPCredential{Kind: "browser"}, controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: until})
+			if got := g.recheck(t.Context(), g.credential, g.revision); got != test.keep {
+				t.Fatalf("keep=%t, want %t", got, test.keep)
+			}
+			if !g.decision.ValidUntil.Equal(until) {
+				t.Fatal("failure moved the last successful deadline")
+			}
+		})
+	}
 }
 
 func TestManagedHTTPGuardRotationDiscardsOldInFlightDeadline(t *testing.T) {
@@ -74,7 +102,7 @@ func TestManagedHTTPGuardClosesIdleConnectionAndNeverExtendsOnFailure(t *testing
 				if mode == "blocked" {
 					<-ctx.Done()
 				}
-				return controlv1.ServiceClientCertificateDecision{}, errors.New("authorization unavailable")
+				return controlv1.ServiceClientCertificateDecision{}, controlclient.ErrUnavailable
 			}}
 			g := newManagedHTTPGuard(ManagedHTTP{Control: control}, tls.Server(raw, &tls.Config{}))
 			expiry := time.Now().Add(150 * time.Millisecond)

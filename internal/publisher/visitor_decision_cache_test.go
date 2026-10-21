@@ -8,7 +8,37 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlclient"
 )
+
+func TestVisitorDecisionCacheExplicitErrorsEvictAllowance(t *testing.T) {
+	for _, denied := range []error{controlclient.ErrUnauthenticated, &controlclient.ProblemError{Status: 403}, errors.New("invalid authority response")} {
+		t.Run(denied.Error(), func(t *testing.T) {
+			var cache visitorDecisionCache[bool]
+			key := sha256.Sum256([]byte("original browser cookie"))
+			if _, err := cache.check(t.Context(), key, func(context.Context) (bool, time.Time, bool, error) {
+				return true, time.Now().Add(time.Hour), true, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			cache.mu.Lock()
+			entry := cache.entries[key]
+			entry.refreshAfter = time.Now().Add(-time.Second)
+			cache.entries[key] = entry
+			cache.mu.Unlock()
+			got, err := cache.check(t.Context(), key, func(context.Context) (bool, time.Time, bool, error) {
+				return false, time.Time{}, false, denied
+			})
+			if got || !errors.Is(err, denied) {
+				t.Fatalf("terminal error restored allowance: allowed=%t, err=%v", got, err)
+			}
+			if len(cache.entries) != 0 {
+				t.Fatal("terminal error retained a positive decision")
+			}
+		})
+	}
+}
 
 func TestVisitorDecisionCacheBoundsRevocationAndOutages(t *testing.T) {
 	var cache visitorDecisionCache[string]
@@ -34,7 +64,7 @@ func TestVisitorDecisionCacheBoundsRevocationAndOutages(t *testing.T) {
 	cache.mu.Unlock()
 	unavailable := func(context.Context) (string, time.Time, bool, error) {
 		checks++
-		return "", time.Time{}, false, errors.New("control is unavailable")
+		return "", time.Time{}, false, controlclient.ErrUnavailable
 	}
 	if result, err := cache.check(t.Context(), key, unavailable); err != nil || result != "allowed" {
 		t.Fatalf("unexpired decision during outage = %q, %v", result, err)

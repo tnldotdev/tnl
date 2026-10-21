@@ -92,11 +92,22 @@ an allowed HTTP request.
 
 The publisher checks every public HTTP app request against a run-local visitor decision.
 Positive decisions are scoped to the public URL, run, credential digest, and
-trusted source IP. An active decision refreshes after 30 seconds; if control is
+trusted source IP. An active decision rechecks within 30 seconds; if control is
 unavailable, its last successful decision expires within two minutes or sooner
 at the underlying credential, IP grant, or run expiry. Unknown visitors fail
 closed. Only the first allowed request on a restricted visitor connection
 promotes ingress capacity; subsequent requests still check visitor access.
+An admitted public HTTP request keeps its own live guard through streaming and
+WebSocket upgrades. The guard retains the original run, trusted source, and
+browser or share credential, rechecking within 30 seconds. Routine renewal can
+keep a long operation alive; a replacement credential authorizes only future
+requests. Revocation, the original session or share expiry, or the last successful
+decision deadline ends the operation. Only structured control unavailability can
+reuse a positive decision, for at most two minutes and never beyond an earlier
+credential or run deadline. Explicit denial and malformed responses fail closed.
+The publisher cancels the target request and resets the affected HTTP/2 stream
+without closing its shared TLS connection; an upgraded HTTP/1 connection is
+closed directly. No application request is buffered for authorization or replayed.
 Local services without an explicit `publicURL` block are private, including HTTP.
 Managed services have their own hostname, port, and certificate, with loopback
 DNS for private reachability. A named group's `public` setting selects direct
@@ -209,7 +220,9 @@ from the selected ready entry-service tunnel. each request checks the selection
 revision and destination tunnel/run before entering the local proxy. an old
 publisher stops admitting requests immediately after a handoff; already admitted
 requests may finish, and its hostname lock remains held through drain and join.
-alias runs do not inherit preview shares or feedback state.
+alias runs do not inherit preview shares or feedback state. Browser sign-in and
+native browser handoff accept HTTP `app` and `alias` purposes consistently, while
+redemption still requires the authorized run and its single-use handoff.
 
 OAuth callback state records the initiating public URL/run separately from the
 destination app tunnel. an alias-origin callback returns to the alias hostname
