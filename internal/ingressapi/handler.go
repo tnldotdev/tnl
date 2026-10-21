@@ -10,6 +10,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -175,6 +176,12 @@ func (h *handler) observeRecovery(
 }
 
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
+	if err != nil {
+		var problem *serviceapi.ProblemError
+		if !errors.As(err, &problem) {
+			err = h.service.privateStateError(request.Context(), err)
+		}
+	}
 	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The ingress service request failed")
 }
 
@@ -186,6 +193,8 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
 		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
+	case errors.Is(err, controlstate.ErrIngressTransportCertificate):
+		return http.StatusServiceUnavailable, "unavailable", "ingress transport certificate is unavailable"
 	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
 		return http.StatusConflict, "recovery_episode_stale", "The public URL recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
@@ -328,7 +337,8 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 			RelayServiceId:               connection.RelayServiceID, RelayId: connection.RelayID,
 			RelayRunId: connection.RelayRunID, RelayLeaseRevision: int64(connection.RelayLeaseRevision),
 			InternalRelayAddress: connection.InternalRelayAddress, TlsServerName: connection.TLSServerName,
-			LeaseExpiresAt: connection.LeaseExpiresAt,
+			LeaseExpiresAt:   connection.LeaseExpiresAt,
+			AvailableStreams: connection.AvailableStreams,
 		}
 	}
 	var recoveryEpisodeID *int64
@@ -346,19 +356,36 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		value := ingressv1.IngressRoutingTableEntryServiceProtocol(projection.ServiceProtocol)
 		protocol = &value
 	}
-	var publicPort *int
-	if projection.PublicPort != nil {
-		value := int(*projection.PublicPort)
-		publicPort = &value
-	}
 	return ingressv1.IngressRoutingTableEntry{
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
-		IngressPoolId: poolID, ServiceProtocol: protocol, PublicPort: publicPort,
+		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),
+		AccessMode:      ingressv1.IngressRoutingTableEntryAccessMode(projection.AccessMode),
 		IpPolicy:        ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),
 		AllowedIpHashes: hashed, IpPolicyKey: verifier,
 		PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
 		RecoveryEpisodeId:  recoveryEpisodeID, PublisherConnections: connections,
+		Traffic: ingressTraffic(projection.Traffic),
 	}
+}
+
+func ingressTraffic(l *trafficlimits.Limits) *ingressv1.IngressTrafficLimits {
+	if l == nil {
+		return nil
+	}
+	result := &ingressv1.IngressTrafficLimits{Connections: l.Connections, Rate: l.Rate, RatePerNs: int64(l.Period()), Burst: l.Burst, UploadBytes: l.UploadBytes, DownloadBytes: l.DownloadBytes}
+	if l.TotalConnections > 0 {
+		v := l.TotalConnections
+		result.TotalConnections = &v
+	}
+	if l.TotalUploadBytes > 0 {
+		v := l.TotalUploadBytes
+		result.TotalUploadBytes = &v
+	}
+	if l.TotalDownloadBytes > 0 {
+		v := l.TotalDownloadBytes
+		result.TotalDownloadBytes = &v
+	}
+	return result
 }

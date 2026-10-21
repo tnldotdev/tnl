@@ -13,7 +13,7 @@ import (
 )
 
 func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
-	for _, kind := range []ingressv1.IngressRoutingTableEventKind{ingressv1.PublicUrlUpsert, ingressv1.ChallengeUpsert} {
+	for _, kind := range []ingressv1.IngressRoutingTableEventKind{ingressv1.PublicUrlUpsert} {
 		t.Run(string(kind), func(t *testing.T) {
 			now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 			makeEvent := func(revision int64, name string) ingressv1.IngressRoutingTableEvent {
@@ -32,9 +32,6 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 			}
 			var table RoutingTable
 			lookup := table.Lookup
-			if kind == ingressv1.ChallengeUpsert {
-				lookup = table.LookupChallenge
-			}
 			first, second := makeEvent(1, "first"), makeEvent(2, "second")
 			if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{
 				ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{first},
@@ -92,100 +89,41 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 	}
 }
 
-func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
+func TestRoutingTablePublisherPoolTombstonesAreRunScoped(t *testing.T) {
 	now := time.Now().UTC()
-	event := func(revision int64, hostname, pool string, port int) ingressv1.IngressRoutingTableEvent {
+	event := func(revision, run int64) ingressv1.IngressRoutingTableEvent {
 		entry := forwardingTestEntry(now, "relay.example:443")
-		entry.PublicUrlId = "public_url_" + hostname
-		entry.CanonicalHostname = hostname + ".example"
+		entry.CanonicalHostname = "pool.example"
 		entry.PolicyRevision = 1
 		entry.IpPolicy = ingressv1.AllowAll
-		id, protocol := ingressv1.Identifier(pool), ingressv1.Postgres
-		entry.IngressPoolId, entry.ServiceProtocol, entry.PublicPort = &id, &protocol, &port
-		return ingressv1.IngressRoutingTableEvent{
-			RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert,
-			PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
-			CanonicalHostname: entry.CanonicalHostname, EntryRevision: revision,
-			Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
-		}
+		entry.PublishRunNumber = run
+		entry.PublishRunId = fmt.Sprintf("run-%d", run)
+		return ingressv1.IngressRoutingTableEvent{RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert, PublicUrlId: entry.PublicUrlId, PublishRunNumber: run, CanonicalHostname: entry.CanonicalHostname, EntryRevision: revision, Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now}
 	}
-	first := event(1, "one", "ingress-a", 5432)
+	first, second := event(1, 1), event(2, 2)
 	var table RoutingTable
-	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{first}}); err != nil {
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 2, Entries: []ingressv1.IngressRoutingTableEvent{first, second}}); err != nil {
 		t.Fatal(err)
 	}
-	*first.Entry.PublicPort = 9999
-	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || *got.PublicPort != 5432 {
-		t.Fatalf("retained port = %+v, reason %q", got, reason)
+	entries, reason := table.LookupAllWithReason(first.CanonicalHostname, now)
+	if reason != LookupCurrent || len(entries) != 2 {
+		t.Fatalf("pool snapshot: %+v %s", entries, reason)
 	}
-	if _, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "missing" {
-		t.Fatalf("wrong pool lookup reason = %q", reason)
-	}
-	for _, test := range []struct {
-		name   string
-		port   int
-		change func(*ingressv1.IngressRoutingTableEntry)
-	}{
-		{name: "below public port range", port: 1023},
-		{name: "above public port range", port: 65536},
-		{name: "http with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
-			protocol := ingressv1.Http
-			entry.ServiceProtocol = &protocol
-		}},
-		{name: "unknown protocol with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
-			protocol := ingressv1.IngressRoutingTableEntryServiceProtocol("unknown")
-			entry.ServiceProtocol = &protocol
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			invalid := event(2, "invalid", "ingress-a", test.port)
-			if test.change != nil {
-				test.change(&invalid.Entry)
-			}
-			if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{invalid}}); !errors.Is(err, ErrRoutingTableEvent) {
-				t.Fatalf("invalid port projection = %v", err)
-			}
-		})
-	}
-	second := event(2, "two", "ingress-a", 5432)
-	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{second}}); !errors.Is(err, ErrRoutingTableEvent) {
-		t.Fatalf("colliding port page = %v", err)
-	}
-	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || got.PublicUrlId != first.PublicUrlId {
-		t.Fatalf("collision changed active port: %+v, %q", got, reason)
-	}
-	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 2, Entries: []ingressv1.IngressRoutingTableEvent{event(1, "one", "ingress-a", 5432), second}}); !errors.Is(err, ErrRoutingTableEvent) {
-		t.Fatalf("colliding snapshot = %v", err)
-	}
-	tombstone := event(2, "one", "ingress-a", 5432)
-	tombstone.Kind, tombstone.PublicUrlExpiresAt, tombstone.Entry.PublisherConnections = ingressv1.PublicUrlTombstone, nil, nil
-	otherPool := event(3, "two", "ingress-b", 5432)
-	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{ThroughRevision: 3, NextRevision: 3, Events: []ingressv1.IngressRoutingTableEvent{tombstone, otherPool}}); err != nil {
+	tombstone := event(3, 1)
+	tombstone.Kind = ingressv1.PublicUrlTombstone
+	tombstone.Entry.PublisherConnections = nil
+	tombstone.PublicUrlExpiresAt = nil
+	if err := table.ApplyPage(2, ingressv1.IngressRoutingTablePage{ThroughRevision: 3, NextRevision: 3, Events: []ingressv1.IngressRoutingTableEvent{tombstone}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "missing" {
-		t.Fatalf("tombstoned port reason = %q", reason)
+	entries, reason = table.LookupAllWithReason(first.CanonicalHostname, now)
+	if reason != LookupCurrent || len(entries) != 1 || entries[0].PublishRunNumber != 2 {
+		t.Fatalf("sibling lost after tombstone: %+v %s", entries, reason)
 	}
-	if got, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "" || got.PublicUrlId != otherPool.PublicUrlId {
-		t.Fatalf("other pool port = %+v, %q", got, reason)
-	}
-	redis := event(4, "redis", "ingress-b", 6379)
-	protocol := ingressv1.Redis
-	redis.Entry.ServiceProtocol = &protocol
-	if err := table.ApplyPage(3, ingressv1.IngressRoutingTablePage{ThroughRevision: 4, NextRevision: 4, Events: []ingressv1.IngressRoutingTableEvent{redis}}); err != nil {
-		t.Fatal(err)
-	}
-	if got, reason := table.LookupPortWithReason("ingress-b", 6379, now); reason != "" || got.PublicUrlId != redis.PublicUrlId {
-		t.Fatalf("Redis port = %+v, %q", got, reason)
-	}
-	ssh := event(5, "ssh", "ingress-b", 2222)
-	sshProtocol := ingressv1.Ssh
-	ssh.Entry.ServiceProtocol = &sshProtocol
-	if err := table.ApplyPage(4, ingressv1.IngressRoutingTablePage{ThroughRevision: 5, NextRevision: 5, Events: []ingressv1.IngressRoutingTableEvent{ssh}}); err != nil {
-		t.Fatal(err)
-	}
-	if got, reason := table.LookupPortWithReason("ingress-b", 2222, now); reason != "" || got.PublicUrlId != ssh.PublicUrlId {
-		t.Fatalf("SSH port = %+v, %q", got, reason)
+	stale := event(4, 1)
+	stale.EntryRevision = 2
+	if err := table.ApplyPage(3, ingressv1.IngressRoutingTablePage{ThroughRevision: 4, NextRevision: 4, Events: []ingressv1.IngressRoutingTableEvent{stale}}); !errors.Is(err, ErrRoutingTableEvent) {
+		t.Fatalf("old run projection revived: %v", err)
 	}
 }
 
@@ -246,14 +184,14 @@ func TestRoutingTableSnapshotDoesNotRegressRevision(t *testing.T) {
 	}
 }
 
-func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
+func TestRoutingTableExplainsUnavailablePublicURL(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	entry := forwardingTestEntry(now, "relay.example:443")
 	entry.CanonicalHostname = "route.example"
 	entry.PolicyRevision = 1
 	entry.IpPolicy = ingressv1.AllowAll
 	event := ingressv1.IngressRoutingTableEvent{
-		RoutingTableRevision: 1, Kind: ingressv1.ChallengeUpsert,
+		RoutingTableRevision: 1, Kind: ingressv1.PublicUrlUpsert,
 		PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
 		CanonicalHostname: entry.CanonicalHostname, EntryRevision: 1,
 		Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
@@ -272,7 +210,7 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 			e.PublicUrlExpiresAt = &e.Entry.PublicUrlExpiresAt
 		}},
 		{"tombstone", "tombstone", func(e *ingressv1.IngressRoutingTableEvent) {
-			e.Kind = ingressv1.ChallengeTombstone
+			e.Kind = ingressv1.PublicUrlTombstone
 			e.PublicUrlExpiresAt = nil
 			e.Entry.PublisherConnections = nil
 		}},
@@ -301,12 +239,12 @@ func TestRoutingTableExplainsUnavailableChallenge(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, reason := table.LookupChallengeWithReason(entry.CanonicalHostname, now)
+			_, reason := table.lookup(entry.CanonicalHostname, now)
 			if reason != test.reason {
 				t.Fatalf("challenge lookup reason = %q, want %q", reason, test.reason)
 			}
 			if test.name == "ready" {
-				_, reason = table.LookupChallengeWithReason("missing.example", now)
+				_, reason = table.lookup("missing.example", now)
 				if reason != "missing" {
 					t.Fatalf("missing challenge reason = %q", reason)
 				}

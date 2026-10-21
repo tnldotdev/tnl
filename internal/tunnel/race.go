@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Candidate is one way to connect to a relay address.
@@ -42,7 +44,14 @@ func Race(
 	fallback Candidate,
 	fallbackDelay time.Duration,
 	hello tunnelv1.Message,
-) (*Session, Transport, error) {
+) (session *Session, transport Transport, retErr error) {
+	ctx, finish := observability.Start(ctx, "tunnel.transport_race", trace.WithAttributes(observability.TransportPreference.Value(boundedTransport(primary.Transport))))
+	defer func() {
+		if transport == TransportQUIC || transport == TransportTLSTCP {
+			trace.SpanFromContext(ctx).SetAttributes(observability.Transport.Value(boundedTransport(transport)))
+		}
+		finish(retErr)
+	}()
 	if primary.Connector == nil || fallback.Connector == nil || primary.Transport == "" || fallback.Transport == "" || fallbackDelay < 0 {
 		return nil, "", errors.New("tunnel: two candidates and a non-negative fallback delay are required")
 	}
@@ -108,7 +117,13 @@ func Race(
 	return nil, "", fmt.Errorf("tunnel: all transport candidates failed: %w", errors.Join(failures...))
 }
 
-func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) candidateResult {
+func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) (result candidateResult) {
+	ctx, finish := observability.Start(ctx, "tunnel.transport_candidate", trace.WithAttributes(observability.Transport.Value(boundedTransport(candidate.Transport))))
+	started := time.Now()
+	defer func() {
+		finish(result.err)
+		observability.PublisherTransportCandidate(ctx, string(candidate.Transport), time.Since(started), result.err)
+	}()
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	transport, err := candidate.Connector.Connect(setupCtx, candidate.Endpoint)
@@ -120,6 +135,11 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 		return candidateResult{session: session, transport: candidate.Transport}
 	}
 	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
+}
+
+func boundedTransport(transport Transport) observability.TransportValue {
+	value, _ := observability.ParseTransport(string(transport))
+	return value
 }
 
 // IsTerminalHandshakeError reports whether a protocol rejection must stop both

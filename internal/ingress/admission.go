@@ -4,27 +4,23 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"time"
 )
 
 const (
-	DefaultClientHelloConnectionLimit       = 1024
-	DefaultChallengeConnectionLimit         = 1024
-	DefaultChallengeHostnameConnectionLimit = 8
-	DefaultControlConnectionLimit           = 1024
-	DefaultRelayConnectionLimit             = 4096
-	DefaultDeniedConnectionLimit            = 16
-	challengeConnectionTimeout              = 10 * time.Second
+	DefaultClientHelloConnectionLimit = 1024
+	DefaultControlConnectionLimit     = 1024
+	DefaultRelayConnectionLimit       = 4096
+	DefaultPrivateConnectionLimit     = 256
 )
 
 type connectionKind uint8
 
 const (
 	visitorConnection connectionKind = iota
-	deniedConnection
-	challengeConnection
+	pendingConnection
 	controlConnection
 	relayConnection
+	privateConnection
 	connectionKinds
 )
 
@@ -34,11 +30,9 @@ func admissionDefaults(config *Config) error {
 		fallback int
 	}{
 		{&config.MaxClientHelloConnections, DefaultClientHelloConnectionLimit},
-		{&config.MaxChallengeConnections, DefaultChallengeConnectionLimit},
-		{&config.MaxHostnameChallengeConnections, DefaultChallengeHostnameConnectionLimit},
 		{&config.MaxControlConnections, DefaultControlConnectionLimit},
 		{&config.MaxRelayConnections, DefaultRelayConnectionLimit},
-		{&config.MaxDeniedConnections, DefaultDeniedConnectionLimit},
+		{&config.MaxPrivateConnections, DefaultPrivateConnectionLimit},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -63,23 +57,17 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-		if s.byPublicURL[key] >= max(1, s.config.MaxConnections/2) {
-			return nil, "public_url_connections"
-		}
-	case deniedConnection:
-		limit, resource = s.config.MaxDeniedConnections, "denied_connections"
-		if s.byDenied[key] >= max(1, limit/2) {
+	case pendingConnection:
+		limit, resource = s.config.Pending.Connections, "denied_connections"
+		if s.byDenied[key] >= s.config.Pending.PublicURLConnections {
 			return nil, "denied_public_url_connections"
-		}
-	case challengeConnection:
-		limit, resource = s.config.MaxChallengeConnections, "challenge_connections"
-		if s.byChallenge[key] >= s.config.MaxHostnameChallengeConnections {
-			return nil, "challenge_hostname_connections"
 		}
 	case controlConnection:
 		limit, resource = s.config.MaxControlConnections, "control_connections"
 	case relayConnection:
 		limit, resource = s.config.MaxRelayConnections, "relay_tcp_connections"
+	case privateConnection:
+		limit, resource = s.config.MaxPrivateConnections, "private_connector_sessions"
 	}
 	if s.admitted[kind] >= limit {
 		return nil, resource
@@ -88,10 +76,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	s.reportAdmittedLocked()
 	if kind == visitorConnection {
 		s.byPublicURL[key]++
-	} else if kind == deniedConnection {
+	} else if kind == pendingConnection {
 		s.byDenied[key]++
-	} else if kind == challengeConnection {
-		s.byChallenge[key]++
 	}
 	return sync.OnceFunc(func() {
 		s.mu.Lock()
@@ -101,10 +87,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		var counts map[string]int
 		if kind == visitorConnection {
 			counts = s.byPublicURL
-		} else if kind == deniedConnection {
+		} else if kind == pendingConnection {
 			counts = s.byDenied
-		} else if kind == challengeConnection {
-			counts = s.byChallenge
 		}
 		if counts != nil {
 			counts[key]--
@@ -126,7 +110,7 @@ func (s *Server) reportAdmittedLocked() {
 	if s.config.Metrics == nil {
 		return
 	}
-	for kind, class := range []string{"public", "denied", "challenge", "control", "relay_tcp"} {
+	for kind, class := range []string{"public", "denied", "control", "relay_tcp", "private_connector"} {
 		s.config.Metrics.SetIngressConnections(class, s.admitted[kind])
 	}
 }

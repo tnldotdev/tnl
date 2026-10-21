@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,11 +14,9 @@ import (
 func TestIngressExactSNIHandoffs(t *testing.T) {
 	for _, test := range []struct {
 		name, hostname, alpn string
-		challenge            bool
 	}{
-		{"control", "control.example", "", false},
-		{"relay", "relay.example", "tnl-tunnel/1", false},
-		{"relay challenge", "relay.example", "acme-tls/1", true},
+		{"control", "control.example", ""},
+		{"relay", "relay.example", "tnl-tunnel/1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -33,19 +30,13 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 					return false
 				}
 			}
-			var wrong atomic.Int32
 			config := Config{}
 			if test.name == "control" {
 				config.ServerHostname = test.hostname
 				config.HandleControl = handoff
 			} else {
 				config.RelayHostname = test.hostname
-				if test.challenge {
-					config.HandleRelayChallenge = handoff
-					config.HandleRelay = func(net.Conn) bool { wrong.Add(1); return false }
-				} else {
-					config.HandleRelay = handoff
-				}
+				config.HandleRelay = handoff
 			}
 			_, address := startIngress(t, config)
 			certificate := testCertificate(t, test.hostname)
@@ -67,9 +58,6 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 				if !c.RemoteAddr().(*net.TCPAddr).IP.IsLoopback() {
 					return errors.New("lost visitor address")
 				}
-				if test.challenge {
-					return nil
-				}
 				var request [4]byte
 				if _, err := io.ReadFull(secured, request[:]); err != nil {
 					return err
@@ -88,16 +76,9 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 			if err := client.Handshake(); err != nil {
 				t.Fatal(err)
 			}
-			if test.challenge {
-				_ = client.Close()
-			} else {
-				exchangePing(t, client)
-			}
+			exchangePing(t, client)
 			if err := ingressAwait(t, result); err != nil {
 				t.Fatal(err)
-			}
-			if wrong.Load() != 0 {
-				t.Fatal("ACME reached publisher transport handler")
 			}
 			// matching must be exact, not a suffix match.
 			other := ingressClient(t, address, "other."+test.hostname, "", protos...)
