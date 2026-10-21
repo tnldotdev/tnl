@@ -27,6 +27,8 @@ type cachedVisitorDecision[T any] struct {
 
 type visitorDecisionCall[T any] struct {
 	done      chan struct{}
+	cancel    context.CancelFunc
+	waiters   int
 	value     T
 	checkedAt time.Time
 	err       error
@@ -74,62 +76,92 @@ func (c *visitorDecisionCache[T]) checkCurrent(ctx context.Context, key [sha256.
 		return entry.value, entry.checkedAt, nil
 	}
 	if call := c.active[key]; call != nil {
+		call.waiters++
 		c.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return zero, time.Time{}, ctx.Err()
-		case <-call.done:
-			return call.value, call.checkedAt, call.err
-		}
+		return c.wait(ctx, key, call)
 	}
 	if c.active == nil {
 		c.active = make(map[[sha256.Size]byte]*visitorDecisionCall[T])
 	}
-	call := &visitorDecisionCall[T]{done: make(chan struct{})}
+	// the cache owns shared I/O; no request's cancellation or shorter deadline
+	// can become another caller's authorization result.
+	requestCtx, cancel := context.WithTimeoutCause(context.WithoutCancel(ctx), 5*time.Second, controlclient.ErrUnavailable)
+	call := &visitorDecisionCall[T]{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	c.active[key] = call
 	c.mu.Unlock()
 
-	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	checkedAt := now
-	value, expires, allowed, err := load(requestCtx)
-	cancel()
-	c.mu.Lock()
-	if revision != c.revision {
-		// the old result and outage fallback must not restore revoked access.
-		value, err = zero, errors.New("publisher: visitor authority changed; retry the request")
-	} else if err == nil {
-		delete(c.entries, key)
-		if allowed && !expires.IsZero() {
-			until := now.Add(visitorDecisionLifetime)
-			if expires.Before(until) {
-				until = expires
-			}
-			if !until.After(time.Now()) {
-				err = errors.New("publisher: visitor decision has expired")
-			} else {
-				if c.entries == nil {
-					c.entries = make(map[[sha256.Size]byte]cachedVisitorDecision[T])
+	go func() {
+		checkedAt := now
+		value, expires, allowed, err := load(requestCtx)
+		cancel()
+		c.mu.Lock()
+		if c.active[key] != call {
+			// every waiter left and canceled this work. discard its result without
+			// evicting the last success or touching a replacement shared call.
+			value, err = zero, context.Canceled
+		} else if revision != c.revision {
+			// the old result and outage fallback must not restore revoked access.
+			value, err = zero, errors.New("publisher: visitor authority changed; retry the request")
+		} else if err == nil {
+			delete(c.entries, key)
+			if allowed && !expires.IsZero() {
+				until := now.Add(visitorDecisionLifetime)
+				if expires.Before(until) {
+					until = expires
 				}
-				if len(c.entries) >= visitorDecisionCapacity {
-					c.evict(time.Now())
+				if !until.After(time.Now()) {
+					err = errors.New("publisher: visitor decision has expired")
+				} else {
+					if c.entries == nil {
+						c.entries = make(map[[sha256.Size]byte]cachedVisitorDecision[T])
+					}
+					if len(c.entries) >= visitorDecisionCapacity {
+						c.evict(time.Now())
+					}
+					c.entries[key] = cachedVisitorDecision[T]{value: value, checkedAt: now,
+						refreshAfter: earlierDecisionTime(now.Add(visitorDecisionRecheck), until), validUntil: until}
 				}
-				c.entries[key] = cachedVisitorDecision[T]{value: value, checkedAt: now,
-					refreshAfter: earlierDecisionTime(now.Add(visitorDecisionRecheck), until), validUntil: until}
 			}
+		} else if errors.Is(err, controlclient.ErrUnavailable) && usable && time.Now().Before(entry.validUntil) {
+			entry.refreshAfter = earlierDecisionTime(time.Now().Add(visitorDecisionRetry), entry.validUntil)
+			c.entries[key] = entry
+			value, err = entry.value, nil
+			checkedAt = entry.checkedAt
+		} else {
+			delete(c.entries, key)
 		}
-	} else if errors.Is(err, controlclient.ErrUnavailable) && usable && time.Now().Before(entry.validUntil) {
-		entry.refreshAfter = earlierDecisionTime(time.Now().Add(visitorDecisionRetry), entry.validUntil)
-		c.entries[key] = entry
-		value, err = entry.value, nil
-		checkedAt = entry.checkedAt
-	} else {
-		delete(c.entries, key)
+		if c.active[key] == call {
+			delete(c.active, key)
+		}
+		call.value, call.checkedAt, call.err = value, checkedAt, err
+		close(call.done)
+		c.mu.Unlock()
+	}()
+	return c.wait(ctx, key, call)
+}
+
+func (c *visitorDecisionCache[T]) wait(ctx context.Context, key [sha256.Size]byte, call *visitorDecisionCall[T]) (T, time.Time, error) {
+	select {
+	case <-ctx.Done():
+	case <-call.done:
 	}
-	delete(c.active, key)
-	call.value, call.checkedAt, call.err = value, checkedAt, err
-	close(call.done)
+	c.mu.Lock()
+	call.waiters--
+	last := call.waiters == 0
+	if last && c.active[key] == call {
+		delete(c.active, key)
+		call.cancel()
+	}
 	c.mu.Unlock()
-	return value, checkedAt, err
+	if last {
+		// the last caller owns joined cleanup, including canceled body I/O.
+		<-call.done
+	}
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, time.Time{}, err
+	}
+	return call.value, call.checkedAt, call.err
 }
 
 func earlierDecisionTime(first, second time.Time) time.Time {

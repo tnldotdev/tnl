@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,80 @@ type liveHTTPControl struct {
 	mu    sync.Mutex
 	check func(controlv1.HTTPVisitorRequest) (controlv1.HTTPVisitorResponse, error)
 	calls int
+}
+
+type coalescedHTTPControl struct {
+	browserAccessStub
+	check func(context.Context) (controlv1.HTTPVisitorResponse, error)
+}
+
+func (c coalescedHTTPControl) AuthorizeHTTPVisitor(ctx context.Context, _ string, _ controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
+	return c.check(ctx)
+}
+
+func TestPublicHTTPGuardCoalescedRefreshCancellationIsolation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started, release := make(chan struct{}), make(chan struct{})
+		var calls atomic.Int32
+		control := &coalescedHTTPControl{check: func(ctx context.Context) (controlv1.HTTPVisitorResponse, error) {
+			if calls.Add(1) == 2 {
+				close(started)
+				select {
+				case <-ctx.Done():
+					return controlv1.HTTPVisitorResponse{}, ctx.Err()
+				case <-release:
+				}
+			}
+			return liveHTTPAllowed(time.Now().Add(visitorDecisionLifetime))
+		}}
+		access := &browserAccess{client: control, runID: "original-run", version: 1, decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
+		original := httptest.NewRequest("GET", "https://route.example/stream", nil)
+		original.AddCookie(&http.Cookie{Name: browserAccessCookieName, Value: liveBrowserCookie})
+		initial, checkedAt, err := access.currentDecision(original, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstCtx, cancelFirst := context.WithCancel(original.Context())
+		defer cancelFirst()
+		first, firstRequest := guardPublicHTTPRequest(httptest.NewRecorder(), original.WithContext(firstCtx), original, access, initial, checkedAt)
+		time.Sleep(visitorDecisionRecheck)
+		<-started
+		second, secondRequest := guardPublicHTTPRequest(httptest.NewRecorder(), original, original, access, initial, checkedAt)
+		defer func() {
+			// an expired guard panics when its handler finishes; retain the failed
+			// assertion while still joining cleanup on the regressed implementation.
+			defer func() {
+				if recovered := recover(); recovered != nil && recovered != http.ErrAbortHandler {
+					panic(recovered)
+				}
+			}()
+			second.finish()
+		}()
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		access.decisions.mu.Lock()
+		active := len(access.decisions.active)
+		access.decisions.mu.Unlock()
+		if active != 1 || calls.Load() != 2 {
+			t.Fatalf("guards did not share the exact refresh: active=%d, calls=%d", active, calls.Load())
+		}
+		cancelFirst()
+		first.finish()
+		synctest.Wait()
+		if !errors.Is(firstRequest.Context().Err(), context.Canceled) {
+			t.Fatal("the first caller did not stop waiting independently")
+		}
+		if err := secondRequest.Context().Err(); err != nil {
+			t.Errorf("canceling the refresh initiator aborted the unrelated guard: %v", err)
+		}
+		close(release)
+		synctest.Wait()
+		time.Sleep(visitorDecisionLifetime)
+		synctest.Wait()
+		if err := secondRequest.Context().Err(); err != nil {
+			t.Errorf("the remaining guard did not keep renewing: %v", err)
+		}
+	})
 }
 
 func (c *liveHTTPControl) AuthorizeHTTPVisitor(_ context.Context, _ string, input controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
