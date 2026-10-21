@@ -125,7 +125,6 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	address := listener.Addr().String()
 	_ = listener.Close()
 	connectCtx, stopConnect := context.WithCancel(t.Context())
-	f.command(t, connectCtx, stopConnect, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person})
 	if len(applied.Services) != 1 || applied.Services[0].ServiceId == nil {
 		t.Fatal("missing private service binding")
 	}
@@ -239,6 +238,17 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal("restored identity did not run its assigned private publisher")
 		}
 		assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, int64(replacement+1), true)
+		if replacement == 1 {
+			// connector readiness now verifies managed TLS. start only after the
+			// recovered publisher has installed the paused certificate, then keep
+			// this same connector through the later publisher replacements.
+			connectReady, _ := f.command(t, connectCtx, stopConnect, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person})
+			select {
+			case <-connectReady:
+			case <-time.After(25 * time.Second):
+				t.Fatal("connector did not verify the recovered publisher")
+			}
+		}
 		if _, supplied := os.LookupEnv("TNL_GROUP_IDENTITY"); supplied {
 			t.Fatal("injected identity remains in the worker environment")
 		}

@@ -55,7 +55,9 @@ async function holdCredential(file: string): Promise<() => Promise<void>> {
   // arm rejection before a failed test's cleanup releases or closes the request.
   void pending.catch(() => {});
   await expect
-    .poll(async () => (await events()).filter((event) => event.event === "blocked").length)
+    .poll(async () => (await events()).filter((event) => event.event === "blocked").length, {
+      timeout: 10_000,
+    })
     .toBe(before + 1);
   return async () => {
     await (await control(file, "/fixture/release")).arrayBuffer();
@@ -143,7 +145,9 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
   const rejected = expect(canceled).rejects.toBe(reason);
   const waiting = Promise.resolve(connectionHandle("database", vi.fn()));
   await expect
-    .poll(async () => (await events()).filter((event) => event.event === "read").length)
+    .poll(async () => (await events()).filter((event) => event.event === "read").length, {
+      timeout: 10_000,
+    })
     .toBe(3);
   abort.abort(reason);
   await rejected;
@@ -166,7 +170,11 @@ test("failed initial validation joins cleanup before any same-port replacement",
     code: "sdk.response_invalid",
   });
   await expect
-    .poll(async () => (await events()).filter((event) => event.event === "stop").length)
+    .poll(async () => (await events()).filter((event) => event.event === "stop").length, {
+      // separate command and owner processes can take longer than Vitest's
+      // one-second default on a shared runner. retain the native command bound.
+      timeout: 10_000,
+    })
     .toBe(1);
   const original = await owner();
   const port = await readFile(path.join(root, "port"), "utf8");
