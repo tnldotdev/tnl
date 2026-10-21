@@ -1,6 +1,8 @@
 package clientauth
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -8,7 +10,74 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
+
+func TestDeviceIssuedCancellationRevokesSessionAfterPollingCredentialExpires(t *testing.T) {
+	issued := issuedSession(t)
+	logoutCalls := 0
+	f := newAuthFixture(t, func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/v1/auth/device/poll":
+			return jsonResponse(200, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
+		case "/v1/auth/device/cancel":
+			return problemResponse(401, "unauthenticated"), nil
+		case "/v1/auth/logout":
+			logoutCalls++
+			if logoutCalls == 1 {
+				return problemResponse(503, "unavailable"), nil
+			}
+			return &http.Response{StatusCode: 204, Body: http.NoBody}, nil
+		default:
+			return nil, errors.New("unexpected request")
+		}
+	})
+	op, err := StartLogin(t.Context(), f.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	due(t, f, op.ID)
+	// stop the real waiter after it persists the issued checkpoint, before install.
+	original := f.transport.respond
+	discoveries := 0
+	f.transport.respond = func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/v1/discovery" {
+			discoveries++
+			if discoveries == 2 {
+				return nil, context.Canceled
+			}
+		}
+		return original(r)
+	}
+	if _, err := WaitLogin(t.Context(), f.config, op.ID, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	op, err = f.store.AuthOperation(t.Context(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint loginCheckpoint
+	if err := json.Unmarshal(op.Private, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if op.Phase != clientstate.AuthIssued || checkpoint.PollingCredential == "" || checkpoint.Session == nil {
+		t.Fatal("fixture did not reach the actual issued checkpoint")
+	}
+	if _, err := CancelLogin(t.Context(), f.config, op.ID); err == nil {
+		t.Fatal("session revocation failure was hidden")
+	}
+	op, err = f.store.AuthOperation(t.Context(), op.ID)
+	if err != nil || len(op.Private) == 0 {
+		t.Fatal("issued session was forgotten before revocation", err)
+	}
+	if _, err := CancelLogin(t.Context(), f.config, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	op, err = f.store.AuthOperation(t.Context(), op.ID)
+	if err != nil || len(op.Private) != 0 || logoutCalls != 2 {
+		t.Fatalf("cleanup logout calls=%d: %v", logoutCalls, err)
+	}
+}
 
 func TestOrdinaryAuthenticationNeverPromptsForMissingOrExpiredCredentials(t *testing.T) {
 	for _, saved := range []bool{false, true} {
