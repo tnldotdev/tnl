@@ -101,6 +101,14 @@ long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
 `task go:test:integration:live-authorization` owns disposable PostgreSQL for
 browser and alias handoffs, current visitor authorization, and HTTP logout.
 
+For ingress production wiring, pool selection, lifetime traffic totals, pending
+promotion, private relay fallback, and server-first half-closes, run
+`task go:test:ingress`, then `task go:test:ingress -- -race`.
+`task go:test:integration:ingress` owns disposable PostgreSQL for terminal
+retirement evidence and real split/standalone forwarding.
+`task go:test:integration:local-oidc` checks the actual UID-65532 provider with a
+mode-0600 key on a Linux-native filesystem, including on Docker Desktop.
+
 Use `RUN` to select an integration test, for example:
 
 ```console

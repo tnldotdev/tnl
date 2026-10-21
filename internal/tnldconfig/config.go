@@ -337,6 +337,14 @@ func (c Config) validateControl() error {
 		return failure.WrapSetting("validate private control listen address", failure.ServerListenAddressInvalid,
 			failure.SettingPrivateControlListen, errors.New("private control listen address is required"))
 	}
+	if c.Role == RoleControl && (c.ControlTLSCertificateFile == "" || c.ControlTLSPrivateKeyFile == "") {
+		setting := failure.SettingPrivateControlCert
+		if c.ControlTLSCertificateFile != "" {
+			setting = failure.SettingPrivateControlKey
+		}
+		return failure.WrapSetting("configure private control TLS", failure.ServerConfigInvalid, setting,
+			errors.New("private control TLS certificate and private key files are required"))
+	}
 	if err := validateCanonicalHostname(c.ServerDomain, "server domain"); err != nil {
 		return err
 	}

@@ -522,6 +522,25 @@ tasks:
     cmds:
       - go test -race ./internal/relay
 
+  go:test:ingress:
+    desc: Check ingress selection, lifetime budgets, promotion, private fallback and production wiring
+    vars:
+      RUN: '{{default "." .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/ingress ./internal/tnldruntime ./internal/tnldconfig ./cmd/tnld -run='{{.RUN}}' -count=1 -timeout=5m
+
+  go:test:integration:ingress:
+    desc: Check ingress terminal retirement and production role forwarding with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(IngressTerminalRetirementProof|PublicURLRecovery|RouteRoutingTableLifecycle|ExpiredIngressRestartsAndRecoversVisitors|StandalonePublish|SplitPublish)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  go:test:integration:local-oidc:
+    desc: Check the real nonroot local OIDC container with a private host TLS key
+    cmds:
+      - go test -v ./internal/devoidc -run='^TestIntegrationLocalOIDCPrivateKeyMount$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+
   go:test:integration:cli:
     desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
     vars:

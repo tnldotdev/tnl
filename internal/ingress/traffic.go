@@ -80,7 +80,7 @@ type trafficAdmission struct {
 	pendingURLs                     map[trafficKey]*pendingTraffic
 	connections, uploads, downloads tokenBucket
 	lastPrune                       time.Time
-	currentRuns                     func() (map[TrafficRun]struct{}, bool)
+	terminalRuns                    func([]TrafficRun) map[TrafficRun]struct{}
 }
 
 func newTrafficAdmission(c TrafficConfig, p PendingConfig) *trafficAdmission {
@@ -219,10 +219,15 @@ func (a *trafficAdmission) prune(now time.Time) {
 		return
 	}
 	a.lastPrune = now
-	var current map[TrafficRun]struct{}
-	known := false
-	if a.currentRuns != nil {
-		current, known = a.currentRuns()
+	var terminal map[TrafficRun]struct{}
+	if a.terminalRuns != nil {
+		candidates := make([]TrafficRun, 0, len(a.runs))
+		for key, r := range a.runs {
+			if r.active == 0 {
+				candidates = append(candidates, TrafficRun{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run})
+			}
+		}
+		terminal = a.terminalRuns(candidates)
 	}
 	for key, s := range a.sources {
 		refill := max(float64(a.config.SourceBurst)/float64(a.config.SourceRate), float64(a.pending.SourceBurst)/float64(a.pending.SourceRate))
@@ -236,8 +241,8 @@ func (a *trafficAdmission) prune(now time.Time) {
 		}
 	}
 	for key, r := range a.runs {
-		if known && r.active == 0 {
-			if _, exists := current[TrafficRun{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run}]; !exists {
+		if r.active == 0 {
+			if _, ended := terminal[TrafficRun{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run}]; ended {
 				delete(a.runs, key)
 				continue
 			}

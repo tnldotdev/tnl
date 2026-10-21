@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const defaultOpenTimeout = 10 * time.Second
@@ -43,6 +44,9 @@ type PublicURL struct {
 	ServiceProtocol   string
 	AccessMode        string
 	Traffic           *TrafficLimits
+	// current assignments include full relays: existing streams still need to
+	// authorize after consuming the last available new-stream slot.
+	assignments []tunnelv1.AdmissionHeader
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
@@ -102,7 +106,7 @@ type Config struct {
 	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
-	CurrentTrafficRuns        func() (map[TrafficRun]struct{}, bool)
+	TerminalTrafficRuns       func([]TrafficRun) map[TrafficRun]struct{}
 }
 
 type Server struct {
@@ -191,7 +195,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		openContext = observability.WithMetrics(openContext, metrics)
 	}
 	traffic := newTrafficAdmission(config.Traffic, config.Pending)
-	traffic.currentRuns = config.CurrentTrafficRuns
+	traffic.terminalRuns = config.TerminalTrafficRuns
 	return &Server{
 		listener:        listener,
 		config:          config,

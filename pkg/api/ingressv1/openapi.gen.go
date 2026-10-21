@@ -343,10 +343,13 @@ type IngressRoutingTableEntry struct {
 	IpPolicy          IngressRoutingTableEntryIpPolicy   `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
-	PolicyRevision       int64                                    `json:"policy_revision"`
-	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
-	PublicUrlId          Identifier                               `json:"public_url_id"`
+	IpPolicyKey        *[]byte    `json:"ip_policy_key,omitempty"`
+	PolicyRevision     int64      `json:"policy_revision"`
+	PublicUrlExpiresAt time.Time  `json:"public_url_expires_at"`
+	PublicUrlId        Identifier `json:"public_url_id"`
+
+	// PublishRunClosed True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
+	PublishRunClosed     *bool                                    `json:"publish_run_closed,omitempty"`
 	PublishRunId         Identifier                               `json:"publish_run_id"`
 	PublishRunNumber     int64                                    `json:"publish_run_number"`
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`

@@ -4,12 +4,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const testOIDCIssuer = "https://identity.example.test"
 const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+func TestSplitControlRequiresInternalTLSMaterial(t *testing.T) {
+	base := []string{"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
+		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey}
+	if _, err := Parse(base); err == nil {
+		t.Fatal("split control accepted without required internal TLS files")
+	} else if typed, ok := failure.Of(err); !ok || typed.Reason() != failure.ServerConfigInvalid || string(typed.Setting()) != "TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" {
+		t.Fatalf("missing internal TLS must identify its setting, not ACME: %v", err)
+	}
+	if _, err := Parse(append(base, "--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key")); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
@@ -117,6 +133,7 @@ func TestParseSplitRoles(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +219,7 @@ func TestParseDNSAutomation(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 		"--route53-managed-zone-id", "Z0123456789ABC", "--ingress-ipv4-address", "192.0.2.10",
 		"--ingress-ipv6-address", "2001:db8::10", "--route53-server-zone-id", "ZSERVER123",
 	})
@@ -224,6 +242,7 @@ func TestParseDNSAutomation(t *testing.T) {
 			"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 			"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 			"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+			"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 		}
 		if _, err := Parse(append(base, args...)); err == nil {
 			t.Fatalf("invalid DNS automation configuration %q was accepted", args)
@@ -305,6 +324,7 @@ func TestConfigStaticCertificateRoleMatrix(t *testing.T) {
 		{"standalone_static_control_server_dns", RoleStandalone, true, false, true, false},
 		{"standalone_static_relay", RoleStandalone, false, true, false, false},
 		{"split_control_static", RoleControl, true, false, false, false},
+		{"split_control_missing_tls", RoleControl, false, false, false, true},
 		{"split_control_relay_override_rejected", RoleControl, false, true, false, true},
 		{"split_relay_static", RoleRelay, false, true, false, false},
 		{"split_relay_automatic", RoleRelay, false, false, false, false},
@@ -316,6 +336,7 @@ func TestConfigStaticCertificateRoleMatrix(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validCertificateConfig(t, test.role)
 			cfg.Route53ServerZoneID = ""
+			cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "", ""
 			if test.control {
 				cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "control.pem", "control.key"
 			}
@@ -406,6 +427,9 @@ func validCertificateConfig(t *testing.T, role Role) Config {
 	args := []string{"--role", string(role)}
 	if role == RoleStandalone {
 		args = append(args, "--route53-server-zone-id", "ZSERVER")
+	}
+	if role == RoleControl {
+		args = append(args, "--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key")
 	}
 	if role.RunsControl() {
 		args = append(args, "--database-url", "postgres://tnl:secret@database.example/tnl",

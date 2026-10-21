@@ -90,6 +90,18 @@ the target. A source outside a configured IP filter is rejected before
 forwarding. The publisher removes untrusted forwarding headers before proxying
 an allowed HTTP request.
 
+Promotion checks the current assignment identity even when that relay reports no
+spare stream capacity. The visitor already owns its stream; new-stream
+eligibility is a separate decision. Both public and private setup reserve time
+for alternate relays before sending visitor bytes.
+
+Ingress retains run-lifetime traffic totals across temporary routing tombstones,
+projection expiry, and resnapshots. Only a tombstone carrying control's explicit
+`publish_run_closed` evidence permits retiring an inactive run's totals. The
+traffic table holds at most 100,000 run keys and fails closed at capacity. If a
+resnapshot skips closure evidence, the unknown run stays in that bounded table;
+absence and a newer sibling run do not prove closure.
+
 The publisher checks every public HTTP app request against a run-local visitor decision.
 Positive decisions are scoped to the public URL, run, credential digest, and
 trusted source IP. An active decision rechecks within 30 seconds; if control is
@@ -551,6 +563,10 @@ overwritten client-IP header. Requests must carry `X-Forwarded-Proto: https` and
 the configured external control host. Forwarded host and port input never choose
 the origin. Internal control HTTPS and authenticated ingress-to-relay TLS retain
 separate listeners and trust; standalone does not expose the internal control API.
+
+Split control requires both private-control TLS files during configuration
+validation. Public HTTPS proxy settings and ACME configuration cannot supply the
+internal listener's static certificate and key.
 
 Managed TCP listeners bind the declared service inventory before ingress lease
 registration. A trusted outer PROXY v2 hop may instead deliver the same original

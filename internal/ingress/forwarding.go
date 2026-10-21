@@ -116,16 +116,18 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routeb
 // PublicURL converts one validated routing-table projection into an immutable
 // public URL view used by Server for a visitor connection.
 func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicURL, error) {
-	eligible := entry
-	eligible.PublisherConnections = make([]ingressv1.IngressRoutingPublisherConnection, 0, len(entry.PublisherConnections))
-	for _, connection := range entry.PublisherConnections {
-		if connection.AvailableStreams == nil || *connection.AvailableStreams > 0 {
-			eligible.PublisherConnections = append(eligible.PublisherConnections, connection)
-		}
-	}
-	backends, err := f.Backends(eligible)
+	all, err := f.Backends(entry)
 	if err != nil {
 		return PublicURL{}, err
+	}
+	backends := make([]routebackend.Backend, 0, len(all))
+	assignments := make([]tunnelv1.AdmissionHeader, 0, len(all))
+	for index, backend := range all {
+		assignments = append(assignments, backend.(forwardingBackend).header.Admission())
+		connection := entry.PublisherConnections[index]
+		if connection.AvailableStreams == nil || *connection.AvailableStreams > 0 {
+			backends = append(backends, backend)
+		}
 	}
 	var hashed *ippolicy.Policy
 	if entry.IpPolicy == ingressv1.HashedAllowlist {
@@ -152,6 +154,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		PublishRunID:   entry.PublishRunId,
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
+		assignments: assignments,
 	}
 	if entry.ServiceProtocol != nil {
 		route.ServiceProtocol = string(*entry.ServiceProtocol)

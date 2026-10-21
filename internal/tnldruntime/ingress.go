@@ -268,21 +268,21 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
-		Lookup: func(hostname string) (ingress.PublicURL, ingress.LookupReason) {
-			entry, reason := controller.LookupWithReason(hostname, time.Now())
+		LookupPool: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
+			entries, reason := controller.LookupAllWithReason(hostname, time.Now())
 			if reason != ingress.LookupCurrent {
-				return ingress.PublicURL{}, reason
+				return nil, reason
 			}
-			route, err := forwarder.PublicURL(entry)
+			routes, err := forwarder.PublicURLs(entries)
 			if err != nil {
 				logOperationalError(ctx, "read ingress public URL", failure.ServerIngressFailed, err)
-				return ingress.PublicURL{}, ingress.LookupInvalidProjection
+				return nil, ingress.LookupInvalidProjection
 			}
-			return route, ingress.LookupCurrent
+			return routes, ingress.LookupCurrent
 		},
 		RequireProxyHeader: settings.requireProxyHeader, TrustedProxyPeers: settings.trustedProxyPeers, MaxConnections: publicCapacity,
 		Traffic: settings.traffic, Pending: settings.pending,
-		CurrentTrafficRuns:        routingTable.CurrentTrafficRuns,
+		TerminalTrafficRuns:       routingTable.TerminalTrafficRuns,
 		MaxClientHelloConnections: settings.clientHelloConnectionLimit,
 		MaxControlConnections:     settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,

@@ -977,6 +977,9 @@ func closePublishRun(
 	reason string,
 ) error {
 	if session.ReadyAt.Valid {
+		// the event and closure commit together. only this terminal path may
+		// authorize ingress to retire lifetime totals for the exact run.
+		session.ClosedAt = timestamptz(now)
 		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, nil, "public_url_tombstone", now); err != nil {
 			return err
 		}
