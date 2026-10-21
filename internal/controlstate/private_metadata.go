@@ -241,10 +241,7 @@ func (d *Database) GetPrivateServiceForPublisher(ctx context.Context, id string,
 	if settings != nil && settings.Limits != nil {
 		result.HTTPLimits = settings.Limits.HTTP
 	}
-	var source LocalServiceSource
-	if err = tx.QueryRow(ctx, `SELECT project_key,source_fingerprint,service,worktree_key FROM control.local_project_services WHERE private_service_id=$1`, id).Scan(&source.ProjectKey, &source.SourceFingerprint, &source.Service, &source.WorktreeKey); err == nil {
-		result.Source = &source
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	if err = privateServiceSource(ctx, controlstatedb.New(tx), &result); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {
