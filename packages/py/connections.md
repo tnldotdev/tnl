@@ -199,3 +199,22 @@ This local fixture uses the real native IPC owner and native CLI read operation,
 an ephemeral certificate, PostgreSQL SSLRequest negotiation, and a real TLS
 socket. It checks failed hostname verification, opaque TCP settings, and unsafe
 handle permissions without contacting a deployed server.
+
+For configured-app metadata and Uvicorn registration, run:
+
+```console
+mise exec -- task py:test -- -k 'app_metadata or worker_registers'
+```
+
+The Go app fixture builds assignments with `projectmeta.NewEndpoint` and
+`Metadata.Public(true)`. Python validates HTTP, TCP, PostgreSQL, MySQL, and
+Kubernetes siblings, including their allocated ports and public/private exposure.
+Only the selected Uvicorn app must be HTTP; its `public_url` retains the native
+HTTPS origin and port even when its managed endpoint is private.
+
+The native subprocess checks use the real local publisher handler, scoped
+capability, and SQLite-backed registration manager for prepare, register, renew,
+and unregister. The publication worker is a fixture; these checks do not exercise
+control allocation, CLI owner discovery, certificates, relays, or visitor traffic.
+Separate real Uvicorn worker/reload checks use native-produced assignments through
+a Python HTTP fixture to verify listener binding and shutdown order.

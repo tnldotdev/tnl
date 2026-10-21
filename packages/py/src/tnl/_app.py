@@ -27,6 +27,45 @@ from ._protocol import (
 )
 
 
+def _service_metadata(name: str, value: object) -> dict[str, object]:
+    item = object_value(
+        value, {"protocol", "namespace", "hostname", "port", "public", "url", "paths"}
+    )
+    hostname(item.get("namespace"))
+    host = hostname(item.get("hostname"))
+    protocol, port = item.get("protocol"), item.get("port")
+    if (
+        protocol not in ("http", "tcp", "postgres", "mysql", "kubernetes")
+        or type(port) is not int
+        or not 1 <= port <= 65535
+        or type(item.get("public")) is not bool
+    ):
+        raise InvalidResponse()
+    url = item.get("url", "")
+    if protocol in ("http", "kubernetes"):
+        if url != f"https://{host}:{port}" and not (port == 443 and url == f"https://{host}"):
+            raise InvalidResponse()
+    elif url != "":
+        raise InvalidResponse()
+    paths = item.get("paths", {})
+    if not isinstance(paths, dict) or len(paths) > 32 or protocol != "http" and paths:
+        raise InvalidResponse()
+    for prefix, raw in paths.items():
+        prefix = text(prefix, 256)
+        mount = object_value(raw, {"service", "url", "stripPrefix"})
+        if (
+            re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+", prefix) is None
+            or any(segment in (".", "..") for segment in prefix.split("/"))
+            or prefix == "/__tnl"
+            or prefix.startswith("/__tnl/")
+            or service_name(mount.get("service")) == name
+            or mount.get("url") != f"{url}{prefix}"
+            or type(mount.get("stripPrefix")) is not bool
+        ):
+            raise InvalidResponse()
+    return item
+
+
 class PreparedService:
     def __init__(
         self, directory: str, service: str | None, state_dir: str | None, native: NativeRuntime
@@ -71,9 +110,9 @@ class PreparedService:
         ):
             raise InvalidResponse()
         name = service_name(assignment.get("service"))
-        private_service = assignment.get("hostname") == "" and assignment.get("public_url") == ""
-        host = "" if private_service else hostname(assignment.get("hostname"))
-        url = "" if private_service else f"https://{host}"
+        without_endpoint = assignment.get("hostname") == "" and assignment.get("public_url") == ""
+        host = "" if without_endpoint else hostname(assignment.get("hostname"))
+        url = "" if without_endpoint else text(assignment.get("public_url"))
         project = object_value(
             assignment.get("project"),
             {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
@@ -87,24 +126,22 @@ class PreparedService:
             or any(key in project for key in ("oauth", "webhooks", "aliases"))
         ):
             hostname(project.get("namespace"))
+        validated = {}
         for key, raw in services.items():
-            service_name(key)
-            item = object_value(raw, {"protocol", "namespace", "hostname", "url", "paths"})
-            hostname(item.get("namespace"))
-            item_host = hostname(item.get("hostname"))
-            if item.get("protocol") != "http" or item.get("url") != f"https://{item_host}":
-                raise InvalidResponse()
-        own = services.get(name)
+            key = service_name(key)
+            validated[key] = _service_metadata(key, raw)
+        own = validated.get(name)
         if (
             name != endpoint.service
-            or assignment.get("public_url") != url
-            or (private_service and own is not None)
+            or endpoint.scope != "app"
+            or (without_endpoint and own is not None)
             or (
-                not private_service
+                not without_endpoint
                 and (
-                    not isinstance(own, dict)
+                    own is None
                     or own.get("protocol") != "http"
                     or own.get("hostname") != host
+                    or own.get("url") != url
                 )
             )
         ):

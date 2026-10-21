@@ -156,7 +156,7 @@ tasks:
       - uv run --frozen --project packages/py mypy packages/py/src packages/py/tests
 
   py:test:
-    desc: Run Python tests with the real native CLI and connection owner
+    desc: Run Python tests with the real native CLI and local owners
     cmds:
       - |
         set -eu
@@ -164,7 +164,8 @@ tasks:
         trap 'rm -rf "$build_dir"' EXIT
         go build -race -o "$build_dir/tnl" ./cmd/tnl
         go build -race -o "$build_dir/owner" ./packages/py/tests/testdata/connection_owner
-        uv run --frozen --project packages/py pytest -q packages/py/tests --tnl-binary="$build_dir/tnl" --tnl-connection-owner="$build_dir/owner"
+        go build -race -o "$build_dir/app-owner" ./packages/py/tests/testdata/app_owner
+        uv run --frozen --project packages/py pytest -q packages/py/tests --tnl-binary="$build_dir/tnl" --tnl-connection-owner="$build_dir/owner" --tnl-app-owner="$build_dir/app-owner" {{.CLI_ARGS}}
 
   py:build:
     desc: Build and verify four platform Python wheels from a GoReleaser snapshot

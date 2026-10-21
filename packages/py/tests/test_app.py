@@ -16,7 +16,10 @@ import pytest
 @pytest.mark.parametrize("reload", [False, True])
 @pytest.mark.parametrize("private_service", [False, True])
 def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
-    tmp_path: Path, reload: bool, private_service: bool
+    tmp_path: Path,
+    reload: bool,
+    private_service: bool,
+    native_app_assignment: dict[str, object],
 ) -> None:
     async def scenario() -> None:
         tmp_path.chmod(0o700)
@@ -53,29 +56,14 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     active.update(payload)
                     active["registration_id"] = "reg_" + str(len(requests) % 10) * 32
                     assert payload["framework"] == "python"
-                    body = json.dumps(
-                        {
-                            "version": 1,
-                            "registration_id": active["registration_id"],
-                            "service": "web",
-                            "hostname": "" if private_service else "web.member.example",
-                            "public_url": "" if private_service else "https://web.member.example",
-                            "project": {
-                                "namespace": "" if private_service else "member.example",
-                                "dev": True,
-                                "services": {}
-                                if private_service
-                                else {
-                                    "web": {
-                                        "protocol": "http",
-                                        "namespace": "member.example",
-                                        "hostname": "web.member.example",
-                                        "url": "https://web.member.example",
-                                    }
-                                },
-                            },
-                        }
-                    ).encode()
+                    native_app_assignment["registration_id"] = active["registration_id"]
+                    if private_service:
+                        native_app_assignment["hostname"] = ""
+                        native_app_assignment["public_url"] = ""
+                        project = native_app_assignment["project"]
+                        assert isinstance(project, dict)
+                        project["services"].pop("web", None)
+                    body = json.dumps(native_app_assignment).encode()
                     status = 200
                     log({"event": "prepare", "pid": payload["pid"]})
                 elif path == "/v1/register":
