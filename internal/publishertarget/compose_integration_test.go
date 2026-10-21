@@ -67,7 +67,7 @@ func TestComposeIntegrationHostTargets(t *testing.T) {
 	projectName := "tnl-compose-target-" + hex.EncodeToString(suffix[:])
 	label := projectName
 	file := filepath.Join(root, "compose.yaml")
-	configuration := fmt.Sprintf("services:\n  web:\n    image: mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61\n    command: [/fixture/app]\n    labels:\n      tnl.worktree: %s\n    ports: ['127.0.0.1::3000']\n    volumes:\n      - %q\n  db:\n    image: mirror.gcr.io/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499\n    labels:\n      tnl.worktree: %s\n    ports: ['127.0.0.1::6379']\n", label, appBinary+":/fixture/app:ro", label)
+	configuration := fmt.Sprintf("services:\n  web:\n    image: mirror.gcr.io/library/golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110\n    command: [/fixture/app]\n    labels:\n      tnl.worktree: %s\n    ports: ['127.0.0.1::3000']\n    volumes:\n      - %q\n  db:\n    image: mirror.gcr.io/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499\n    labels:\n      tnl.worktree: %s\n    ports: ['127.0.0.1::6379']\n", label, appBinary+":/fixture/app:ro", label)
 	if err := os.WriteFile(file, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}

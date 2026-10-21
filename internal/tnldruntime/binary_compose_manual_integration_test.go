@@ -44,7 +44,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 			t.Fatal("-tnl-test-compose-host-address must be an IPv4 address or host-gateway")
 		}
 	}
-	image := "mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61"
+	image := "mirror.gcr.io/library/golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110"
 	postgresImage := "mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 	base := filepath.Join(root, "compose.yaml")
 	configuration := fmt.Sprintf("services:\n  publisher:\n    image: %s\n    command: [sleep, infinity]\n    working_dir: /workspace\n    extra_hosts:\n      - control.127.0.0.1.nip.io:host-gateway\n      - relay.127.0.0.1.nip.io:host-gateway\n    environment:\n      SSL_CERT_FILE: /run/tnl/roots.pem\n      TNL_SERVER: https://control.127.0.0.1.nip.io:8445\n      TNL_STATE_DIR: /run/tnl/state/owner-state\n    volumes:\n      - %q\n      - %q\n      - %q\n      - publisher-state:/run/tnl/state\n  web:\n    image: %s\n    command: [/fixture/app]\n    volumes:\n      - %q\n  db:\n    image: %s\n    environment:\n      POSTGRES_PASSWORD: postgres\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U postgres -d postgres]\n      interval: 2s\n      timeout: 5s\n      retries: 10\nvolumes:\n  publisher-state:\n", image, fixture.tnlPath+":/usr/local/bin/tnl:ro", fixture.trustFile+":/run/tnl/roots.pem:ro", root+":/workspace", image, appBinary+":/fixture/app:ro", postgresImage)
