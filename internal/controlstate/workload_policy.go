@@ -88,7 +88,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		services := map[string]config.Service{}
 		for key, s := range c.Services {
 			if s.Publisher != "local" {
-				services[key] = config.Service{}
+				services[key] = config.Service{Publisher: new(s.Publisher)}
 			}
 		}
 		policy := config.Workload{Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Ref: g.Ref, Events: g.Events}, Services: p.Services}

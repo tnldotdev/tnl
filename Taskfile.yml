@@ -245,6 +245,12 @@ tasks:
     cmds:
       - go test -race -v ./internal/authorityapi -run='^TestWebsiteTeamUsage' -count=1
 
+  go:test:config-contracts:
+    desc: Check config serialization, evaluated owner snapshots, target trust, references and local status protocols
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/config/... ./internal/projectconfig ./internal/projectmeta ./internal/naming ./internal/localpublisher -count=1
+      - go test {{.CLI_ARGS}} ./cmd/tnl -run='^TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink$' -count=1
+
   go:test:live-authorization:
     desc: Check public HTTP decision caching and live request authorization
     vars:

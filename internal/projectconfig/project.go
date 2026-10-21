@@ -26,25 +26,35 @@ type Project struct {
 // configuration. an empty selection still resolves cwd as a
 // project so commands without a configuration file share the same identity.
 func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte) (Project, error) {
-	worktree, err := ResolveWorktree(ctx, cwd)
+	directory := cwd
+	if selection.Path != "" {
+		path, err := absolutePath(cwd, selection.Path)
+		if err != nil {
+			return Project{}, err
+		}
+		directory, err = filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return Project{}, fmt.Errorf("resolve selected project directory: %w", err)
+		}
+		selection.Path = filepath.Join(directory, filepath.Base(path))
+	}
+	worktree, err := ResolveWorktree(ctx, directory)
 	if err != nil {
 		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
+	root := worktree.Root
+	if selection.Path != "" {
+		root = directory
+	}
 	project := Project{
 		Selection: selection,
-		Worktree:  ApplyWorktreeHashSalt(worktree, worktree.Root, salt),
-		Root:      worktree.Root,
+		Worktree:  ApplyWorktreeHashSalt(worktree, root, salt),
+		Root:      root,
 	}
 	if selection.Path == "" {
 		return project, nil
 	}
 
-	project.Root = filepath.Dir(selection.Path)
-	project.Worktree, err = ResolveWorktree(ctx, project.Root)
-	if err != nil {
-		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
-	}
-	project.Worktree = ApplyWorktreeHashSalt(project.Worktree, project.Root, salt)
 	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
 		project.Config, err = loadTypeScript(ctx, selection.Path, cwd, project.Worktree)
 	} else {

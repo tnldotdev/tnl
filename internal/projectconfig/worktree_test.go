@@ -35,7 +35,10 @@ func TestResolveWorktreePreservesGitCommandDeadline(t *testing.T) {
 }
 
 func TestWorktreeNamesUseProjectAndCheckoutNotBranch(t *testing.T) {
-	parent := t.TempDir()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	primary := filepath.Join(parent, "shop")
 	linked := filepath.Join(parent, "perf")
 	if err := os.Mkdir(primary, 0o700); err != nil {

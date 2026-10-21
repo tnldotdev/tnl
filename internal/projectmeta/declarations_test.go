@@ -38,7 +38,7 @@ export default defineConfig(({worktree}) => ({
   services: {
     web: {publicURL: {}, http: {paths: {"/api": "api"}}},
     api: {},
-    db: worktree.label.checkout ? {protocol: "postgres", target: {type: "address", address: "db:5432"}} : {protocol: "mysql", target: {type: "address", address: "db:3306"}},
+    db: worktree.label.checkout ? {publisher: "production" as const, protocol: "postgres", target: {type: "address", address: "db:5432"}} : {publisher: "production" as const, protocol: "mysql", target: {type: "address", address: "db:3306"}},
     ...(worktree.label.checkout ? {worker: {protocol: "tcp" as const, target: {type: "address" as const, address: "worker:9000"}}} : {}),
   },
   aliases: { review: { service: "web" } },

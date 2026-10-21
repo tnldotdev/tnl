@@ -2149,7 +2149,7 @@
               "service": {
                 "type": "string",
                 "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                "description": "Configured entry service serving the alias."
+                "description": "configured local HTTP entry service with an explicit public_url block."
               },
               "name": {
                 "type": "string",
@@ -2221,7 +2221,8 @@
                     "type": "array",
                     "maxItems": 32,
                     "minItems": 1,
-                    "uniqueItems": true
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -2294,7 +2295,8 @@
                     "type": "array",
                     "maxItems": 32,
                     "minItems": 1,
-                    "uniqueItems": true
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -2336,7 +2338,8 @@
                     "type": "array",
                     "maxItems": 32,
                     "minItems": 1,
-                    "uniqueItems": true
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",
@@ -2377,7 +2380,8 @@
                     "type": "array",
                     "maxItems": 32,
                     "minItems": 1,
-                    "uniqueItems": true
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
                   },
                   "max_duration": {
                     "type": "string",

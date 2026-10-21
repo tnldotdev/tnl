@@ -391,7 +391,7 @@ func targetSchema(protocol string) *jsonschema.Schema {
 
 func aliasSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "Configured entry service serving the alias."})
+	properties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "configured local HTTP entry service with an explicit public_url block."})
 	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`, MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Relative DNS name beneath the member namespace; defaults to the alias key. Nested names require server permission."})
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain; otherwise inherit the entry service's domain."})
 	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."})

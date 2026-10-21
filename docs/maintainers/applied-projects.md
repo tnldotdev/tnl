@@ -34,6 +34,8 @@ tunnel heartbeat.
 named groups reserve a durable namespace beneath the selected team's existing
 namespace. the readable project label is captured from the Git source and config
 directory at first apply; checkout paths and branch names do not rename it.
+labels longer than 63 bytes keep a readable prefix and a stable hash of the full
+normalized label, so long monorepo paths still produce usable DNS namespaces.
 services receive stable endpoint hostnames and durable per-ingress-pool ports.
 `publishers.NAME.domain` selects the ready domain and `public: true` declares
 direct reachability; omission keeps the endpoint connector-only. neither setting

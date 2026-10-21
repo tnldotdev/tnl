@@ -193,7 +193,7 @@ components:
         project: { type: string }
         service: { type: string }
         service_protocol:
-          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PublicURLServiceProtocol" }
+          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceProtocol" }
         directory: { type: string }
         tunnel_id: { type: string }
         public_url: { type: string }
@@ -251,7 +251,8 @@ components:
         server: { type: string }
         project: { type: string }
         service: { type: string }
-        service_protocol: { type: string, enum: [http, tcp, mysql, postgres] }
+        service_protocol:
+          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceProtocol" }
         public_url_id: { type: string }
         publish_run_number: { type: integer, format: int64, minimum: 1 }
         private_service_id:

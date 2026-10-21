@@ -906,7 +906,7 @@ export interface TnlConfig {
     [k: string]:
       | {
           /**
-           * Configured entry service serving the alias.
+           * configured local HTTP entry service with an explicit public_url block.
            */
           service: string;
           /**
@@ -942,6 +942,8 @@ export interface TnlConfig {
       | {
           provider: "github";
           /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
            * @minItems 1
            * @maxItems 32
            */
@@ -990,6 +992,8 @@ export interface TnlConfig {
       | {
           provider: "vercel";
           /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
            * @minItems 1
            * @maxItems 32
            */
@@ -1007,6 +1011,8 @@ export interface TnlConfig {
       | {
           provider: "fly";
           /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
            * @minItems 1
            * @maxItems 32
            */
@@ -1024,6 +1030,8 @@ export interface TnlConfig {
       | {
           provider: "oidc";
           /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
            * @minItems 1
            * @maxItems 32
            */

@@ -200,11 +200,14 @@ may require further shortening. the primary checkout omits the checkout piece.
 generated project declarations preserve exact label literals, and browser
 metadata exposes those pieces without filesystem roots.
 
-project alias declarations name one configured entry service. relative alias
-names can contain several DNS labels; ordinary tunnel names remain one label.
+project alias declarations name one local HTTP entry service with an explicit
+`publicURL` block. private HTTP and named-group services cannot receive aliases.
+relative alias names can contain several DNS labels; ordinary tunnel names remain
+one label.
 configuration validation does not consult server policy or publish a URL.
-TypeScript config helpers check service references in aliases, webhooks, and
-path mounts; Go validation also checks computed values and static configuration.
+TypeScript config helpers check service references in aliases, webhooks, workloads,
+and path mounts; Go validation also checks computed values and static configuration.
+workload targets must use a named publisher group, matching the apply boundary.
 
 aliases keep a persistent selected project directory in client state, initially
 the corresponding project in the primary checkout. registration never takes an
@@ -262,6 +265,13 @@ capabilities and ad-hoc invocations receive invocation-scoped capabilities;
 `api/local-publisher/v1/openapi.yaml` defines their private HTTP operations.
 the owner credential and control sessions stay in the native process. descriptors,
 snapshots, and browser metadata contain no publisher signing key.
+
+project resolution canonicalizes the selected configuration's directory before
+transferring its evaluated snapshot through the private owner pipe. inspection
+byte sizes retain their string form in static projections and snapshots; neither
+the owner nor trust capture evaluates configuration again. runtime trust capture
+uses the already resolved target origin or TCP address. apply resolves a declared
+target once before capturing the same trust material.
 
 the same owner can serve several ad-hoc invocations. each requires a current
 namespace-scoped publisher identity from explicit local setup or a private

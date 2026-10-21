@@ -595,6 +595,7 @@ defineConfig({
       target: { type: "eks", cluster: "development", region: "us-east-1" },
     },
     db: {
+      publisher: "production",
       protocol: "postgres",
       target: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
     },
@@ -628,9 +629,14 @@ defineConfig({
   },
 });
 defineConfig({
+  publishers: { production: {} },
   services: {
-    inventory: {},
-    models: { protocol: "postgres", target: { type: "address", address: "localhost:5432" } },
+    inventory: { publisher: "production", target: { type: "address", address: 3000 } },
+    models: {
+      publisher: "production",
+      protocol: "postgres",
+      target: { type: "address", address: "localhost:5432" },
+    },
   },
   workloads: {
     storefront: {
@@ -688,6 +694,48 @@ defineConfig(async () => ({ services: { web: { target: { type: "app", address: 3
   // @ts-expect-error existing sshd services use opaque tcp, not a separate protocol.
   services: { shell: { protocol: "ssh", target: { type: "address", address: 22 } } },
 }) satisfies TnlConfig;
+
+const privateAliasEntry = {
+  services: { web: {} },
+  aliases: { review: { service: "web" } },
+} as const;
+// @ts-expect-error aliases require an explicit publicURL entry, including inferred objects.
+defineConfig(privateAliasEntry);
+// @ts-expect-error synchronous factories cannot alias private HTTP services.
+defineConfig(() => privateAliasEntry);
+// @ts-expect-error asynchronous factories cannot alias private HTTP services.
+defineConfig(async () => privateAliasEntry);
+const groupAliasEntry = {
+  publishers: { cloud: {} },
+  services: {
+    web: { publisher: "cloud", publicURL: {}, target: { type: "address", address: 3000 } },
+  },
+  aliases: { review: { service: "web" } },
+} as const;
+// @ts-expect-error aliases require local entry services.
+defineConfig(groupAliasEntry);
+const localWorkload = {
+  services: { web: {}, explicit: { publisher: "local" } },
+  workloads: {
+    ci: {
+      provider: "fly",
+      org: "acme",
+      orgId: "1",
+      app: "web",
+      appId: "2",
+      services: ["web", "explicit"],
+    },
+  },
+} as const;
+// @ts-expect-error workload targets must belong to named publisher groups.
+defineConfig(localWorkload);
+// @ts-expect-error synchronous factories reject local workload references.
+defineConfig(() => localWorkload);
+// @ts-expect-error asynchronous factories reject local workload references.
+defineConfig(async () => localWorkload);
+
+// spreading an inferred configuration preserves its service-reference checks.
+defineConfig({ ...config, inspection: { maxBytes: "1GiB" } });
 ({
   services: {
     // @ts-expect-error service-level TLS has been replaced by target.tls.

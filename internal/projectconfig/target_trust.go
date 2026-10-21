@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 )
 
@@ -45,6 +46,14 @@ func targetTrustDigest(hostname string, ca []byte) string {
 // CaptureTargetTrust reads the declared CA source at apply time. source paths
 // and bundle URLs never enter the resulting declaration or remote worker.
 func (p Project) CaptureTargetTrust(ctx context.Context, cache *privatetrust.Cache, name, discovered string) (*TargetTrustSnapshot, error) {
+	service := p.Config.Services[name]
+	if service.Target != nil && service.Target.TLS != nil && !(config.TargetType(service) == "app" && discovered == "") {
+		publication, err := p.ResolvePublish(name, discovered)
+		if err != nil {
+			return nil, err
+		}
+		discovered = string(*publication.Target)
+	}
 	trust, err := p.captureTrust(ctx, cache, name, discovered)
 	if err != nil {
 		return nil, err

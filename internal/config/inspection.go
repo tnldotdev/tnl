@@ -86,8 +86,10 @@ func ValidateInspection(value *Inspection) error {
 	if value.Retention != nil && (value.Retention.Value() < time.Minute || value.Retention.Value() > 30*24*time.Hour) {
 		return errors.New("retention must be between 1m and 720h")
 	}
-	if value.MaxBytes != nil && (value.MaxBytes.Value() < 1<<20 || value.MaxBytes.Value() > 1<<30) {
-		return errors.New("max_bytes must be between 1MiB and 1GiB")
+	if value.MaxBytes != nil {
+		if _, err := value.MaxBytes.text(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -95,6 +97,31 @@ func ValidateInspection(value *Inspection) error {
 type ByteSize int64
 
 func (size ByteSize) Value() int64 { return int64(size) }
+
+func (size ByteSize) text() (string, error) {
+	if size < 1<<20 || size > 1<<30 {
+		return "", errors.New("max_bytes must be between 1MiB and 1GiB")
+	}
+	for _, unit := range []struct {
+		name  string
+		bytes ByteSize
+	}{{"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}} {
+		if size%unit.bytes == 0 {
+			return strconv.FormatInt(int64(size/unit.bytes), 10) + unit.name, nil
+		}
+	}
+	return "", errors.New("max_bytes must be a positive whole KiB, MiB, or GiB size")
+}
+
+func (size ByteSize) MarshalJSON() ([]byte, error) {
+	text, err := size.text()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(text)
+}
+
+func (size ByteSize) MarshalYAML() (any, error) { return size.text() }
 
 var byteSizeSyntax = regexp.MustCompile(`^[1-9][0-9]*(KiB|MiB|GiB)$`)
 

@@ -90,6 +90,11 @@ one native owner serving real HTTP and PostgreSQL while another request stalls.
 Prepared reads publish metadata and transport identity together; they never wait
 for another service's preparation or an assertion exchange.
 
+For config serialization, evaluated native-owner snapshots, resolved target trust,
+service references, and local status protocols, run `task go:test:config-contracts`
+through `mise exec --`. `task js:typecheck` checks the same reference restrictions
+in config literals and synchronous/asynchronous factories, along with SDK types.
+
 For public HTTP live authorization, run `task go:test:live-authorization`, then
 `task go:test:live-authorization -- -race`. These use deterministic clocks for
 long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
