@@ -45,10 +45,10 @@ func Race(
 	fallbackDelay time.Duration,
 	hello tunnelv1.Message,
 ) (session *Session, transport Transport, retErr error) {
-	ctx, finish := observability.Start(ctx, "tunnel.transport_race", trace.WithAttributes(observability.TransportPreference.String(boundedTransport(primary.Transport))))
+	ctx, finish := observability.Start(ctx, "tunnel.transport_race", trace.WithAttributes(observability.TransportPreference.Value(boundedTransport(primary.Transport))))
 	defer func() {
 		if transport == TransportQUIC || transport == TransportTLSTCP {
-			trace.SpanFromContext(ctx).SetAttributes(observability.Transport.String(string(transport)))
+			trace.SpanFromContext(ctx).SetAttributes(observability.Transport.Value(boundedTransport(transport)))
 		}
 		finish(retErr)
 	}()
@@ -118,7 +118,7 @@ func Race(
 }
 
 func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) (result candidateResult) {
-	ctx, finish := observability.Start(ctx, "tunnel.transport_candidate", trace.WithAttributes(observability.Transport.String(boundedTransport(candidate.Transport))))
+	ctx, finish := observability.Start(ctx, "tunnel.transport_candidate", trace.WithAttributes(observability.Transport.Value(boundedTransport(candidate.Transport))))
 	started := time.Now()
 	defer func() {
 		finish(result.err)
@@ -137,12 +137,9 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	return candidateResult{err: err, terminal: IsTerminalHandshakeError(err)}
 }
 
-func boundedTransport(transport Transport) string {
-	switch transport {
-	case TransportQUIC, TransportTLSTCP:
-		return string(transport)
-	}
-	return "unknown"
+func boundedTransport(transport Transport) observability.TransportValue {
+	value, _ := observability.ParseTransport(string(transport))
+	return value
 }
 
 // IsTerminalHandshakeError reports whether a protocol rejection must stop both

@@ -185,7 +185,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		base = context.Background()
 	}
 	base = observability.NarrowIdentity(base, observability.Identity{PublicURLID: config.PublicURLID})
-	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
+	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
@@ -804,7 +804,7 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 		parent = context.Background()
 	}
 	parent = observability.NarrowIdentity(parent, observability.Identity{PublicURLID: r.run.PublicURLID})
-	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
+	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
 	parent = observability.WithVisitor(parent, streamHeader.VisitorConnectionID)
 	life, cancel := context.WithCancel(parent)
 	defer cancel()

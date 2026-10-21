@@ -57,7 +57,7 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 		}
 		for index, operation := range local.ActiveOperations {
 			result.ActiveOperations[index] = observability.DatabaseOperationSnapshot{
-				Operation: operation.Operation, ElapsedSeconds: operation.ElapsedSeconds,
+				Operation: diagnosticQueryNames.Lookup(operation.Operation), ElapsedSeconds: operation.ElapsedSeconds,
 			}
 		}
 		return result

@@ -54,7 +54,7 @@ func (d *Database) lockManagedHTTPRun(ctx context.Context, tx pgx.Tx, auth Manag
 	if !slices.Contains(endpoint.RunIds, auth.RunID) {
 		return ErrPrivateServiceAccess
 	}
-	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.PrivateServiceID}, observability.Fields{Component: "control", ServiceProtocol: "http"})
+	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.PrivateServiceID}, observability.Fields{Component: "control", ServiceProtocol: observability.ProtocolHTTP})
 	return nil
 }
 

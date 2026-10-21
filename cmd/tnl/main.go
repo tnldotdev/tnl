@@ -354,7 +354,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" {
 		var metrics *observability.Metrics
-		ctx, metrics, err = observability.StartProcess(ctx, string(commandObservabilityRole(parsedCommand, flags)))
+		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, flags).String())
 		if err != nil {
 			return err
 		}

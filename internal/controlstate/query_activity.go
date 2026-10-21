@@ -19,22 +19,7 @@ import (
 //go:embed queries/*.sql
 var diagnosticQuerySources embed.FS
 
-var diagnosticQueryNames = func() map[string]struct{} {
-	names := make(map[string]struct{})
-	files, _ := diagnosticQuerySources.ReadDir("queries")
-	for _, file := range files {
-		data, _ := diagnosticQuerySources.ReadFile("queries/" + file.Name())
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if strings.HasPrefix(line, "-- name: ") {
-				fields := strings.Fields(line)
-				if len(fields) == 4 {
-					names[fields[2]] = struct{}{}
-				}
-			}
-		}
-	}
-	return names
-}()
+var diagnosticQueryNames = observability.DatabaseOperations(diagnosticQuerySources)
 
 const maximumActiveQueries = MaxDatabaseDiagnosticOperations
 
@@ -62,7 +47,7 @@ func diagnosticQueryName(sql string) string {
 	line, _, _ := strings.Cut(sql, "\n")
 	fields := strings.Fields(line)
 	if len(fields) == 4 && fields[0] == "--" && fields[1] == "name:" {
-		if _, ok := diagnosticQueryNames[fields[2]]; ok {
+		if diagnosticQueryNames.Contains(fields[2]) {
 			return strings.Clone(fields[2]) // do not retain the SQL backing string.
 		}
 	}
@@ -105,7 +90,7 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 		err = ctx.Err()
 	}
 	metrics := q.metrics.Load()
-	metrics.ObserveDatabaseQueryContext(ctx, query.operation, err, now.Sub(query.started))
+	metrics.ObserveDatabaseQueryContext(ctx, diagnosticQueryNames.Lookup(query.operation), err, now.Sub(query.started))
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, exists := q.active[query]; exists {
@@ -137,7 +122,7 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 	if query.operation == "commit" || query.operation == "rollback" || conn.IsClosed() {
 		if guards := q.guards[conn]; guards != nil {
 			for operation, started := range guards.held {
-				metrics.ObserveDatabaseGuardContext(ctx, operation, err, now.Sub(started))
+				metrics.ObserveDatabaseGuardContext(ctx, diagnosticQueryNames.Lookup(operation), err, now.Sub(started))
 			}
 			delete(q.guards, conn)
 		}

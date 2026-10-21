@@ -70,7 +70,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	ctx, finish := d.observeOperation(ctx, operation)
 	defer func() {
 		err := retErr
-		result := string(observability.ErrorOutcome(err))
+		result := observability.ErrorOutcome(err).String()
 		switch {
 		case errors.Is(err, ErrPublisherRuntimeStale):
 			observability.MarkReason(ctx, "stale")

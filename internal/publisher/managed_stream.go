@@ -44,7 +44,8 @@ type ManagedStream struct {
 }
 
 func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
-	fields := observability.Fields{Component: "publisher", ServiceProtocol: string(s.Protocol), AccessPath: "direct", Exposure: "private"}
+	protocol, _ := observability.ParseProtocol(string(s.Protocol))
+	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "direct", Exposure: "private"}
 	if s.Public {
 		fields.Exposure = "public"
 	}

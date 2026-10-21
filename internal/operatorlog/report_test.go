@@ -75,11 +75,11 @@ func TestReportContextExportsMachineOperationAndExactOwnedCode(t *testing.T) {
 	for _, a := range record.Attributes {
 		attrs[a.Key] = a.Value.GetStringValue()
 	}
-	if attrs[string(observability.Operation)] != "renew_private_publisher" || attrs[string(observability.Event)] != "operational_failure" || attrs[string(observability.ErrorType)] != string(failure.TargetUnavailable) {
+	if attrs[string(observability.Operation.Key())] != "renew_private_publisher" || attrs[string(observability.Event.Key())] != "operational_failure" || attrs[string(observability.ErrorType.Key())] != string(failure.TargetUnavailable) {
 		t.Fatal("actual operator log lost its owned machine fields", attrs)
 	}
 	for _, definition := range observability.VocabularyAttributes() {
-		if definition.Key == observability.ErrorType && !slices.Contains(definition.Values, string(failure.TargetUnavailable)) {
+		if definition.Key == observability.ErrorType.Key() && !slices.Contains(definition.Values, string(failure.TargetUnavailable)) {
 			t.Fatal("actual TNL code is not approved by generated vocabulary")
 		}
 	}

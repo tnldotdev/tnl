@@ -54,7 +54,7 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 	}
 	fields := observability.Fields{Component: "control"}
 	if p.Scope.PublicURLID != "" {
-		fields.ServiceProtocol = "http"
+		fields.ServiceProtocol = observability.ProtocolHTTP
 	}
 	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, PublicURLID: p.Scope.PublicURLID, ServiceID: p.Scope.PrivateServiceID}, fields))
 	return store, p, true

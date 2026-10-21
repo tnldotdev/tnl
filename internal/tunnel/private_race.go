@@ -28,7 +28,7 @@ func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, dela
 		go func() {
 			attempt, stop := context.WithTimeout(setup, handshakeTimeout)
 			defer stop()
-			attempt, finishAttempt := observability.Start(attempt, "tunnel.private_transport_candidate", trace.WithAttributes(observability.Transport.String(boundedTransport(candidate.Transport))))
+			attempt, finishAttempt := observability.Start(attempt, "tunnel.private_transport_candidate", trace.WithAttributes(observability.Transport.Value(boundedTransport(candidate.Transport))))
 			transport, err := candidate.Connector.Connect(attempt, candidate.Endpoint)
 			if err != nil {
 				finishAttempt(err)

@@ -120,7 +120,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if approved.ManagedTls.Public {
 		exposure = "public"
 	}
-	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: string(approved.Protocol), Exposure: exposure})
+	protocol, _ := observability.ParseProtocol(string(approved.Protocol))
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: protocol, Exposure: exposure})
 	ctx = observability.WithPublisherRecovery(ctx)
 	_, startup := observability.PublisherOperation(ctx, "private_startup")
 	defer func() { startup(result) }()

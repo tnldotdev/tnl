@@ -28,7 +28,7 @@ func (d *Database) PrometheusMetrics(now time.Time) observability.DatabaseSnapsh
 		}
 	}
 	for _, operation := range local.ActiveOperations {
-		result.ActiveOperations = append(result.ActiveOperations, observability.DatabaseOperationSnapshot(operation))
+		result.ActiveOperations = append(result.ActiveOperations, observability.DatabaseOperationSnapshot{Operation: diagnosticQueryNames.Lookup(operation.Operation), ElapsedSeconds: operation.ElapsedSeconds})
 	}
 	return result
 }
