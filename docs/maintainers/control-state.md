@@ -4,76 +4,50 @@ Audience: tnl maintainers working on `internal/controlstate`, routing
 publication, usage aggregation, or recovery. Product and operator documentation
 does not depend on these implementation details.
 
-## start from the baseline, then keep migrations compatible
+## start from a fresh baseline
 
-The current baseline is for fresh databases; old staging and production schemas
-must be reset before installing it. `tnld migrate` applies that baseline through
-the direct database URL. For later changes, preserve the reads and writes of
-control and standalone processes still serving traffic: add schema before
-switching its users, and remove old schema after those users stop. The runtime
-checks a minimum schema version and accepts newer versions; an older
-`tnld migrate` rejects databases newer than its embedded migrations.
+The current baseline requires a fresh PostgreSQL database and a coordinated
+stop/start of control, ingress, and relay roles. `tnld migrate` uses the direct
+database URL. Serving processes require the exact embedded migration version
+and the stored baseline identity; another version-1 database cannot be reused.
+Later compatible changes must add schema before switching serving code to it.
 
-`schemaVersion` tracks the newest embedded migration and changes when a migration
-is added. `minimumSchemaVersion` tracks the oldest schema the serving code can
-use safely; it advances only when runtime reads or writes need a newer migration.
-The values can differ while an additive migration is not yet used by serving code.
+The baseline creates ingress pools before teams and public URLs. It seeds
+`ingress-a` disabled until the operator verifies its addresses and ports. A
+team's ingress pool is pinned while it owns saved public URLs; each new URL
+inherits that pool. Private services use authenticated ingress assignments,
+not service-specific public TCP ports or port claims.
 
-Migration 23 seeds the current public ingress address as `ingress-a`. Existing
-teams and public URLs keep that pool ID; its address and allocatable ports remain
-disabled until an operator has verified the deployment. A TCP port claim belongs
-to one saved public URL and one pool. Released claims retain the hostname and
-port so another public URL cannot later receive the same pair. Adding a second
-pool must not change the pool already pinned to an existing public URL.
+Public and private publisher connection slots share
+`control.publisher_service_connection_slots`. The typed
+`control.publish_run_connection_slots` and
+`control.private_service_connection_slots` views enforce their service-kind
+boundaries on reads and writes. A slot keeps its `id` and
+`(run_id, connection_slot)` identity when its assignment is replaced;
+`publisher_connection_id` changes. Trigger-maintained relay-service reservations
+count open, assigned slots and use an advisory guard during placement. Historical
+process-run IDs do not require live ingress or relay lease rows.
 
-Migration 24 prevents moving a team to another pool while it has any saved
-public URLs. Creation reads the team's pool under its authorization lock and
-pins it to the new URL. DNS work uses the URL's pinned pool, so member wildcard
-records cannot alternate between ingress addresses. Until `ingress-a` is
-enabled with its public IPs, DNS work for that seeded pool keeps using the
-existing ingress-address configuration; another disabled pool never receives
-DNS records.
+Control stores the guest retry key in `control.guest_retry_keys` and the visitor
+network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
+the storage key and must participate in key rotation. IP-policy and request
+digests elsewhere retain their own ciphertext and storage-key IDs.
 
-Migration 25 records the visitor service protocol separately from a public
-URL's purpose. TCP public URLs have no saved private target. Control assigns a
-TCP port only after the pool and port have been enabled. A claimed URL keeps
-its port across runs; deletion moves the claim into seven days of quarantine.
-Cleanup releases a bounded batch after the deadline, retaining the historical
-hostname-and-port pair so a new URL cannot take both values at once. Both
-TCP protocols prefer available symmetric ports (such as `10001`), then
-choose among the remaining available ports using the public URL ID.
+Applied projects store the source fingerprint, expected/current revision,
+encrypted normalized configuration, group scopes, and service assignments.
+Enrollment stores group membership and public signing keys; private signing
+keys stay with each member. Group leases permit only assigned configuration
+reads and exact-revision acknowledgements. Applying local declarations retains
+metadata without allocating shared worktree URLs. Named group services use
+publisher pools with independent member runs. See
+[applied project boundaries](applied-projects.md).
 
-Control may enable `ingress-a` after its public IPs and `TNLD_TCP_PORTS`
-inventory have been exposed by the ingress deployment. Repeated starts may
-add verified ports but cannot change an enabled pool's public IPs or disable
-ports that have saved claims. Ingress capacity and pool addresses are separate
-from the interchangeable ingress process leases.
-
-Migration 26 makes the saved URL's public TCP port readable with its protocol.
-Creation claims that port inside the URL-creation transaction, after the
-authorization and team guard but before publishing the new URL. An exhausted
-pool rolls back the whole creation; an idempotent retry returns the saved
-hostname and port. Existing HTTP URLs still have no public TCP port.
-
-The guest-domain change requires migration 11 because managed guest trials store
-an empty DNS authority reference that the old constraint rejected. Email delivery
-requires migration 12's queue table, including for storage-key rotation. The
-authority cleanup requires migration 13's renamed guest retry-key columns.
-
-The two publisher connection slots are stored in
-`control.publish_run_connection_slots`. A slot keeps its `id` and
-`(publish_run_id, connection_slot)` identity when its connection assignment is
-replaced; `publisher_connection_id` changes with that assignment. Tables use
-`id` as their primary key and retain natural lookup keys as unique constraints.
-Foreign keys cover saved control-owned relationships, including publish run
-usage and certificate orders. guest trials retain their own ownership IDs;
-historical process-run IDs do not require current-lease rows.
-
-Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` when
-an ingress first registers. The encryption migration discards earlier usage
-reports, buckets, deliveries, ingress usage runs, and the old plaintext key;
-the next ingress registration creates a new key. Storage-key rotation also
-re-encrypts this master key.
+Management audit facts commit with the mutation they describe. Visitor
+observations arrive in bounded, authenticated batches from ingress or an exact
+publisher run and are independently deduplicated. The service-audit clock
+preserves cursor commit order. A process crash can lose queued visitor
+observations; this does not undo a committed management fact or relax an
+authorization decision.
 
 ## acquire locks in one order
 
@@ -230,17 +204,11 @@ page.
 
 ## coordinate certificate challenges
 
-Before TLS-ALPN validation starts, control requires at least one live,
-non-draining ingress. Every such ingress must acknowledge the latest challenge
-projection for the order's publish run number.
-
-Unrelated routing events do not move this barrier. Changes to the challenge's
-own forwarding projection require a new acknowledgement. Selecting the latest
-challenge event before checking kind and expiration prevents a tombstone or
-expired challenge from exposing an older upsert.
-
-Routing retention must preserve the current challenge event until it is safely
-superseded.
+Publisher certificate issuance uses DNS-01 only. Control reconciles the owned
+TXT values under a record lock, waits for the provider change and authoritative
+DNS verification, then asks the CA to validate. Ingress routing and publisher
+connections have no certificate-challenge path. Each publisher keeps its own
+private key; a saved-URL grant receives an exact-host certificate plan.
 
 ## advance certificate work
 
@@ -259,9 +227,8 @@ Public URL certificate work has two stages that can advance independently:
 An ACME response may skip or revisit the intermediate order stages. The worker
 checks the complete authorization set before saving discovery. It presents all
 pending challenges before checking propagation or asking the CA to validate
-any one of them. Control changes TLS-ALPN authorizations from `presenting` to
-`presented` only after publishing their challenge; the worker checks ingress
-routing readiness again before accepting the challenge at the CA.
+any one of them. The worker changes DNS authorizations from `presenting` to
+`presented` after the provider write and verifies propagation before acceptance.
 
 An issued public URL certificate becomes available at `waiting_for_install`,
 even when DNS cleanup remains. For a DNS authorization, `valid` → `cleaning`

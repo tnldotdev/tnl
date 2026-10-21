@@ -1,113 +1,356 @@
-# metrics
+# observability contract
 
-Each `tnld` process serves `/metrics` on its private observability listener
-(`127.0.0.1:9090` by default). Split roles expose their own metrics; standalone
-exposes control, ingress, and both logical relays together. Application metrics
-start with `tnl_`. Prometheus also exports `go_*` and `process_*` metrics.
+`internal/observability` owns each native process's metrics, finite-operation
+spans, optional operational logs, export queues, and shutdown. applications record
+each boundary once. the attribute handles in `attributes.go`, catalog in
+`attribute_catalog.go`, semantic result mappings in `contract.go`, and actual
+instrument declarations generate the shared contract at
+`api/observability/v1/vocabulary.json`. sync that file to tnl.dev; it is neither an
+HTTP API nor a tunnel schema. regenerate with `mise exec -- task generate`.
 
-## process and capacity
+the JSON lists keys, allowed fixed values, meanings, dimension policies, each
+instrument's dimension allowlist, and explicit histogram boundaries. native OTel
+attributes use dots; Prometheus escapes them to underscores. for example,
+`tnl.service_kind` becomes `tnl_service_kind`. application instrument names use
+the same meaningful `tnl_*` families in both exports. there are no old-label or
+old-family aliases. the shared API families are `tnl_api_request_duration_seconds`
+and `tnl_api_requests_in_flight`, including ingress and relay APIs.
 
-| Metric                                     | What it shows                         |
-| ------------------------------------------ | ------------------------------------- |
-| `tnl_process_info{role}`                   | The process's configured role.        |
-| `tnl_admission_limit{resource}`            | Effective admission limits.           |
-| `tnl_admission_rejections_total{resource}` | Work rejected because a limit is hit. |
+## process ownership
 
-Some limits apply **per public URL or hostname**; do not compare those with
-process-wide occupancy. Standalone sums the limits of its two logical relays.
+`StartProcess(ctx, role)` reads standard exporter configuration once and returns
+the owner context and `*Metrics`. `WithMetrics` and `FromContext` carry the owner
+through workers. retain that context when starting background work; use
+`context.WithoutCancel` when the worker has a separate cancellation lifetime.
+join workers before `Shutdown` with a fresh context. flush and shutdown have a
+shared five-second bound across signals and respect shorter caller deadlines.
+each provider starts its flush or shutdown independently within that bound. the
+owner stops its processors even when shutdown starts with a canceled context;
+one slow signal cannot strand another signal's queue. export failures preserve
+their causes for callers while displaying only authored text.
 
-## ingress and relay
+`New(role)` is isolated and local-only. embedding never reads exporter environment
+variables or installs global providers implicitly. neither native entry point
+installs global meter/tracer/error handlers. owner-local export queues avoid
+global SDK feature flags. missing owners make scoped helpers no-ops.
 
-| Metric                                                        | What it shows                             |
-| ------------------------------------------------------------- | ----------------------------------------- |
-| `tnl_ingress_connections{class}`                              | Occupied ingress admission slots.         |
-| `tnl_ingress_visitor_connections_total{outcome}`              | Ordinary visitor outcomes.                |
-| `tnl_ingress_visitor_stream_open_duration_seconds{outcome}`   | Time to a forwarding decision.            |
-| `tnl_ingress_relay_attempts_total{connection_slot,outcome}`   | Internal-forwarding attempts.             |
-| `tnl_ingress_routing_last_successful_check_timestamp_seconds` | Most recent successful routing check.     |
-| `tnl_ingress_lease_expiration_timestamp_seconds`              | Ingress lease expiry.                     |
-| `tnl_relay_publisher_connections_registered`                  | Locally registered publisher connections. |
-| `tnl_relay_publisher_connections_ready`                       | Ready publisher connections.              |
-| `tnl_relay_visitor_stream_slots_occupied`                     | Occupied relay stream slots.              |
-| `tnl_relay_visitor_stream_rejections_total{reason}`           | Non-capacity stream rejections.           |
-| `tnl_relay_earliest_lease_expiration_timestamp_seconds`       | Earliest local relay lease expiry.        |
+`tnld` serves `/metrics` on its private listener (`127.0.0.1:9090` by default).
+standalone includes its control, ingress, and relay observations once. native
+`tnl` has no metrics listener. ordinary CLI commands have role `client`; foreground
+publishing, group publishers, app-led owners, and installed supervisors have role
+`publisher`. detached launchers have role `client`; their child owns publishing.
+parsing help, version, project configuration commands, and offline infrastructure
+generation do not initialize exporters.
 
-Visitor outcomes are recorded when connections end. `forwarded` means ingress
-established forwarding, not that visitor TLS or the local service succeeded.
-Relay attempt counts can exceed visitor counts when ingress retries. Ready
-publisher connections are not the same as database claims.
+finite `tnl` invocations use a shorter 250-millisecond shutdown budget. persistent
+owners retain the five-second budget. see [client tracing](client-tracing.md) for
+native launch and private IPC carriers, SDK/framework ownership, lifecycle
+meaning, and the website bootstrap input contract.
 
-## control and background work
+process resource facts are:
 
-| Metric                                                                 | What it shows                                                         |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `tnl_control_api_request_duration_seconds{surface,operation,outcome}`  | Completed API requests.                                               |
-| `tnl_control_api_requests_in_flight{surface}`                          | Requests still running.                                               |
-| `tnl_control_webhook_provider_source_requests_total{provider,outcome}` | Sender-policy lookups by fixed provider and bounded result.           |
-| `tnl_control_public_urls_created_total{purpose}`                       | New saved public URLs, excluding idempotent retries.                  |
-| `tnl_control_publish_runs_ready_total{purpose}`                        | Publish runs first made ready by public URL purpose.                  |
-| `tnl_control_placement_decisions_total{action,outcome}`                | Publish run placement results.                                        |
-| `tnl_control_certificate_work_duration_seconds{kind,stage,outcome}`    | Certificate worker attempts.                                          |
-| `tnl_control_public_url_certificate_orders_total{domain_kind,plan}`    | New public URL certificate orders committed by this control process.  |
-| `tnl_control_dns_work_duration_seconds{kind,phase,outcome}`            | DNS work and verification.                                            |
-| `tnl_control_public_url_usage_items_total{result}`                     | Finalized, delivered, or retried items.                               |
-| `tnl_control_cleanup_last_success_timestamp_seconds{kind}`             | Last successful cleanup.                                              |
-| `tnl_control_tcp_port_pool_ports{pool,state}`                          | Available, claimed, quarantined, and configured TCP ports per pool.   |
-| `tnl_control_guest_trials_last_24h{stage}`                             | Issued, allocated, ready, or ended guest trials from committed state. |
-| `tnl_control_public_url_recovery_duration_seconds`                     | Newly observed recovery durations.                                    |
+- `service.namespace=tnl`;
+- `service.name=tnld|tnl|tnl-accounts|otel-collector`, according to the process;
+- `service.version` and `tnl.role`;
+- `service.instance.id`, generated randomly for each owner when unset; a durable
+  publisher identity or replica key is not a runtime instance;
+- operator-declared `deployment.environment.name`, `cloud.provider`,
+  `cloud.region`, and `cloud.availability_zone`, only when known.
 
-The API `surface` distinguishes control, built-in authority, and private
-ingress and relay requests. A histogram's `_count` is its completed attempt
-count. Certificate availability is not publisher installation. Usage results
-count different kinds of items; do not sum them as one backlog.
-certificate orders use fixed `managed|custom` domain kinds and `exact|wildcard`
-plans. sum their rates across control replicas. idempotent retries and cached
-certificate reuse do not increment the counter; a committed order can fail
-before the CA issues a certificate. the counter does not measure the CA's
-registered-domain quota or orders created outside this deployment.
-Guest stages are `issued`, `allocated`, `ready`, `expired`, `ready_limit`,
-and `transfer_limit`. They count trials, not publish runs or pings. Each control
-reports the same database-wide 24-hour snapshot; use the maximum across control
-replicas rather than summing them. Guest cleanup removes IP digests after one
-hour for issuance and after trial expiry plus public URL deletion for access.
-Provider source requests are approximate interest, not configured webhook
-endpoints or deliveries. The provider label accepts only the fixed enum or
-`unknown`; it never contains a public URL, project, or identity.
-The `purpose` label is a fixed, client-declared public URL use such as `app`,
-`webhooks`, or `oauth`. These process-local counters show activity, not distinct
-identities. Query control's saved URLs and publish runs for distinct identities;
-URLs saved before purpose tracking are labeled `app` by migration but do not
-retroactively increment the creation counter.
+there is no cloud metadata discovery. scoped tenant or publisher identity never
+becomes a process resource.
 
-For distinct identities rather than process-local counter rates, query control's
-committed ready runs. Each identity appears once per purpose in the window:
+## authenticated scope and caller helpers
 
-```sql
-SELECT u.purpose, count(DISTINCT r.acting_identity_id) AS identities
-FROM control.publish_runs AS r
-JOIN control.public_urls AS u ON u.id = r.public_url_id
-WHERE r.ready_at >= now() - interval '30 days'
-GROUP BY u.purpose
-ORDER BY u.purpose;
+`ReplaceIdentity(ctx, Identity)` replaces every field, including empty fields.
+use it after authentication or when clearing scope. `NarrowIdentity` keeps parent
+team/group/publisher/deployment scope within the same authenticated boundary but
+always replaces or clears service scope. changing a team, publisher, group, or
+deployment starts a replacement scope. conflicting service IDs or invalid fields
+clear the identity instead of inheriting the previous tenant.
+
+```go
+ctx = observability.ReplaceIdentity(ctx, observability.Identity{
+    TeamID: member.TeamId,
+    PublisherGroupID: member.GroupId,
+    PublisherIdentityID: member.PublisherIdentityId,
+})
+worker := observability.NarrowIdentity(ctx, observability.Identity{
+    ServiceID: service.ServiceId,
+})
+worker, finish := observability.PublisherOperation(worker, "target_preflight")
+defer func() { finish(err) }()
 ```
 
-The same purpose can be joined to `control.public_url_usage_buckets` for
-connection and byte totals. Ingress cannot see the HTTP path or whether a
-provider's webhook reached and succeeded at a local handler.
+`ServiceID` is only a managed service. `PublicURLID` is only a public URL; they
+are mutually exclusive. the scope derives `ServiceKind=managed_service|public_url`.
+`NormalizeServiceKind` translates the `private_service` wire value.
+`PublisherGroupID` maps the authenticated `group_id`; `PublisherIdentityID`,
+`DeploymentID`, and `ReplicaKey` retain their distinct meanings. only the publisher
+instruments and the signed control runtime lifecycle instrument allow scoped identity
+dimensions. runtime scope attaches only after control verifies the signing proof.
 
-## database
+`WithFields(ctx, Fields)` replaces the protocol/component field set. protocol and
+transport fields use `Protocol` and `TransportValue`; parse wire strings with
+`ParseProtocol` and `ParseTransport` before setting them. unknown values are omitted.
+`Attributes(ctx, allowed ...MetricKey)` selects identity/protocol
+fields for a caller's explicit instrument allowlist. `TLSAttributes` returns only
+negotiated TLS version and session resumption. `Start(ctx, name, options...)`
+accepts standard span options, including trace links, for authored finite work.
+its error finish function is idempotent. `PublisherOperation` also records its
+duration exactly once. `ObserveOperationContext` attaches an already measured
+operation interval to its caller context; do not wrap the same boundary in an
+additional span. control state starts `ControlOperation` before transaction work;
+driver query and acquisition spans use that context. DNS and certificate workers
+start finite `WorkerAttempt` spans; an available scheduling span is a link, never
+an invented asynchronous request parent. links retain trace/span IDs and flags,
+with at most eight links per span and no link attributes. `Start` also removes
+link tracestate. no scheduling payload is copied into link events or attributes,
+and no request context is stored in worker records or database activity snapshots.
 
-| Metric                                                   | What it shows                              |
-| -------------------------------------------------------- | ------------------------------------------ |
-| `tnl_database_pool_*`                                    | Pool size, utilization, and waits.         |
-| `tnl_database_pool_acquire_duration_seconds{outcome}`    | Time to acquire a connection.              |
-| `tnl_database_query_duration_seconds{operation,outcome}` | SQL time after acquisition.                |
-| `tnl_database_failures_total{phase,outcome}`             | Connection, transaction, and SQL failures. |
+publisher byte directions are `visitor_to_target|target_to_visitor`. relay wire
+directions are `visitor_to_publisher|publisher_to_visitor`; ingress keeps its
+explicit forwarding direction. wire bytes include protocol metadata and are not
+application payload bytes. `tnl.transport` is absent until a transport is selected;
+`tnl.transport_preference` describes the initial preference independently.
 
-Scraping never queries PostgreSQL or a remote service. Metric labels use
-fixed operations and outcomes, plus a bounded operator-owned ingress pool ID;
-never public URL IDs, hostnames, credentials, or raw URLs. The pool gauge is a
-database-wide snapshot on each control process, so use the maximum across
-replicas rather than summing it.
-Definitions and role registration live in `internal/observability`; record
-events at their ingress, relay, control, or worker boundary.
+## typed authoring boundaries
+
+`Key` is a catalog name with no value constructors. declared handles expose only
+the right constructor: `HTTPStatus.Int(200)`, `TLSResumed.Bool(true)`, and
+`RequestID.String(id)`. closed values use `Value`, such as
+`ServiceProtocol.Value(ProtocolHTTP)` and `OutcomeKey.Value(Success)`. protocol,
+transport, role, outcome, service kind, state, and event are distinct ordinal
+types; a string cast cannot turn supplied input into one. `New` and `StartProcess`
+validate dynamic role strings before the owner uses a typed `Role`.
+
+```go
+protocol, _ := observability.ParseProtocol(string(service.Protocol))
+ctx = observability.WithFields(ctx, observability.Fields{
+    Component: "publisher",
+    ServiceProtocol: protocol, // unknown wire values stay unspecified
+})
+ctx, finish := observability.Start(ctx, "publisher.target_preflight")
+defer func() { finish(err) }()
+```
+
+`Start`, `WorkerAttempt`, `PublisherOperation`, and authorization helpers accept
+authored string literals through an unexported operation type. dynamic strings
+cannot be passed or cast to that type by callers. `ControlOperation` validates
+wrapper arguments against its compiled operation list. the database adapter
+builds a `DatabaseOperationCatalog` from `embed.FS` SQL sources; `Lookup` returns
+an opaque `DatabaseOperationName`, normalizing unknown driver names to `unknown`.
+query, guard, and passive snapshot observations all require that token.
+
+instrument declarations take sealed `MetricKey` handles and an `InstrumentKind`.
+resource and trace/log-only keys cannot be declared as metric dimensions, except
+the explicitly metric-eligible process role used by `tnl_process_info`.
+`DimensionPolicy` describes catalog policy with a separate type. recording uses
+named `Dimension` values, independent of argument order:
+
+```go
+attempts := newCounter(meter, "tnl_example_attempts_total", "Completed attempts.",
+    ConnectionSlot, OutcomeKey)
+attempts.With(ConnectionSlot.Dimension(0), OutcomeKey.Dimension(Success)).Inc()
+```
+
+there is no positional string-label binding or arbitrary key-to-dimension adapter.
+trace/log-only handles have no `Dimension` method. bindings reject duplicate or
+undeclared keys; invalid external values are omitted. semantic result adapters
+classify domain strings into typed outcomes and bounded reasons before binding.
+scoped identity strings remain dynamic and retain their authentication and length
+checks. the SDK filter also checks value types, enums, and instrument allowlists
+for observations made directly through OTel. `.Key()` returns a handle's catalog
+name for metadata comparisons; it does not recover a value constructor.
+
+## results and cardinality
+
+`tnl.outcome` is `success|denied|rejected|timeout|canceled|error`. bounded domain
+detail goes in `tnl.reason`; readiness belongs in `tnl.state`, and queue/ingestion
+lifecycle belongs in `tnl.event`. certificate, DNS, cleanup, and admission domains
+use `tnl.certificate_kind`, `tnl.dns_kind`, `tnl.cleanup_kind`, and
+`tnl.capacity_resource`. there is no generic `kind` label.
+
+worker phases, stages, and actions use `tnl.operation`; certificate milestones use
+`tnl.event`. a successful HTTP 200 authorization response can have outcome `denied`
+or `rejected` with reason `not_admitted`. the latter means the credential was
+allowed but the visitor was not admitted. infrastructure failures remain `error`.
+
+`ErrorOutcome` classifies context cancellation/deadlines, network timeouts, and
+owned failure classes without formatting an error. `FailureCode` exports only an
+owned failure reason or diagnostic code as `error.type`, using `internal.unexpected` for
+unclassified errors. original errors and causes remain available to callers.
+span status and logs never contain raw error strings or exception messages.
+the generated `error.type` values include exact catalog codes, including `TNL_*`
+client codes. native providers disable the SDK's automatic panic exception
+recording. interrupted API handlers finish with an error and continue unwinding
+the original panic; an unsent response does not acquire a synthetic HTTP 200.
+
+HTTP instrumentation uses standard method/status/route attributes; the route is
+a compiled matched pattern, never a raw path or URL. a semantic HTTP 200 denial
+remains `denied`. `APIRequests` accepts only one canonical, 55-byte version-00
+`traceparent`, preserving its parent IDs while the process chooses sampling.
+absent, duplicate, or malformed parents clear previous parentage. tracestate and
+baggage headers are never extracted. `OwnedHTTPClient` sends only the current
+canonical `traceparent` to dedicated tnl-owned API clients and removes any existing
+tracestate or baggage headers. customer target, DNS, CA, and identity-provider
+traffic does not receive tnl trace propagation. no baggage, headers, bodies, peer
+addresses, hostnames, credentials, project paths, or SQL text are recorded.
+
+visitor, request, publish-run, connection, grant, actor, revision, and image-hash
+correlation is trace/log-only. `Visitor` and `WithVisitor` correlate existing
+visitor connection IDs without inventing tunnel parentage or changing headers.
+SDK views enforce per-instrument attribute allowlists and fixed enum values. each
+instrument is capped at 2000 series per collection. overflow points carry only
+`otel.metric.overflow=true` as a boolean, replacing application dimensions.
+collectors must preserve that validated marker. instrument callers cannot supply
+it themselves. absolute gauge state is reserved for bounded process-wide enums.
+spans are limited to 32 attributes, 256 characters per value, eight events with
+eight attributes each, and eight attribute-free links. the native SDK's raw
+per-link attribute limit is zero, including links added after span creation.
+link IDs and flags are trace-only correlation, never metric dimensions or tenant
+authorization evidence. authenticated telemetry receivers trust hosted producers
+to derive tenant scope from authenticated state and enforce this producer policy;
+retaining asynchronous links does not verify a tenant claim on the wire.
+
+## optional HTTPS export
+
+there is no default destination, including localhost. no signal leaves the process
+without an explicit endpoint for that signal. operational observability is
+independent of pseudonymous CLI usage telemetry.
+
+| setting                                                                             | contract                                                                                                                                            |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                       | HTTPS base URL; append `/v1/metrics`, `/v1/traces`, or `/v1/logs`                                                                                   |
+| `OTEL_EXPORTER_OTLP_{METRICS,TRACES,LOGS}_ENDPOINT`                                 | exact signal URL, overriding the base                                                                                                               |
+| `OTEL_{METRICS,TRACES,LOGS}_EXPORTER`                                               | `otlp` or `none`; `otlp` still needs an explicit endpoint                                                                                           |
+| `OTEL_SDK_DISABLED=true`                                                            | case-insensitive; disables application metrics, sampled spans, logs, and export; ignores exporter settings; passive local Go/process scrape remains |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`                                                       | `http/protobuf` only                                                                                                                                |
+| `OTEL_EXPORTER_OTLP_HEADERS`                                                        | comma-separated `name=value`, percent-decoded values, at most 8 KiB; signal-specific headers replace the general list                               |
+| `OTEL_EXPORTER_OTLP_TIMEOUT`                                                        | milliseconds, default 5000, maximum 10000                                                                                                           |
+| `OTEL_METRIC_EXPORT_TIMEOUT`, `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` | may shorten the corresponding timeout; maximum 10000 ms                                                                                             |
+| `OTEL_METRIC_EXPORT_INTERVAL`                                                       | milliseconds, default 60000, maximum 600000                                                                                                         |
+| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`                                 | unset or `cumulative`; `delta` and `lowmemory` are rejected                                                                                         |
+| `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`                          | unset or `explicit_bucket_histogram`; other aggregations are rejected                                                                               |
+| `OTEL_EXPORTER_OTLP_COMPRESSION`                                                    | `none` or `gzip`                                                                                                                                    |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`                                                    | PEM receiver CA file                                                                                                                                |
+| `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_KEY`            | paired PEM client certificate/key                                                                                                                   |
+| `OTEL_BSP_MAX_QUEUE_SIZE`                                                           | default 2048, maximum 8192 spans                                                                                                                    |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`                                                    | default 512, maximum 1024, capped at queue size                                                                                                     |
+| `OTEL_BSP_SCHEDULE_DELAY`                                                           | milliseconds, default 5000, maximum 60000                                                                                                           |
+| `OTEL_BLRP_MAX_QUEUE_SIZE`, `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE`                       | log queue default 2048/max 8192; batch default 512/max 1024, capped at queue size                                                                   |
+| `OTEL_BLRP_SCHEDULE_DELAY`                                                          | log batch delay in milliseconds, default 1000, maximum 60000                                                                                        |
+| `OTEL_TRACES_SAMPLER`                                                               | `always_on`, `always_off`, `traceidratio`, or their `parentbased_` forms; default `parentbased_always_on`                                           |
+| `OTEL_TRACES_SAMPLER_ARG`                                                           | ratio in `[0,1]` for ratio samplers                                                                                                                 |
+| `OTEL_SERVICE_NAME`                                                                 | one approved service name, overriding resource `service.name`                                                                                       |
+| `OTEL_RESOURCE_ATTRIBUTES`                                                          | approved resource keys above; values at most 128 characters; namespace must remain `tnl`                                                            |
+
+exporter TLS/header/compression/timeout/protocol settings accept signal-specific
+`OTEL_EXPORTER_OTLP_{METRICS,TRACES,LOGS}_*` overrides. HTTPS verification is required;
+userinfo, query strings, fragments, insecure transport, and redirects are rejected.
+invalid settings report only the setting name. standard headers support a receiver's
+authorization scheme, including website-issued collector authorization, without
+adding a tnl-specific auth protocol.
+the pinned Go metric exporter supports delta and low-memory selectors, but the
+hosted contract accepts cumulative sums and explicit-bucket histograms. native
+construction pins those selectors and validates their environment settings.
+all generic and signal-specific exporter settings are validated even when an
+override wins: SDK constructors parse some ambient values before applying explicit
+options. invalid overridden URLs, headers, durations, or certificate files must
+fail through the owned setting error before that SDK diagnostic path runs.
+
+the indirect Go auto-instrumentation SDK also reads span-limit variables during
+package initialization. malformed values such as `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`
+or `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` can produce upstream stderr warnings before
+`StartProcess` runs. constructor validation cannot intercept that import-time
+output; those variables do not change tnl's fixed span limits.
+
+export runs outside traffic with bounded queues and retry deadlines. retries start
+at 100 ms, back off to at most one second, and share the signal timeout. sampled
+spans drop on overflow without blocking recording. log export uses the bounded
+SDK batch processor with the standard `OTEL_BLRP_*` settings above.
+failed batches are lost; metrics are recollected at the next interval. there is no
+persistent queue. exporter errors, readiness decisions, and traffic are independent.
+
+`operatorlog.ReportContext` preserves compact authored one-line `tnld` output,
+adds `trace_id`/`span_id` when present, and optionally calls `OperationalFailure`
+to export safe failure copy with authenticated scope. `Correlation` is available
+for other existing operational logs. these helpers never export arbitrary log
+bodies or secrets. existing context-free `Report` still writes its one-line log.
+exported operational failures use `tnl.event=operational_failure` and look up
+the caller's operation in the compiled log vocabulary. approved operation words
+become lowercase underscore-separated `tnl.operation` values; unknown operations
+use `operational_failure`. the operation never comes from cause text. already measured
+operation spans retain their own machine operation attribute too.
+
+export health is local and best-effort:
+
+- `tnl_observability_export_failures_total{tnl_signal}`: failed batches after retry;
+- `tnl_observability_export_lost_spans_total`: spans in failed batches;
+- `tnl_observability_queue_dropped_spans_total`: sampled spans lost to queue overflow.
+
+## interpreting existing families
+
+the generated JSON is the complete instrument/dimension inventory. these boundaries
+matter when reading it:
+
+- `RuntimeInstrumentDefinitions` declares an exact-name subset of the pinned
+  Prometheus Go/process bridge for hosted collection. its gauges, cumulative
+  counters, and `go_gc_duration_seconds` OTLP summary keep their actual types;
+  a summary is not an explicit-bucket histogram. platform-specific process metrics
+  may be absent. other local runtime scrape families are outside that hosted
+  allowlist; collectors must not admit arbitrary `go_*` or `process_*` names.
+
+- ingress visitor outcomes describe forwarding, not visitor TLS or application
+  success. `success` with reason `forwarded` means forwarding was established.
+  relay attempts can exceed visitor counts because ingress can retry before sending
+  the first visitor byte. registered connections are not database claims.
+- publisher readiness and lease timestamps require freshness checks. failed refresh
+  does not extend confirmed expiry. control remains the authority for authorization,
+  grants, lease state, and durable audit.
+- certificate `progress` and DNS `pending` are successful observations with domain
+  reasons. certificate availability does not imply publisher installation. order
+  counters count committed new orders, excluding cached reuse/idempotent retries;
+  they do not measure a CA quota or orders outside this deployment.
+- service audit events are `queued|delivered|retry|dropped|accepted|duplicate`.
+  they describe separate queue/ingestion stages, not distinct visitors or durable
+  audit totals. usage item events likewise count different item types.
+- pool/active SQL snapshots are passive. scraping never acquires a database
+  connection or queries a remote service. SQL operation names come from the compiled
+  query sanitizer, never SQL text or parameters.
+- database-wide port-pool and guest-trial snapshots repeat across control replicas;
+  use their maximum rather than their sum. process-local counters reset at restart.
+  guest trial events count trials, not publish runs or pings. public URL purpose
+  counters measure activity by saved purpose, not distinct identities.
+- port inventory refresh runs every 30 seconds with a five-second deadline.
+  `tnl_control_tcp_port_pool_last_success_timestamp_seconds` records only complete
+  successful refreshes. disappeared pools vanish on the next successful refresh;
+  all capacity series disappear after 90 seconds without success. the timestamp
+  remains available to explain stale data. neither scrape nor collection queries
+  PostgreSQL. use `max`, not `sum`, across replicas for both inventory and timestamp.
+- `tnl_control_certificate_orders_total` and
+  `tnl_control_certificate_milestone_age_seconds` cover public URLs and managed
+  services using `tnl.certificate_kind`; there are no public-URL-only aliases.
+  certificate work, claims, transitions, and installation use the same kinds.
+  the shared service certificate queue reports failed claims and empty polls as
+  `service_queue`; only a successfully claimed row identifies `public_url` or
+  `managed_service`. relay claims retain `relay`.
+- certificate and DNS worker attempt deadlines are operational timeouts while the
+  process lifetime remains live. their owner attempt and one authored diagnostic
+  retain the timeout and trace correlation even if saving retry state succeeds.
+  process-lifetime cancellation or deadline ends work without an operational
+  failure diagnostic. expired work leases remain recoverable by later claims.
+- `tnl_control_publisher_runtime_duration_seconds` measures signed `inspect`,
+  `start`, `renew`, and `stop` with selected authenticated team/group/publisher
+  and reported deployment/replica dimensions. replaced/stopped runtime rejection
+  uses outcome `rejected` and the existing reason `stale`. run IDs, epochs, and
+  signing assertions never become metric labels.
+- operation histograms preserve explicit classic second buckets. benchmark
+  `DurationSummaries` selects only histograms ending in `_seconds`, excluding
+  non-duration SDK distributions. runtime/process collectors use the supported
+  Prometheus bridge for OTLP; application metrics never pass through that bridge.
+
+publisher live payload-byte instruments and complete HTTP streaming instrumentation
+belong to their data-path owners. this backend does not add tunnel headers or
+managed-service/database desired-version state. see [server readiness](server-readiness.md)
+for the private diagnostic surfaces and lease-loss boundary.
