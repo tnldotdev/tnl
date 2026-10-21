@@ -25,7 +25,10 @@ type Configuration struct {
 	SharedRoot       string
 	IntegrationGroup string
 	TargetBinding    *TargetBinding
-	Attach           func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
+	// cleanup owns resources allocated before the worker starts, including when
+	// target capture or local tunnel creation fails. it runs after drain/join.
+	Cleanup func() error
+	Attach  func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
 }
 
 type proofEntry struct {
@@ -52,6 +55,9 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	if err != nil {
 		return err
 	}
+	if configuration.Cleanup != nil {
+		defer func() { result = errors.Join(result, configuration.Cleanup()) }()
+	}
 	if configuration.RunPrivate != nil {
 		return w.runPrivate(ctx, service, configuration, observe)
 	}
@@ -66,7 +72,9 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 			return diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("target changed before publication"))
 		}
 	}
-	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: service.Name, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
+	// service.Name is the registration key, which may be an invocation ID.
+	// cfg.Service is only a configured service name; ad-hoc tunnels have none.
+	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
 	if err != nil {
 		return err
 	}

@@ -19,6 +19,11 @@ import (
 
 func testAppRuntime(t *testing.T) (*appRuntime, privateprotocol.Endpoint) {
 	t.Helper()
+	return testAppRuntimeWorkers(t, false)
+}
+
+func testAppRuntimeWorkers(t *testing.T, realWorkers bool) (*appRuntime, privateprotocol.Endpoint) {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -29,18 +34,23 @@ func testAppRuntime(t *testing.T) (*appRuntime, privateprotocol.Endpoint) {
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	a := &appRuntime{state: state, project: projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}}, prepared: map[string]appPreparation{}}
-	a.manager, err = clientruntime.New(t.Context(), root, state, configuredRuntimeServices(a.project), func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
+	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration}
+	run := func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
 		if err := observe(1, true); err != nil {
 			return err
 		}
 		<-ctx.Done()
 		return ctx.Err()
-	})
+	}
+	if realWorkers {
+		run = a.workers.Run
+	}
+	a.manager, err = clientruntime.New(t.Context(), root, state, configuredRuntimeServices(a.project), run)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.manager.Close)
-	a.workers = &projectpublisher.Workers{Database: state, Manager: a.manager}
+	a.workers.Manager = a.manager
 	server := httptest.NewUnstartedServer(nil)
 	a.capabilities, err = privateprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
 	if err != nil {

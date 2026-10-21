@@ -126,7 +126,11 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, registration)
+		if err := privateprotocol.Write(w, 200, registration); err != nil || r.Context().Err() != nil {
+			// a failed acknowledgment cannot leave an unrenewable invocation
+			// running. unregister joins its worker and allocation cleanup.
+			_ = s.Manager.UnregisterTarget(registration.RegistrationID, registration.Owner, registration.Target)
+		}
 	})
 	for _, operation := range []string{"register", "renew", "unregister"} {
 		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +186,12 @@ func (s *Server) Handler() http.Handler {
 				name = *grant.InvocationId
 			}
 			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.Name != name })
-			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool { return publication.Service != name })
+			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
+				if grant.Scope == "invocation" {
+					return !slices.ContainsFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.TunnelID == publication.ID })
+				}
+				return publication.Service != name
+			})
 			snapshot.Events = nil
 		}
 		privateprotocol.Write(w, 200, snapshot)

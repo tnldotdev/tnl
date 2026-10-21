@@ -305,6 +305,12 @@ tasks:
     cmds:
       - go test -race -v ./cmd/tnl -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
 
+  go:test:invocations:
+    desc: Check ad-hoc registration, real SQLite workers, limits and allocation cleanup locally
+    cmds:
+      - go test -race -v ./cmd/tnl -run='^Test(Invocation|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|StatusSnapshot|WaitDoesNotTreatOldSnapshotAsFreshOwnerCheck)' -count=1 -timeout=2m
+      - go test -race ./internal/projectpublisher ./internal/localpublisher ./internal/privateprotocol ./internal/clientruntime -count=1 -timeout=2m
+
   go:test:client-tracing:
     desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
     cmds:

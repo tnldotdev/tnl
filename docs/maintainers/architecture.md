@@ -256,6 +256,10 @@ namespace-scoped publisher identity from explicit local setup or a private
 only its bound target and invocation identity. the worker allocates the exact
 temporary public URL, starts a signed run, and deletes the URL after drain.
 ad-hoc readiness is the run's routability, not a public GET app probe.
+the registration journal uses the invocation ID as its key; the tunnel has no
+configured service name. invocation-scoped status selects its tunnel by ID.
+an explicit invocation server may override saved or hosted defaults, but must
+match an explicit project server or `TNL_SERVER` selection.
 
 the native owner runs with the project's app or `tnl publish` invocation. a
 host-side owner can discover a selected Compose container through its published
@@ -299,13 +303,19 @@ manager restart and contains no credentials, request bodies, or OAuth state.
 private streams do not create HTTP inspection records. Inspection never retains
 request headers, bodies, database credentials, or application payloads.
 
-`internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
-registrations. control allocates the URL before `publisher.Run` starts; the
+ad-hoc publications allocate their URL through control before `publisher.Run` starts; the
 publisher reuses that exact URL and never creates a second one for the handle.
-the runner signs control calls with the selected namespace publisher identity,
+the native caller signs control calls with the selected namespace publisher identity,
 observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
+
+the native registration handler owns cleanup as soon as allocation succeeds,
+then transfers it to the project worker before local tunnel setup. canceled setup
+and failed registration acknowledgment writes stop and join cleanup. the local
+publisher contract carries the same request, rate, and concurrency limits as
+allocation; native validation precedes allocation and the worker applies them.
+
 the Python binding starts ASGI lifespan on a port-0 loopback listener before
 registering it over the same scoped private API used by TypeScript. its status
 poller waits for the exact registration and ready publish run, never a public

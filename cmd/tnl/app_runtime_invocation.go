@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -27,7 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Invocation) (privateprotocol.Registration, error) {
+func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Invocation) (_ privateprotocol.Registration, result error) {
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
 	finish := a.manager.BeginPreparation()
@@ -36,6 +37,10 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	if err != nil || canonical != request.Target || request.PublisherFile != "" && request.PublisherId != "" ||
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return privateprotocol.Registration{}, errors.New("invalid invocation target or policy")
+	}
+	limits, err := invocationLimits(request.Limits)
+	if err != nil {
+		return privateprotocol.Registration{}, err
 	}
 	file := request.PublisherFile
 	if file == "" && request.PublisherId == "" {
@@ -63,10 +68,14 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	}
 	server := valueOrEmpty(a.project.Config.Server)
 	if request.ServerUrl != nil {
-		if server != "" && server != *request.ServerUrl {
+		selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+		if err != nil {
+			return privateprotocol.Registration{}, err
+		}
+		if server != "" && server != selected {
 			return privateprotocol.Registration{}, nativeauth.ErrScope
 		}
-		server = *request.ServerUrl
+		server = selected
 	}
 	server, err = clientserver.Select(ctx, a.state, server)
 	if err != nil {
@@ -91,7 +100,7 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 		}
 		return privateprotocol.Registration{}, err
 	}
-	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip}
+	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
 	if request.AccessMode != nil {
 		mode := controlv1.VisitorAccessMode(*request.AccessMode)
 		allocation.AccessMode = &mode
@@ -100,27 +109,36 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	if err != nil {
 		return privateprotocol.Registration{}, err
 	}
-	cleanup := func() {
+	cleanup := sync.OnceValue(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = native.DeletePublicURL(ctx, route.Id)
-	}
+		return native.DeletePublicURL(ctx, route.Id)
+	})
+	transferred, id := false, ""
+	defer func() {
+		if !transferred {
+			if id != "" {
+				result = errors.Join(result, a.manager.Unregister(id, request.Owner))
+				a.mu.Lock()
+				delete(a.prepared, id)
+				a.mu.Unlock()
+			}
+			result = errors.Join(result, cleanup())
+		}
+	}()
 	if err := a.manager.AddService(clientruntime.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: clientruntime.Readiness{Path: "/"}}); err != nil {
-		cleanup()
 		return privateprotocol.Registration{}, err
 	}
-	id, err := a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+route.CanonicalHostname)
+	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+route.CanonicalHostname)
 	if err != nil {
-		cleanup()
 		return privateprotocol.Registration{}, err
 	}
 	policy, err := config.ResolveInspection(nil, "http")
 	if err != nil {
-		cleanup()
 		return privateprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, PolicyRevision: uint64(route.PolicyRevision), Hostname: route.CanonicalHostname, ProjectRoot: a.project.Root, Service: request.InvocationId, Target: request.Target, ServiceProtocol: "http", Ephemeral: true, AllocatedPublicURL: &route, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
+	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, PolicyRevision: uint64(route.PolicyRevision), Hostname: route.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AllocatedPublicURL: &route, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
 	cfg.PublisherID = native.PublisherID()
 	if route.MembershipId != nil {
 		cfg.MembershipID = *route.MembershipId
@@ -129,21 +147,50 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 		cfg.AllowedIPPrefixes = slices.Clone(*route.AllowedIpPrefixes)
 	}
 	cfg.AccessMode = route.AccessMode
-	configuration := projectpublisher.Configuration{Publisher: cfg, Inspection: policy}
-	configuration.Attach = func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error) { return cleanup, nil }
+	configuration := projectpublisher.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, clientruntime.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
-			cleanup()
 			return privateprotocol.Registration{}, err
 		}
 	}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
 	a.mu.Unlock()
-	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
-		cleanup()
-		_ = a.manager.Unregister(id, request.Owner)
+	if err := ctx.Err(); err != nil {
 		return privateprotocol.Registration{}, err
 	}
+	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
+		return privateprotocol.Registration{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return privateprotocol.Registration{}, err
+	}
+	transferred = true
 	return privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
+}
+
+func invocationLimits(input *controlv1.PublisherApplicationLimits) (publisher.ApplicationLimits, error) {
+	var limits publisher.ApplicationLimits
+	if input != nil {
+		if input.Requests != nil {
+			if *input.Requests < 1 {
+				return limits, errors.New("request limit must be positive")
+			}
+			limits.Requests = *input.Requests
+		}
+		if input.Concurrency != nil {
+			if *input.Concurrency < 1 {
+				return limits, errors.New("concurrency limit must be positive")
+			}
+			limits.Concurrency = *input.Concurrency
+		}
+		if input.Rate != nil {
+			period, err := time.ParseDuration(input.Rate.Per)
+			if err != nil || period <= 0 || input.Rate.Requests < 1 {
+				return limits, errors.New("request rate requires a positive count and period")
+			}
+			limits.RateRequests, limits.RatePer = input.Rate.Requests, period
+		}
+	}
+	return limits, limits.Validate()
 }

@@ -19,7 +19,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -108,13 +107,8 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 		}
 		project.Config.Server = &canonical
 	}
-	if project.Config.Server == nil {
-		server, err := clientserver.Select(ctx, state, "")
-		if err != nil {
-			return projectConfiguration{}, "", err
-		}
-		project.Config.Server = &server
-	}
+	// leave implicit saved/hosted selection to the operation. only project
+	// configuration and TNL_SERVER constrain an invocation's explicit server.
 	return projectConfiguration{Project: project}, state.Root(), nil
 }
 

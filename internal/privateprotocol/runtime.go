@@ -60,8 +60,8 @@ func Decode(w http.ResponseWriter, r *http.Request, value any) error {
 	return nil
 }
 
-func Write(w http.ResponseWriter, status int, value any) {
+func Write(w http.ResponseWriter, status int, value any) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	return json.NewEncoder(w).Encode(value)
 }

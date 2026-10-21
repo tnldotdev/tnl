@@ -133,7 +133,7 @@ paths:
   /v1/ad-hoc/register:
     post:
       operationId: registerInvocation
-      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
       requestBody:
         required: true
         content:
@@ -351,6 +351,8 @@ components:
         publisher_file: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
         access_mode: { type: string, enum: [restricted, anonymous] }
         ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
+        limits:
+          $ref: "../../control/v1/openapi.yaml#/components/schemas/PublisherApplicationLimits"
     Check:
       type: object
       additionalProperties: false
