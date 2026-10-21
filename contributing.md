@@ -109,6 +109,11 @@ retirement evidence and real split/standalone forwarding.
 `task go:test:integration:local-oidc` checks the actual UID-65532 provider with a
 mode-0600 key on a Linux-native filesystem, including on Docker Desktop.
 
+For native HTTP forwarding, run `task go:test:http-streaming` and
+`task go:test:http-streaming -- -race` through `mise exec --`. these use local
+HTTP/1 and HTTP/2 wires for early responses during uploads, upload deadlines,
+trailers, long responses, upgrades, cancellation, and inspection outcomes.
+
 Use `RUN` to select an integration test, for example:
 
 ```console

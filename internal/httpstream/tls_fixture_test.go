@@ -1,4 +1,4 @@
-package httpstream
+package httpstream_test
 
 import (
 	"crypto/tls"

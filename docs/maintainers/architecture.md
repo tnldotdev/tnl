@@ -163,6 +163,17 @@ the assignment adapter, root catalog, tests and live qualification boundary.
 the publisher forwards application authentication headers unchanged after visitor
 admission. the application owns target authentication independently of tnl access.
 
+`internal/httpstream` owns the shared HTTP request-body adapter for managed
+forwarding and `internal/localproxy`. it enables HTTP/1 full duplex before the
+target can flush a response, and gives each upload 30 seconds to complete,
+including trickling uploads. the read deadline ends at body completion; it does
+not impose a total lifetime on SSE responses or upgrades. HTTP/2 read deadlines
+apply to one request stream. the adapter retains the original incoming trailer
+owner across authentication, cookie-filter, mount, and proxy request clones,
+copying trailer values to the target request only after body EOF. it neither
+buffers nor replays payloads. inspection records an interrupted response as an
+error while retaining the status already sent to the visitor.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

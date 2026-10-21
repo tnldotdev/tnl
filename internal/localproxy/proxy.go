@@ -24,6 +24,7 @@ import (
 	"unicode"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tcpport"
@@ -291,7 +292,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 	if admit {
 		requests = make(chan struct{}, requestLimit)
 	}
-	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	return httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if code := ValidateRequest(request, hostname); code != "" {
 			diagnostic.WriteHTTP(response, request, code)
 			return
@@ -336,7 +337,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 			return
 		}
 		baseHandler.ServeHTTP(response, request)
-	}), nil
+	}), httpstream.RequestBodyTimeout), nil
 }
 
 func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, options TargetOptions, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
@@ -377,6 +378,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			httpstream.ForwardTrailers(request.In, request.Out)
 			observability.PublisherHTTPForward(request.Out.Context())
 			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host

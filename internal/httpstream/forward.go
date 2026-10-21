@@ -61,6 +61,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	}()
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			ForwardTrailers(request.In, request.Out)
 			observability.PublisherHTTPForward(request.Out.Context())
 			request.SetURL(target)
 			request.Out.Host = target.Host
@@ -83,7 +84,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if wrap != nil {
 		handler = wrap(handler)
 	}
-	handler = observability.PublisherHTTP(handler)
+	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
 		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0)}
 	defer server.Close()

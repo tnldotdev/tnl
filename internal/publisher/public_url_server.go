@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -76,6 +77,7 @@ type PublicURLServer struct {
 	certificateExpired    chan struct{}
 	queue                 *publicURLListener
 	http                  *http.Server
+	bodyTimeout           time.Duration
 	mu                    sync.Mutex
 	started               bool
 	closed                bool
@@ -104,6 +106,7 @@ type responseOriginKey struct{}
 type observedResponseWriter struct {
 	http.ResponseWriter
 	status int
+	err    error
 }
 
 func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -120,7 +123,18 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(data)
+	if err != nil {
+		w.err = err
+	}
 	return n, err
+}
+
+func (w *observedResponseWriter) FlushError() error {
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	if err != nil {
+		w.err = err
+	}
+	return err
 }
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
@@ -197,6 +211,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		life:      life, cancel: cancelLife,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
+		bodyTimeout:     httpstream.RequestBodyTimeout,
 		tls: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
 			NextProtos:             []string{"h2", "http/1.1"},
@@ -225,11 +240,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				defer emitAudit()
 				if config.ObserveSummary != nil && config.InspectionMode != inspection.None && !strings.HasPrefix(request.URL.Path, "/__tnl/") {
 					started := time.Now()
+					observationContext := request.Context()
 					forwarded := &atomic.Bool{}
 					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
 					tracked := &observedResponseWriter{ResponseWriter: response}
 					response = tracked
 					defer func() {
+						interrupted := recover()
 						path := request.URL.EscapedPath()
 						if len(path) > 512 {
 							path = path[:512]
@@ -242,8 +259,15 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
+						result := inspection.HTTPResult(status)
+						if interrupted != nil || tracked.err != nil || observationContext.Err() != nil {
+							result = inspection.ResultError
+						}
 						config.ObserveSummary(inspection.Summary{Protocol: "http", ReceivedAt: started.UTC(), Method: request.Method,
-							Path: path, Status: status, Result: inspection.HTTPResult(status), Duration: time.Since(started), Origin: origin})
+							Path: path, Status: status, Result: result, Duration: time.Since(started), Origin: origin})
+						if interrupted != nil {
+							panic(interrupted)
+						}
 					}()
 				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
@@ -463,12 +487,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				return context.WithValue(ctx, denialContextKey{}, true)
 			},
 			ReadHeaderTimeout: 10 * time.Second,
-			// bound incomplete bodies with a real read deadline. for HTTP/2,
-			// net/http enforces this independently on each request stream.
-			ReadTimeout:    30 * time.Second,
-			IdleTimeout:    2 * time.Minute,
-			MaxHeaderBytes: 64 << 10,
-			ErrorLog:       log.New(io.Discard, "", 0),
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    64 << 10,
+			ErrorLog:          log.New(io.Discard, "", 0),
 		},
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),
@@ -792,6 +813,9 @@ func (r *PublicURLServer) Close() error {
 }
 
 func (r *PublicURLServer) startHTTP() {
+	// the body owner precedes authentication/header clones and clears its read
+	// deadline at upload completion, without limiting a streamed response.
+	r.http.Handler = httpstream.Requests(r.http.Handler, r.bodyTimeout)
 	go func() {
 		err := r.http.Serve(r.queue)
 		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {

@@ -351,7 +351,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 			}
 			awaitPublisherTest(t, streaming)
 			assertRouteOverloaded(t, singleConnectionRouteClient(t, route, true))
-			time.Sleep(2 * route.http.ReadTimeout)
+			time.Sleep(2 * route.bodyTimeout)
 			unblock()
 			rest, err := io.ReadAll(response.Body)
 			if err != nil || string(first) != "first\n" || string(rest) != "second\n" {
@@ -372,11 +372,11 @@ func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout t
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = route.Close() })
-	if route.http.ReadTimeout <= 0 || route.http.ReadTimeout > 30*time.Second {
-		t.Fatalf("unsafe production read timeout: %v", route.http.ReadTimeout)
+	if route.bodyTimeout <= 0 || route.bodyTimeout > 30*time.Second || route.http.ReadTimeout != 0 || route.http.WriteTimeout != 0 {
+		t.Fatalf("unsafe production timeouts: body=%v read=%v write=%v", route.bodyTimeout, route.http.ReadTimeout, route.http.WriteTimeout)
 	}
 	if timeout != 0 {
-		route.http.ReadTimeout = timeout
+		route.bodyTimeout = timeout
 	}
 	finished := make(chan struct{}, 16)
 	handler := route.http.Handler
