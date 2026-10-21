@@ -173,6 +173,48 @@ function entrypoint(env: NodeJS.ProcessEnv = {}, entry = "main") {
 }
 
 describe("native main and post", () => {
+  test("OIDC acquisition has a deadline even when the provider never settles", async () => {
+    vi.stubEnv("INPUT_TIMEOUT", "1");
+    await actionFailure(
+      main({ signal: new AbortController().signal, getIDToken: () => new Promise(() => {}) }),
+      "TNL_ACTION_OIDC_FAILED",
+    );
+    expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
+      '"op":"start"',
+    );
+    const owned = await saved();
+    await expect(stat(owned.session)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  test("cancellation interrupts a pending OIDC provider and never starts native connections", async () => {
+    const controller = new AbortController();
+    let entered: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let finish: ((token: string) => void) | undefined;
+    const running = main({
+      signal: controller.signal,
+      getIDToken: () => {
+        entered?.();
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    }).catch((error: unknown) => error);
+    await ready;
+    controller.abort();
+    const result = await Promise.race([
+      running,
+      new Promise((resolve) => setTimeout(() => resolve("waiting"), 100)),
+    ]);
+    finish?.("late.private.assertion");
+    await running;
+    expect(result).toMatchObject({ code: "TNL_ACTION_CANCELLED" });
+    expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
+      '"op":"start"',
+    );
+    expect(output.join("")).not.toContain("late.private.assertion");
+  });
   test("ready owner survives steps; exact copied binary and private handle clean up after checkout changes", async () => {
     await writeFile(
       path.join(project, "fixture.json"),

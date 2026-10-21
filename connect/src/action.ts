@@ -210,8 +210,28 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     // saved policy, current claims, and one-use JTI during native exchange.
     let assertion: string;
     try {
-      assertion = await (options.getIDToken ?? core.getIDToken)(context.audience);
+      const lifetime = AbortSignal.any([options.signal, AbortSignal.timeout(timeout * 1000)]);
+      assertion = await new Promise<string>((resolve, reject) => {
+        const aborted = () =>
+          reject(
+            new ActionError(
+              options.signal.aborted ? "TNL_ACTION_CANCELLED" : "TNL_ACTION_OIDC_FAILED",
+            ),
+          );
+        lifetime.addEventListener("abort", aborted, { once: true });
+        void Promise.resolve()
+          .then(() => {
+            lifetime.throwIfAborted();
+            return (options.getIDToken ?? core.getIDToken)(context.audience);
+          })
+          .then((token) => {
+            if (lifetime.aborted) aborted();
+            else resolve(token);
+          }, reject)
+          .finally(() => lifetime.removeEventListener("abort", aborted));
+      });
     } catch (cause) {
+      checkCancelled(options.signal);
       throw new ActionError("TNL_ACTION_OIDC_FAILED", { cause });
     }
     checkCancelled(options.signal);
