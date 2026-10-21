@@ -1,7 +1,6 @@
 import { once } from "node:events";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
-import * as path from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { startTestBootstrap, waitForBootstrapRequest } from "./test-helper/bootstrap.js";
@@ -30,16 +29,12 @@ describe("test resource ownership", () => {
     await expect(startTestBootstrap()).rejects.toThrow("chmod failed");
     const socket = vi.mocked(fs.chmod).mock.calls[0]?.[0];
     expect(typeof socket).toBe("string");
-    await expect(fs.stat(path.dirname(String(socket)))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(socketRequest(String(socket), "{}")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(String(socket))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("surfaces malformed bootstrap requests through the waiter instead of throwing in an event handler", async () => {
     const bootstrap = await startTestBootstrap();
-    const socket = bootstrap.environment.APP_TEST_SOCKET;
-    expect(socket).toBeDefined();
-    if (socket === undefined) throw new Error("test bootstrap did not provide a socket");
-    expect(await socketRequest(socket, "{")).toBe(400);
+    expect(await endpointRequest(bootstrap.endpoint, "{")).toBe(400);
     await expect(waitForBootstrapRequest(bootstrap)).rejects.toBeInstanceOf(SyntaxError);
     await bootstrap.close();
     await bootstrap.close();
@@ -149,7 +144,6 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   expect(sanitized.NODE_ENV).toBe("development");
   for (const name of [
     "TNL_ACCESS_TOKEN",
-    "TNL_LOGIN_TOKEN",
     "TNL_TUNNEL_ID",
     "TNL_PUBLIC_HOSTNAME",
     "TNL_PUBLIC_URL",
@@ -163,10 +157,14 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   }
 });
 
-async function socketRequest(socketPath: string, body: string): Promise<number | undefined> {
+async function endpointRequest(
+  endpoint: import("./src/internal/local.js").RuntimeEndpoint,
+  body: string,
+): Promise<number | undefined> {
   return await new Promise((resolve, reject) => {
     const request = http.request(
-      { socketPath, method: "POST", path: "/v1/prepare" },
+      endpoint.url + "/v1/prepare",
+      { method: "POST", headers: { Authorization: `Bearer ${endpoint.capability}` } },
       (response) => {
         response.on("error", reject);
         response.on("end", () => resolve(response.statusCode));

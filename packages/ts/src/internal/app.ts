@@ -1,11 +1,14 @@
-import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import * as http from "node:http";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
+import { operation, independent, scheduled, bound as observeBound } from "./tracing.js";
 import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
-import { resolveNativeBinary } from "./launcher.js";
+import {
+  startRuntime,
+  runtimeRequest,
+  type RuntimeEndpoint,
+  type EndpointSelection,
+} from "./local.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import {
   exactKeys,
@@ -15,18 +18,18 @@ import {
   validServiceName,
   type ProjectRuntime,
 } from "./runtime.js";
+export { startRuntime, runtimeRequest } from "./local.js";
 
 export interface PrepareOptions {
   readonly service?: string;
   readonly directory?: string;
+  readonly stateDir?: string;
 }
-
-type CanonicalLoopbackTarget = `http://${string}`;
 
 export interface PreparedService extends ProjectRuntime {
   readonly service: string;
-  readonly hostname: string;
-  readonly publicURL: `https://${string}`;
+  readonly hostname: string | undefined;
+  readonly publicURL: `https://${string}` | undefined;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
   register(server: LocalHTTPServer): Promise<void>;
   /** unregisters publication without stopping the application listener. */
@@ -36,21 +39,20 @@ export interface PreparedService extends ProjectRuntime {
 interface Assignment {
   readonly registrationID: string;
   readonly service: string;
-  readonly hostname: string;
-  readonly publicURL: `https://${string}`;
+  readonly hostname: string | undefined;
+  readonly publicURL: `https://${string}` | undefined;
   readonly project: ProjectRuntime;
 }
-
 interface Dependencies {
-  start(directory: string): Promise<string>;
-  request(socket: string, operation: string, body: unknown): Promise<unknown>;
+  start(
+    directory: string,
+    binary?: string,
+    selection?: EndpointSelection,
+  ): Promise<RuntimeEndpoint>;
+  request(endpoint: RuntimeEndpoint, operation: string, body?: unknown): Promise<unknown>;
 }
-
 const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
 
-// one handle survives framework config reloads in the same process. listener
-// replacements share ownership while the native manager rejects requests and
-// probes from old registrations or publish runs.
 declare global {
   var __tnlAppPreparations: Map<string, Promise<PreparedService>> | undefined;
 }
@@ -58,23 +60,19 @@ const preparations = (globalThis.__tnlAppPreparations ??= new Map<
   string,
   Promise<PreparedService>
 >());
-
 const frameworkTargets = new WeakMap<
   PreparedService,
-  (target: CanonicalLoopbackTarget) => Promise<void>
+  (target: `http://${string}`) => Promise<void>
 >();
 
-// Next reports its framework-provided post-bind origin. its registration lives
-// with the framework process rather than a public Node server object.
 export function reportFrameworkTarget(
   handle: PreparedService,
-  target: CanonicalLoopbackTarget,
+  target: `http://${string}`,
 ): Promise<void> {
   const report = frameworkTargets.get(handle);
   if (report === undefined) throw new TnlError("sdk.configuration_invalid");
   return report(target);
 }
-
 type Framework = "node" | "bun" | "vite" | "next";
 
 export function prepareService(
@@ -83,7 +81,7 @@ export function prepareService(
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
-  const key = `${directory}\0${options.service ?? ""}\0${framework}`;
+  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
   const existing = preparations.get(key);
   if (existing !== undefined) return existing;
   const prepared = createPreparedService(options, framework, defaultDependencies, () =>
@@ -94,16 +92,30 @@ export function prepareService(
   return prepared;
 }
 
-export async function createPreparedService(
+export function createPreparedService(
   options: PrepareOptions,
   framework: Framework,
   dependencies: Dependencies,
   onClose: () => void = () => {},
 ): Promise<PreparedService> {
+  return operation("sdk.prepare", () =>
+    createPreparedServiceUntraced(options, framework, dependencies, onClose),
+  );
+}
+
+async function createPreparedServiceUntraced(
+  options: PrepareOptions,
+  framework: Framework,
+  dependencies: Dependencies,
+  onClose: () => void,
+): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
+  const selection = {
+    ...(options.service === undefined ? {} : { service: options.service }),
+    ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+  };
   const owner = randomBytes(16).toString("hex");
-  let socket = await dependencies.start(directory);
   const prepareRequest = {
     version: 1,
     directory,
@@ -112,250 +124,206 @@ export async function createPreparedService(
     owner,
     pid: process.pid,
   };
-  let assignment = parseAssignment(await dependencies.request(socket, "prepare", prepareRequest));
+  let endpoint = await dependencies.start(directory, undefined, selection);
+  let assignment = parseAssignment(await dependencies.request(endpoint, "prepare", prepareRequest));
+  if (assignment.service !== endpoint.service) throw new TnlError("sdk.response_invalid");
+  const initial = assignment;
+  let target: CanonicalTarget | undefined;
   let server: LocalHTTPServer | undefined;
-  let reportedTarget: CanonicalTarget | undefined;
   let closed = false;
-  let registered = false;
-  let needsPrepare = false;
-  let releasing: Promise<void> | undefined;
-  let renewing = false;
+  let released = false;
   let revision = 0;
-  let registering = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const registration = (target?: string) => ({
+  let pending = Promise.resolve();
+  let closing: Promise<void> | undefined;
+  const enqueue = (operation: () => Promise<void>) => {
+    const result = pending.catch(() => {}).then(operation);
+    pending = result;
+    return result;
+  };
+  const registration = () => ({
     version: 1,
     registration_id: assignment.registrationID,
     owner,
     ...(target === undefined ? {} : { target }),
   });
-  const reconnect = async () => {
-    socket = await dependencies.start(directory);
-    const replacement = parseAssignment(
-      await dependencies.request(socket, "prepare", prepareRequest),
-    );
-    if (
-      replacement.publicURL !== assignment.publicURL ||
-      replacement.service !== assignment.service
-    ) {
-      await dependencies.request(socket, "unregister", {
-        version: 1,
-        registration_id: replacement.registrationID,
-        owner,
-      });
-      throw new TnlError("sdk.response_invalid");
-    }
-    assignment = replacement;
-    if (closed) {
-      await dependencies.request(socket, "unregister", registration());
-      throw new TnlError("sdk.registration_stale");
-    }
-  };
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    revision++;
-    clearTimeout(timer);
-    process.off("beforeExit", beforeExit);
-    onClose();
-    try {
-      await dependencies.request(socket, "unregister", registration());
-    } catch (error) {
+  const reconnect = () =>
+    operation("sdk.app.recover", async () => {
+      const replacementEndpoint = await dependencies.start(directory, undefined, selection);
+      const replacement = parseAssignment(
+        await dependencies.request(replacementEndpoint, "prepare", prepareRequest),
+      );
       if (
-        !(error instanceof TnlError) ||
-        (error.code !== "sdk.dev_unavailable" && error.code !== "sdk.registration_stale")
-      )
-        throw error;
-    }
-  };
-  const beforeExit = () => {
-    void close().catch(() => {});
-  };
-  process.once("beforeExit", beforeExit);
-
-  const schedule = () => {
-    if (closed || needsPrepare) return;
+        replacement.publicURL !== initial.publicURL ||
+        replacement.service !== initial.service ||
+        replacement.service !== replacementEndpoint.service
+      ) {
+        await dependencies.request(replacementEndpoint, "unregister", {
+          version: 1,
+          registration_id: replacement.registrationID,
+          owner,
+        });
+        throw new TnlError("sdk.response_invalid");
+      }
+      endpoint = replacementEndpoint;
+      assignment = replacement;
+      released = false;
+    });
+  const release = async () => {
     clearTimeout(timer);
+    try {
+      await dependencies.request(endpoint, "unregister", registration());
+    } catch (error) {
+      if (!recoverable(error)) throw error;
+    }
+    released = true;
+  };
+  const schedule = () => {
+    if (closed || released) return;
+    clearTimeout(timer);
+    const renew = independent("sdk.app.renew", () =>
+      enqueue(async () => {
+        if (closed || released) return;
+        try {
+          if (server !== undefined && !isBunServer(server) && !server.listening) {
+            await release();
+            return;
+          }
+          await dependencies.request(endpoint, "renew", registration());
+        } catch (error) {
+          if (recoverable(error)) {
+            try {
+              await reconnect();
+              if (!closed && target !== undefined)
+                await dependencies.request(endpoint, "register", registration());
+            } catch {
+              /* the next renewal retries a restarting owner. */
+            }
+          }
+        } finally {
+          schedule();
+        }
+      }),
+    );
     timer = setTimeout(() => {
-      void renew();
+      void renew().catch(() => {});
     }, 5_000);
     timer.unref();
   };
-  const renew = async () => {
-    if (closed || renewing) return;
-    renewing = true;
-    const observedRevision = revision;
-    try {
-      if (registered && server !== undefined && !isBunServer(server) && !server.listening) {
-        await release();
-        return;
-      }
-      await dependencies.request(socket, "renew", registration());
-    } catch (error) {
-      if (closed || observedRevision !== revision) return;
-      if (
-        !(error instanceof TnlError) ||
-        (error.code !== "sdk.dev_unavailable" && error.code !== "sdk.registration_stale")
-      )
-        return;
-      try {
-        const replacementSocket = await dependencies.start(directory);
-        const replacement = parseAssignment(
-          await dependencies.request(replacementSocket, "prepare", prepareRequest),
-        );
-        if (closed || observedRevision !== revision) {
-          if (closed || needsPrepare)
-            await dependencies.request(replacementSocket, "unregister", {
-              version: 1,
-              registration_id: replacement.registrationID,
-              owner,
-            });
-          return;
-        }
-        // a manager restart cannot silently change metadata already compiled into
-        // an app. normal restarts keep the saved public URL and get a new run.
-        if (
-          replacement.publicURL !== assignment.publicURL ||
-          replacement.service !== assignment.service
-        ) {
-          await dependencies.request(replacementSocket, "unregister", {
-            version: 1,
-            registration_id: replacement.registrationID,
-            owner,
-          });
-          throw new TnlError("sdk.response_invalid");
-        }
-        socket = replacementSocket;
-        assignment = replacement;
-        if (registered) {
-          const target = server === undefined ? reportedTarget : await listeningTarget(server);
-          if (target === undefined) throw new TnlError("sdk.listener_failed");
-          if (!closed && observedRevision === revision)
-            await dependencies.request(socket, "register", registration(target));
-        }
-      } catch {
-        /* a later renewal retries a stopped or restarting manager. */
-      }
-    } finally {
-      renewing = false;
-      schedule();
-    }
-  };
-  schedule();
-
-  const registerListener = async (listener: LocalHTTPServer) => {
+  const setTarget = async (bound: CanonicalTarget, listener?: LocalHTTPServer) => {
     if (closed) throw new TnlError("sdk.registration_stale");
-    await releasing;
-    if (needsPrepare) {
-      await reconnect();
-      needsPrepare = false;
-      schedule();
-    }
-    const target = await listeningTarget(listener);
-    if (closed) throw new TnlError("sdk.registration_stale");
-    const currentRevision = ++revision;
+    if (released) await reconnect();
+    if (target !== bound || server !== listener) observeBound();
+    target = bound;
     server = listener;
-    reportedTarget = target;
-    registered = false;
-    if (isBunServer(listener)) {
-      const original = listener.stop.bind(listener);
-      listener.stop = async (force) => {
-        try {
-          return await original(force);
-        } finally {
-          if (server === listener && revision === currentRevision) await release();
-        }
-      };
-    } else {
-      listener.once("close", () => {
-        if (server === listener && revision === currentRevision) void release().catch(() => {});
+    const current = ++revision;
+    if (listener !== undefined) {
+      const stopped = independent("sdk.app.cleanup", async () => {
+        if (server === listener && revision === current && !closed)
+          return enqueue(async () => {
+            if (server === listener && revision === current) await release();
+          });
+        return Promise.resolve();
       });
+      if (isBunServer(listener)) {
+        const original = listener.stop.bind(listener);
+        listener.stop = async (force) => {
+          try {
+            await original(force);
+          } finally {
+            await stopped();
+          }
+        };
+      } else
+        listener.once("close", () => {
+          void stopped().catch(() => {});
+        });
     }
     try {
-      await dependencies.request(socket, "register", registration(target));
+      await dependencies.request(endpoint, "register", registration());
     } catch (error) {
-      if (closed || revision !== currentRevision)
-        throw new TnlError("sdk.listener_failed", { cause: error });
-      if (
-        !(error instanceof TnlError) ||
-        (error.code !== "sdk.registration_stale" && error.code !== "sdk.dev_unavailable")
-      )
-        throw error;
+      if (!recoverable(error) || closed) throw error;
       await reconnect();
-      if (closed || revision !== currentRevision) throw new TnlError("sdk.listener_failed");
-      await dependencies.request(socket, "register", registration(target));
+      if (closed) throw new TnlError("sdk.registration_stale");
+      await dependencies.request(endpoint, "register", registration());
     }
-    if (closed || revision !== currentRevision || (!isBunServer(listener) && !listener.listening))
+    if (closed || (listener !== undefined && !isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
-    registered = true;
+    schedule();
   };
-
-  const register = (listener: LocalHTTPServer): Promise<void> => {
-    const operation = registering.catch(() => {}).then(() => registerListener(listener));
-    registering = operation;
-    return operation;
-  };
-
-  const release = (): Promise<void> => {
-    registered = false;
-    needsPrepare = true;
-    revision++;
+  const close = (): Promise<void> => {
+    if (closing !== undefined) return closing;
+    closed = true;
     clearTimeout(timer);
-    releasing = dependencies.request(socket, "unregister", registration()).then(
-      () => {},
-      (error: unknown) => {
-        if (
-          !(error instanceof TnlError) ||
-          (error.code !== "sdk.registration_stale" && error.code !== "sdk.dev_unavailable")
-        )
-          throw error;
-      },
+    process.off("beforeExit", beforeExit);
+    onClose();
+    closing = operation(
+      framework === "next"
+        ? "next.cleanup"
+        : framework === "vite"
+          ? "vite.cleanup"
+          : "sdk.app.cleanup",
+      () => enqueue(release),
     );
-    return releasing;
+    return closing;
   };
-
-  const handle = Object.freeze({
+  const exitCleanup = scheduled(close);
+  const beforeExit = () => {
+    void exitCleanup().catch(() => {});
+  };
+  process.once("beforeExit", beforeExit);
+  schedule();
+  const handle: PreparedService = Object.freeze({
     ...assignment.project,
     service: assignment.service,
     hostname: assignment.hostname,
     publicURL: assignment.publicURL,
-    register,
+    register: (listener: LocalHTTPServer) =>
+      operation("sdk.app.register", () =>
+        enqueue(async () => {
+          await setTarget(await listeningTarget(listener), listener);
+        }),
+      ),
     close,
   });
-  frameworkTargets.set(handle, async (target) => {
-    const parsed = new URL(target);
-    if (canonicalLoopbackTarget(parsed.hostname, Number(parsed.port)) !== target)
-      throw new TnlError("sdk.target_invalid");
-    if (closed) throw new TnlError("sdk.registration_stale");
-    await releasing;
-    if (needsPrepare) {
-      await reconnect();
-      needsPrepare = false;
-      schedule();
-    }
-    revision++;
-    server = undefined;
-    reportedTarget = target;
-    await dependencies.request(socket, "register", registration(target));
-    registered = true;
-  });
+  frameworkTargets.set(handle, (bound) =>
+    operation(
+      framework === "next" && target !== undefined && target !== bound
+        ? "next.restart"
+        : "sdk.app.register",
+      () =>
+        enqueue(async () => {
+          const parsed = new URL(bound);
+          if (canonicalLoopbackTarget(parsed.hostname, Number(parsed.port)) !== bound)
+            throw new TnlError("sdk.target_invalid");
+          await setTarget(bound);
+        }),
+    ),
+  );
   return handle;
 }
 
+function recoverable(error: unknown): boolean {
+  return (
+    error instanceof TnlError &&
+    (error.code === "sdk.dev_unavailable" || error.code === "sdk.registration_stale")
+  );
+}
 function validateOptions(options: PrepareOptions): void {
   if (
     options === null ||
     typeof options !== "object" ||
     Array.isArray(options) ||
-    Object.keys(options).some((key) => key !== "service" && key !== "directory") ||
+    Object.keys(options).some((key) => !["service", "directory", "stateDir"].includes(key)) ||
     (options.service !== undefined && !validServiceName(options.service)) ||
-    (options.directory !== undefined &&
-      (typeof options.directory !== "string" || options.directory === ""))
+    [options.directory, options.stateDir].some(
+      (value) =>
+        value !== undefined &&
+        (typeof value !== "string" || value === "" || value.length > 4096 || value.includes("\0")),
+    )
   )
     throw new TnlError("sdk.configuration_invalid");
 }
-
 function parseAssignment(value: unknown): Assignment {
   try {
     const object = record(value, "app assignment");
@@ -371,13 +339,17 @@ function parseAssignment(value: unknown): Assignment {
       !validServiceName(object.service)
     )
       throw new TnlError("sdk.response_invalid");
-    const hostname = requiredHostname(object.hostname, "app hostname");
-    const publicURL: `https://${string}` = `https://${hostname}`;
     const project = parseProjectRuntime(object.project, "app project");
+    const privateService = object.hostname === "" && object.public_url === "";
+    const hostname = privateService ? undefined : requiredHostname(object.hostname, "app hostname");
+    const publicURL = hostname === undefined ? undefined : (`https://${hostname}` as const);
     if (
-      object.public_url !== publicURL ||
       !project.dev ||
-      project.services[object.service]?.hostname !== hostname
+      (privateService
+        ? project.services[object.service] !== undefined
+        : object.public_url !== publicURL ||
+          project.services[object.service]?.hostname !== hostname ||
+          project.services[object.service]?.protocol !== "http")
     )
       throw new TnlError("sdk.response_invalid");
     return {
@@ -387,135 +359,7 @@ function parseAssignment(value: unknown): Assignment {
       publicURL,
       project,
     };
-  } catch (cause) {
-    throw new TnlError("sdk.response_invalid", { cause });
+  } catch {
+    throw new TnlError("sdk.response_invalid");
   }
-}
-
-export async function startRuntime(
-  directory: string,
-  binary: string = resolveNativeBinary(),
-): Promise<string> {
-  try {
-    const { stdout } = await promisify(execFile)(
-      binary,
-      ["--no-telemetry", "runtime", "address", "--directory", directory],
-      { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
-    );
-    const value: unknown = JSON.parse(stdout);
-    const object = record(value, "local publisher socket");
-    exactKeys(object, ["version", "socket"], "local publisher socket");
-    if (
-      object.version !== 1 ||
-      typeof object.socket !== "string" ||
-      !path.isAbsolute(object.socket) ||
-      object.socket.includes("\0")
-    )
-      throw new TnlError("sdk.response_invalid");
-    if (!(await runtimeHealthy(object.socket))) {
-      // the app process owns the local publisher's lifetime. a second service
-      // can race this spawn: the runtime's hostname lock elects one owner.
-      const process_ = spawn(
-        binary,
-        ["--no-telemetry", "runtime", "serve", "--directory", directory],
-        {
-          cwd: directory,
-          stdio: "ignore",
-        },
-      );
-      process_.once("error", () => {
-        // an available sibling runtime may still win the socket election.
-      });
-      process_.unref();
-      const deadline = Date.now() + 15_000;
-      while (!(await runtimeHealthy(object.socket))) {
-        if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      }
-    }
-    return object.socket;
-  } catch (cause) {
-    if (cause instanceof TnlError) throw cause;
-    throw new TnlError("sdk.dev_unavailable", { cause });
-  }
-}
-
-function runtimeHealthy(socket: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const request = http.get(
-      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
-      (response) => {
-        response.resume();
-        resolve(response.statusCode === 204);
-      },
-    );
-    request.on("error", () => resolve(false));
-    request.on("timeout", () => request.destroy());
-  });
-}
-
-export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const request = http.request(
-      {
-        socketPath: socket,
-        path: `/v1/${operation}`,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-        },
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        let length = 0;
-        response.on("data", (chunk: Buffer) => {
-          length += chunk.length;
-          if (length > 64 * 1024) response.destroy(new TnlError("sdk.response_invalid"));
-          else chunks.push(chunk);
-        });
-        response.on("error", (cause) => reject(new TnlError("sdk.dev_unavailable", { cause })));
-        response.on("end", () => {
-          try {
-            if (response.statusCode === 204) {
-              if (length !== 0) throw new TnlError("sdk.response_invalid");
-              resolve(undefined);
-              return;
-            }
-            const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-            if (response.statusCode !== 200) {
-              const problem = record(value, "local publisher error");
-              const code =
-                problem.code === "runtime.owner_conflict"
-                  ? "sdk.owner_conflict"
-                  : problem.code === "runtime.registration_stale"
-                    ? "sdk.registration_stale"
-                    : problem.code === "runtime.authentication_required"
-                      ? "sdk.authentication_required"
-                      : response.statusCode !== undefined && response.statusCode >= 500
-                        ? "sdk.dev_unavailable"
-                        : "sdk.request_rejected";
-              throw new TnlError(code);
-            }
-            if (response.headers["content-type"]?.split(";", 1)[0] !== "application/json")
-              throw new TnlError("sdk.response_invalid");
-            resolve(value);
-          } catch (cause) {
-            reject(
-              cause instanceof TnlError ? cause : new TnlError("sdk.response_invalid", { cause }),
-            );
-          }
-        });
-        response.on("close", () => {
-          if (!response.complete) reject(new TnlError("sdk.dev_unavailable"));
-        });
-      },
-    );
-    const deadline = setTimeout(() => request.destroy(new TnlError("sdk.dev_unavailable")), 30_000);
-    deadline.unref();
-    request.once("close", () => clearTimeout(deadline));
-    request.on("error", (cause) => reject(new TnlError("sdk.dev_unavailable", { cause })));
-    request.end(payload);
-  });
 }

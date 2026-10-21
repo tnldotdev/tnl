@@ -26,7 +26,8 @@ test("malformed responses are errors, not a silently empty feedback list", async
 
 test("access and conflict errors have actionable text without leaking server response bodies", async () => {
   for (const [status, message] of [
-    [403, "preview access expired"],
+    [401, "sign in to write feedback"],
+    [403, "do not have permission"],
     [409, "feedback changed"],
   ] as const) {
     const api = createFeedbackAPI(

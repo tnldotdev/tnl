@@ -153,9 +153,21 @@ function FeedbackLayer({
             <button type="button" onClick={() => signOut.mutate()}>
               [ sign out ]
             </button>
+            <form
+              method="POST"
+              target="_blank"
+              action={"/__tnl/team/switch?return=" + encodeURIComponent(path)}
+            >
+              <button type="submit">[ switch account ]</button>
+            </form>
           </>
         ) : browserStatus.data ? (
-          <a class="account-link" href={"/__tnl/team/login?return=" + encodeURIComponent(path)}>
+          <a
+            class="account-link"
+            href={"/__tnl/team/login?return=" + encodeURIComponent(path)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             [ sign in ]
           </a>
         ) : null}

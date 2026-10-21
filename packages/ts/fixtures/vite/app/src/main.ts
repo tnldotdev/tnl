@@ -5,10 +5,11 @@ import { tnl } from "@tnldotdev/tnl";
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (app !== null) {
+  const metadata = tnl.services.api;
   app.textContent = [
     "Vite fixture",
-    `url:${tnl.services?.api?.url}`,
-    `hostname:${tnl.services?.api?.hostname}`,
+    `url:${metadata?.protocol === "http" ? metadata.url : undefined}`,
+    `hostname:${metadata?.hostname}`,
     `namespace:${tnl?.namespace}`,
     `under-dev:${tnl.dev}`,
   ].join(" ");

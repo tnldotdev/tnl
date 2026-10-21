@@ -33,7 +33,11 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => process.env.APP_TEST_SOCKET ?? "",
+        start: async () => {
+          if (process.env.APP_TEST_ENDPOINT === undefined)
+            throw new (await import("./dist/errors.js")).TnlError("sdk.dev_unavailable");
+          return JSON.parse(process.env.APP_TEST_ENDPOINT);
+        },
         request: actual.runtimeRequest,
       });
       onTestFinished(() => prepared.close());
@@ -106,6 +110,7 @@ describe("tnl", () => {
           ...runtimeDefine(true),
           server: { allowedHosts: ["api.member.example"] },
         });
+        expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
       }),
     );
   });
@@ -254,28 +259,34 @@ test(
         body: { version: 1, framework: "vite" },
         path: "/v1/prepare",
       });
-      expect(await fixture.request(1)).toMatchObject({
-        body: { version: 1, target: `http://127.0.0.1:${port}` },
-        path: "/v1/register",
-      });
+      const registration = await fixture.request(1);
+      expect(registration.path).toBe("/v1/register");
+      const target = z.object({ target: z.string().url() }).parse(registration.body).target;
+      expect(new URL(target).hostname).toBe("127.0.0.1");
+      const selectedPort = Number(new URL(target).port);
+      expect(selectedPort).toBeGreaterThanOrEqual(port);
 
-      const page = await requestTestServer(port);
+      const page = await requestTestServer(selectedPort);
       expect(page.status).toBe(200);
       expect(page.body).toContain("Vite fixture");
       expect(page.headers["x-tnl-fixture"]).toBe("vite");
-      const appModule = await requestTestServer(port, { path: "/src/main.ts" });
+      const appModule = await requestTestServer(selectedPort, { path: "/src/main.ts" });
       expect(appModule.status).toBe(200);
-      await expect(requestTestServer(port, { host: "existing.example" })).resolves.toMatchObject({
+      await expect(
+        requestTestServer(selectedPort, { host: "existing.example" }),
+      ).resolves.toMatchObject({
         status: 200,
       });
-      await expect(requestTestServer(port, { host: "attacker.example" })).resolves.toMatchObject({
+      await expect(
+        requestTestServer(selectedPort, { host: "attacker.example" }),
+      ).resolves.toMatchObject({
         status: 403,
       });
 
-      const client = await requestTestServer(port, { path: "/@vite/client" });
+      const client = await requestTestServer(selectedPort, { path: "/@vite/client" });
       expect(client.status).toBe(200);
       const { environmentPath, token } = viteClientConnection(client.body);
-      const environment = await requestTestServer(port, { path: environmentPath });
+      const environment = await requestTestServer(selectedPort, { path: environmentPath });
       expect(environment.status).toBe(200);
       // execute the browser defines without depending on Vite's serialization or host globals.
       const payload = runInNewContext(
@@ -286,7 +297,7 @@ test(
       expect(JSON.parse(payload)).toEqual(testPublicProject(true));
 
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
-        port,
+        selectedPort,
         `/?token=${encodeURIComponent(token)}`,
         { origin: "https://api.member.example", protocol: "vite-hmr" },
       );
@@ -299,7 +310,7 @@ test(
         type: "update",
         updates: [expect.objectContaining({ acceptedPath: "/src/main.ts", path: "/src/main.ts" })],
       });
-      const updatedModule = await requestTestServer(port, {
+      const updatedModule = await requestTestServer(selectedPort, {
         path: `/src/main.ts?t=${Date.now()}`,
       });
       expect(updatedModule.status).toBe(200);
@@ -333,11 +344,13 @@ test("registers and serves an IPv6 localhost target", async () => {
   const fixture = await startViteFixture(port, {}, "::1");
 
   await fixture.diagnose(async () => {
-    expect(await fixture.request(1)).toMatchObject({
-      body: { version: 1, target: `http://[::1]:${port}` },
-      path: "/v1/register",
-    });
-    await expect(requestTestServer(port, { address: "::1" })).resolves.toMatchObject({
+    const registration = await fixture.request(1);
+    expect(registration.path).toBe("/v1/register");
+    const target = z.object({ target: z.string().url() }).parse(registration.body).target;
+    expect(new URL(target).hostname).toBe("[::1]");
+    const selectedPort = Number(new URL(target).port);
+    expect(selectedPort).toBeGreaterThanOrEqual(port);
+    await expect(requestTestServer(selectedPort, { address: "::1" })).resolves.toMatchObject({
       status: 200,
     });
   });
@@ -346,19 +359,25 @@ test("registers and serves an IPv6 localhost target", async () => {
 function runtimeDefine(dev: boolean, apiHostname = "api.member.example") {
   const payload = JSON.stringify({
     namespace: "member.example",
-    dev,
     services: {
       api: {
+        protocol: "http",
         namespace: "member.example",
         hostname: apiHostname,
+        port: 443,
+        public: true,
         url: `https://${apiHostname}`,
       },
       web: {
+        protocol: "http",
         namespace: "member.example",
         hostname: "web.member.example",
+        port: 443,
+        public: true,
         url: "https://web.member.example",
       },
     },
+    dev,
   });
   return {
     define: {
