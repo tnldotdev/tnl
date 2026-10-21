@@ -3,16 +3,20 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
@@ -24,7 +28,7 @@ import (
 // installed jobs never fall back to a login server profile.
 type backgroundPublishFlags struct {
 	Foreground     bool   `name:"foreground" help:"Run in this terminal (the default)."`
-	Install        bool   `name:"install" help:"Register a saved URL with an installed supervisor."`
+	Install        bool   `name:"install" help:"Install a publisher supervisor and keep this saved publication running."`
 	Detach         bool   `name:"detach" help:"Run independently of the terminal without automatic restart."`
 	DetachedChild  string `name:"detached-child" hidden:"" help:"Internal detached publication ID."`
 	System         bool   `name:"system" help:"Use the unattended system supervisor with --install."`
@@ -49,9 +53,6 @@ func backgroundSelection(flags publishCommand, selection enrolledPublishSelectio
 	if selected == 0 && (flags.Service == "" || background.System) {
 		return failure.Wrap("select installed publisher", failure.InstalledPublisherSelectionMissing, errors.New("an explicit system-scoped enrollment or publisher identity is required"))
 	}
-	if background.System && flags.Service != "" {
-		return publisherCLIError("system publications require an explicit target and system-scoped publisher; project services need user state")
-	}
 	if flags.serverFromConfig && flags.Service == "" {
 		return publisherjob.ErrScope
 	}
@@ -64,15 +65,15 @@ func backgroundSelection(flags publishCommand, selection enrolledPublishSelectio
 	return nil
 }
 
-// runEnrolledBackgroundPublish registers one desired job with an already
-// installed supervisor. preflight must precede enrollment and registry writes.
+// runEnrolledBackgroundPublish stages one exact grant, then hands its private
+// credential to the shared installer. no operator session reaches the service.
 func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, output io.Writer, input io.Reader, executor publisherjob.Executor) error {
 	scope := systemStateFlags{System: background.System, SystemStateDir: background.SystemStateDir}
 	options, err := scope.options()
 	if err != nil {
 		return err
 	}
-	if err := requireInstalledService(ctx, options, executor); err != nil {
+	if _, err := publisherjob.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
 		return err
 	}
 	if selection.PublisherFile != "" {
@@ -101,7 +102,26 @@ func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, sel
 	if err := backgroundSelection(flags, selection, background); err != nil {
 		return err
 	}
-	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: options.Root, User: options.User})
+	if flags.Protocol == "" || flags.Protocol == "http" {
+		target, err := normalizePublishTarget(flags.Target, controlv1.Http)
+		if err != nil {
+			return err
+		}
+		trust, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
+		if err != nil {
+			return err
+		}
+		trust.ServerName = flags.TargetTLSName
+		if err := localproxy.PreflightWithOptions(ctx, target, trust); err != nil {
+			return err
+		}
+	}
+	root, err := clientStateRoot(flags.StateDir)
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256([]byte(options.Root))
+	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: filepath.Join(root, "publisher-install-"+hex.EncodeToString(digest[:12])), User: true})
 	if err != nil {
 		return err
 	}
@@ -110,7 +130,23 @@ func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, sel
 	if err := installBackgroundJob(ctx, registry, flags, selection, background, input, publisherjob.Clients, &id); err != nil {
 		return err
 	}
-	return writeSystemJobs(ctx, registry, output, "tnl publish", id)
+	job, err := registry.ResolveJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	credential, err := registry.Credential(ctx, job)
+	if err != nil {
+		return err
+	}
+	job.VerifyReadiness = job.Kind == publisherjob.KindPublicURL
+	if executor != nil {
+		options.BinarySource, err = os.Executable()
+		if err != nil {
+			return err
+		}
+		return registerPublication(ctx, options, publicationInstallation{Job: job, Credential: credential}, output, executor)
+	}
+	return deliverPublicationInstallation(ctx, options, publicationInstallation{Job: job, Credential: credential}, output, os.Stderr)
 }
 
 func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, input io.Reader, clients publisherjob.ClientFactory, installedID *string) error {
@@ -118,6 +154,7 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 		return err
 	}
 	job := publisherjob.Job{Kind: publisherjob.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName}
+	job.ReadinessPath = flags.publicationReadinessPath()
 	job.Limits = flags.limits()
 	var err error
 	job.Server, err = clientstate.CanonicalServer(job.Server)
@@ -206,6 +243,7 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 			return publisherjob.ErrScope
 		}
 		job.Kind, job.PrivateServiceID = publisherjob.KindPrivateService, *identity.PrivateServiceId
+		job.ReadinessPath = ""
 		job.ID = publisherjob.PrivateServiceJobKey(job.Server, job.PrivateServiceID)
 		service, err := native.SavedPrivateService(ctx)
 		if err != nil {
@@ -302,6 +340,14 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 		*installedID = job.ID
 	}
 	return nil
+}
+
+func (flags publishCommand) publicationReadinessPath() string {
+	service := flags.project.Config.Services[flags.Service]
+	if service.HTTP != nil && service.HTTP.Readiness != nil {
+		return service.HTTP.Readiness.Path
+	}
+	return ""
 }
 
 // this never creates or edits a public URL. the project inventory only narrows

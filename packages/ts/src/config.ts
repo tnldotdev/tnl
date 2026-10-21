@@ -53,7 +53,7 @@ type WebhookService<Config> = Config extends { readonly services: infer Services
   : never;
 
 type TargetReferences<Config> = {
-  [Field in keyof Config as Field extends "ci" ? Field : never]: {
+  [Field in keyof Config as Field extends "workloads" ? Field : never]: {
     [Name in keyof Config[Field]]: {
       services: readonly (Config extends { services: infer Services }
         ? Extract<keyof Services, string>
@@ -112,6 +112,9 @@ export type TnlServiceTarget = NonNullable<Service["target"]>;
 export type TnlProtocol = NonNullable<Service["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
+type WorkloadForNames<Policy, Names extends string> = Policy extends unknown
+  ? Omit<Policy, "services"> & { services: NoInfer<Names>[] }
+  : never;
 type MemberHTTP<Member> = Member extends { http?: infer HTTP } ? NonNullable<HTTP> : never;
 type MemberPaths<Member, Names extends string, Name extends Names> =
   MemberHTTP<Member> extends { paths?: infer Paths }
@@ -140,7 +143,7 @@ type ServiceForNames<Names extends string, Name extends Names, Member = Service>
  */
 export type TnlConfigForServices<Names extends string> = Omit<
   TnlConfig,
-  "services" | "aliases" | "webhooks" | "ci"
+  "services" | "aliases" | "webhooks" | "workloads"
 > & {
   services?: {
     [Name in Names]: ServiceForNames<Names, Name>;
@@ -150,11 +153,9 @@ export type TnlConfigForServices<Names extends string> = Omit<
     string,
     Omit<Webhook, "service"> & { service: NoInfer<[Names] extends [never] ? "" : Names> }
   >;
-  ci?: Record<
+  workloads?: Record<
     string,
-    Omit<NonNullable<NonNullable<TnlConfig["ci"]>[string]>, "services"> & {
-      services: NoInfer<Names>[];
-    }
+    WorkloadForNames<NonNullable<NonNullable<TnlConfig["workloads"]>[string]>, Names>
   >;
 };
 

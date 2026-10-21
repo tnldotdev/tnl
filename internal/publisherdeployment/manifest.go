@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/workloadmanifest"
 )
 
 const (
@@ -46,6 +47,7 @@ type Manifest struct {
 	DocumentationSHA256 string      `json:"documentation_sha256"`
 	Publishers          []Publisher `json:"publishers"`
 	DeclarationsSHA256  string      `json:"declarations_sha256,omitempty"`
+	WorkloadsSHA256     string      `json:"workloads_sha256,omitempty"`
 }
 
 type Publisher struct {
@@ -113,6 +115,14 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity, dec
 	if err := config.ValidateTNL(configuration); err != nil {
 		return result, err
 	}
+	if len(configuration.Workloads) > 0 {
+		data, err := workloadmanifest.Generate(configuration, source)
+		if err != nil {
+			return result, err
+		}
+		result.Files[workloadmanifest.Filename] = data
+		result.Manifest.WorkloadsSHA256 = digest(data)
+	}
 	for _, name := range slices.Sorted(maps.Keys(configuration.Publishers)) {
 		aws := configuration.Publishers[name].AWS
 		if aws == nil {
@@ -165,6 +175,9 @@ func validHash(value string) bool {
 // Validate bounds and validates the in-memory manifest, including canonical
 // artifact paths and exact per-replica parameter names. Read also checks bytes.
 func (m Manifest) Validate() error {
+	if m.WorkloadsSHA256 != "" && !validHash(m.WorkloadsSHA256) {
+		return errors.New("invalid workload manifest digest")
+	}
 	if m.SchemaVersion != SchemaVersion || (len(m.Publishers) != 0 || m.ProjectKey != "" || m.SourceFingerprint != "") && (!naming.ValidProjectKey(m.ProjectKey) || !validHash(m.SourceFingerprint)) || m.DocumentationPath != DocumentationPath || !validHash(m.DocumentationSHA256) || m.Publishers == nil || len(m.Publishers) > 32 || m.DeclarationsSHA256 != "" && !validHash(m.DeclarationsSHA256) {
 		return errors.New("invalid publisher manifest version or source identity")
 	}

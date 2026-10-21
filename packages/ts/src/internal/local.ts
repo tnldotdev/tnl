@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
 import { resolveNativeBinary } from "./launcher.js";
+import { launchEnvironment, traceHeaders, operation as traceOperation } from "./tracing.js";
 import { exactKeys, record, validServiceName } from "./runtime.js";
 
 export interface RuntimeEndpoint {
@@ -176,6 +177,7 @@ export async function startRuntime(
         timeout: 30_000,
         maxBuffer: 64 * 1024,
         encoding: "utf8",
+        env: launchEnvironment(),
       });
       endpoint = parseEndpoint(JSON.parse(stdout), selection);
     }
@@ -188,6 +190,16 @@ export async function startRuntime(
 }
 
 export function runtimeRequest(
+  endpoint: RuntimeEndpoint,
+  operation: string,
+  body?: unknown,
+): Promise<unknown> {
+  return traceOperation("sdk.native.request", () =>
+    runtimeRequestUntraced(endpoint, operation, body),
+  );
+}
+
+function runtimeRequestUntraced(
   endpoint: RuntimeEndpoint,
   operation: string,
   body?: unknown,
@@ -218,6 +230,7 @@ export function runtimeRequest(
         method: get ? "GET" : "POST",
         agent: false,
         headers: {
+          ...traceHeaders(),
           Host: endpoint.url.slice("http://".length),
           Authorization: `Bearer ${endpoint.capability}`,
           ...(payload === undefined

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -70,8 +71,14 @@ func TestIntegrationManagedHTTPAuthentication(t *testing.T) {
 		if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Share-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") || r.Header.Get("X-Forwarded-Host") != "" || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
 			t.Error("target received visitor credentials or spoofed forwarding identity")
 		}
+		if r.URL.Path == "/cookie-whitespace" && r.Header.Get("Cookie") != "app_session=kept" {
+			t.Error("cookie stripping changed the application cookie")
+		}
 		if r.TLS == nil {
 			t.Error("target TLS was not independent of visitor TLS")
+		}
+		if (r.URL.Path == "/app-auth" || len(r.Header.Values("Authorization")) != 0) && !slices.Equal(r.Header.Values("Authorization"), []string{"caller-one", "caller-two"}) {
+			t.Error("application authorization headers changed")
 		}
 		switch r.URL.Path {
 		case "/watch":
@@ -183,6 +190,7 @@ func TestIntegrationManagedHTTPAuthentication(t *testing.T) {
 		}
 		r.Header.Set("X-Forwarded-Host", "attacker.example")
 		r.Header.Set("X-Real-IP", "203.0.113.99")
+		r.Header["Authorization"] = []string{"caller-one", "caller-two"}
 		response, err := client.Do(r)
 		if err != nil {
 			t.Fatal(err)
@@ -204,7 +212,7 @@ func TestIntegrationManagedHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeResponse(request(client, "/", "Tnl-Access-Token", token.Secret, 200))
+	closeResponse(request(client, "/app-auth", "Tnl-Access-Token", token.Secret, 200))
 	firstConnection := targetConnection.Load()
 	closeResponse(request(client, "/", "Tnl-Access-Token", token.Secret, 200))
 	if targetConnection.Load() != firstConnection {
@@ -287,6 +295,22 @@ func TestIntegrationManagedHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(response)
 	closeResponse(request(&browser, "/", "", "", 200))
+	// net/http accepts whitespace between a reserved cookie name and '='.
+	// use the actual signed-in browser credential through ingress and control,
+	// and verify the target still receives only the application cookie.
+	originForCookies, _ := url.Parse(base)
+	var browserSecret string
+	for _, cookie := range browser.Jar.Cookies(originForCookies) {
+		if cookie.Name == "__Host-tnl-browser" {
+			browserSecret = cookie.Value
+		}
+	}
+	if browserSecret == "" {
+		t.Fatal("browser credential missing")
+	}
+	for _, space := range []string{" ", "\t", " \t "} {
+		closeResponse(request(client, "/cookie-whitespace", "Cookie", "app_session=kept; __Host-tnl-browser"+space+"="+browserSecret+"; __Host-tnl-share"+space+"=unused; __Host-tnl-feedback-browser"+space+"=unused; __Host-tnl-browser-attempt"+space+"=unused", 200))
+	}
 	badOrigin, _ := http.NewRequestWithContext(t.Context(), "POST", base+"/__tnl/team/logout", nil)
 	badOrigin.Header.Set("Origin", "https://"+service.ManagedTls.Hostname)
 	badOriginResponse, err := browser.Do(badOrigin)

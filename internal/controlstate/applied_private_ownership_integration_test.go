@@ -217,7 +217,7 @@ func inspectAppliedPrivateResource(t *testing.T, d *Database, r ApplyProjectConf
 	if err != nil || trustErr != nil || !opaqueid.Valid(id, opaqueid.PrivateServicePrefix) || value.ID != id || value.TeamID != r.TeamID || value.Name != name || !value.Enabled || value.Protocol != "postgres" || value.PublisherPool != pool || value.TrustRevision != 1 || !reflect.DeepEqual(value.TLS, trust) {
 		t.Fatal("incorrect saved private resource", value, err)
 	}
-	grants, err := d.ListPrivateServiceGrants(ctx, id, r.ActorID)
+	grants, _, err := d.ListPrivateServiceGrants(ctx, id, r.ActorID, "")
 	if err != nil || len(grants) != 2 {
 		t.Fatal("new resource must have exactly owner and configured team grants", grants, err)
 	}

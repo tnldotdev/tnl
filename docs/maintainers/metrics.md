@@ -42,6 +42,11 @@ publishing, group publishers, app-led owners, and installed supervisors have rol
 parsing help, version, project configuration commands, and offline infrastructure
 generation do not initialize exporters.
 
+finite `tnl` invocations use a shorter 250-millisecond shutdown budget. persistent
+owners retain the five-second budget. see [client tracing](client-tracing.md) for
+native launch and private IPC carriers, SDK/framework ownership, lifecycle
+meaning, and the website bootstrap input contract.
+
 process resource facts are:
 
 - `service.namespace=tnl`;

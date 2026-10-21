@@ -74,12 +74,12 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 }
 
-func TestConfiguredInstallPreflightsBeforeProjectState(t *testing.T) {
+func TestInstallRequiresASavedURLSelectorBeforeProjectState(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "user-state")
 	service := filepath.Join(t.TempDir(), "service-state")
 	var output, diagnostics bytes.Buffer
 	err := run(t.Context(), []string{"publish", "orders", "--install", "--state-dir", state, "--system-state-dir", service}, &output, &diagnostics)
-	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled {
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.InvalidTunnelFlags {
 		t.Fatalf("project state opened before service preflight: %v", err)
 	}
 	for _, path := range []string{state, service} {

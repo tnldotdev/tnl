@@ -15,6 +15,9 @@ import (
 
 func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "application-owned" {
+			t.Error("ordinary target lost application authorization")
+		}
 		if r.URL.Path == "/broken" {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -41,6 +44,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 		{"/invalid", 400, "tnl"},
 	} {
 		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Authorization", "application-owned")
 		request.Host = "app.example"
 		request.TLS = &tls.ConnectionState{ServerName: "app.example"}
 		if test.path == "/invalid" {

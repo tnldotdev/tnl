@@ -34,7 +34,7 @@ jobs:
         run: node connect/test/workflow.ts prepare
       - uses: ./connect # zizmor: ignore[self-repository] tests the checked-out bundle; pinned actionlint does not support $/ syntax
         with:
-          ci: deploy
+          workload: deploy
           cli-path: ${{ steps.fixture.outputs.binary }}
           working-directory: ${{ steps.fixture.outputs.project }}
           services: database

@@ -252,7 +252,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			grants, err := database.ListPrivateServiceGrants(t.Context(), service.Id, session.identity.Identity.Id)
+			grants, _, err := database.ListPrivateServiceGrants(t.Context(), service.Id, session.identity.Identity.Id, "")
 			if err != nil {
 				t.Fatal(err)
 			}

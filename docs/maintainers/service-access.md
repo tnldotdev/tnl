@@ -30,9 +30,35 @@ of the target; the team is in the path. this purpose is separate from
 successful reads and writes consume both the exact JWT and issuer/JTI in the
 existing assertion exchange table, in the operation's state transaction. failures
 roll back consumption with the operation. a retry needs a fresh assertion; keep
-the invitation's `Idempotency-Key` and exact body for that operation. the existing
-invitation transaction rejects a used creation key with `conflict` and never
-returns a stored secret.
+the invitation's `Idempotency-Key` and exact body for that operation. an exact
+creation retry by the same actor returns HTTP 200 with the original invitation
+ID and current state, without its secret. a changed service, normalized email,
+or absolute deadline with that key returns `conflict`. current management and
+company source authorization are checked before any retry lookup. successful
+recovery consumes the fresh assertion too.
+
+only the invitation secret's digest is stored. if the creation response was
+lost, explicitly revoke the returned invitation ID, then create with a new key
+and deadline. revocation also ends an already accepted invitation's derived
+grant; a retry never rotates the secret, revives a revoked invitation, extends
+the deadline, or silently creates another invitation. HTTP 201 is the only
+response containing a newly created secret. accepted, revoked and expired
+invitations remain recoverable as secretless metadata while the actor is still
+authorized to manage the service.
+
+the CLI can retain an operation across invocations with an explicit key and
+absolute deadline:
+
+```console
+tnl share service invite create orders --email=reviewer@example.test --expires-at=2026-10-22T12:00:00Z --idempotency-key=review-42
+```
+
+use the same command to recover a lost committed response while the deadline is
+still in the future. human output identifies the invitation and gives the revoke
+command; JSON returns the same invitation model without `secret`. revoke that ID
+with `tnl share service revoke orders <invitation-id>` before creating a replacement
+with a new key. `--expires-in` cannot be combined with a caller-supplied key because
+it would change the request's deadline on retry.
 
 ## generated authority operations
 
@@ -42,9 +68,9 @@ all paths below start with `/v1/service`:
 | --------------------------------------------------------------------------- | ---------------------------------------- |
 | `GET /teams/{team_id}/private-services[?cursor=…]`                          | `listWebsitePrivateServices`             |
 | `GET /private-services/{private_service_id}`                                | `getWebsitePrivateService`               |
-| `GET /private-services/{private_service_id}/grants`                         | `listWebsitePrivateServiceGrants`        |
+| `GET /private-services/{private_service_id}/grants[?cursor=…]`              | `listWebsitePrivateServiceGrants`        |
 | `DELETE /private-services/{private_service_id}/grants/{grant_id}`           | `revokeWebsitePrivateServiceGrant`       |
-| `GET /private-services/{private_service_id}/invitations`                    | `listWebsitePrivateServiceInvitations`   |
+| `GET /private-services/{private_service_id}/invitations[?cursor=…]`         | `listWebsitePrivateServiceInvitations`   |
 | `POST /private-services/{private_service_id}/invitations`                   | `inviteWebsitePrivateServiceVisitor`     |
 | `DELETE /private-services/{private_service_id}/invitations/{invitation_id}` | `revokeWebsitePrivateServiceInvitation`  |
 | `POST /private-service-invitations/preview`                                 | `previewWebsitePrivateServiceInvitation` |
@@ -70,8 +96,24 @@ revoked, accepted, or wrong-recipient invitation secrets return generic
 name, protocol, and deadline after matching the secret and issuer-verified email.
 
 service lists/get include existing local or applied project source context.
-grants and invitation lists retain the existing 101-record bound; expired and
-revoked records are history, not current access. HTTP summaries contain only
+grant lists return `{grants, next_cursor?}`; invitation lists return
+`{invitations, next_cursor?}`. each page has at most 100 records ordered by ID.
+the cursor is the last returned grant or invitation ID, exclusive on the next
+page, and is absent when no further records were found. both control and
+authority use these same control schemas. there is no array-response alias.
+each page rechecks current management; authority callers sign the exact cursor
+query with a fresh assertion. the CLI follows all pages before emitting a list
+or deciding whether a grant ID can be revoked. malformed, overlapping or
+nonprogressing pages fail the entire CLI list without partial output.
+
+expired, accepted and revoked records stay in the inventory. callers that filter
+history must follow every page before claiming there is no active access. pages
+are current reads, not a cross-request snapshot: concurrent changes can alter
+later results, so refresh from the first page after mutations. inventory is not
+proof of visit permission: an owner/admin can manage without a visitor grant,
+and the creator's automatic owner grant still requires current owner/admin
+membership. visitor inventory and admission check current grants separately.
+HTTP summaries contain only
 `subject`, `id`, `kind`, `expires_at`, and optional `revoked_at`, never credentials
 or share URLs. native control adds `listManagedHTTPGrants` at
 `GET /v1/private-services/{private_service_id}/http-grants`; `tnl share service list`
@@ -93,7 +135,9 @@ same-origin/CSRF checks, bounded input, and secret delivery.
 ## qualification
 
 run `mise exec -- task go:test:integration:service-access` for real PostgreSQL and
-configured-issuer HTTP tests. it covers exact request binding, JWT/JTI replay,
+configured-issuer HTTP tests. it covers three-page inventories with over 200
+records and revoked/expired history, lost committed response recovery, changed
+request conflicts, explicit CLI revoke/reissue, exact request binding, JWT/JTI replay,
 website-only rejection, current roles and company sources, disabled identities,
 issuer-verified recipient email, preview without acceptance, exact grant/deadline
 and revocation lifecycle, managed HTTP inventory and resource-scope rejection.

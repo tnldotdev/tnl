@@ -21,10 +21,10 @@ type privateVisitorStore interface {
 	GetPrivateService(context.Context, string, string) (controlstate.PrivateServiceRecord, error)
 	DeletePrivateService(context.Context, string, string, time.Time) error
 	CreatePrivateServiceGrant(context.Context, string, string, string, string, string, *time.Time, time.Time) (controlstate.PrivateServiceGrant, error)
-	ListPrivateServiceGrants(context.Context, string, string) ([]controlstate.PrivateServiceGrant, error)
+	ListPrivateServiceGrants(context.Context, string, string, string) ([]controlstate.PrivateServiceGrant, string, error)
 	RevokePrivateServiceGrant(context.Context, string, string, string, time.Time) error
 	InvitePrivateServiceVisitor(context.Context, string, string, string, string, time.Time, time.Time) (controlstate.PrivateServiceInvitation, error)
-	ListPrivateServiceInvitations(context.Context, string, string) ([]controlstate.PrivateServiceInvitation, error)
+	ListPrivateServiceInvitations(context.Context, string, string, string) ([]controlstate.PrivateServiceInvitation, string, error)
 	AcceptPrivateServiceInvitation(context.Context, string, string, time.Time) (controlstate.PrivateServiceGrant, error)
 	RevokePrivateServiceInvitation(context.Context, string, string, string, time.Time) error
 	ListPrivateServices(context.Context, string, string, string) ([]controlstate.PrivateServiceRecord, string, error)
@@ -241,19 +241,22 @@ func (h *handler) CreatePrivateServiceGrant(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 201, privateGrant(grant))
 }
 
-func (h *handler) ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID) {
+func (h *handler) ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, params controlv1.ListPrivateServiceGrantsParams) {
 	store, identity, ok := h.privateVisitor(w, r)
 	if !ok {
 		return
 	}
-	grants, err := store.ListPrivateServiceGrants(r.Context(), id, identity)
+	grants, next, err := store.ListPrivateServiceGrants(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
 	if err != nil {
 		privateVisitorError(w, "list private service grants", err)
 		return
 	}
-	result := make([]controlv1.PrivateServiceGrant, 0, len(grants))
+	result := controlv1.PrivateServiceGrantPage{Grants: make([]controlv1.PrivateServiceGrant, 0, len(grants))}
 	for _, grant := range grants {
-		result = append(result, privateGrant(grant))
+		result.Grants = append(result.Grants, privateGrant(grant))
+	}
+	if next != "" {
+		result.NextCursor = &next
 	}
 	writeJSON(w, 200, result)
 }
@@ -290,22 +293,29 @@ func (h *handler) InvitePrivateServiceVisitor(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 201, privateInvitation(invitation))
+	status := http.StatusCreated
+	if invitation.Secret == "" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, privateInvitation(invitation))
 }
 
-func (h *handler) ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID) {
+func (h *handler) ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, params controlv1.ListPrivateServiceInvitationsParams) {
 	store, identity, ok := h.privateVisitor(w, r)
 	if !ok {
 		return
 	}
-	rows, err := store.ListPrivateServiceInvitations(r.Context(), id, identity)
+	rows, next, err := store.ListPrivateServiceInvitations(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
 	if err != nil {
 		privateVisitorError(w, "list private service invitations", err)
 		return
 	}
-	result := make([]controlv1.PrivateServiceInvitation, 0, len(rows))
+	result := controlv1.PrivateServiceInvitationPage{Invitations: make([]controlv1.PrivateServiceInvitation, 0, len(rows))}
 	for _, row := range rows {
-		result = append(result, privateInvitation(row))
+		result.Invitations = append(result.Invitations, privateInvitation(row))
+	}
+	if next != "" {
+		result.NextCursor = &next
 	}
 	writeJSON(w, 200, result)
 }

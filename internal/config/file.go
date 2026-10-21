@@ -157,7 +157,7 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
-	if err := validateCI(config); err != nil {
+	if err := ValidateWorkloads(config); err != nil {
 		return err
 	}
 	if err := ValidateInspection(config.Inspection); err != nil {

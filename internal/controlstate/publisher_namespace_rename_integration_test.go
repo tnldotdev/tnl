@@ -35,7 +35,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID)
+	grants, _, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if renamed.Revision != applied.Revision+1 || renamed.Services[0].ServiceID != assignment.ServiceID || renamed.Services[0].Port != applied.Services[0].Port || renamed.Services[0].Hostname == applied.Services[0].Hostname || renamed.ConfigurationHash != applied.ConfigurationHash || !reflect.DeepEqual(renamed.Configuration, applied.Configuration) {
 		t.Fatal("namespace rename changed service identity or configuration", renamed)
 	}
-	after, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID)
+	after, _, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
 	if err != nil || !reflect.DeepEqual(grants, after) {
 		t.Fatal("visitor grants changed", err)
 	}

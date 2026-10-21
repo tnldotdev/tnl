@@ -89,8 +89,8 @@ func TestIntegrationPrivateServiceAccessClient(t *testing.T) {
 	if err != nil || invite.Secret == nil || invite.PrivateServiceId != a.Id || !invite.ExpiresAt.Equal(deadline) {
 		t.Fatalf("create exact invitation: %+v %v", invite, err)
 	}
-	if _, err := owner.InvitePrivateServiceVisitor(ctx, a.Id, "one-invitation", body); err == nil {
-		t.Fatal("invitation creation retry recovered or replaced its one-time secret")
+	if retry, err := owner.InvitePrivateServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil {
+		t.Fatal("invitation creation retry lost its ID or reissued a secret", err)
 	}
 	for _, client := range []*controlclient.Client{wrongEmail, unverified} {
 		_, err := client.AcceptPrivateServiceInvitation(ctx, *invite.Secret)
@@ -102,6 +102,9 @@ func TestIntegrationPrivateServiceAccessClient(t *testing.T) {
 	}
 	_, err = visitor.AcceptPrivateServiceInvitation(ctx, *invite.Secret)
 	denied(err)
+	if retry, err := owner.InvitePrivateServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil || retry.AcceptedAt == nil {
+		t.Fatal("accepted retry lost its current state or reissued a secret", err)
+	}
 	invitations, err := owner.ListPrivateServiceInvitations(ctx, a.Id)
 	if err != nil || len(invitations) != 1 || invitations[0].Secret != nil || invitations[0].AcceptedAt == nil {
 		t.Fatalf("listed accepted invitation: %+v %v", invitations, err)
@@ -144,6 +147,9 @@ func TestIntegrationPrivateServiceAccessClient(t *testing.T) {
 	if err := owner.RevokePrivateServiceInvitation(ctx, a.Id, invite.Id); err != nil {
 		t.Fatal(err)
 	}
+	if retry, err := owner.InvitePrivateServiceVisitor(ctx, a.Id, "one-invitation", body); err != nil || retry.Id != invite.Id || retry.Secret != nil || retry.RevokedAt == nil {
+		t.Fatal("retry revived a revoked invitation", err)
+	}
 	invitations, err = owner.ListPrivateServiceInvitations(ctx, a.Id)
 	if err != nil || len(invitations) != 1 || invitations[0].RevokedAt == nil {
 		t.Fatalf("invitation revocation was not visible to the manager: %+v %v", invitations, err)
@@ -182,5 +188,9 @@ func TestIntegrationPrivateServiceAccessClient(t *testing.T) {
 	_, err = owner.ListPrivateServiceInvitations(ctx, a.Id)
 	if !errors.Is(err, controlclient.ErrUnauthenticated) {
 		t.Fatal("revoked manager session remained authorized", err)
+	}
+	_, err = owner.InvitePrivateServiceVisitor(ctx, a.Id, "one-invitation", body)
+	if !errors.Is(err, controlclient.ErrUnauthenticated) {
+		t.Fatal("retry bypassed revoked manager session", err)
 	}
 }

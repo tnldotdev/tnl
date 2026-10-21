@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type detachedCommand struct {
@@ -225,7 +226,9 @@ func detachedRequestData(root, id, request string, limit int64) ([]byte, error) 
 	return data, err
 }
 
-func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, titles ...string) error {
+func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, titles ...string) (result error) {
+	ctx, finish := observability.ClientOperation(ctx, "client.detach")
+	defer func() { finish(result) }()
 	root, err := clientStateRoot(stateDir)
 	if err != nil {
 		return err
@@ -254,7 +257,7 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 		}
 	}
 	childArgs = append(childArgs, "--detached-child="+id)
-	cmd, err := startDetachedProcess(binary, childArgs)
+	cmd, err := startDetachedProcess(binary, childArgs, observability.LaunchEnvironment(ctx, os.Environ()))
 	if err != nil {
 		return err
 	}
@@ -395,8 +398,11 @@ func removeDeadDetachedSocket(root, id string) {
 	}
 }
 
-func startDetachedProcess(binary string, args []string) (*exec.Cmd, error) {
+func startDetachedProcess(binary string, args []string, environment ...[]string) (*exec.Cmd, error) {
 	cmd := exec.Command(binary, args...)
+	if len(environment) != 0 {
+		cmd.Env = environment[0]
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, io.Discard, io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {

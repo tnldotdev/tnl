@@ -116,7 +116,14 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 	if flags.identityInputRead {
 		return nil
 	}
-	value, supplied, err := publisherGroupIdentityInput(flags.IdentityFile)
+	path := ""
+	if len(flags.IdentityFile) > 1 {
+		return publisherCLIError("omit --group when supplying multiple identities")
+	}
+	if len(flags.IdentityFile) == 1 {
+		path = flags.IdentityFile[0]
+	}
+	value, supplied, err := publisherGroupIdentityInput(path)
 	if err != nil {
 		return err
 	}

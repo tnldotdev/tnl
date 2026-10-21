@@ -86,7 +86,7 @@ func startDatabaseTLS(ctx context.Context, service string) (_ *databaseTLSFixtur
 			testcontainers.WithEnv(map[string]string{"MYSQL_ROOT_HOST": "%"}),
 			testcontainers.WithFiles(files...), reservedLoopbackPort("3306"), nativeClientHost,
 			testcontainers.WithEntrypoint("sh", "-ec"),
-			testcontainers.WithCmd(`chown -R mysql:mysql /tnl-fixture && exec docker-entrypoint.sh mysqld --require_secure_transport=ON --ssl-ca=/tnl-fixture/ca.pem --ssl-cert=/tnl-fixture/server.pem --ssl-key=/tnl-fixture/server.key --auto_generate_certs=OFF --tls-version=TLSv1.2,TLSv1.3`),
+			testcontainers.WithCmd(`chown -R mysql:mysql /tnl-fixture && exec docker-entrypoint.sh mysqld --require_secure_transport=ON --ssl-ca=/tnl-fixture/ca.pem --ssl-cert=/tnl-fixture/server.pem --ssl-key=/tnl-fixture/server.key --auto_generate_certs=OFF --tls-version=TLSv1.2,TLSv1.3 --mysql-native-password=ON`),
 			testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp")),
 		)
 		if container != nil {
@@ -97,7 +97,7 @@ func startDatabaseTLS(ctx context.Context, service string) (_ *databaseTLSFixtur
 		}
 		// create a fresh caching_sha2 user and clear the server cache immediately
 		// before the test. its first login must perform full authentication.
-		code, output, err := container.Exec(ctx, []string{"mysql", "--protocol=socket", "--user=root", "--password=testpass", "--execute=CREATE USER 'tnl_client'@'%' IDENTIFIED WITH caching_sha2_password BY 'testpass' REQUIRE SSL; GRANT ALL ON tnl_fixture.* TO 'tnl_client'@'%'; FLUSH PRIVILEGES;"})
+		code, output, err := container.Exec(ctx, []string{"mysql", "--protocol=socket", "--user=root", "--password=testpass", "--execute=CREATE USER 'tnl_client'@'%' IDENTIFIED WITH caching_sha2_password BY 'testpass' REQUIRE SSL; GRANT ALL ON tnl_fixture.* TO 'tnl_client'@'%'; CREATE USER 'tnl_legacy'@'%' IDENTIFIED WITH mysql_native_password BY 'testpass' REQUIRE SSL; GRANT ALL ON tnl_fixture.* TO 'tnl_legacy'@'%'; FLUSH PRIVILEGES;"})
 		if err != nil || code != 0 {
 			var message []byte
 			if output != nil {

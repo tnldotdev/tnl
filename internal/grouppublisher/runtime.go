@@ -70,7 +70,8 @@ func (r Runtime) Serve(ctx context.Context) error {
 	defer func() {
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = owner.Stop(finish)
+		finish, end := observability.PublisherOperation(observability.Independent(finish), "group_shutdown")
+		end(owner.Stop(finish))
 	}()
 	var mu sync.Mutex
 	stop := func() {
@@ -132,7 +133,9 @@ func (r Runtime) Serve(ctx context.Context) error {
 			}
 		}
 		if lease.ExpiresAt.After(time.Now()) {
-			assignment, err := r.Control.Assignments(ctx, lease.AccessToken)
+			poll, finishPoll := observability.PublisherOperation(ctx, "group_assignments")
+			assignment, err := r.Control.Assignments(poll, lease.AccessToken)
+			finishPoll(err)
 			if errors.Is(err, controlclient.ErrUnauthenticated) {
 				stop()
 				lease = controlv1.PublisherGroupLease{}
@@ -194,7 +197,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 					if workers[service.Service] != nil {
 						continue
 					}
-					workerCtx, cancel := context.WithCancel(observability.NarrowIdentity(ctx, observability.Identity{ServiceID: service.ServiceId}))
+					workerCtx, cancel := context.WithCancel(observability.Independent(observability.NarrowIdentity(poll, observability.Identity{ServiceID: service.ServiceId})))
 					w := &running{definition: definitions[service.Service], cancel: cancel, done: make(chan struct{})}
 					w.lease = time.AfterFunc(time.Until(lease.ExpiresAt), cancel)
 					workers[service.Service] = w
@@ -217,7 +220,9 @@ func (r Runtime) Serve(ctx context.Context) error {
 					healthy = healthy && w.healthy
 				}
 				mu.Unlock()
-				err = r.Control.Acknowledge(ctx, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: revision, ConfigurationHash: assignment.ConfigurationHash, Healthy: healthy})
+				ack, finishAck := observability.PublisherOperation(ctx, "group_acknowledge")
+				err = r.Control.Acknowledge(ack, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: revision, ConfigurationHash: assignment.ConfigurationHash, Healthy: healthy})
+				finishAck(err)
 				if err == nil {
 					if err := observe(revision, healthy); err != nil {
 						return err

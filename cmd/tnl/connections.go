@@ -24,8 +24,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/connectionruntime"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/workloadclient"
+	"github.com/tnldotdev/tnl/internal/workloadmanifest"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
@@ -33,9 +36,13 @@ type connectionsCommand struct {
 	Capabilities   connectionsCapabilities   `cmd:""`
 	Context        connectionsContextOptions `cmd:""`
 	Start          connectionsStartOptions   `cmd:""`
+	Identity       connectionsContextOptions `cmd:"" hidden:""`
+	Attach         connectionsHandleOptions  `cmd:"" hidden:""`
+	Recover        connectionsHandleOptions  `cmd:"" hidden:""`
 	Serve          connectionsServeOptions   `cmd:"" hidden:""`
 	Status         connectionsHandleOptions  `cmd:""`
 	Read           connectionsReadOptions    `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
+	Prepare        connectionsReadOptions    `cmd:"" hidden:""`
 	Stop           connectionsHandleOptions  `cmd:""`
 	KubeCredential connectionsKubeOptions    `cmd:"" hidden:""`
 }
@@ -44,7 +51,8 @@ type connectionsCapabilities struct {
 }
 type connectionsContextOptions struct {
 	Directory string   `name:"directory" required:"" type:"path"`
-	CI        string   `name:"ci"`
+	Workload  string   `name:"workload"`
+	Manifest  string   `name:"workload-manifest" type:"path"`
 	Service   []string `name:"service"`
 	TeamID    string   `name:"team-id"`
 	StateDir  string   `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
@@ -76,11 +84,10 @@ type connectionsReadOptions struct {
 	Service                  string `name:"service" required:""`
 }
 
-// the workload transport owner supplies this exact adapter at the merge seam.
-// no synthetic identity/device, human login, or placeholder wire call is used.
-var resolveConnectionTeam func(context.Context, string, string) (string, error)
-
 func connectionProject(ctx context.Context, options connectionsContextOptions) (projectConfiguration, connectionruntime.Context, error) {
+	if options.Manifest != "" {
+		return connectionManifest(options)
+	}
 	if options.TeamID != "" && !opaqueid.Valid(options.TeamID, opaqueid.TeamPrefix) {
 		return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrInvalid
 	}
@@ -111,7 +118,7 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 	}
 	if selected := os.Getenv("TNL_SERVER"); selected != "" {
 		server = selected
-	} else if options.CI == "" && project.Config.Server == nil {
+	} else if options.Workload == "" && project.Config.Server == nil {
 		selected, database, err := resolveServer(ctx, options.StateDir, "")
 		if err != nil {
 			return projectConfiguration{}, connectionruntime.Context{}, err
@@ -126,15 +133,15 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 		return projectConfiguration{}, connectionruntime.Context{}, err
 	}
 	services := slices.Clone(options.Service)
-	if options.CI == "" && len(services) == 0 {
+	if options.Workload == "" && len(services) == 0 {
 		for name, service := range project.Config.Services {
 			if !isConnectPublicURL(service) {
 				services = append(services, name)
 			}
 		}
 	}
-	if options.CI != "" {
-		policy, ok := project.Config.CI[options.CI]
+	if options.Workload != "" {
+		policy, ok := project.Config.Workloads[options.Workload]
 		if !ok {
 			return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrInvalid
 		}
@@ -174,17 +181,12 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 	if binding, err := connectionruntime.ReadBinding(project.Root); err == nil && binding.Server == server && binding.ProjectKey == source.Key && binding.SourceID == source.Fingerprint {
 		appliedBinding = &binding
 	}
-	if options.CI != "" && !opaqueid.Valid(team, opaqueid.TeamPrefix) {
+	if options.Workload != "" && !opaqueid.Valid(team, opaqueid.TeamPrefix) {
 		if appliedBinding != nil && appliedBinding.Team == team {
 			team = appliedBinding.TeamID
-		} else {
-			if resolveConnectionTeam == nil {
-				return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrTeam
-			}
-			team, err = resolveConnectionTeam(ctx, server, team)
-			if err != nil {
-				return projectConfiguration{}, connectionruntime.Context{}, err
-			}
+		}
+		if team == "" {
+			return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrTeam
 		}
 	}
 	encoded, err := json.Marshal(struct {
@@ -198,8 +200,46 @@ func connectionProject(ctx context.Context, options connectionsContextOptions) (
 		return projectConfiguration{}, connectionruntime.Context{}, err
 	}
 	digest := sha256.Sum256(encoded)
-	scope := connectionruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: source.Label, CI: options.CI, Services: services}
+	scope := connectionruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: source.Label, Workload: options.Workload, Services: services}
 	return projectConfiguration{Project: project}, scope, scope.Validate()
+}
+
+// deployed artifacts need neither Git nor a project config loader at runtime.
+// the manifest selects a saved policy; only control grants service rights.
+func connectionManifest(options connectionsContextOptions) (projectConfiguration, connectionruntime.Context, error) {
+	m, err := workloadmanifest.Read(options.Manifest)
+	if err != nil {
+		return projectConfiguration{}, connectionruntime.Context{}, err
+	}
+	w, ok := m.Workloads[options.Workload]
+	if !ok || options.TeamID != "" && options.TeamID != m.Team {
+		return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrInvalid
+	}
+	directory, err := filepath.Abs(options.Directory)
+	if err == nil {
+		directory, err = filepath.EvalSymlinks(directory)
+	}
+	if err != nil {
+		return projectConfiguration{}, connectionruntime.Context{}, err
+	}
+	services := slices.Clone(options.Service)
+	if len(services) == 0 {
+		services = slices.Clone(w.Services)
+	}
+	slices.Sort(services)
+	for _, s := range services {
+		if !slices.Contains(w.Services, s) {
+			return projectConfiguration{}, connectionruntime.Context{}, connectionruntime.ErrInvalid
+		}
+	}
+	b, _ := json.Marshal(m)
+	digest := sha256.Sum256(b)
+	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Provider: w.Provider, Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
+	for _, s := range services {
+		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
+	}
+	scope := connectionruntime.Context{Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
+	return projectConfiguration{Project: projectconfig.Project{Root: directory, Config: configuration}}, scope, scope.Validate()
 }
 
 func runConnections(ctx context.Context, command string, flags connectionsCommand, output io.Writer) (result error) {
@@ -209,8 +249,62 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		}
 	}()
 	switch command {
+	case "runtime connections identity":
+		_, scope, err := connectionProject(ctx, flags.Identity)
+		if err != nil {
+			return err
+		}
+		var request connectionruntime.StartRequest
+		if connectionruntime.ReadJSON(os.Stdin, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
+			return connectionruntime.ErrInvalid
+		}
+		if request.Assertion == "" {
+			m, err := workloadmanifest.Read(flags.Identity.Manifest)
+			if err != nil {
+				return err
+			}
+			hints := m.Workloads[scope.Workload].Acquisition
+			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
+				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
+			}
+			request.Assertion, err = workloadclient.Acquire(ctx, hints, nil)
+			if err != nil {
+				return err
+			}
+		}
+		client, err := workloadclient.New(scope.Server, nil)
+		if err != nil {
+			return err
+		}
+		identity, err := client.IdentifyPolicy(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, request.Assertion)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "binding": identity.Binding, "assertion_expires_at": identity.AssertionExpiresAt})
+	case "runtime connections attach":
+		h, err := connectionruntime.ReadHandle(flags.Attach.Handle)
+		if err != nil {
+			return err
+		}
+		var request struct {
+			Schema    int    `json:"schema"`
+			Assertion string `json:"assertion"`
+		}
+		if connectionruntime.ReadJSON(os.Stdin, &request) != nil || request.Schema != 1 {
+			return connectionruntime.ErrInvalid
+		}
+		var attached json.RawMessage
+		if err = connectionruntime.Call(ctx, flags.Attach.Handle, "attach", connectionruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest, Assertion: request.Assertion}, &attached); err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(attached)
+	case "runtime connections recover":
+		if err := connectionruntime.OwnerStopped(flags.Recover.Handle); err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "state": "stopped"})
 	case "runtime connections capabilities":
-		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "start", "status", "stop", "connect", "read", "kube-credential"}, "workload_private": true, "opaque_private_preflight": true, "team_names": "applied_binding"})
+		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "identity", "start", "attach", "status", "stop", "recover", "connect", "prepare", "read", "kube-credential"}, "workload_private": true, "workload_manifest": true, "opaque_private_preflight": true, "team_names": "saved_policy"})
 	case "runtime connections context":
 		_, scope, err := connectionProject(ctx, flags.Context)
 		if err != nil {
@@ -223,6 +317,8 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return serveConnectionsOwner(ctx, flags.Serve, os.Stdin, output)
 	case "runtime connections read":
 		return readPreparedConnection(ctx, flags.Read, output)
+	case "runtime connections prepare":
+		return prepareConnection(ctx, flags.Prepare, output)
 	case "runtime connections status", "runtime connections stop":
 		options := flags.Status
 		operation := "status"
@@ -233,6 +329,9 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		if err != nil {
 			if operation == "stop" {
 				if _, missing := os.Lstat(options.Handle); errors.Is(missing, os.ErrNotExist) || errors.Is(err, connectionruntime.ErrExpired) {
+					if connectionruntime.OwnerStopped(options.Handle) == nil {
+						return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "state": "stopped"})
+					}
 					if err := waitConnectionsStopped(ctx, options.Handle); err != nil {
 						return err
 					}
@@ -244,6 +343,9 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		var result json.RawMessage
 		err = connectionruntime.Call(ctx, options.Handle, operation, connectionruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest}, &result)
 		if err != nil {
+			if operation == "stop" && connectionruntime.OwnerStopped(options.Handle) == nil {
+				return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "state": "stopped"})
+			}
 			return err
 		}
 		if operation == "stop" {
@@ -260,17 +362,29 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 }
 
 func readPreparedConnection(ctx context.Context, options connectionsReadOptions, output io.Writer) error {
+	return connectionSnapshot(ctx, options, "prepared", output)
+}
+
+func prepareConnection(ctx context.Context, options connectionsReadOptions, output io.Writer) error {
+	return connectionSnapshot(ctx, options, "prepare", output)
+}
+
+func connectionSnapshot(ctx context.Context, options connectionsReadOptions, operation string, output io.Writer) error {
 	if !naming.ValidServiceName(options.Service) {
 		return connectionruntime.ErrInvalid
 	}
-	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := 5 * time.Second
+	if operation == "prepare" {
+		timeout = 30 * time.Second
+	}
+	bounded, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	handle, err := connectionruntime.ReadHandle(options.Handle)
 	if err != nil {
 		return err
 	}
 	var prepared connectionruntime.Prepared
-	if err := connectionruntime.Call(bounded, options.Handle, "prepared", connectionruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: options.Service}, &prepared); err != nil {
+	if err := connectionruntime.Call(bounded, options.Handle, operation, connectionruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: options.Service}, &prepared); err != nil {
 		return err
 	}
 	if prepared.Schema != connectionruntime.Schema || prepared.Connection.Schema != connectionruntime.Schema {
@@ -303,17 +417,48 @@ func waitConnectionsStopped(ctx context.Context, path string) error {
 }
 
 func startConnections(ctx context.Context, options connectionsStartOptions, input io.Reader, output io.Writer) error {
-	if options.ParentPID < 0 || options.CI != "" && (options.ParentPID != 0 || options.RunnerTemp == "") {
+	if options.ParentPID < 0 {
 		return connectionruntime.ErrInvalid
 	}
-	_, scope, err := connectionProject(ctx, options.connectionsContextOptions)
+	project, scope, err := connectionProject(ctx, options.connectionsContextOptions)
 	if err != nil {
 		return err
 	}
 	request := connectionruntime.StartRequest{Schema: 1, Context: scope}
-	if options.CI != "" {
-		if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || request.Assertion == "" || !reflect.DeepEqual(request.Context, scope) {
+	if options.Workload != "" {
+		if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
 			return connectionruntime.ErrInvalid
+		}
+		if request.Assertion == "" {
+			var hints workloadmanifest.Acquisition
+			if options.Manifest != "" {
+				m, e := workloadmanifest.Read(options.Manifest)
+				if e != nil {
+					return e
+				}
+				hints = m.Workloads[options.Workload].Acquisition
+			} else {
+				p := project.Config.Workloads[options.Workload]
+				switch p.Provider {
+				case "vercel":
+					hints.Method = "vercel-oidc"
+				case "fly":
+					hints.Method = "fly-machine-api"
+					hints.Audience = "https://fly.io/" + p.Org
+				case "oidc":
+					hints.Method = "token-file"
+					hints.TokenFile = p.TokenFile
+				default:
+					return connectionruntime.ErrInvalid
+				}
+			}
+			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
+				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
+			}
+			request.Assertion, err = workloadclient.Acquire(ctx, hints, nil)
+			if err != nil {
+				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
+			}
 		}
 	}
 	parent := options.RunnerTemp
@@ -339,8 +484,11 @@ func startConnections(ctx context.Context, options connectionsStartOptions, inpu
 		return err
 	}
 	args := []string{"--no-telemetry", "runtime", "connections", "serve", "--directory", scope.Directory, "--owner-directory", directory}
-	if options.CI != "" {
-		args = append(args, "--ci", options.CI)
+	if options.Workload != "" {
+		args = append(args, "--workload", options.Workload)
+	}
+	if options.Manifest != "" {
+		args = append(args, "--workload-manifest", options.Manifest)
 	}
 	if options.TeamID != "" {
 		args = append(args, "--team-id", options.TeamID)
@@ -371,10 +519,11 @@ func startConnections(ctx context.Context, options connectionsStartOptions, inpu
 	child.Stdin = bytes.NewReader(data)
 	// keep runner tracking; retain no GitHub assertion-request bearer in owner env.
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=") && !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_URL=") {
+		if !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=") && !strings.HasPrefix(value, "ACTIONS_ID_TOKEN_REQUEST_URL=") && !strings.HasPrefix(value, "VERCEL_OIDC_TOKEN=") && !strings.HasPrefix(value, "VERCEL_TOKEN=") {
 			child.Env = append(child.Env, value)
 		}
 	}
+	child.Env = observability.LaunchEnvironment(ctx, child.Env)
 	pipe, err := child.StdoutPipe()
 	if err != nil {
 		return err
@@ -443,10 +592,23 @@ func serveConnectionsOwner(ctx context.Context, options connectionsServeOptions,
 		return err
 	}
 	var request connectionruntime.StartRequest
-	if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.CI == "") != (request.Assertion == "") {
+	if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
 		return connectionruntime.ErrInvalid
 	}
 	backend := &nativeConnectionBackend{project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
+	if options.ParentPID == 0 {
+		backend.initialServices = slices.Clone(scope.Services)
+	}
+	if options.Manifest != "" {
+		m, err := workloadmanifest.Read(options.Manifest)
+		if err != nil {
+			return err
+		}
+		backend.acquisition = m.Workloads[scope.Workload].Acquisition
+		if backend.acquisition.TokenFile != "" && !filepath.IsAbs(backend.acquisition.TokenFile) {
+			backend.acquisition.TokenFile = filepath.Join(scope.Directory, backend.acquisition.TokenFile)
+		}
+	}
 	request.Assertion = ""
 	backend.kubeOptions = connectStartCommand{KubeTokenFile: options.KubeTokenFile, KubeUserConfig: options.KubeUserConfig, KubeUser: options.KubeUser, Namespace: options.Namespace}
 	executable, err := os.Executable()
@@ -507,7 +669,7 @@ func connectionReason(err error) failure.Reason {
 		return failure.ConnectionPortInUse
 	case errors.Is(err, connectionruntime.ErrCleanup):
 		return failure.ConnectionCleanupFailed
-	case errors.Is(err, connectionruntime.ErrUnavailable):
+	case errors.Is(err, connectionruntime.ErrUnavailable), errors.Is(err, connectionruntime.ErrUnprepared):
 		return failure.ConnectionUnavailable
 	}
 	return ""

@@ -80,7 +80,7 @@ type ProjectServiceConfiguration struct {
 	HTTP            *config.HTTPService      `json:"http,omitempty"`
 }
 type ProjectConfiguration struct {
-	CI         map[string]ProjectCI                   `json:"ci,omitempty"`
+	Workloads  map[string]ProjectWorkload             `json:"workloads,omitempty"`
 	Publishers map[string]ProjectPublisherGroup       `json:"publishers"`
 	Services   map[string]ProjectServiceConfiguration `json:"services"`
 	OAuth      bool                                   `json:"oauth"`
@@ -200,7 +200,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	if err = normalizeAppliedProjectIntegrations(&c); err != nil {
 		return c, "", err
 	}
-	if err = normalizeProjectCI(&c); err != nil {
+	if err = normalizeProjectWorkloads(&c); err != nil {
 		return c, "", err
 	}
 	data, err = json.Marshal(c)

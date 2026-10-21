@@ -1666,14 +1666,17 @@ type ControlWorkloadSession struct {
 	ID                   string
 	TeamID               string
 	ProjectKey           string
-	CiName               string
-	RepositoryID         string
-	RunID                string
-	RunAttempt           string
-	CheckRunID           string
+	WorkloadName         string
+	Provider             string
+	SessionNonce         string
+	RepositoryID         pgtype.Text
+	RunID                pgtype.Text
+	RunAttempt           pgtype.Text
+	CheckRunID           pgtype.Text
 	PublicKey            []byte
 	RequestDigest        []byte
 	Claims               []byte
+	Binding              string
 	CredentialDigest     []byte
 	CredentialCiphertext []byte
 	StorageKeyID         string

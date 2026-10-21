@@ -158,27 +158,33 @@ func (d *Database) CreatePrivateServiceGrant(ctx context.Context, serviceID, act
 	return privateGrantRecord(row), nil
 }
 
-func (d *Database) ListPrivateServiceGrants(ctx context.Context, serviceID, actorID string) (result []PrivateServiceGrant, retErr error) {
+func (d *Database) ListPrivateServiceGrants(ctx context.Context, serviceID, actorID, after string) (result []PrivateServiceGrant, next string, retErr error) {
+	if !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) || after != "" && !opaqueid.Valid(after, opaqueid.PrivateServiceGrantPrefix) {
+		return nil, "", ErrPrivateServiceAccess
+	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rollback(ctx, tx, "list private service grants", &retErr)()
 	if _, err = lockManagedPrivateService(ctx, tx, serviceID, actorID); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	rows, err := controlstatedb.New(tx).ListPrivateServiceGrants(ctx, serviceID)
+	rows, err := controlstatedb.New(tx).ListPrivateServiceGrants(ctx, controlstatedb.ListPrivateServiceGrantsParams{PrivateServiceID: serviceID, AfterID: after})
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	if len(rows) > 100 {
+		next, rows = rows[99].ID, rows[:100]
 	}
 	result = make([]PrivateServiceGrant, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, privateGrantRecord(row))
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return result, nil
+	return result, next, nil
 }
 
 func (d *Database) RevokePrivateServiceGrant(ctx context.Context, serviceID, actorID, grantID string, now time.Time) (retErr error) {

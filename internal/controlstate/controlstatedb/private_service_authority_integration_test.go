@@ -75,8 +75,8 @@ func TestIntegrationPrivateServiceAuthority(t *testing.T) {
 	if err != nil || invite.Secret == "" {
 		t.Fatalf("create invitation: %+v, %v", invite, err)
 	}
-	if _, err = d.InvitePrivateServiceVisitor(ctx, service.ID, identityID, "invite", "visitor@example.test", now.Add(time.Hour), now); !errors.Is(err, controlstate.ErrPrivateServiceConflict) {
-		t.Fatalf("invitation retry reissued a different one-use secret: %v", err)
+	if retry, err := d.InvitePrivateServiceVisitor(ctx, service.ID, identityID, "invite", "visitor@example.test", now.Add(time.Hour), now); err != nil || retry.ID != invite.ID || retry.Secret != "" {
+		t.Fatalf("invitation retry lost its ID or reissued a secret: %v", err)
 	}
 	if _, err = d.AcceptPrivateServiceInvitation(ctx, wrongEmailID, invite.Secret, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		t.Fatalf("different verified email accepted invitation: %v", err)
@@ -91,7 +91,7 @@ func TestIntegrationPrivateServiceAuthority(t *testing.T) {
 	if _, err = d.AcceptPrivateServiceInvitation(ctx, visitorID, invite.Secret, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		t.Fatalf("reused invitation secret: %v", err)
 	}
-	listed, err := d.ListPrivateServiceInvitations(ctx, service.ID, identityID)
+	listed, _, err := d.ListPrivateServiceInvitations(ctx, service.ID, identityID, "")
 	if err != nil || len(listed) != 1 || listed[0].Secret != "" {
 		t.Fatalf("listed invitation leaked secret: %+v, %v", listed, err)
 	}

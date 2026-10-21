@@ -30,7 +30,7 @@ type serviceShareCommand struct {
 }
 
 type serviceShareInviteCommand struct {
-	Create serviceShareInviteCreateCommand `cmd:"" help:"Print a one-use invitation secret; requires --expires-at or --expires-in (at most 30d)."`
+	Create serviceShareInviteCreateCommand `cmd:"" help:"Print a one-use invitation secret or retry recovery details; requires --expires-at or --expires-in (at most 30d)."`
 	Accept serviceShareInviteAcceptCommand `cmd:"" help:"Accept using the matching signed-in verified email; does not join a team."`
 }
 
@@ -48,7 +48,8 @@ type serviceShareInviteCreateCommand struct {
 	serviceShareSelection `embed:""`
 	serviceShareDeadline  `embed:""`
 	Email                 string           `name:"email" required:"" help:"Recipient's verified sign-in email."`
-	Output                statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Raw one-time secret or JSON containing it."`
+	IdempotencyKey        string           `name:"idempotency-key" help:"Retry key (1-128 bytes); requires --expires-at. An exact retry returns the original ID without its secret for explicit revoke/reissue."`
+	Output                statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Raw new secret or recovery instructions; JSON omits the secret on an exact retry."`
 }
 
 type serviceShareInviteAcceptCommand struct {
@@ -233,6 +234,9 @@ func serviceShareSecret(secret, id string) bool {
 }
 
 func runServiceShareInviteCreate(ctx context.Context, f serviceShareInviteCreateCommand, project projectConfiguration, o, d io.Writer) error {
+	if f.IdempotencyKey != "" && (len(f.IdempotencyKey) > 128 || f.ExpiresAt == "") {
+		return serviceShareInput("use a 1-128 byte --idempotency-key with --expires-at so retries keep the exact deadline")
+	}
 	at, err := f.deadline(time.Now(), 30*24*time.Hour)
 	if err != nil {
 		return err
@@ -246,19 +250,37 @@ func runServiceShareInviteCreate(ctx context.Context, f serviceShareInviteCreate
 }
 
 func createServiceShareInvitation(ctx context.Context, control *controlclient.Client, service string, f serviceShareInviteCreateCommand, at time.Time, o io.Writer) error {
-	key, err := randomIdempotencyKey()
-	if err != nil {
-		return err
+	key := f.IdempotencyKey
+	if key == "" {
+		var err error
+		key, err = randomIdempotencyKey()
+		if err != nil {
+			return err
+		}
 	}
 	invite, err := control.InvitePrivateServiceVisitor(ctx, service, key, controlv1.CreatePrivateServiceInvitationRequest{Email: openapi_types.Email(f.Email), ExpiresAt: at})
 	if err != nil {
 		return err
 	}
-	if invite.PrivateServiceId != service || !strings.EqualFold(string(invite.Email), strings.TrimSpace(f.Email)) || !invite.ExpiresAt.Equal(at) || invite.Secret == nil || !privateInvitationSecret(*invite.Secret, invite.Id) || invite.AcceptedAt != nil || invite.RevokedAt != nil {
+	if invite.PrivateServiceId != service || !opaqueid.Valid(invite.Id, opaqueid.PrivateServiceInvitationPrefix) || !strings.EqualFold(string(invite.Email), strings.TrimSpace(f.Email)) || !invite.ExpiresAt.Equal(at) || invite.Secret != nil && (!privateInvitationSecret(*invite.Secret, invite.Id) || invite.AcceptedAt != nil || invite.RevokedAt != nil) {
 		return serviceShareResponse()
 	}
 	if f.Output == statusOutputJSON {
 		return failure.Wrap("write service invitation", failure.OutputUnavailable, json.NewEncoder(o).Encode(invite))
+	}
+	if invite.Secret == nil {
+		state := serviceShareState(&invite.ExpiresAt, invite.RevokedAt, time.Now())
+		if state == "active" {
+			state = "pending"
+			if invite.AcceptedAt != nil {
+				state = "accepted"
+			}
+		}
+		return writeHumanFrame(o, "tnl share service invite create", "secret unavailable", "revoke this invitation, then create with a new key", clioutput.Fields(
+			clioutput.Field{Label: "service ID", Value: service},
+			clioutput.Field{Label: "invitation ID", Value: invite.Id},
+			clioutput.Field{Label: "state", Value: state},
+		), clioutput.Section("revoke", clioutput.Text("tnl share service revoke "+service+" "+invite.Id)))
 	}
 	_, err = fmt.Fprintln(o, *invite.Secret)
 	return failure.Wrap("write service invitation secret", failure.OutputUnavailable, err)

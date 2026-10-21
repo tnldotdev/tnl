@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,9 +13,52 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/publisherjob"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
+	for _, extension := range []string{"json", "yaml", "ts"} {
+		t.Run(extension, func(t *testing.T) {
+			root := t.TempDir()
+			name := "tnl." + extension
+			if extension == "ts" {
+				name = "tnl.config.ts"
+			}
+			path := filepath.Join(root, name)
+			for _, extra := range []string{"", `,"auth":{}`} {
+				source := `{"services":{"api":{"target":{"type":"address","address":"https://api.example","tls":{}` + extra + `}}}}`
+				if extension == "ts" {
+					source = "export default " + source
+				} else {
+					source = `{"version":1,"tnl":` + source + `}`
+				}
+				if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				_, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: path}, root, [32]byte{})
+				if (err != nil) != (extra != "") {
+					t.Fatalf("application auth must fail strict project loading: %v", err)
+				}
+			}
+		})
+	}
+	for _, input := range []struct {
+		body string
+		out  any
+	}{
+		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
+		{`{"target":"https://api.example","target_auth":{}}`, new(publisherjob.Job)},
+		{`{"secrets":[]}`, new(publisherjob.GroupBinding)},
+	} {
+		if err := httpjson.Decode(json.NewDecoder(strings.NewReader(input.body)), input.out); err == nil {
+			t.Fatal("retired settings were silently ignored", input.body)
+		}
+	}
+}
 
 func TestCheckEvaluatesConfigurationWithoutStateOrTelemetry(t *testing.T) {
 	directory := t.TempDir()

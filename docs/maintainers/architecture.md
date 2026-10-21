@@ -137,6 +137,9 @@ bounds metadata freshness, and captures DNS endpoints only for new target
 connections. See [publisher AWS target discovery](aws-target-discovery.md) for
 the assignment adapter, root catalog, tests and live qualification boundary.
 
+the publisher forwards application authentication headers unchanged after visitor
+admission. the application owns target authentication independently of tnl access.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.
@@ -549,9 +552,9 @@ and relay unchanged and terminates in the publisher.
 
 ## place authority decisions
 
-GitHub CI executions use independent visitor workload sessions, with exact saved
-service rights and a fixed execution window. trusted apply binds repository IDs;
-job tokens cannot apply policy or create human control sessions. see
+provider workloads use independent visitor workload sessions, with exact saved
+service rights and a fixed session window. trusted apply binds provider identity
+constraints and issuer trust; runtime assertions cannot apply policy or create human control sessions. see
 [workload sessions](workload-sessions.md) for the authority endpoints, native
 adapter, saved cloud selector contract, and subject-bound visitor transport.
 

@@ -57,7 +57,7 @@ beforeEach(async () => {
   vi.stubEnv("RUNNER_TEMP", temp);
   vi.stubEnv("GITHUB_STATE", state);
   vi.stubEnv("GITHUB_ENV", envFile);
-  vi.stubEnv("INPUT_CI", "deploy");
+  vi.stubEnv("INPUT_WORKLOAD", "deploy");
   vi.stubEnv("INPUT_CLI-PATH", binary);
   vi.stubEnv("INPUT_TIMEOUT", "5");
   vi.stubEnv("INPUT_VERSION", "");
@@ -263,10 +263,12 @@ describe("native main and post", () => {
     expect(getIDToken).not.toHaveBeenCalled();
   });
 
-  test("ci is required before any OIDC or native startup", async () => {
-    vi.stubEnv("INPUT_CI", "");
+  test("workload is required before any OIDC or native startup", async () => {
+    vi.stubEnv("INPUT_WORKLOAD", "");
     const getIDToken = vi.fn(oidc);
-    await expect(main({ signal: new AbortController().signal, getIDToken })).rejects.toThrow("ci");
+    await expect(main({ signal: new AbortController().signal, getIDToken })).rejects.toThrow(
+      "workload",
+    );
     expect(getIDToken).not.toHaveBeenCalled();
     await expect(readFile(path.join(project, "trace.ndjson"))).rejects.toThrow();
   });

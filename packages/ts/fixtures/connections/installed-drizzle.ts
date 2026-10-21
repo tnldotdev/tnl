@@ -27,6 +27,7 @@ const workspace = z
   .looseObject({ devDependencies: z.record(z.string(), z.string()) })
   .parse(JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as unknown);
 const directory = await mkdtemp(path.join(tmpdir(), "tnl-installed-drizzle-"));
+let stage = "native packaging";
 try {
   const nativeName = nativePackageName(process.platform, process.arch);
   const nativeStage = path.join(directory, "native");
@@ -45,28 +46,25 @@ try {
       os: [process.platform],
       cpu: [process.arch],
       files: ["bin/tnl"],
+      publishConfig: { executableFiles: ["bin/tnl"] },
     }),
   );
   const pack = async (cwd: string): Promise<string> => {
-    const { stdout } = await run(
-      "npm",
-      ["pack", "--json", "--ignore-scripts", "--pack-destination", directory],
-      { cwd, timeout: 30_000 },
-    );
-    const result = z
-      .array(z.object({ filename: z.string() }))
-      .length(1)
-      .parse(JSON.parse(stdout));
-    const packed = result[0];
-    assert(packed, "npm pack must return its tarball filename");
-    return path.join(directory, packed.filename);
+    const tarball = path.join(directory, `${path.basename(cwd)}.tgz`);
+    await run("pnpm", ["pack", "--out", tarball], {
+      cwd,
+      timeout: 30_000,
+    });
+    return tarball;
   };
   const nativeTarball = await pack(nativeStage);
+  stage = "sdk packaging";
   await cp(path.join(packageRoot, "dist"), path.join(launcherStage, "dist"), { recursive: true });
   await writeFile(
     path.join(launcherStage, "package.json"),
     JSON.stringify({
       ...launcher,
+      scripts: {},
       optionalDependencies: { [nativeName]: launcher.version },
     }),
   );
@@ -84,6 +82,10 @@ try {
         "drizzle-kit": workspace.devDependencies["drizzle-kit"],
         "drizzle-orm": workspace.devDependencies["drizzle-orm"],
         pg: workspace.devDependencies.pg,
+        postgres: workspace.devDependencies.postgres,
+        mysql: workspace.devDependencies.mysql,
+        mysql2: workspace.devDependencies.mysql2,
+        zod: workspace.devDependencies.zod,
       },
     }),
   );
@@ -91,16 +93,49 @@ try {
     path.join(consumer, "pnpm-workspace.yaml"),
     `overrides:\n  '${nativeName}': 'file:${nativeTarball}'\n`,
   );
+  stage = "dependency installation";
   await run("pnpm", ["install", "--ignore-scripts"], {
     cwd: consumer,
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
   });
-  if (protocol !== "postgres") {
+  if (protocol.endsWith("-drivers")) {
+    stage = "database drivers";
+    const fixture = path.join(consumer, "database-drivers.ts");
+    await copyFile(path.join(import.meta.dirname, "database-drivers.ts"), fixture);
+    const { stdout, stderr } = await run(process.execPath, [fixture, protocol], {
+      cwd: consumer,
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024,
+    }).catch((cause: unknown) => {
+      if (
+        typeof cause === "object" &&
+        cause !== null &&
+        "stdout" in cause &&
+        typeof cause.stdout === "string"
+      ) {
+        const line = cause.stdout.trim().split("\n").at(-1);
+        if (line) {
+          const failure = z
+            .object({
+              phase: z.string().regex(/^[a-z0-9 ]{1,80}$/),
+              code: z.string().regex(/^(?:[A-Z0-9_]{1,64}|sdk\.[a-z_]{1,64})$/),
+            })
+            .parse(JSON.parse(line));
+          process.stdout.write(JSON.stringify(failure) + "\n");
+        }
+      }
+      throw new Error("installed database driver check failed");
+    });
+    assert.equal(stderr, "", "ordinary driver settings must not produce option warnings");
+    process.stdout.write(stdout);
+  } else if (protocol !== "postgres") {
+    stage = "native runtime";
     const fixture = path.join(consumer, "native-runtime.ts");
     await copyFile(path.join(import.meta.dirname, "native-runtime.ts"), fixture);
     await run(process.execPath, [fixture, protocol], { cwd: consumer, timeout: 60_000 });
   } else {
+    stage = "drizzle config";
     await copyFile(
       path.join(import.meta.dirname, "drizzle.config.ts"),
       path.join(consumer, "drizzle.config.ts"),
@@ -167,10 +202,10 @@ try {
     );
     await run(process.execPath, [verification], { cwd: consumer, timeout: 60_000 });
   }
-  process.stdout.write("installed pnpm package and ordinary Drizzle config passed\n");
+  process.stdout.write("installed package connection checks passed\n");
 } catch {
   // driver and subprocess output may contain application account details.
-  throw new Error("installed pnpm package or ordinary Drizzle config verification failed");
+  throw new Error(`installed pnpm package verification failed during ${stage}`);
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

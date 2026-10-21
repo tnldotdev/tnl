@@ -1012,8 +1012,13 @@ paths:
   /v1/private-services/{private_service_id}/grants:
     get:
       operationId: listPrivateServiceGrants
+      description: Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: cursor
+          in: query
+          schema: { $ref: "#/components/schemas/PrivateServiceGrantID" }
       responses:
         "200":
           {
@@ -1021,10 +1026,7 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema:
-                      { type: array, items: { $ref: "#/components/schemas/PrivateServiceGrant" } },
-                  },
+                  { schema: { $ref: "#/components/schemas/PrivateServiceGrantPage" } },
               },
           }
         default: { $ref: "#/components/responses/Problem" }
@@ -1075,19 +1077,23 @@ paths:
   /v1/private-services/{private_service_id}/invitations:
     get:
       operationId: listPrivateServiceInvitations
+      description: Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: cursor
+          in: query
+          schema: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
       responses:
         "200":
           description: Invitations for service administrators
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/PrivateServiceInvitation" }
+              schema: { $ref: "#/components/schemas/PrivateServiceInvitationPage" }
         default: { $ref: "#/components/responses/Problem" }
     post:
       operationId: invitePrivateServiceVisitor
+      description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
       security: [{ bearerAuth: [] }]
       parameters:
         [
@@ -1104,6 +1110,11 @@ paths:
             },
         }
       responses:
+        "200":
+          description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceInvitation" }
         "201":
           {
             description: One-use verified-email invitation,
@@ -3044,10 +3055,10 @@ components:
       additionalProperties: false
       required: [publishers, services, oauth, webhooks]
       properties:
-        ci:
+        workloads:
           type: object
           maxProperties: 32
-          additionalProperties: { $ref: "#/components/schemas/ProjectCI" }
+          additionalProperties: { $ref: "#/components/schemas/ProjectWorkload" }
         oauth:
           type: boolean
           default: false
@@ -3076,12 +3087,14 @@ components:
         description: { type: string, maxLength: 1024 }
         domain_id: { type: string }
         public: { type: boolean, default: false }
-    ProjectCI:
+    ProjectWorkload:
       type: object
       additionalProperties: false
-      required: [github, services, max_duration_seconds]
+      required: [provider, trust, services, max_duration_seconds]
       properties:
-        github: { $ref: "#/components/schemas/ProjectCIGitHub" }
+        provider: { $ref: "#/components/schemas/WorkloadProvider" }
+        trust: { $ref: "#/components/schemas/WorkloadTrust" }
+        github: { $ref: "#/components/schemas/ProjectWorkloadGitHub" }
         services:
           type: array
           minItems: 1
@@ -3089,7 +3102,24 @@ components:
           uniqueItems: true
           items: { type: string }
         max_duration_seconds: { type: integer, minimum: 1, maximum: 21600, default: 3600 }
-    ProjectCIGitHub:
+    WorkloadProvider:
+      type: string
+      enum: [github, vercel, fly, oidc]
+      x-enum-varnames: [WorkloadGitHub, WorkloadVercel, WorkloadFly, WorkloadOIDC]
+    WorkloadTrust:
+      type: object
+      additionalProperties: false
+      required: [provider, issuer, jwks_url, audience, claims]
+      properties:
+        provider: { $ref: "#/components/schemas/WorkloadProvider" }
+        issuer: { type: string, maxLength: 1024 }
+        jwks_url: { type: string, maxLength: 1024 }
+        audience: { type: string, maxLength: 1024 }
+        claims:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 1024 }
+    ProjectWorkloadGitHub:
       type: object
       additionalProperties: false
       description: Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
@@ -3916,6 +3946,16 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time }
+    PrivateServiceGrantPage:
+      type: object
+      additionalProperties: false
+      required: [grants]
+      properties:
+        grants:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/PrivateServiceGrant" }
+        next_cursor: { $ref: "#/components/schemas/PrivateServiceGrantID" }
     CreatePrivateServiceInvitationRequest:
       type: object
       additionalProperties: false
@@ -3935,12 +3975,20 @@ components:
         accepted_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time }
         secret:
-          {
-            type: string,
-            minLength: 32,
-            maxLength: 128,
-            description: Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.,
-          }
+          type: string
+          minLength: 32
+          maxLength: 128
+          description: Returned only for a new creation (HTTP 201). Exact creation retries (HTTP 200) and lists omit it. If delivery was lost, revoke the returned ID and create with a new key; secrets cannot be recovered.
+    PrivateServiceInvitationPage:
+      type: object
+      additionalProperties: false
+      required: [invitations]
+      properties:
+        invitations:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/PrivateServiceInvitation" }
+        next_cursor: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
     PrivateConnectorSessionSetup:
       type: object
       additionalProperties: false

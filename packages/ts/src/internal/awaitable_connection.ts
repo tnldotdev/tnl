@@ -4,6 +4,7 @@ import type { TnlConnectionHandle } from "../project.js";
 export function awaitableConnection<Settings extends object>(
   read: () => Settings,
   prepare: () => Promise<Settings>,
+  lazy?: Readonly<Partial<Settings>>,
 ): TnlConnectionHandle<Settings> {
   const target = Object.create(null) as object;
   const then: PromiseLike<Settings>["then"] = (fulfilled, rejected) =>
@@ -16,6 +17,7 @@ export function awaitableConnection<Settings extends object>(
     get(_target, key) {
       if (key === "then") return then;
       if (typeof key !== "string" || key === "toJSON") return undefined;
+      if (lazy !== undefined && Object.hasOwn(lazy, key)) return Reflect.get(lazy, key);
       const snapshot = enumeration ?? read();
       const value: unknown = Reflect.get(snapshot, key);
       remaining.delete(key);
@@ -24,6 +26,7 @@ export function awaitableConnection<Settings extends object>(
     },
     has(_target, key) {
       if (key === "then") return true;
+      if (lazy !== undefined && Object.hasOwn(lazy, key)) return true;
       return Object.hasOwn(enumeration ?? read(), key);
     },
     ownKeys() {
@@ -38,6 +41,10 @@ export function awaitableConnection<Settings extends object>(
     },
     getOwnPropertyDescriptor(_target, key) {
       if (key === "then") return Reflect.getOwnPropertyDescriptor(target, key);
+      if (lazy !== undefined && Object.hasOwn(lazy, key)) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(lazy, key);
+        return descriptor === undefined ? undefined : { ...descriptor, configurable: true };
+      }
       const snapshot = enumeration ?? read();
       const descriptor = Reflect.getOwnPropertyDescriptor(snapshot, key);
       return descriptor === undefined ? undefined : { ...descriptor, configurable: true };

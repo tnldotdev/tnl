@@ -39,9 +39,12 @@ export interface TnlConnectionRegistry {
     readonly ssl: TnlNativeTLSOptions;
   };
   mysql: {
-    readonly host: "127.0.0.1";
+    /** mysql2 verifies this hostname; stream dials the native loopback listener. */
+    readonly host: string;
     readonly port: number;
-    readonly ssl: TnlNativeTLSOptions;
+    readonly ssl: TnlNativeTLSOptions & { readonly verifyIdentity: true };
+    /** a fresh socket for each ordinary mysql2 connection, including pools. */
+    readonly stream: () => import("node:net").Socket;
   };
   tcp: { readonly host: "127.0.0.1"; readonly port: number };
   http: { readonly url: `https://${string}`; readonly fetch: TnlFetch };
@@ -124,9 +127,9 @@ export type TnlProjectFromConfig<Config> = Config extends unknown
         Config[Key]
       >;
     } & {
-      readonly [Key in keyof Config as Key extends "publishers" | "ci" ? Key : never]: DeepReadonly<
-        Config[Key]
-      >;
+      readonly [
+        Key in keyof Config as Key extends "publishers" | "workloads" ? Key : never
+      ]: DeepReadonly<Config[Key]>;
     } & {
       readonly [Key in keyof Config as Key extends "oauth" ? Key : never]:
         | { readonly hostname: string; readonly url: `https://${string}` }

@@ -32,6 +32,10 @@ and remove digest-pinned disposable databases; it is not a product binary
 dependency. Each PostgreSQL-backed invocation shares one PostgreSQL container
 while each test creates its own database. The same harness drives the runtime
 load topology and fault sweeps without a TypeScript container runner.
+The complete runtime tier has a 20-minute budget, including real lease-cycle
+tests; a shell running the full multi-package integration tier needs a longer
+deadline than an individual package. The Node 24 function-artifact fixture runs
+only through its explicit `go:test:integration:vercel` target and artifact input.
 `generate-check` regenerates files and compares them with `HEAD`, so intentional
 uncommitted generated changes also appear as drift. `format-check` only checks;
 `format` applies fixes.
@@ -43,11 +47,15 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Routine behavior                           | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                                    |
 | Go races                                   | `task go:test:race`                                          | No database                                                                                                          |
 | Database and service boundaries            | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
-| CI workload authority and saved selectors  | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub fixtures, without live GitHub or AWS                           |
-| CI workload visitor transports             | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
+| Provider workload authority and selectors  | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub, Vercel, Fly, and generic OIDC fixtures                        |
+| Workload visitor transports                | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
 | Native connection owner and prepared IPC   | `task go:test:connections`                                   | Local TLS fixtures and native subprocesses, without a human sign-in                                                  |
 | Drizzle Kit and native connection options  | `task go:test:integration:connections`                       | Docker; Task owns disposable PostgreSQL and a real Drizzle Kit migration                                             |
+| Local Vercel Node function artifacts       | `task go:test:integration:vercel`                            | Docker and Pebble; Node 24.20.0 on PATH, installed tarballs, workload-owned native startup and real PostgreSQL       |
+| Shared native workload HTTP boundary       | `task go:test:integration:provider-http`                     | Docker and Pebble; SDK/native IPC fixtures plus real workload HTTP certificates and separated runtime processes      |
 | Private services and groups                | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
+| Managed HTTP services                      | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
+| Fixed-list cross-team publishers           | `task go:test:integration:publisher-groups`                  | Linux and Docker; one real CLI process, independent group identities, managed TLS and disposable PostgreSQL          |
 | Signed-human service access and CLI lookup | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
 | Publisher egress evidence                  | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
 | Private runtime topology                   | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
@@ -56,6 +64,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Existing OpenSSH target                    | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
 | Binary behavior                            | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
 | Compose target discovery                   | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                                   |
+| Ubuntu and Compose publisher installation  | `task go:test:integration:publisher-install`                 | Docker; privileged disposable Ubuntu/systemd, private trust, and disposable PostgreSQL; never installs on the host   |
 | Authoritative DNS                          | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                          |
 | Public Route 53 and ACME staging           | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                              |
 | Fuzz targets                               | `task go:test:fuzz`                                          | Go toolchain                                                                                                         |
@@ -63,6 +72,10 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Python ASGI and socket contract            | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real native owner, and wheel source/type-marker checks         |
 | Local release snapshot                     | `task package`                                               | Builds and checks packages; does not publish                                                                         |
 | Deployed release check                     | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
+
+For native client trace propagation and bounded flush, run
+`task go:test:client-tracing` and `task js:test:client-tracing` through `mise exec --`.
+The existing connection tier also checks the real CLI-to-detached-owner trace chain.
 
 Use `RUN` to select an integration test, for example:
 
@@ -116,6 +129,22 @@ mise exec -- pnpm exec vitest run packages/ts/vite.test.ts
 
 Run `mise exec -- task js:check` to build once and run the JavaScript checks
 used in CI, including package verification.
+
+For the opt-in emitted Vercel Node function check, see
+[local Vercel qualification](docs/maintainers/vercel-functions.md). its Tasks use
+Node `24.20.0` from `PATH`, including on CI; they do not invoke mise internally.
+the root mise environment defaults to Node 22, so select Node 24 explicitly:
+
+```console
+mise exec node@24.20.0 -- task go:test:integration:vercel
+```
+
+the artifact check starts its own packaged native owner with signed local Vercel
+request context and a generated manifest. it checks shared HTTP/PostgreSQL,
+incremental preparation, concurrent cold/warm budgets, assertion failures, and
+real revocation against local server roles. optional Linux x64 container execution
+uses `LINUX_NODE_IMAGE`; deployed provider sandbox lifetime remains a separate
+qualification boundary described in the maintainer guide.
 
 The feedback toolbar source and Vitest tests live in `internal/feedbacktoolbar`.
 Its committed `toolbar.js` is generated by `task generate` for Go embedding.

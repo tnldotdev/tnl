@@ -74,7 +74,13 @@ func serviceConnectionProfile(service controlv1.PrivateService, listen string) (
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
 		profile.URL = "https://" + managedOrigin + "/"
-		profile.Command = []string{"curl", "--connect-to", managedOrigin + ":" + address, profile.URL}
+		profile.Command = []string{"curl", "--noproxy", hostname, "--connect-to", managedOrigin + ":" + address, profile.URL}
+		profile.Instructions = []string{"curl below dials the local listener and verifies the managed TLS hostname"}
+		if profile.Port == profile.ManagedPort {
+			profile.Instructions = append(profile.Instructions, "browser: map the exact managed hostname to the listener in your local hosts file before opening the HTTPS URL:", host+" "+hostname, profile.URL)
+		} else {
+			profile.Instructions = append(profile.Instructions, "browser: first run tnl connect with --listen="+net.JoinHostPort(host, strconv.Itoa(profile.ManagedPort))+" and map the exact managed hostname to that loopback IP in your local hosts file; HTTP requires the allocated port in its URL")
+		}
 	case config.ProtocolPostgres:
 		profile.TLS = "PostgreSQL SSLRequest; verify-full; system roots"
 		query := url.Values{"hostaddr": {host}, "sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}
@@ -147,7 +153,11 @@ func writeNativeConnection(output io.Writer, profile nativeConnectionProfile, mo
 		footer = "keep tnl running while using the service"
 	}
 	if profile.URL != "" {
-		fields = append(fields, clioutput.Field{Label: "url", Value: profile.URL})
+		label := "url"
+		if profile.Protocol == config.ProtocolHTTP {
+			label = "curl url"
+		}
+		fields = append(fields, clioutput.Field{Label: label, Value: profile.URL})
 	}
 	if profile.DetachedID != "" {
 		fields = append(fields, clioutput.Field{Label: "detached ID", Value: profile.DetachedID})

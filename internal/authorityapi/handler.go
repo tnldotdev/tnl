@@ -58,7 +58,7 @@ type Store interface {
 }
 
 type handler struct {
-	workloads *oidcauth.GitHubWorkloadVerifier
+	workloads *oidcauth.WorkloadVerifier
 	config    Config
 	store     Store
 	oidc      *oidcauth.Server
@@ -92,7 +92,7 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	h := &handler{config: cfg, store: store}
 	if cfg.ControlURL != "" {
 		var err error
-		h.workloads, err = oidcauth.NewGitHubWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)
+		h.workloads, err = oidcauth.NewWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)
 		if err != nil {
 			return nil, err
 		}

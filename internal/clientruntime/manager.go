@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
@@ -87,7 +88,7 @@ func New(ctx context.Context, project string, database *clientstate.Database, se
 }
 
 func (m *Manager) emitLocked(kind string, service *Service) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), 5*time.Second)
 	defer cancel()
 	if err := CommitSnapshot(ctx, m.database, &m.snapshot, kind, service); err != nil {
 		m.writeErr = err
@@ -277,6 +278,10 @@ func (m *Manager) renew(id, owner, target string, fenced bool) error {
 // register acknowledges ownership and a bound target. provisioning happens in
 // the worker after this method returns and has its own observations.
 func (m *Manager) Register(id, owner, target, framework string) error {
+	return m.RegisterContext(m.ctx, id, owner, target, framework)
+}
+
+func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target, framework string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -323,7 +328,7 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	service.PublishRunNumber, service.Observation = 0, nil
 	service.ProvisioningStage = ""
 	reg.expires = time.Now().Add(LeaseDuration)
-	ctx, cancel := context.WithCancel(m.ctx)
+	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
 	copy, done := *service, reg.done
 	m.emitLocked("service.registered", service)
@@ -335,6 +340,7 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 		m.mu.Unlock()
 		return err
 	}
+	observability.ClientLifecycle(m.ctx, observability.EventRegistered)
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -394,12 +400,16 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 				service.ProvisioningStage = ""
 			}
 		}
+		becameReady := routable && (!service.Routable || run != service.PublishRunNumber)
 		service.PublishRunNumber, service.Routable = run, routable
 		if routable {
 			service.Failure = ""
 			service.ProvisioningStage = ""
 		}
 		m.emitLocked("service.publication", service)
+		if becameReady && m.writeErr == nil {
+			observability.ClientLifecycle(m.ctx, observability.EventPublicationReady)
+		}
 		return m.writeErr
 	}
 	return ErrRegistrationStale

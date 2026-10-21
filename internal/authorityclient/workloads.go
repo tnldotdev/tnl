@@ -7,9 +7,21 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
-func (c *Client) ExchangeGitHubWorkload(ctx context.Context, body authorityv1.GitHubWorkloadExchange) (authorityv1.WorkloadSession, error) {
+func (c *Client) IdentifyWorkload(ctx context.Context, body authorityv1.WorkloadIdentityRequest) (authorityv1.WorkloadIdentity, error) {
+	return requestWithToken[authorityv1.WorkloadIdentity](ctx, c, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.IdentifyWorkload(ctx, body, editors...)
+	})
+}
+
+func (c *Client) AttachWorkloadAssertion(ctx context.Context, id, credential string, body authorityv1.WorkloadAssertion) (authorityv1.WorkloadSession, error) {
+	return requestWithToken[authorityv1.WorkloadSession](ctx, c, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AttachWorkloadAssertion(ctx, id, body, editors...)
+	})
+}
+
+func (c *Client) ExchangeWorkload(ctx context.Context, body authorityv1.WorkloadExchange) (authorityv1.WorkloadSession, error) {
 	return requestWithToken[authorityv1.WorkloadSession](ctx, c, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ExchangeGitHubWorkload(ctx, body, editors...)
+		return c.api.ExchangeWorkload(ctx, body, editors...)
 	})
 }
 func (c *Client) RenewWorkloadSession(ctx context.Context, id, credential string) (authorityv1.WorkloadSession, error) {

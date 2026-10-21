@@ -188,6 +188,14 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 	if executor == nil {
 		return ErrScope
 	}
+	notices, err := serviceNotices(o.BinarySource)
+	if err != nil {
+		return err
+	}
+	sourceInfo, err := os.Lstat(o.BinarySource)
+	if err != nil || !sourceInfo.Mode().IsRegular() || sourceInfo.Mode().Perm()&0o022 != 0 {
+		return ErrUnsafeState
+	}
 	if o.User {
 		if err := ensureUserUnitParent(unitDir, owner); err != nil {
 			return err
@@ -221,11 +229,24 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 		}
 		defer source.Close()
 		info, err := source.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || !os.SameFile(sourceInfo, info) || sourceInfo.Mode() != info.Mode() {
 			return ErrUnsafeState
 		}
 		if err := atomicFile(binary, source, owner, 0o700); err != nil {
 			return err
+		}
+		after, err := source.Stat()
+		if err != nil || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+			return ErrUnsafeState
+		}
+		noticeDir := filepath.Join(binDir, "tnl-notices")
+		if err := ensureServiceDir(noticeDir, owner, true); err != nil {
+			return err
+		}
+		for name, data := range notices {
+			if err := atomicFile(filepath.Join(noticeDir, name), bytes.NewReader(data), owner, 0o600); err != nil {
+				return err
+			}
 		}
 		unit, err := serviceUnit(o.Platform, binary, registry.Root(), o.User)
 		if err != nil {
@@ -276,6 +297,46 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 		return failure.Wrap("inspect system publisher service", failure.ClientStateUnavailable, err)
 	}
 	return executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"bootstrap", domain, unitPath}})
+}
+
+// serviceNotices follows the release archive, curl installer, and image layouts.
+// all three legal files travel with the trusted supervisor copy of the binary.
+func serviceNotices(binary string) (map[string][]byte, error) {
+	info, err := os.Lstat(binary)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+		return nil, ErrUnsafeState
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || trustedAncestors(filepath.Dir(binary), int(stat.Uid)) != nil {
+		return nil, ErrUnsafeState
+	}
+	for _, dir := range []string{filepath.Join(filepath.Dir(binary), "tnl-notices"), filepath.Dir(binary), "/licenses/tnl"} {
+		if trustedAncestors(dir, int(stat.Uid)) != nil {
+			continue
+		}
+		files := map[string][]byte{}
+		for _, name := range []string{"LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"} {
+			path := filepath.Join(dir, name)
+			before, err := os.Lstat(path)
+			if err != nil || !before.Mode().IsRegular() || before.Mode().Perm()&0o022 != 0 || before.Size() == 0 || before.Size() > 4<<20 {
+				break
+			}
+			owner, ok := before.Sys().(*syscall.Stat_t)
+			if !ok || owner.Uid != 0 && owner.Uid != stat.Uid {
+				break
+			}
+			data, err := os.ReadFile(path)
+			after, statErr := os.Lstat(path)
+			if err != nil || statErr != nil || !os.SameFile(before, after) || after.Mode() != before.Mode() {
+				return nil, ErrUnsafeState
+			}
+			files[name] = data
+		}
+		if len(files) == 3 {
+			return files, nil
+		}
+	}
+	return nil, failure.Wrap("copy publisher legal files", failure.PublisherInstallSourceInvalid, errors.New("install tnl with its LICENSE, NOTICE, and THIRD_PARTY_LICENSES.txt files"))
 }
 
 func ensureUserUnitParent(dir string, owner int) error {

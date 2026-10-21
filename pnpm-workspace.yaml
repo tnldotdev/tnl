@@ -6,3 +6,7 @@ allowBuilds:
   esbuild: false
 
 autoInstallPeers: false
+
+minimumReleaseAgeExclude:
+  - "@vercel/cli-config@0.3.2"
+  - "@vercel/oidc@4.0.2"

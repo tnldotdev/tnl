@@ -6,9 +6,40 @@ const native = vi.hoisted(() => ({
   resolve: vi.fn(() => "/installed/matching/tnl"),
 }));
 vi.mock("./src/internal/launcher.js", () => ({ resolveNativeBinary: native.resolve }));
+// reuse the response queue for direct async IPC; synchronous reads still use
+// the installed native reader and never dispatch a prepare operation.
+vi.mock("./src/internal/connection_ipc.js", () => ({
+  ownerIPC: async (file: string) => ({
+    async prepare(name: string) {
+      const { stdout } = await native.async("/installed/matching/tnl", [
+        "--no-telemetry",
+        "runtime",
+        "connections",
+        "prepare",
+        "--handle",
+        file,
+        "--service",
+        name,
+      ]);
+      const value: unknown = JSON.parse(stdout);
+      return value;
+    },
+    close() {},
+  }),
+}));
 vi.mock("node:child_process", async () => {
-  const { promisify } = await import("node:util");
-  const execFile = Object.defineProperty(() => {}, promisify.custom, { value: native.async });
+  const execFile = (
+    binary: string,
+    args: string[],
+    _options: unknown,
+    callback: (error: unknown, stdout?: string) => void,
+  ) => {
+    void native.async(binary, args).then(
+      ({ stdout }) => callback(null, stdout),
+      (error) => callback(error),
+    );
+    return { stdin: { end() {} } };
+  };
   return { execFile, execFileSync: native.sync };
 });
 
@@ -47,6 +78,8 @@ beforeEach(() => {
   });
   vi.resetModules();
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
+  for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
+    vi.stubEnv(name, undefined);
   native.resolve.mockClear();
   native.async.mockReset().mockImplementation(async (_binary, args) => ({
     stdout: JSON.stringify(
@@ -65,6 +98,19 @@ afterEach(() => {
 });
 
 describe("awaitable root connection handles", () => {
+  test("a sibling synchronous settings read dispatches only prepared read and no provider/control preparation", async () => {
+    const { connectionHandle } = await import("./src/internal/connection.js");
+    await connectionHandle("database", vi.fn());
+    const before = native.async.mock.calls.length;
+    native.sync.mockImplementation(() => {
+      throw Object.assign(new Error("native prepared read failed"), {
+        stderr: JSON.stringify({ reason: "TNL_CLIENT_CONNECTION_UNAVAILABLE" }),
+      });
+    });
+    expect(() => Reflect.get(connectionHandle("sibling", vi.fn()), "port")).toThrow();
+    expect(native.async).toHaveBeenCalledTimes(before);
+    expect(native.sync.mock.calls.at(-1)?.[1][3]).toBe("read");
+  });
   test("creation is immediate and unprepared reads fail before resolving a binary", async () => {
     const { connectionHandle } = await import("./src/internal/connection.js");
     const { TnlError } = await import("./src/errors.js");
@@ -103,9 +149,7 @@ describe("awaitable root connection handles", () => {
     });
     const starts = native.async.mock.calls.filter(([, args]) => args.includes("start"));
     expect(starts).toHaveLength(1);
-    expect(starts[0]?.[1]).toContain("--service");
-    const args = starts[0]?.[1] ?? [];
-    expect(args[args.indexOf("--service") + 1]).toBe("database");
+    expect(starts[0]?.[1]).not.toContain("--service");
     expect(native.async).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenCalledWith(project);
 
@@ -137,6 +181,8 @@ describe("awaitable root connection handles", () => {
   });
 
   test("prepared environment handles support synchronous reads without startup", async () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("TNL_WORKLOAD", "storefront");
     vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/action/handle.json");
     const { connectionHandle } = await import("./src/internal/connection.js");
     const handle = connectionHandle("database", vi.fn());
@@ -148,7 +194,7 @@ describe("awaitable root connection handles", () => {
     expect(Object.keys(spread)).toEqual(["host", "port", "ssl"]);
     expect(native.sync).toHaveBeenCalledTimes(3);
     await handle;
-    expect(native.async.mock.calls.every(([, args]) => args.includes("read"))).toBe(true);
+    expect(native.async.mock.calls.every(([, args]) => args.includes("prepare"))).toBe(true);
   });
 
   test("one spread reads one coherent snapshot, while later reads refresh", async () => {
@@ -335,12 +381,12 @@ describe("awaitable root connection handles", () => {
     expect(await handle).toHaveProperty("port", 24567);
     expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
       "start",
-      "read",
+      "prepare",
       "stop",
       "stop",
       "stop",
       "start",
-      "read",
+      "prepare",
     ]);
   });
 
@@ -351,6 +397,86 @@ describe("awaitable root connection handles", () => {
     native.async.mockResolvedValueOnce({ stdout: JSON.stringify({ ...prepared(), schema: 2 }) });
     await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
     expect(await handle).toHaveProperty("port", 24567);
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(["read", "read"]);
+    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(["prepare", "prepare"]);
+  });
+
+  test("known owner expiry requires async preparation and coalesces one joined replacement", async () => {
+    const { connectionHandle } = await import("./src/internal/connection.js");
+    const handle = connectionHandle("database", vi.fn());
+    const first = await handle;
+    const previous = JSON.stringify(first);
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 120_000);
+    const calls = native.async.mock.calls.length;
+    const synchronous = native.sync.mock.calls.length;
+    expect(() => ({ ...handle })).toThrow(
+      expect.objectContaining({ code: "sdk.connection_unprepared" }),
+    );
+    expect(native.async).toHaveBeenCalledTimes(calls);
+    expect(native.sync).toHaveBeenCalledTimes(synchronous);
+    const settings = await Promise.all(
+      Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
+    );
+    expect(settings.every((value) => Object.isFrozen(value))).toBe(true);
+    expect(JSON.stringify(first)).toBe(previous);
+    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
+      "start",
+      "prepare",
+      "stop",
+      "start",
+      "prepare",
+    ]);
+  });
+
+  test("expired owner cleanup retains its capability until joined stop is confirmed", async () => {
+    const { connectionHandle } = await import("./src/internal/connection.js");
+    const handle = connectionHandle("database", vi.fn());
+    await handle;
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 120_000);
+    native.async
+      .mockRejectedValueOnce({ code: "ETIMEDOUT" })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ schema: 1, state: "stopping" }) });
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
+    expect(() => ({ ...handle })).toThrow(
+      expect.objectContaining({ code: "sdk.connection_unprepared" }),
+    );
+    await handle;
+    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
+      "start",
+      "prepare",
+      "stop",
+      "stop",
+      "stop",
+      "start",
+      "prepare",
+    ]);
+  });
+
+  test("snapshot expiry cannot replace a live owner or extend its validated deadline", async () => {
+    const { connectionHandle } = await import("./src/internal/connection.js");
+    const handle = connectionHandle("database", vi.fn());
+    const now = Date.now();
+    await handle;
+    vi.useFakeTimers();
+    vi.setSystemTime(now + 30_000);
+    native.async.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        ...prepared(),
+        connection: { ...connection(), expires_at: new Date(now - 1).toISOString() },
+      }),
+    });
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    await handle;
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(0);
+    vi.setSystemTime(now + 61_000);
+    await handle;
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(2);
   });
 });

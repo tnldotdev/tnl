@@ -79,8 +79,9 @@ tnl:
       publisher: production
       protocol: postgres
       target: { type: rds, cluster: orders, region: us-east-1, endpoint: writer }
-  ci:
+  workloads:
     deploy:
+      provider: github
       github:
         repository: company/project
         workflow: .github/workflows/deploy.yml
@@ -90,14 +91,19 @@ tnl:
       max_duration: 1h
 ```
 
-`ci.NAME.github` optionally selects an environment and an exact
+`workloads.NAME.github` with `provider: github` optionally selects an environment and an exact
 `reusable_workflow` (`owner/repository/.github/workflows/file@ref`). An omitted
 repository is inferred from GitHub origin by the applying consumer, never by
 type generation. Workflow paths and refs are exact; events are a declared enum;
 service references must name existing keys. `max_duration`, when set, is
-positive and at most six hours for GitHub-hosted runs. Omission means one hour;
-`config.CI.DurationLimit()` shares this default with consuming code without
-filling in the declaration. Visitor access grants do not imply CI authority.
+positive and at most six hours. omission means one hour;
+`config.Workload.DurationLimit()` shares this default with consuming code without
+filling in the declaration. visitor access grants do not imply workload authority.
+
+`tnl generate` also writes `workloads.json` for any declared workloads. package
+this nonsecret build manifest with a deployed application so its runtime can
+select a saved workload without Git or evaluating TypeScript configuration.
+see [workload sessions](workload-sessions.md) for provider acquisition and fields.
 
 RDS selects exactly one `instance` or `cluster`; `endpoint` defaults to `writer`,
 and `reader` is cluster-only. EKS and RDS selectors contain no discovered

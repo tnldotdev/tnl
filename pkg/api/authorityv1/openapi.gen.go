@@ -675,21 +675,6 @@ type EmailDeliveryRequest struct {
 // EmailDeliveryRequestType defines model for EmailDeliveryRequest.Type.
 type EmailDeliveryRequestType string
 
-// GitHubWorkloadExchange defines model for GitHubWorkloadExchange.
-type GitHubWorkloadExchange struct {
-	Assertion  string `json:"assertion"`
-	Ci         string `json:"ci"`
-	ProjectKey string `json:"project_key"`
-
-	// PublicKey Unpadded base64url Ed25519 public key
-	PublicKey string    `json:"public_key"`
-	Services  *[]string `json:"services,omitempty"`
-
-	// Signature Unpadded base64url signature of the workload exchange digest
-	Signature string `json:"signature"`
-	TeamId    string `json:"team_id"`
-}
-
 // Identity defines model for Identity.
 type Identity struct {
 	Administrator   bool                 `json:"administrator"`
@@ -1012,23 +997,83 @@ type VerifiedOIDCTeamContext struct {
 	TeamId               string `json:"team_id"`
 }
 
+// WorkloadAssertion defines model for WorkloadAssertion.
+type WorkloadAssertion struct {
+	Assertion string `json:"assertion"`
+
+	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-attach/v1", session_id, assertion_sha256_base64url].
+	Signature string `json:"signature"`
+}
+
+// WorkloadExchange defines model for WorkloadExchange.
+type WorkloadExchange struct {
+	Assertion  string `json:"assertion"`
+	Nonce      string `json:"nonce"`
+	ProjectKey string `json:"project_key"`
+
+	// PublicKey Unpadded base64url Ed25519 public key
+	PublicKey string    `json:"public_key"`
+	Services  *[]string `json:"services,omitempty"`
+
+	// Signature Unpadded base64url signature of the workload exchange digest
+	Signature         string `json:"signature"`
+	SourceFingerprint string `json:"source_fingerprint"`
+
+	// TeamId Exact team ID or unique team-name selector. The response contains the canonical team ID.
+	TeamId   string `json:"team_id"`
+	Workload string `json:"workload"`
+}
+
+// WorkloadGitHubExecution Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
+type WorkloadGitHubExecution struct {
+	CheckRunId        string `json:"check_run_id"`
+	RepositoryId      string `json:"repository_id"`
+	RepositoryOwnerId string `json:"repository_owner_id"`
+	RunAttempt        string `json:"run_attempt"`
+	RunId             string `json:"run_id"`
+}
+
+// WorkloadIdentity defines model for WorkloadIdentity.
+type WorkloadIdentity struct {
+	// AssertionExpiresAt Expiry verified by authority for the exact supplied assertion.
+	AssertionExpiresAt time.Time `json:"assertion_expires_at"`
+	Binding            string    `json:"binding"`
+	Services           []string  `json:"services"`
+}
+
+// WorkloadIdentityRequest defines model for WorkloadIdentityRequest.
+type WorkloadIdentityRequest struct {
+	Assertion         string `json:"assertion"`
+	ProjectKey        string `json:"project_key"`
+	SourceFingerprint string `json:"source_fingerprint"`
+	TeamId            string `json:"team_id"`
+	Workload          string `json:"workload"`
+}
+
 // WorkloadSession defines model for WorkloadSession.
-type WorkloadSession struct {
-	CheckRunId     string    `json:"check_run_id"`
-	Ci             string    `json:"ci"`
-	Credential     string    `json:"credential"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	Id             string    `json:"id"`
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-	ProjectKey     string    `json:"project_key"`
-	RenewAfter     time.Time `json:"renew_after"`
-	RunAttempt     string    `json:"run_attempt"`
-	RunId          string    `json:"run_id"`
-	ServiceIds     []string  `json:"service_ids"`
+type WorkloadSession = WorkloadSessionFields
+
+// WorkloadSessionFields defines model for WorkloadSessionFields.
+type WorkloadSessionFields struct {
+	// AssertionExpiresAt Verified expiry of the supplied assertion on exchange or attachment. Omitted on renewal; never extends the session window.
+	AssertionExpiresAt *time.Time `json:"assertion_expires_at,omitempty"`
+	Binding            string     `json:"binding"`
+	Credential         string     `json:"credential"`
+	ExpiresAt          time.Time  `json:"expires_at"`
+
+	// Github Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
+	Github         *WorkloadGitHubExecution      `json:"github,omitempty"`
+	Id             string                        `json:"id"`
+	LeaseExpiresAt time.Time                     `json:"lease_expires_at"`
+	ProjectKey     string                        `json:"project_key"`
+	Provider       externalRef0.WorkloadProvider `json:"provider"`
+	RenewAfter     time.Time                     `json:"renew_after"`
+	ServiceIds     []string                      `json:"service_ids"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject externalRef0.VisitorSubject `json:"subject"`
-	TeamId  string                      `json:"team_id"`
+	Subject  externalRef0.VisitorSubject `json:"subject"`
+	TeamId   string                      `json:"team_id"`
+	Workload string                      `json:"workload"`
 }
 
 // CompanyActorToken defines model for CompanyActorToken.
@@ -1111,6 +1156,8 @@ type GetWebsitePrivateServiceParams struct {
 
 // ListWebsitePrivateServiceGrantsParams defines parameters for ListWebsitePrivateServiceGrants.
 type ListWebsitePrivateServiceGrantsParams struct {
+	Cursor *externalRef0.PrivateServiceGrantID `form:"cursor,omitempty" json:"cursor,omitempty"`
+
 	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
 	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
@@ -1141,6 +1188,8 @@ type RevokeWebsiteManagedHTTPGrantParams struct {
 
 // ListWebsitePrivateServiceInvitationsParams defines parameters for ListWebsitePrivateServiceInvitations.
 type ListWebsitePrivateServiceInvitationsParams struct {
+	Cursor *externalRef0.PrivateServiceInvitationID `form:"cursor,omitempty" json:"cursor,omitempty"`
+
 	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
 	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
@@ -1374,8 +1423,14 @@ type CreateTeamInvitationJSONRequestBody = CreateInvitationRequest
 // SetMembershipRoleJSONRequestBody defines body for SetMembershipRole for application/json ContentType.
 type SetMembershipRoleJSONRequestBody = SetMembershipRoleRequest
 
-// ExchangeGitHubWorkloadJSONRequestBody defines body for ExchangeGitHubWorkload for application/json ContentType.
-type ExchangeGitHubWorkloadJSONRequestBody = GitHubWorkloadExchange
+// ExchangeWorkloadJSONRequestBody defines body for ExchangeWorkload for application/json ContentType.
+type ExchangeWorkloadJSONRequestBody = WorkloadExchange
+
+// IdentifyWorkloadJSONRequestBody defines body for IdentifyWorkload for application/json ContentType.
+type IdentifyWorkloadJSONRequestBody = WorkloadIdentityRequest
+
+// AttachWorkloadAssertionJSONRequestBody defines body for AttachWorkloadAssertion for application/json ContentType.
+type AttachWorkloadAssertionJSONRequestBody = WorkloadAssertion
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1705,6 +1760,8 @@ type ClientInterface interface {
 	GetWebsitePrivateService(ctx context.Context, privateServiceId PrivateServiceID, params *GetWebsitePrivateServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListWebsitePrivateServiceGrants performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+	//
+	// Up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization. Inventory is not proof of visitor access.
 	ListWebsitePrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeWebsitePrivateServiceGrant performs a DELETE /v1/service/private-services/{private_service_id}/grants/{grant_id} (the `RevokeWebsitePrivateServiceGrant` operationId) request.
@@ -1729,14 +1786,20 @@ type ClientInterface interface {
 	RevokeWebsiteManagedHTTPGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId string, params *RevokeWebsiteManagedHTTPGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListWebsitePrivateServiceInvitations performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+	//
+	// Up to 100 records ordered by ID, including accepted, expired and revoked history, without secrets. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization.
 	ListWebsitePrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InviteWebsitePrivateServiceVisitorWithBody performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InviteWebsitePrivateServiceVisitor performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeWebsitePrivateServiceInvitation performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
@@ -1935,16 +1998,32 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeGitHubWorkloadWithBody performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request,
+	// ExchangeWorkloadWithBody performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 	// with any type of body and a specified content type.
-	ExchangeGitHubWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExchangeWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeGitHubWorkload performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request.
+	// ExchangeWorkload performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
 	// Takes a body of the `application/json` content type.
-	ExchangeGitHubWorkload(ctx context.Context, body ExchangeGitHubWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExchangeWorkload(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IdentifyWorkloadWithBody performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	IdentifyWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IdentifyWorkload performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
+	// Takes a body of the `application/json` content type.
+	IdentifyWorkload(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeWorkloadSession performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
 	RevokeWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachWorkloadAssertionWithBody performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	AttachWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachWorkloadAssertion performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AttachWorkloadAssertion(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RenewWorkloadSession performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
 	RenewWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2654,6 +2733,8 @@ func (c *Client) GetWebsitePrivateService(ctx context.Context, privateServiceId 
 }
 
 // ListWebsitePrivateServiceGrants performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
+//
+// Up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization. Inventory is not proof of visitor access.
 func (c *Client) ListWebsitePrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListWebsitePrivateServiceGrantsRequest(c.Server, privateServiceId, params)
 	if err != nil {
@@ -2738,6 +2819,8 @@ func (c *Client) RevokeWebsiteManagedHTTPGrant(ctx context.Context, privateServi
 }
 
 // ListWebsitePrivateServiceInvitations performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
+//
+// Up to 100 records ordered by ID, including accepted, expired and revoked history, without secrets. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization.
 func (c *Client) ListWebsitePrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListWebsitePrivateServiceInvitationsRequest(c.Server, privateServiceId, params)
 	if err != nil {
@@ -2752,6 +2835,8 @@ func (c *Client) ListWebsitePrivateServiceInvitations(ctx context.Context, priva
 
 // InviteWebsitePrivateServiceVisitorWithBody performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
+//
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *Client) InviteWebsitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteWebsitePrivateServiceVisitorRequestWithBody(c.Server, privateServiceId, params, contentType, body)
 	if err != nil {
@@ -2766,6 +2851,8 @@ func (c *Client) InviteWebsitePrivateServiceVisitorWithBody(ctx context.Context,
 
 // InviteWebsitePrivateServiceVisitor performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *Client) InviteWebsitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInviteWebsitePrivateServiceVisitorRequest(c.Server, privateServiceId, params, body)
 	if err != nil {
@@ -3354,10 +3441,10 @@ func (c *Client) SetMembershipRole(ctx context.Context, teamId TeamID, membershi
 	return c.Client.Do(req)
 }
 
-// ExchangeGitHubWorkloadWithBody performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request,
+// ExchangeWorkloadWithBody performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 // with any type of body and a specified content type.
-func (c *Client) ExchangeGitHubWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeGitHubWorkloadRequestWithBody(c.Server, contentType, body)
+func (c *Client) ExchangeWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeWorkloadRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3368,10 +3455,38 @@ func (c *Client) ExchangeGitHubWorkloadWithBody(ctx context.Context, contentType
 	return c.Client.Do(req)
 }
 
-// ExchangeGitHubWorkload performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request.
+// ExchangeWorkload performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
 // Takes a body of the `application/json` content type.
-func (c *Client) ExchangeGitHubWorkload(ctx context.Context, body ExchangeGitHubWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeGitHubWorkloadRequest(c.Server, body)
+func (c *Client) ExchangeWorkload(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeWorkloadRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IdentifyWorkloadWithBody performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) IdentifyWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentifyWorkloadRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IdentifyWorkload performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) IdentifyWorkload(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIdentifyWorkloadRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3385,6 +3500,34 @@ func (c *Client) ExchangeGitHubWorkload(ctx context.Context, body ExchangeGitHub
 // RevokeWorkloadSession performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
 func (c *Client) RevokeWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeWorkloadSessionRequest(c.Server, sessionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachWorkloadAssertionWithBody performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AttachWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachWorkloadAssertionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachWorkloadAssertion performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AttachWorkloadAssertion(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachWorkloadAssertionRequest(c.Server, sessionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4505,6 +4648,33 @@ func NewListWebsitePrivateServiceGrantsRequest(server string, privateServiceId P
 		return nil, err
 	}
 
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
@@ -4765,6 +4935,33 @@ func NewListWebsitePrivateServiceInvitationsRequest(server string, privateServic
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -6176,19 +6373,19 @@ func NewSetMembershipRoleRequestWithBody(server string, teamId TeamID, membershi
 	return req, nil
 }
 
-// NewExchangeGitHubWorkloadRequest calls the generic ExchangeGitHubWorkload builder with application/json body
-func NewExchangeGitHubWorkloadRequest(server string, body ExchangeGitHubWorkloadJSONRequestBody) (*http.Request, error) {
+// NewExchangeWorkloadRequest calls the generic ExchangeWorkload builder with application/json body
+func NewExchangeWorkloadRequest(server string, body ExchangeWorkloadJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExchangeGitHubWorkloadRequestWithBody(server, "application/json", bodyReader)
+	return NewExchangeWorkloadRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewExchangeGitHubWorkloadRequestWithBody constructs an http.Request for the ExchangeGitHubWorkload method, with any body, and a specified content type
-func NewExchangeGitHubWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewExchangeWorkloadRequestWithBody constructs an http.Request for the ExchangeWorkload method, with any body, and a specified content type
+func NewExchangeWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6196,7 +6393,47 @@ func NewExchangeGitHubWorkloadRequestWithBody(server string, contentType string,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/workload-sessions/github")
+	operationPath := fmt.Sprintf("/v1/workload-sessions/exchange")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIdentifyWorkloadRequest calls the generic IdentifyWorkload builder with application/json body
+func NewIdentifyWorkloadRequest(server string, body IdentifyWorkloadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIdentifyWorkloadRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIdentifyWorkloadRequestWithBody constructs an http.Request for the IdentifyWorkload method, with any body, and a specified content type
+func NewIdentifyWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload-sessions/identity")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6246,6 +6483,53 @@ func NewRevokeWorkloadSessionRequest(server string, sessionId string) (*http.Req
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewAttachWorkloadAssertionRequest calls the generic AttachWorkloadAssertion builder with application/json body
+func NewAttachWorkloadAssertionRequest(server string, sessionId string, body AttachWorkloadAssertionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAttachWorkloadAssertionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewAttachWorkloadAssertionRequestWithBody constructs an http.Request for the AttachWorkloadAssertion method, with any body, and a specified content type
+func NewAttachWorkloadAssertionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload-sessions/%s/assertions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6611,6 +6895,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListWebsitePrivateServiceGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
 	//
+	// Up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization. Inventory is not proof of visitor access.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	ListWebsitePrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceGrantsResponse, error)
 
@@ -6645,17 +6931,23 @@ type ClientWithResponsesInterface interface {
 
 	// ListWebsitePrivateServiceInvitationsWithResponse performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
 	//
+	// Up to 100 records ordered by ID, including accepted, expired and revoked history, without secrets. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	ListWebsitePrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceInvitationsResponse, error)
 
 	// InviteWebsitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	InviteWebsitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error)
 
 	// InviteWebsitePrivateServiceVisitorWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 	InviteWebsitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error)
 
 	// RevokeWebsitePrivateServiceInvitationWithResponse performs a DELETE /v1/service/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokeWebsitePrivateServiceInvitation` operationId) request.
@@ -6894,20 +7186,40 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
 
-	// ExchangeGitHubWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request,
+	// ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	ExchangeGitHubWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeGitHubWorkloadResponse, error)
+	ExchangeWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error)
 
-	// ExchangeGitHubWorkloadWithResponse performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request.
+	// ExchangeWorkloadWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ExchangeGitHubWorkloadWithResponse(ctx context.Context, body ExchangeGitHubWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeGitHubWorkloadResponse, error)
+	ExchangeWorkloadWithResponse(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error)
+
+	// IdentifyWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	IdentifyWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error)
+
+	// IdentifyWorkloadWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	IdentifyWorkloadWithResponse(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error)
 
 	// RevokeWorkloadSessionWithResponse performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeWorkloadSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RevokeWorkloadSessionResponse, error)
+
+	// AttachWorkloadAssertionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AttachWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error)
+
+	// AttachWorkloadAssertionWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AttachWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error)
 
 	// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
 	//
@@ -8081,13 +8393,13 @@ type ListWebsitePrivateServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]externalRef0.PrivateServiceGrant
+	JSON200 *externalRef0.PrivateServiceGrantPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListWebsitePrivateServiceGrantsResponse) GetJSON200() *[]externalRef0.PrivateServiceGrant {
+func (r ListWebsitePrivateServiceGrantsResponse) GetJSON200() *externalRef0.PrivateServiceGrantPage {
 	return r.JSON200
 }
 
@@ -8307,13 +8619,13 @@ type ListWebsitePrivateServiceInvitationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]externalRef0.PrivateServiceInvitation
+	JSON200 *externalRef0.PrivateServiceInvitationPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListWebsitePrivateServiceInvitationsResponse) GetJSON200() *[]externalRef0.PrivateServiceInvitation {
+func (r ListWebsitePrivateServiceInvitationsResponse) GetJSON200() *externalRef0.PrivateServiceInvitationPage {
 	return r.JSON200
 }
 
@@ -8354,10 +8666,17 @@ func (r ListWebsitePrivateServiceInvitationsResponse) ContentType() string {
 type InviteWebsitePrivateServiceVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *externalRef0.PrivateServiceInvitation
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *externalRef0.PrivateServiceInvitation
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InviteWebsitePrivateServiceVisitorResponse) GetJSON200() *externalRef0.PrivateServiceInvitation {
+	return r.JSON200
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -9598,7 +9917,7 @@ func (r SetMembershipRoleResponse) ContentType() string {
 	return ""
 }
 
-type ExchangeGitHubWorkloadResponse struct {
+type ExchangeWorkloadResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
@@ -9608,22 +9927,22 @@ type ExchangeGitHubWorkloadResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeGitHubWorkloadResponse) GetJSON200() *WorkloadSession {
+func (r ExchangeWorkloadResponse) GetJSON200() *WorkloadSession {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeGitHubWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ExchangeWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ExchangeGitHubWorkloadResponse) GetBody() []byte {
+func (r ExchangeWorkloadResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ExchangeGitHubWorkloadResponse) Status() string {
+func (r ExchangeWorkloadResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -9631,7 +9950,7 @@ func (r ExchangeGitHubWorkloadResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeGitHubWorkloadResponse) StatusCode() int {
+func (r ExchangeWorkloadResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9639,7 +9958,55 @@ func (r ExchangeGitHubWorkloadResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeGitHubWorkloadResponse) ContentType() string {
+func (r ExchangeWorkloadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IdentifyWorkloadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadIdentity
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IdentifyWorkloadResponse) GetJSON200() *WorkloadIdentity {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IdentifyWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IdentifyWorkloadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IdentifyWorkloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IdentifyWorkloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IdentifyWorkloadResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9681,6 +10048,54 @@ func (r RevokeWorkloadSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeWorkloadSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AttachWorkloadAssertionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AttachWorkloadAssertionResponse) GetJSON200() *WorkloadSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AttachWorkloadAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AttachWorkloadAssertionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AttachWorkloadAssertionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AttachWorkloadAssertionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AttachWorkloadAssertionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10288,6 +10703,8 @@ func (c *ClientWithResponses) GetWebsitePrivateServiceWithResponse(ctx context.C
 
 // ListWebsitePrivateServiceGrantsWithResponse performs a GET /v1/service/private-services/{private_service_id}/grants (the `ListWebsitePrivateServiceGrants` operationId) request.
 //
+// Up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization. Inventory is not proof of visitor access.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListWebsitePrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceGrantsResponse, error) {
 	rsp, err := c.ListWebsitePrivateServiceGrants(ctx, privateServiceId, params, reqEditors...)
@@ -10358,6 +10775,8 @@ func (c *ClientWithResponses) RevokeWebsiteManagedHTTPGrantWithResponse(ctx cont
 
 // ListWebsitePrivateServiceInvitationsWithResponse performs a GET /v1/service/private-services/{private_service_id}/invitations (the `ListWebsitePrivateServiceInvitations` operationId) request.
 //
+// Up to 100 records ordered by ID, including accepted, expired and revoked history, without secrets. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListWebsitePrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListWebsitePrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListWebsitePrivateServiceInvitationsResponse, error) {
 	rsp, err := c.ListWebsitePrivateServiceInvitations(ctx, privateServiceId, params, reqEditors...)
@@ -10370,6 +10789,8 @@ func (c *ClientWithResponses) ListWebsitePrivateServiceInvitationsWithResponse(c
 // InviteWebsitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) InviteWebsitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error) {
 	rsp, err := c.InviteWebsitePrivateServiceVisitorWithBody(ctx, privateServiceId, params, contentType, body, reqEditors...)
@@ -10381,6 +10802,8 @@ func (c *ClientWithResponses) InviteWebsitePrivateServiceVisitorWithBodyWithResp
 
 // InviteWebsitePrivateServiceVisitorWithResponse performs a POST /v1/service/private-services/{private_service_id}/invitations (the `InviteWebsitePrivateServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
 func (c *ClientWithResponses) InviteWebsitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InviteWebsitePrivateServiceVisitorParams, body InviteWebsitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InviteWebsitePrivateServiceVisitorResponse, error) {
 	rsp, err := c.InviteWebsitePrivateServiceVisitor(ctx, privateServiceId, params, body, reqEditors...)
 	if err != nil {
@@ -10853,26 +11276,48 @@ func (c *ClientWithResponses) SetMembershipRoleWithResponse(ctx context.Context,
 	return ParseSetMembershipRoleResponse(rsp)
 }
 
-// ExchangeGitHubWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request,
+// ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 // with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeGitHubWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeGitHubWorkloadResponse, error) {
-	rsp, err := c.ExchangeGitHubWorkloadWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ExchangeWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error) {
+	rsp, err := c.ExchangeWorkloadWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeGitHubWorkloadResponse(rsp)
+	return ParseExchangeWorkloadResponse(rsp)
 }
 
-// ExchangeGitHubWorkloadWithResponse performs a POST /v1/workload-sessions/github (the `ExchangeGitHubWorkload` operationId) request.
+// ExchangeWorkloadWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ExchangeGitHubWorkloadWithResponse(ctx context.Context, body ExchangeGitHubWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeGitHubWorkloadResponse, error) {
-	rsp, err := c.ExchangeGitHubWorkload(ctx, body, reqEditors...)
+func (c *ClientWithResponses) ExchangeWorkloadWithResponse(ctx context.Context, body ExchangeWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeWorkloadResponse, error) {
+	rsp, err := c.ExchangeWorkload(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeGitHubWorkloadResponse(rsp)
+	return ParseExchangeWorkloadResponse(rsp)
+}
+
+// IdentifyWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IdentifyWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error) {
+	rsp, err := c.IdentifyWorkloadWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentifyWorkloadResponse(rsp)
+}
+
+// IdentifyWorkloadWithResponse performs a POST /v1/workload-sessions/identity (the `IdentifyWorkload` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IdentifyWorkloadWithResponse(ctx context.Context, body IdentifyWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*IdentifyWorkloadResponse, error) {
+	rsp, err := c.IdentifyWorkload(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIdentifyWorkloadResponse(rsp)
 }
 
 // RevokeWorkloadSessionWithResponse performs a DELETE /v1/workload-sessions/{session_id} (the `RevokeWorkloadSession` operationId) request.
@@ -10884,6 +11329,28 @@ func (c *ClientWithResponses) RevokeWorkloadSessionWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseRevokeWorkloadSessionResponse(rsp)
+}
+
+// AttachWorkloadAssertionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error) {
+	rsp, err := c.AttachWorkloadAssertionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachWorkloadAssertionResponse(rsp)
+}
+
+// AttachWorkloadAssertionWithResponse performs a POST /v1/workload-sessions/{session_id}/assertions (the `AttachWorkloadAssertion` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error) {
+	rsp, err := c.AttachWorkloadAssertion(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachWorkloadAssertionResponse(rsp)
 }
 
 // RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
@@ -11730,7 +12197,7 @@ func ParseListWebsitePrivateServiceGrantsResponse(rsp *http.Response) (*ListWebs
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []externalRef0.PrivateServiceGrant
+		var dest externalRef0.PrivateServiceGrantPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11887,7 +12354,7 @@ func ParseListWebsitePrivateServiceInvitationsResponse(rsp *http.Response) (*Lis
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []externalRef0.PrivateServiceInvitation
+		var dest externalRef0.PrivateServiceInvitationPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11919,6 +12386,13 @@ func ParseInviteWebsitePrivateServiceVisitorResponse(rsp *http.Response) (*Invit
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest externalRef0.PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest externalRef0.PrivateServiceInvitation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -12777,15 +13251,15 @@ func ParseSetMembershipRoleResponse(rsp *http.Response) (*SetMembershipRoleRespo
 	return response, nil
 }
 
-// ParseExchangeGitHubWorkloadResponse parses an HTTP response from a ExchangeGitHubWorkloadWithResponse call
-func ParseExchangeGitHubWorkloadResponse(rsp *http.Response) (*ExchangeGitHubWorkloadResponse, error) {
+// ParseExchangeWorkloadResponse parses an HTTP response from a ExchangeWorkloadWithResponse call
+func ParseExchangeWorkloadResponse(rsp *http.Response) (*ExchangeWorkloadResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ExchangeGitHubWorkloadResponse{
+	response := &ExchangeWorkloadResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -12793,6 +13267,39 @@ func ParseExchangeGitHubWorkloadResponse(rsp *http.Response) (*ExchangeGitHubWor
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorkloadSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIdentifyWorkloadResponse parses an HTTP response from a IdentifyWorkloadWithResponse call
+func ParseIdentifyWorkloadResponse(rsp *http.Response) (*IdentifyWorkloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IdentifyWorkloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadIdentity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -12826,6 +13333,39 @@ func ParseRevokeWorkloadSessionResponse(rsp *http.Response) (*RevokeWorkloadSess
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAttachWorkloadAssertionResponse parses an HTTP response from a AttachWorkloadAssertionWithResponse call
+func ParseAttachWorkloadAssertionResponse(rsp *http.Response) (*AttachWorkloadAssertionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AttachWorkloadAssertionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -13049,11 +13589,17 @@ type ServerInterface interface {
 	// (PATCH /v1/teams/{team_id}/memberships/{membership_id})
 	SetMembershipRole(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID)
 
-	// (POST /v1/workload-sessions/github)
-	ExchangeGitHubWorkload(w http.ResponseWriter, r *http.Request)
+	// (POST /v1/workload-sessions/exchange)
+	ExchangeWorkload(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/workload-sessions/identity)
+	IdentifyWorkload(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /v1/workload-sessions/{session_id})
 	RevokeWorkloadSession(w http.ResponseWriter, r *http.Request, sessionId string)
+
+	// (POST /v1/workload-sessions/{session_id}/assertions)
+	AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request, sessionId string)
 
 	// (POST /v1/workload-sessions/{session_id}/renew)
 	RenewWorkloadSession(w http.ResponseWriter, r *http.Request, sessionId string)
@@ -13645,6 +14191,19 @@ func (siw *ServerInterfaceWrapper) ListWebsitePrivateServiceGrants(w http.Respon
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListWebsitePrivateServiceGrantsParams
 
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
 	headers := r.Header
 
 	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
@@ -13932,6 +14491,19 @@ func (siw *ServerInterfaceWrapper) ListWebsitePrivateServiceInvitations(w http.R
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListWebsitePrivateServiceInvitationsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
 
 	headers := r.Header
 
@@ -15214,11 +15786,25 @@ func (siw *ServerInterfaceWrapper) SetMembershipRole(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
-// ExchangeGitHubWorkload operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeGitHubWorkload(w http.ResponseWriter, r *http.Request) {
+// ExchangeWorkload operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeWorkload(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeGitHubWorkload(w, r)
+		siw.Handler.ExchangeWorkload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IdentifyWorkload operation middleware
+func (siw *ServerInterfaceWrapper) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IdentifyWorkload(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15245,6 +15831,32 @@ func (siw *ServerInterfaceWrapper) RevokeWorkloadSession(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeWorkloadSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AttachWorkloadAssertion operation middleware
+func (siw *ServerInterfaceWrapper) AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachWorkloadAssertion(w, r, sessionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15412,7 +16024,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants", wrapper.ListWebsiteManagedHTTPGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants", wrapper.CreateWebsiteManagedHTTPGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/private-services/{private_service_id}/http-grants/{grant_id}", wrapper.RevokeWebsiteManagedHTTPGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/github", wrapper.ExchangeGitHubWorkload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/identity", wrapper.IdentifyWorkload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/assertions", wrapper.AttachWorkloadAssertion)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/exchange", wrapper.ExchangeWorkload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/renew", wrapper.RenewWorkloadSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/workload-sessions/{session_id}", wrapper.RevokeWorkloadSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections", wrapper.ReadCompanyConnections)

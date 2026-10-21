@@ -37,6 +37,12 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	project.Root = canonicalRoot
 	project.Selection.Path = filepath.Join(canonicalRoot, filepath.Base(project.Selection.Path))
 	var source projectconfig.SourceIdentity
+	if len(project.Config.Workloads) > 0 {
+		source, err = project.SourceIdentity(ctx)
+		if err != nil {
+			return failure.Wrap("identify workload project", failure.ProjectConfigInvalid, err)
+		}
+	}
 	for _, publisher := range project.Config.Publishers {
 		if publisher.AWS == nil {
 			continue

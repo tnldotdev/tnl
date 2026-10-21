@@ -19,7 +19,7 @@ export const contextSchema = z.strictObject({
   source_id: text,
   worktree_key: text,
   project_label: text,
-  ci: serviceKey,
+  workload: serviceKey,
   services: z
     .array(serviceKey)
     .min(1)
@@ -95,7 +95,7 @@ export function checkCapabilities(value: unknown): void {
       capabilities: z.array(z.string()),
       workload_private: z.literal(true),
       opaque_private_preflight: z.literal(true),
-      team_names: z.literal("applied_binding"),
+      team_names: z.literal("saved_policy"),
     })
     .safeParse(value);
   if (

@@ -163,9 +163,10 @@ func (q *Queries) ClaimPrivateServiceConnectionSlot(ctx context.Context, arg Cla
 const cleanupPrivateConnectorSessions = `-- name: CleanupPrivateConnectorSessions :exec
 DELETE FROM control.private_connector_sessions session WHERE session.id IN
     (SELECT expired.id FROM control.private_connector_sessions expired
-        WHERE expired.expires_at <= $1 LIMIT 100)
-    AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream
-        WHERE stream.connector_session_id = session.id)
+        WHERE expired.workload_session_id IS NULL AND expired.expires_at <= $1
+        AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream
+            WHERE stream.connector_session_id = expired.id)
+        ORDER BY expired.expires_at, expired.id LIMIT 100 FOR UPDATE SKIP LOCKED)
 `
 
 func (q *Queries) CleanupPrivateConnectorSessions(ctx context.Context, now pgtype.Timestamptz) error {
@@ -384,6 +385,39 @@ func (q *Queries) ExpirePrivateServiceRunPreparation(ctx context.Context, arg Ex
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const findPrivateServiceInvitationRequest = `-- name: FindPrivateServiceInvitationRequest :one
+SELECT id, private_service_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.private_service_invitations
+WHERE created_by_identity_id = $1
+AND idempotency_key = $2 FOR UPDATE
+`
+
+type FindPrivateServiceInvitationRequestParams struct {
+	CreatedByIdentityID string
+	IdempotencyKey      string
+}
+
+// the caller rechecks current management before recovering metadata, never secrets.
+func (q *Queries) FindPrivateServiceInvitationRequest(ctx context.Context, arg FindPrivateServiceInvitationRequestParams) (ControlPrivateServiceInvitation, error) {
+	row := q.db.QueryRow(ctx, findPrivateServiceInvitationRequest, arg.CreatedByIdentityID, arg.IdempotencyKey)
+	var i ControlPrivateServiceInvitation
+	err := row.Scan(
+		&i.ID,
+		&i.PrivateServiceID,
+		&i.TeamID,
+		&i.NormalizedEmail,
+		&i.TokenDigest,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.AcceptedIdentityID,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const getPrivateRunPublisherIdentity = `-- name: GetPrivateRunPublisherIdentity :one
@@ -983,11 +1017,17 @@ func (q *Queries) ListPrivateServiceConnectionSlotsNeedingReplacement(ctx contex
 
 const listPrivateServiceGrants = `-- name: ListPrivateServiceGrants :many
 SELECT id, private_service_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.private_service_grants WHERE private_service_id = $1
-ORDER BY id LIMIT 101
+AND id COLLATE "C" > $2
+ORDER BY id COLLATE "C" LIMIT 101
 `
 
-func (q *Queries) ListPrivateServiceGrants(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceGrant, error) {
-	rows, err := q.db.Query(ctx, listPrivateServiceGrants, privateServiceID)
+type ListPrivateServiceGrantsParams struct {
+	PrivateServiceID string
+	AfterID          string
+}
+
+func (q *Queries) ListPrivateServiceGrants(ctx context.Context, arg ListPrivateServiceGrantsParams) ([]ControlPrivateServiceGrant, error) {
+	rows, err := q.db.Query(ctx, listPrivateServiceGrants, arg.PrivateServiceID, arg.AfterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,11 +1062,17 @@ func (q *Queries) ListPrivateServiceGrants(ctx context.Context, privateServiceID
 
 const listPrivateServiceInvitations = `-- name: ListPrivateServiceInvitations :many
 SELECT id, private_service_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.private_service_invitations
-WHERE private_service_id = $1 ORDER BY id LIMIT 101
+WHERE private_service_id = $1 AND id COLLATE "C" > $2
+ORDER BY id COLLATE "C" LIMIT 101
 `
 
-func (q *Queries) ListPrivateServiceInvitations(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceInvitation, error) {
-	rows, err := q.db.Query(ctx, listPrivateServiceInvitations, privateServiceID)
+type ListPrivateServiceInvitationsParams struct {
+	PrivateServiceID string
+	AfterID          string
+}
+
+func (q *Queries) ListPrivateServiceInvitations(ctx context.Context, arg ListPrivateServiceInvitationsParams) ([]ControlPrivateServiceInvitation, error) {
+	rows, err := q.db.Query(ctx, listPrivateServiceInvitations, arg.PrivateServiceID, arg.AfterID)
 	if err != nil {
 		return nil, err
 	}

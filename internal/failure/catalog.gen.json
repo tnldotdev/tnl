@@ -191,13 +191,6 @@
       "action": "leave the tunnel running while certificate issuance retries"
     },
     {
-      "code": "TNL_CLIENT_CI_REPOSITORY_METADATA_UNAVAILABLE",
-      "slug": "ci-repository-metadata-unavailable",
-      "class": "invalid",
-      "message": "ci repository metadata is unavailable for first setup",
-      "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
-    },
-    {
       "code": "TNL_CLIENT_CONNECTION_CLEANUP_FAILED",
       "slug": "connection-cleanup-failed",
       "class": "unavailable",
@@ -236,8 +229,8 @@
       "code": "TNL_CLIENT_CONNECTION_TEAM_BINDING",
       "slug": "connection-team-binding",
       "class": "invalid",
-      "message": "the project has no matching applied team binding",
-      "action": "run tnl apply as a team administrator and commit .tnl/generated/connections.json"
+      "message": "the workload has no configured team selector",
+      "action": "set team in project configuration and run tnl generate"
     },
     {
       "code": "TNL_CLIENT_CONNECTION_TLS_REJECTED",
@@ -471,6 +464,13 @@
       "action": "publish the service once to save its public URL, then enroll a publisher for that URL and retry --install with --enroll-key"
     },
     {
+      "code": "TNL_CLIENT_INSTALLED_PUBLISH_RUN_PENDING",
+      "slug": "installed-publish-run-pending",
+      "class": "unavailable",
+      "message": "the saved public URL's previous publish run is still closing",
+      "action": "leave the publisher running while control expires the previous run; stop any other publisher still serving this URL"
+    },
+    {
       "code": "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE",
       "slug": "installed-service-identity-unavailable",
       "class": "unavailable",
@@ -653,6 +653,13 @@
       "action": "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED",
+      "slug": "publisher-enrollment-required",
+      "class": "unauthenticated",
+      "message": "this publisher needs a new enrollment key",
+      "action": "request fresh enrollment for the saved public URL with tnl publisher enroll; set TNL_ENROLL_KEY and restart with the persistent state volume"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
       "slug": "publisher-identity-state-invalid",
       "class": "invalid",
@@ -665,6 +672,13 @@
       "class": "unavailable",
       "message": "tnl could not use the durable publisher identity files",
       "action": "check the identity directory's mount and available space, then retry"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_INSTALL_SOURCE_INVALID",
+      "slug": "publisher-install-source-invalid",
+      "class": "invalid",
+      "message": "tnl's installation files are missing or unsafe",
+      "action": "install tnl from a release archive with LICENSE, NOTICE and THIRD_PARTY_LICENSES.txt, then retry --install"
     },
     {
       "code": "TNL_CLIENT_SERVER_CONFLICT",
@@ -939,6 +953,20 @@
       "class": "unavailable",
       "message": "the selected webhook receiver is not ready",
       "action": "start the configured service in this worktree and wait for its public URL to be ready"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE",
+      "slug": "workload-assertion-unavailable",
+      "class": "unauthenticated",
+      "message": "the workload provider assertion is unavailable",
+      "action": "check the selected workload's token file or provider acquisition callback"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_REPOSITORY_METADATA_UNAVAILABLE",
+      "slug": "workload-repository-metadata-unavailable",
+      "class": "invalid",
+      "message": "workload repository metadata is unavailable for first setup",
+      "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
     }
   ]
 }

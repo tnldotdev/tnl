@@ -14,29 +14,40 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
-// Serve reports readiness once, after every service has bound and verified TLS.
-// any service/renewal failure cancels the entire owner; cleanup is always joined.
+// Serve owns private IPC and joins cleanup. process-owned adapters distinguish
+// their process lifetime from bounded session and per-service authorization.
 func Serve(ctx context.Context, scope Context, directory, executable string, backend Backend, output io.Writer) (result error) {
+	startup, finishStartup := observability.ClientOperation(ctx, "native.connections.startup")
+	defer func() { finishStartup(result) }()
 	if scope.Validate() != nil || backend == nil {
 		return ErrInvalid
 	}
-	lifetime, cancel := context.WithCancel(ctx)
+	lifetime, cancel := context.WithCancel(observability.Independent(ctx))
 	defer cancel()
 	var closeOnce sync.Once
 	var closeError error
 	closeBackend := func() {
 		closeOnce.Do(func() {
-			cleanup, done := context.WithTimeout(context.Background(), 15*time.Second)
+			cleanup, done := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 15*time.Second)
 			defer done()
+			cleanup, finish := observability.ClientOperation(cleanup, "native.connections.shutdown")
 			closeError = backend.Close(cleanup)
+			finish(closeError)
 			result = errors.Join(result, closeError)
 		})
 	}
 	defer closeBackend()
-	setup, finish := context.WithTimeout(lifetime, 30*time.Second)
+	lock, err := ownerLock(directory)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	setup, finish := context.WithTimeout(startup, 30*time.Second)
 	metadata, expires, err := backend.Start(setup)
 	finish()
 	if err != nil {
@@ -44,6 +55,13 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	}
 	if !expires.After(time.Now()) || expires.After(time.Now().Add(6*time.Hour+time.Second)) {
 		return ErrExpired
+	}
+	persistent := false
+	if provider, ok := backend.(interface{ Persistent() bool }); ok {
+		persistent = provider.Persistent()
+	}
+	if persistent {
+		expires = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -56,8 +74,8 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	}
 	path := filepath.Join(directory, "handle.json")
 	handle := Handle{Schema: Schema, URL: "http://" + listener.Addr().String(), Key: key, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, ExpiresAt: expires, Executable: executable}
-	if scope.CI != "" {
-		handle.CI, handle.TeamID = scope.CI, scope.TeamID
+	if scope.Workload != "" {
+		handle.Workload, handle.TeamID = scope.Workload, scope.TeamID
 	}
 	if err := WriteHandle(path, handle); err != nil {
 		return err
@@ -80,8 +98,8 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		failed = provider.Done()
 	}
 	var operationMu sync.Mutex
-	server := &http.Server{ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
-	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := &http.Server{BaseContext: func(net.Listener) context.Context { return observability.Independent(lifetime) }, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
+	server.Handler = observability.LocalRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != "POST" || r.Host != listener.Addr().String() || r.Header.Get("Origin") != "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+key)) != 1 {
@@ -109,15 +127,66 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return
 		}
 		switch operation {
+		case "attach":
+			provider, ok := backend.(interface {
+				Attach(context.Context, string) error
+			})
+			if !ok {
+				w.WriteHeader(400)
+				_, _ = io.WriteString(w, `{"code":"connections.invalid"}`)
+				return
+			}
+			bounded, done := context.WithTimeout(r.Context(), 10*time.Second)
+			defer done()
+			if err := provider.Attach(bounded, request.Assertion); err != nil {
+				w.WriteHeader(403)
+				_, _ = io.WriteString(w, `{"code":"connections.unauthorized"}`)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "attached"})
 		case "status":
+			if provider, ok := backend.(interface {
+				PublicRuntime() projectmeta.PublicMetadata
+			}); ok {
+				state.PublicRuntime = provider.PublicRuntime()
+			}
 			_ = json.NewEncoder(w).Encode(state)
-		case "connect", "prepared":
+		case "connect", "prepare", "prepared":
 			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
 			defer done()
 			stop := context.AfterFunc(lifetime, done)
 			defer stop()
-			connection, err := backend.Connect(bounded, request.Service)
+			var connection Connection
+			var err error
+			if operation == "prepared" {
+				connection, err = backend.Prepared(request.Service)
+			} else {
+				if request.Assertion != "" || request.AcquireAssertion {
+					if provider, ok := backend.(interface {
+						UseAssertion(context.Context, string) error
+					}); ok {
+						err = provider.UseAssertion(bounded, request.Assertion)
+					} else {
+						provider, ok := backend.(interface {
+							Attach(context.Context, string) error
+						})
+						if !ok {
+							err = ErrInvalid
+						} else {
+							err = provider.Attach(bounded, request.Assertion)
+						}
+					}
+				}
+				if err == nil {
+					connection, err = backend.Connect(bounded, request.Service)
+				}
+			}
 			if err != nil {
+				if errors.Is(err, ErrUnprepared) {
+					w.WriteHeader(425)
+					_, _ = io.WriteString(w, `{"code":"connections.unprepared"}`)
+					return
+				}
 				if errors.Is(err, ErrExpired) {
 					w.WriteHeader(410)
 					_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
@@ -127,8 +196,17 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
 				return
 			}
-			if operation == "prepared" {
-				_ = json.NewEncoder(w).Encode(Prepared{Schema: Schema, PublicRuntime: state.PublicRuntime, Connection: connection})
+			if operation != "connect" {
+				if provider, ok := backend.(interface {
+					PublicRuntime() projectmeta.PublicMetadata
+				}); ok {
+					state.PublicRuntime = provider.PublicRuntime()
+				}
+				result := Prepared{Schema: Schema, PublicRuntime: state.PublicRuntime, Connection: connection}
+				if provider, ok := backend.(interface{ Verification() *AssertionVerification }); ok {
+					result.Verification = provider.Verification()
+				}
+				_ = json.NewEncoder(w).Encode(result)
 			} else {
 				_ = json.NewEncoder(w).Encode(connection)
 			}
@@ -156,7 +234,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			w.WriteHeader(404)
 			_, _ = io.WriteString(w, `{"code":"connections.invalid"}`)
 		}
-	})
+	}))
 	serverDone := make(chan struct{})
 	var serveError error
 	go func() { serveError = server.Serve(listener); close(serverDone) }()
@@ -177,6 +255,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	if err := json.NewEncoder(output).Encode(state); err != nil {
 		return err
 	}
+	finishStartup(nil)
 	// the parent receives EOF immediately; the detached child retains no pipe to
 	// the action's terminal and keeps RUNNER_TRACKING_ID for runner crash cleanup.
 	if closer, ok := output.(io.Closer); ok {
@@ -198,14 +277,28 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return ErrExpired
 		case <-renew.C:
 			bounded, done := context.WithTimeout(lifetime, 10*time.Second)
+			bounded, finish := observability.ClientOperation(bounded, "native.connections.renew")
 			next, err := backend.Renew(bounded)
+			finish(err)
 			done()
+			if persistent {
+				if provider, ok := backend.(interface{ OwnerAlive() bool }); ok && !provider.OwnerAlive() {
+					return nil
+				}
+				continue
+			}
 			if err != nil {
 				return err
 			}
+			operationMu.Lock()
 			if !next.After(time.Now()) || next.After(expires) {
+				operationMu.Unlock()
 				return ErrExpired
 			}
+			expires = next
+			state.ExpiresAt = next
+			deadline.Reset(time.Until(next))
+			operationMu.Unlock()
 		}
 	}
 }

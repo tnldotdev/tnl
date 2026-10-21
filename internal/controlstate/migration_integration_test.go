@@ -112,6 +112,41 @@ func TestIntegrationMigrationRejectsOtherVersionOneBaseline(t *testing.T) {
 	}
 }
 
+func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
+	d, _ := newControlStateIntegrationDatabase(t, "platform_access_baseline")
+	ctx := t.Context()
+	if _, err := d.pool.Exec(ctx, `ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`); err != nil {
+		t.Fatal(err)
+	}
+	for _, previous := range []string{
+		"tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors",
+		"tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-provider-workloads",
+		"tnl-control-fresh-v1-services-platform-access",
+	} {
+		t.Run(previous, func(t *testing.T) {
+			if _, err := d.pool.Exec(ctx, `UPDATE control.schema_identity SET baseline_id=$1 WHERE id=1`, previous); err != nil {
+				t.Fatal(err)
+			}
+			if err := Migrate(ctx, d.pool.Config().ConnString()); err == nil {
+				t.Fatal("migration accepted a sibling workload baseline")
+			}
+			if err := d.Readiness(ctx); err == nil {
+				t.Fatal("readiness accepted a sibling workload baseline")
+			}
+			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, ""); err == nil {
+				opened.Close()
+				t.Fatal("serving accepted a sibling workload baseline")
+			}
+		})
+	}
+	if _, err := d.pool.Exec(ctx, `UPDATE control.schema_identity SET baseline_id=$1 WHERE id=1`, baselineID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Readiness(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIntegrationScopedForeignKeys(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "scoped_foreign_keys")
 	seedControlPublicURL(t, database, now, "owner_a")

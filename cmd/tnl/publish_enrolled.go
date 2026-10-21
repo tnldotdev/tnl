@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/internal/publisherjob"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -128,6 +129,9 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		}
 		native, identity, err = nativeauth.EnrollNative(ctx, profile, control, authority, secret)
 		if err != nil {
+			if flags.Enrolled && (errors.Is(err, authorityclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrNotFound)) {
+				return failure.Wrap("enroll publication", failure.PublisherEnrollmentRequired, err)
+			}
 			return err
 		}
 	} else if selection.PublisherID != "" {
@@ -148,6 +152,9 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		if err != nil {
 			return err
 		}
+	}
+	if flags.Enrolled && identity.Kind != authorityv1.SavedUrl {
+		return nativeauth.ErrScope
 	}
 	if identity.Kind == authorityv1.PrivateService {
 		if flags.Service != "" && config.IsPublicService(flags.project.Config.Services[flags.Service]) {
@@ -229,6 +236,12 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	if err != nil {
 		return err
 	}
+	if flags.Enrolled && route.Ephemeral {
+		return nativeauth.ErrScope
+	}
+	if err := retainPublication(ctx, profile, flags, identity.ClientId); err != nil {
+		return err
+	}
 	options, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
 	if err != nil {
 		return err
@@ -276,6 +289,13 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		return err
 	}
 	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membership, PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: route.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedURLTarget: route.Target == "", Limits: flags.limits(), InspectionMode: inspection.Mode(flags.InspectionMode), QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: transportTLS}}
+	if flags.Enrolled {
+		discovery, err := control.Discovery(ctx)
+		if err != nil {
+			return err
+		}
+		cfg.BrowserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
+	}
 	cfg.PublisherID = native.PublisherID()
 	if route.Ephemeral {
 		cfg.Ephemeral = true
@@ -296,6 +316,9 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	}
 	cfg.Logf = output.logf
 	cfg.Observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })
+	if flags.Enrolled {
+		publisherjob.VerifyPublicationReadiness(ctx, &cfg, flags.publicationReadinessPath())
+	}
 	stopRuntime, err := startDeployedPublisher(ctx, native, server)
 	if err != nil {
 		return err

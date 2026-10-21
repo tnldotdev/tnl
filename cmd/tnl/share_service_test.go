@@ -75,6 +75,8 @@ func TestServiceShareSyntaxAndEarlyValidation(t *testing.T) {
 		{"invite", "create", shareTestService, "--email=visitor@example.test"},
 		{"invite", "create", shareTestService, "--email=visitor@example.test", "--expires-in=31d"},
 		{"invite", "create", shareTestService, "--email=visitor@example.test", "--expires-in=1h", "--expires-at=2027-01-01T00:00:00Z"},
+		{"invite", "create", shareTestService, "--email=visitor@example.test", "--expires-in=1h", "--idempotency-key=stable-key"},
+		{"invite", "create", shareTestService, "--email=visitor@example.test", "--expires-at=2027-01-01T00:00:00Z", "--idempotency-key=" + strings.Repeat("a", 129)},
 		{"token", "create", shareTestService, "--expires-in=8d"},
 		{"link", "create", shareTestService, "--expires-at=2020-01-01T00:00:00Z"},
 		{"invite", "accept", "shr_0123456789abcdefghijkl." + strings.Repeat("A", 43)},
@@ -274,10 +276,10 @@ func TestServiceShareInvitationResponsesCannotWidenScopeOrLeakSecrets(t *testing
 				_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceGrant{Id: shareTestGrant, PrivateServiceId: shareTestService, Kind: "team", ExpiresAt: &at})
 			case "list":
 				if strings.HasSuffix(r.URL.Path, "/grants") {
-					_, _ = io.WriteString(w, "[]")
+					_, _ = io.WriteString(w, `{"grants":[]}`)
 					return
 				}
-				_ = json.NewEncoder(w).Encode([]controlv1.PrivateServiceInvitation{{Id: shareTestInvite, PrivateServiceId: shareTestService, Email: "visitor@example.test", ExpiresAt: at, Secret: &secret}})
+				_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceInvitationPage{Invitations: []controlv1.PrivateServiceInvitation{{Id: shareTestInvite, PrivateServiceId: shareTestService, Email: "visitor@example.test", ExpiresAt: at, Secret: &secret}}})
 			}
 		})
 		var output bytes.Buffer
@@ -326,11 +328,11 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(grant)
 		case "GET /v1/private-services/" + shareTestService + "/grants":
-			_ = json.NewEncoder(w).Encode([]controlv1.PrivateServiceGrant{grant})
+			_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceGrantPage{Grants: []controlv1.PrivateServiceGrant{grant}})
 		case "GET /v1/private-services/" + shareTestService + "/invitations":
 			listed := invite
 			listed.Secret, listed.AcceptedAt = nil, new(time.Now())
-			_ = json.NewEncoder(w).Encode([]controlv1.PrivateServiceInvitation{listed})
+			_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceInvitationPage{Invitations: []controlv1.PrivateServiceInvitation{listed}})
 		case "GET /v1/private-services/" + shareTestService + "/http-grants":
 			_ = json.NewEncoder(w).Encode([]controlv1.ManagedHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.HTTPAuthorizationSubject{Kind: "managed_service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
 		case "DELETE /v1/private-services/" + shareTestService + "/invitations/" + shareTestInvite,
@@ -377,7 +379,11 @@ func TestServiceShareHTTPInventoryRejectsMixedScopesAndSecrets(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 				return
 			}
-			_, _ = io.WriteString(w, "[]")
+			if strings.HasSuffix(r.URL.Path, "/grants") {
+				_, _ = io.WriteString(w, `{"grants":[]}`)
+			} else {
+				_, _ = io.WriteString(w, `{"invitations":[]}`)
+			}
 		})
 		var output bytes.Buffer
 		err := listServiceShares(t.Context(), control, shareTestService, statusOutputJSON, &output)
@@ -393,15 +399,15 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 		status     int
 		want       failure.Reason
 	}{
-		{"unknown model field", `[{"id":"` + shareTestGrant + `","private_service_id":"` + shareTestService + `","kind":"identity","unexpected":"private-value"}]`, 200, failure.ServerResponseInvalid},
-		{"wrong scope", `[{"id":"` + shareTestGrant + `","private_service_id":"psvc_abcdefghijkl0123456789","kind":"identity"}]`, 200, failure.ServerResponseInvalid},
-		{"unknown kind", `[{"id":"` + shareTestGrant + `","private_service_id":"` + shareTestService + `","kind":"future-kind"}]`, 200, failure.ServerResponseInvalid},
+		{"unknown model field", `{"grants":[{"id":"` + shareTestGrant + `","private_service_id":"` + shareTestService + `","kind":"identity","unexpected":"private-value"}]}`, 200, failure.ServerResponseInvalid},
+		{"wrong scope", `{"grants":[{"id":"` + shareTestGrant + `","private_service_id":"psvc_abcdefghijkl0123456789","kind":"identity"}]}`, 200, failure.ServerResponseInvalid},
+		{"unknown kind", `{"grants":[{"id":"` + shareTestGrant + `","private_service_id":"` + shareTestService + `","kind":"future-kind"}]}`, 200, failure.ServerResponseInvalid},
 		{"manager denied", `{"code":"forbidden","detail":"private-value"}`, 403, failure.ServerDenied},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/invitations") {
-					_, _ = io.WriteString(w, "[]")
+					_, _ = io.WriteString(w, `{"invitations":[]}`)
 					return
 				}
 				w.WriteHeader(test.status)
@@ -426,7 +432,7 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 				w.WriteHeader(204)
 				return
 			}
-			_ = json.NewEncoder(w).Encode([]controlv1.PrivateServiceGrant{{Id: shareTestGrant, PrivateServiceId: shareTestService, Kind: kind}})
+			_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceGrantPage{Grants: []controlv1.PrivateServiceGrant{{Id: shareTestGrant, PrivateServiceId: shareTestService, Kind: kind}}})
 		})
 		err := revokeServiceShare(t.Context(), control, shareTestService, serviceShareRevokeCommand{ID: shareTestGrant}, io.Discard)
 		if kind == "team" && (err == nil || deletes != 0) || kind == "identity" && (err != nil || deletes != 1) {
@@ -505,6 +511,30 @@ func TestServiceShareManagedHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 		service.Protocol, service.ManagedTls.Public = protocol, protocol != "http"
 		if err := createServiceShareHTTP(t.Context(), control, service, statusOutputHuman, "token", at, io.Discard); err == nil {
 			t.Fatalf("created HTTP token for private or non-HTTP service: %s", protocol)
+		}
+	}
+}
+
+func TestServiceShareInvitationRetryGivesExplicitRecovery(t *testing.T) {
+	at := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") != "retained-key" {
+			t.Error("retry replaced its operation key")
+		}
+		var body controlv1.CreatePrivateServiceInvitationRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email != "visitor@example.test" || !body.ExpiresAt.Equal(at) {
+			t.Error("retry changed its exact email or deadline", err)
+		}
+		_ = json.NewEncoder(w).Encode(controlv1.PrivateServiceInvitation{Id: shareTestInvite, PrivateServiceId: shareTestService, Email: body.Email, ExpiresAt: at})
+	})
+	for _, mode := range []statusOutputMode{statusOutputHuman, statusOutputJSON} {
+		var output bytes.Buffer
+		err := createServiceShareInvitation(t.Context(), control, shareTestService, serviceShareInviteCreateCommand{Email: "visitor@example.test", IdempotencyKey: "retained-key", Output: mode}, at, &output)
+		if err != nil || !strings.Contains(output.String(), shareTestInvite) || strings.Contains(output.String(), `"secret"`) {
+			t.Fatal("retry did not identify the recoverable invitation", err)
+		}
+		if mode == statusOutputHuman && (!strings.Contains(output.String(), "secret unavailable") || !strings.Contains(output.String(), "revoke") || !strings.Contains(output.String(), "new key")) {
+			t.Fatal("human retry omitted explicit revoke/reissue instructions")
 		}
 	}
 }

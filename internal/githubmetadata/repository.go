@@ -26,7 +26,7 @@ var numericID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 type MetadataError struct{ cause error }
 
 func (e *MetadataError) Error() string {
-	return "first ci apply needs GitHub repository metadata; configure existing gh authentication with read access to this repository, or have a trusted operator apply verified repository and owner IDs"
+	return "first workload apply needs GitHub repository metadata; configure existing gh authentication with read access to this repository, or have a trusted operator apply verified repository and owner IDs"
 }
 func (e *MetadataError) Unwrap() error { return e.cause }
 

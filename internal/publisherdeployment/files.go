@@ -134,6 +134,9 @@ func (m Manifest) hashes() map[string]string {
 	if m.DeclarationsSHA256 != "" {
 		result["project.d.ts"] = m.DeclarationsSHA256
 	}
+	if m.WorkloadsSHA256 != "" {
+		result["workloads.json"] = m.WorkloadsSHA256
+	}
 	if m.DocumentationPath != "" {
 		result[m.DocumentationPath] = m.DocumentationSHA256
 	}

@@ -95,7 +95,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 			case "revoked-device":
 				err = d.RevokeVisitorDevice(ctx, r.ActingIdentityID, device.ID, now)
 			case "revoked-grant":
-				grants, e := d.ListPrivateServiceGrants(ctx, service.ID, r.ActingIdentityID)
+				grants, _, e := d.ListPrivateServiceGrants(ctx, service.ID, r.ActingIdentityID, "")
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -286,7 +286,7 @@ func TestIntegrationPrivateVisitorAssignmentRequiresCurrentDeviceAndGrant(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, err := d.ListPrivateServiceGrants(ctx, service.ID, r.ActingIdentityID)
+	grants, _, err := d.ListPrivateServiceGrants(ctx, service.ID, r.ActingIdentityID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

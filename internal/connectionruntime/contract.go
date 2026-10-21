@@ -23,8 +23,9 @@ var (
 	ErrExpired      = errors.New("connection session expired; prepare it again")
 	ErrUnavailable  = errors.New("native connection is unavailable")
 	ErrTransport    = errors.New("native connector or verified preflight adapter is not installed")
-	ErrTeam         = errors.New("team name resolution requires an applied team ID binding")
+	ErrTeam         = errors.New("workload requires a configured team selector")
 	ErrCleanup      = errors.New("connection owner cleanup failed")
+	ErrUnprepared   = errors.New("service is not prepared; await its connection handle first")
 )
 
 // Context is nonsecret. the action requests an OIDC assertion for Audience only
@@ -40,7 +41,7 @@ type Context struct {
 	SourceID     string   `json:"source_id"`
 	WorktreeKey  string   `json:"worktree_key"`
 	ProjectLabel string   `json:"project_label"`
-	CI           string   `json:"ci,omitempty"`
+	Workload     string   `json:"workload,omitempty"`
 	Services     []string `json:"services"`
 }
 
@@ -55,11 +56,16 @@ func (StartRequest) String() string   { return "private connection startup reque
 func (StartRequest) GoString() string { return "private connection startup request" }
 
 type Request struct {
-	Schema       int    `json:"schema"`
-	Directory    string `json:"directory"`
-	ConfigDigest string `json:"config_digest"`
-	Service      string `json:"service,omitempty"`
+	Schema           int    `json:"schema"`
+	Directory        string `json:"directory"`
+	ConfigDigest     string `json:"config_digest"`
+	Service          string `json:"service,omitempty"`
+	Assertion        string `json:"assertion,omitempty"`
+	AcquireAssertion bool   `json:"acquire_assertion,omitempty"`
 }
+
+func (Request) String() string   { return "private connection request" }
+func (Request) GoString() string { return "private connection request" }
 
 type TLSOptions struct {
 	ServerName         string `json:"servername"`
@@ -74,15 +80,16 @@ func (TLSOptions) GoString() string { return "private native TLS options" }
 // local dial address; SSL.ServerName and URL retain the approved managed name.
 // connector admission never exports an application client certificate or key.
 type Connection struct {
-	Schema     int         `json:"schema"`
-	Protocol   string      `json:"protocol"`
-	Host       string      `json:"host"`
-	Port       int         `json:"port"`
-	SSL        *TLSOptions `json:"ssl,omitempty"`
-	URL        string      `json:"url,omitempty"`
-	Kubeconfig string      `json:"kubeconfig,omitempty"`
-	Context    string      `json:"context,omitempty"`
-	ExpiresAt  time.Time   `json:"expires_at"`
+	Schema      int         `json:"schema"`
+	Protocol    string      `json:"protocol"`
+	Host        string      `json:"host"`
+	Port        int         `json:"port"`
+	SSL         *TLSOptions `json:"ssl,omitempty"`
+	URL         string      `json:"url,omitempty"`
+	Kubeconfig  string      `json:"kubeconfig,omitempty"`
+	Context     string      `json:"context,omitempty"`
+	ExpiresAt   time.Time   `json:"expires_at"`
+	TransportID string      `json:"transport_id,omitempty"`
 }
 
 func (Connection) String() string   { return "private native connection" }
@@ -94,6 +101,15 @@ type Prepared struct {
 	Schema        int                        `json:"schema"`
 	PublicRuntime projectmeta.PublicMetadata `json:"public_runtime"`
 	Connection    Connection                 `json:"connection"`
+	Verification  *AssertionVerification     `json:"verification,omitempty"`
+}
+
+// AssertionVerification comes only from authority-confirmed exact assertion
+// bytes. it is a nonsecret cache selector, never visitor authorization.
+type AssertionVerification struct {
+	Digest    string    `json:"digest"`
+	Binding   string    `json:"binding"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func (Prepared) String() string   { return "private prepared connection" }
@@ -112,11 +128,12 @@ type Status struct {
 }
 
 // Backend is implemented by the native CLI's human/workload adapters. Start
-// binds and verifies every selected endpoint before returning. failure closes
-// all earlier endpoints. Renew must not extend the fixed execution deadline.
+// establishes identity and the authorized snapshot; Connect prepares only its
+// requested service. Renew may narrow a workload's fixed session deadline.
 type Backend interface {
 	Start(context.Context) (projectmeta.PublicMetadata, time.Time, error)
 	Connect(context.Context, string) (Connection, error)
+	Prepared(string) (Connection, error)
 	Renew(context.Context) (time.Time, error)
 	Close(context.Context) error
 }

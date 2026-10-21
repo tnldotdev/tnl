@@ -44,6 +44,7 @@ var managedMySQLClient = flag.String("tnl-test-mysql-client-container", "", "dis
 
 type managedTLSFixture struct {
 	server, client tls.Certificate
+	wrongName      tls.Certificate
 	roots          *x509.CertPool
 	ca             []byte
 }
@@ -79,7 +80,7 @@ func managedCertificates(t *testing.T) managedTLSFixture {
 		}
 		return tls.Certificate{Certificate: [][]byte{encoded, der}, PrivateKey: private}
 	}
-	return managedTLSFixture{server: issue(2, x509.ExtKeyUsageServerAuth, []string{"*.production.storefront.example.test"}), client: issue(3, x509.ExtKeyUsageClientAuth, nil), roots: roots, ca: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
+	return managedTLSFixture{server: issue(2, x509.ExtKeyUsageServerAuth, []string{"*.production.storefront.example.test"}), client: issue(3, x509.ExtKeyUsageClientAuth, nil), wrongName: issue(4, x509.ExtKeyUsageServerAuth, []string{"wrong.example.test"}), roots: roots, ca: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
 
 func managedPublisherListener(t *testing.T, server publisher.ManagedStream, addresses ...string) string {

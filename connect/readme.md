@@ -1,6 +1,6 @@
 # github action boundary
 
-`tnldotdev/tnl/connect` prepares native connections for one saved CI policy and
+`tnldotdev/tnl/connect` prepares native connections for one saved GitHub workload and
 keeps them available to later steps in the same job. pin the action to a full
 commit, install the project's locked dependencies first, and select the policy:
 
@@ -20,7 +20,7 @@ jobs:
       # set up your package manager and install locked dependencies here
       - uses: tnldotdev/tnl/connect@<full-commit-sha>
         with:
-          ci: deploy
+          workload: deploy
       - run: pnpm exec drizzle-kit migrate
       - run: pnpm run deploy
 ```
@@ -34,14 +34,14 @@ isolation boundary between mutually untrusted steps.
 
 ## inputs
 
-| input               | contract                                                                                |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `ci`                | required key in the project's `ci` declarations; for example `deploy`                   |
-| `working-directory` | selected project directory, relative to the workspace; defaults to `.`                  |
-| `services`          | optional newline-separated service keys; only narrows the CI declaration                |
-| `timeout`           | native startup wait in seconds, 1–300; defaults to 90                                   |
-| `version`           | optional exact npm release version, such as `0.1.0-rc.1`; no `v`, ranges, tags, or URLs |
-| `cli-path`          | optional explicit native executable, relative to the project directory or absolute      |
+| input               | contract                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `workload`          | required key in the project's `workloads` declarations with `provider: github`; for example `deploy` |
+| `working-directory` | selected project directory, relative to the workspace; defaults to `.`                               |
+| `services`          | optional newline-separated service keys; only narrows the workload declaration                       |
+| `timeout`           | native startup wait in seconds, 1–300; defaults to 90                                                |
+| `version`           | optional exact npm release version, such as `0.1.0-rc.1`; no `v`, ranges, tags, or URLs              |
+| `cli-path`          | optional explicit native executable, relative to the project directory or absolute                   |
 
 `version` and `cli-path` are mutually exclusive. by default, resolution starts at
 the selected directory's installed `@tnldotdev/tnl` export and finds its manifest
@@ -70,9 +70,10 @@ post cleanup after later package installs or checkout changes.
 
 1. `tnl --no-telemetry runtime connections capabilities` must report schema 1,
    `context`, `start`, `status`, `stop`, both private transport capabilities, and
-   `team_names: applied_binding`.
-2. `... context --directory <project> --ci <key> [--service <key>]` resolves the
-   selected project and nonsecret applied binding. missing bindings fail here.
+   `team_names: saved_policy`.
+2. `... context --directory <project> --workload <key> [--service <key>]` resolves the
+   selected project and nonsecret source identity. a team name remains a selector
+   for the saved policy; an applied binding can supply its canonical team ID.
 3. the official Actions OIDC client requests an assertion for exactly that
    context's HTTPS audience. the assertion is masked and passed only on stdin.
    the checkout's context cannot authorize itself: control verifies GitHub's

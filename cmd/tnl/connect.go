@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisherjob"
 	"github.com/tnldotdev/tnl/internal/tcpconnect"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -268,6 +269,8 @@ func connectListen(value string) (string, error) {
 }
 
 func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) (result error) {
+	ctx, finishStartup := observability.ClientOperation(ctx, "client.connect.startup")
+	defer func() { finishStartup(result) }()
 	defer func() {
 		if reason, ok := failure.ReasonOf(result); ok && reason == failure.ServerDenied {
 			result = failure.Wrap("authorize service connection", failure.ConnectAccessRequired, result)
@@ -313,7 +316,8 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		return flags.detach()
 	}
 	if flags.Stdio {
-		return runConnectStdio(ctx, session, service, output)
+		finishStartup(nil)
+		return runConnectStdio(observability.Independent(ctx), session, service, output)
 	}
 	flags.Protocol = string(service.Protocol)
 	if flags.Listen == "" && service.ManagedTls != nil {
@@ -391,7 +395,7 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		}
 		return writeReady(job, output)
 	}
-	return runPrivateConnectorLifecycle(ctx, listener, job, requestedProtocol, privateConnectorLifecycle{
+	return runPrivateConnectorLifecycle(observability.Independent(ctx), listener, job, requestedProtocol, privateConnectorLifecycle{
 		services: session.authenticated.Control,
 		listen: func(ctx context.Context, job publisherjob.Job) (net.Listener, error) {
 			return session.store.ListenPrivateServiceAt(ctx, job.IdentityID, job.PrivateServiceID, job.Target)
@@ -400,6 +404,7 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 			return servePrivateConnector(ctx, session, listener, job, ready)
 		},
 		ready: func(job publisherjob.Job) error {
+			finishStartup(nil)
 			if flags.Output == statusOutputJSON {
 				return writeReady(job, output)
 			}

@@ -73,7 +73,14 @@ other native clients negotiate TLS through the connector themselves.
 the local dial address and managed TLS identity are separate:
 
 - curl uses an HTTPS URL with the approved managed hostname and allocated port, plus
-  `--connect-to` to dial the loopback listener independently of public DNS.
+  `--connect-to` to dial the actual loopback listener and `--noproxy` to bypass
+  configured proxies for that hostname. human output labels this a `curl url`.
+  HTTP requires the allocated port in its authority, even with a `--listen`
+  override. browser use requires a connector on the allocated port and an exact
+  local hosts-file mapping from the managed hostname to that connector's loopback
+  IP, including for public services. tnl prints these prerequisites and does not
+  edit DNS or hosts files. the JSON `url` remains the managed HTTP origin used
+  with the printed curl arguments; `host` and `port` describe the local listener.
 - PostgreSQL uses the managed `host` and local port with loopback `hostaddr`,
   `sslmode=verify-full`, `sslrootcert=system`, `gssencmode=disable`, and
   `channel_binding=disable` across publisher TLS termination.
@@ -291,6 +298,13 @@ a team membership, team grant, or publisher-group grant. Revoking an invitation
 also revokes its accepted grant. Revoking a `psgr_` ID through this command checks
 that it is an identity grant; declared team grants belong to project configuration.
 
+For response-loss recovery across invocations, use `--idempotency-key` with
+`--expires-at` and retain the exact command. An exact retry returns the original
+invitation ID and current state without a secret. Explicitly revoke that ID,
+then create a replacement with a new key. Changed email, service or deadline with
+a used key conflicts; a retry does not extend access or issue another secret.
+See [service access](service-access.md) for the API contract.
+
 Configured keys select one entry from the current team's manager inventory by
 exact project key, source fingerprint, configuration key, and worktree key.
 Local services use the current worktree realization; applied services use an
@@ -307,15 +321,17 @@ with an exact service ID works outside the project.
 All management operations use the current signed-in person's control session;
 control checks current owner/admin permission. Accepting an invitation needs no
 membership in the service's team. List returns exact-service grants and
-invitations, including accepted, expired, and revoked records. Human output
+invitations, including accepted, expired, and revoked records. The CLI follows all
+100-record API pages before rendering or selecting a grant to revoke. Human output
 includes identity and invitation IDs, states, and deadlines. JSON includes
 `schema_version: 1`, `private_service_id`, `grants`, and `invitations`; it never
 includes invitation secrets. Managed HTTP summaries appear in `http_grants`
 without their token or share secret. The list covers stored grants, not an enumeration
 of current team members or all effective access decisions.
 
-Creation prints the one-time secret as a raw stdout value. `--output=json`
-returns the creation model, including its secret. Acceptance, listing, and
+New creation prints the one-time secret as a raw stdout value. An exact retry
+prints revoke/reissue instructions. `--output=json` returns the invitation model,
+with `secret` present only for a new creation. Acceptance, listing, and
 revocation use the shared human renderer by default and support JSON. Finite
 results go to stdout; authentication prompts and errors go to stderr.
 

@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
 
@@ -212,7 +213,9 @@ func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot
 	return writeHumanFrame(output, "tnl wait", state, "", append(blocks, appServiceBlocks(snapshot)...)...)
 }
 
-func runAppWatch(ctx context.Context, project projectConfiguration, root string, flags watchCommand, output io.Writer) error {
+func runAppWatch(ctx context.Context, project projectConfiguration, root string, flags watchCommand, output io.Writer) (result error) {
+	ctx, finish := observability.ClientOperation(ctx, "client.watch.startup")
+	defer func() { finish(result) }()
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -237,12 +240,16 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 		}
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
+	finish(nil)
+	ctx = observability.Independent(ctx)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		events, err := clientruntime.EventsAfterFrom(ctx, state, project.Root, cursor)
+		poll, finishPoll := observability.ClientOperation(ctx, "client.watch.poll")
+		events, err := clientruntime.EventsAfterFrom(poll, state, project.Root, cursor)
+		finishPoll(err)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil

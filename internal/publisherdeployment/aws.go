@@ -187,8 +187,8 @@ func RenderAWS(p Publisher, projectKey string, configurations ...config.TNL) ([]
 		t.addReplica(i+1, r, cluster, taskSG, filesystem, filesystemARN)
 		if len(configurations) != 0 {
 			statements := discoveryStatements(configurations[0], p.Name)
+			role := t.Resources[fmt.Sprintf("Replica%dTaskRole", i+1)].(object)["Properties"].(object)
 			if len(statements) != 0 {
-				role := t.Resources[fmt.Sprintf("Replica%dTaskRole", i+1)].(object)["Properties"].(object)
 				role["Policies"] = append(role["Policies"].([]any), policy("target-discovery", statements...))
 			}
 		}

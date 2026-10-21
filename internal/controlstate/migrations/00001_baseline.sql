@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-native-owner')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-native-owner');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1948,14 +1948,17 @@ CREATE TABLE control.workload_sessions (
     id text PRIMARY KEY CHECK (id ~ '^wls_[A-Za-z0-9]{22}$'),
     team_id text NOT NULL REFERENCES control.teams(id),
     project_key text NOT NULL,
-    ci_name text NOT NULL,
-    repository_id text NOT NULL,
-    run_id text NOT NULL,
-    run_attempt text NOT NULL,
-    check_run_id text NOT NULL,
+    workload_name text NOT NULL,
+    provider text NOT NULL CHECK (provider IN ('github','vercel','fly','oidc')),
+    session_nonce text NOT NULL CHECK (session_nonce ~ '^[A-Za-z0-9_-]{16,128}$'),
+    repository_id text,
+    run_id text,
+    run_attempt text,
+    check_run_id text,
     public_key bytea NOT NULL CHECK (octet_length(public_key)=32),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     claims jsonb NOT NULL,
+    binding text NOT NULL CHECK (binding ~ '^[0-9a-f]{64}$'),
     credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest)=32),
     credential_ciphertext bytea NOT NULL,
     storage_key_id text NOT NULL,
@@ -1965,9 +1968,14 @@ CREATE TABLE control.workload_sessions (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
+    UNIQUE(team_id,project_key,session_nonce),
+    CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
+           (provider<>'github' AND repository_id IS NULL AND run_id IS NULL AND run_attempt IS NULL AND check_run_id IS NULL)),
+    CHECK (jsonb_typeof(claims)='object' AND COALESCE(claims->>'provider'=provider,false)),
     CHECK (expires_at>created_at AND expires_at<=created_at+interval '6 hours'),
     CHECK (lease_expires_at>created_at AND lease_expires_at<=expires_at)
 );
+CREATE INDEX workload_sessions_retention ON control.workload_sessions(expires_at,id);
 CREATE TABLE control.workload_session_services (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     private_service_id text NOT NULL REFERENCES control.private_services(id),
@@ -1980,6 +1988,8 @@ CREATE TABLE control.workload_assertions (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     expires_at timestamptz NOT NULL
 );
+CREATE INDEX workload_assertions_expiry ON control.workload_assertions(expires_at);
+CREATE INDEX workload_assertions_session ON control.workload_assertions(workload_session_id);
 CREATE TABLE control.workload_ingress_requests (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
@@ -1997,12 +2007,15 @@ CREATE TABLE control.workload_client_certificates (
     expires_at timestamptz NOT NULL,
     UNIQUE(workload_session_id,private_service_id,csr_digest)
 );
+CREATE INDEX workload_certificates_retention ON control.workload_client_certificates(expires_at,certificate_digest);
 CREATE TABLE control.workload_audit (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     event text NOT NULL CHECK (event IN ('start','renew','revoke','certificate.issue','assignment.create')),
     private_service_id text REFERENCES control.private_services(id),
     occurred_at timestamptz NOT NULL
 );
+CREATE INDEX workload_audit_retention ON control.workload_audit(occurred_at);
+CREATE INDEX workload_audit_session ON control.workload_audit(workload_session_id);
 
 CREATE TABLE control.visitor_devices (
     id text PRIMARY KEY CHECK (id ~ '^vdev_[A-Za-z0-9]{22}$'),
@@ -2057,6 +2070,7 @@ CREATE TABLE control.private_connector_sessions (
     UNIQUE (id, private_service_id, identity_id, source_ip)
 );
 CREATE INDEX private_connector_sessions_expiring ON control.private_connector_sessions(expires_at);
+CREATE INDEX private_connector_sessions_workload ON control.private_connector_sessions(workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE INDEX private_connector_sessions_unbound_assignment ON control.private_connector_sessions(assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at) WHERE bound_at IS NULL AND revoked_at IS NULL;
 
 -- recover committed assignment responses without reserving capacity again.
@@ -2100,6 +2114,9 @@ CREATE TABLE control.private_certificate_requests (
     PRIMARY KEY (private_run_id,idempotency_key)
 );
 CREATE INDEX private_visitor_streams_capacity ON control.private_visitor_streams(private_run_id, valid_until) WHERE closed_at IS NULL;
+CREATE INDEX private_visitor_streams_connector ON control.private_visitor_streams(connector_session_id);
+CREATE INDEX private_visitor_streams_workload ON control.private_visitor_streams(workload_session_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX private_visitor_streams_workload_retention ON control.private_visitor_streams(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 
 -- direct admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
@@ -2133,6 +2150,9 @@ CREATE TABLE control.direct_service_visitors (
     CHECK (promoted_at IS NULL OR identity_id IS NOT NULL OR workload_session_id IS NOT NULL OR http_credential_kind IS NOT NULL)
 );
 CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(private_run_id,valid_until) WHERE closed_at IS NULL;
+CREATE INDEX direct_service_visitors_workload ON control.direct_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX direct_service_visitors_certificate ON control.direct_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
+CREATE INDEX direct_service_visitors_workload_retention ON control.direct_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 CREATE VIEW control.private_service_visitor_capacity AS
 SELECT visitor_connection_id,private_run_id,valid_until,closed_at FROM control.private_visitor_streams
 UNION ALL

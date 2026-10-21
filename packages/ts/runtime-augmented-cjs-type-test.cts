@@ -2,6 +2,11 @@ import type * as SDK from "@tnldotdev/tnl";
 
 declare const tnlModule: typeof SDK;
 
+const inventory = tnlModule.tnl.connect("api");
+inventory.fetch("/stock") satisfies Promise<Response>;
+// @ts-expect-error CommonJS HTTP options have no SQL connection properties.
+void inventory.ssl;
+
 const database = tnlModule.tnl.connect("db");
 database.host satisfies "127.0.0.1";
 database.ssl.servername satisfies string;

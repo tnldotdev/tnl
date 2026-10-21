@@ -80,7 +80,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	flags.namedOverrides = flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral ||
 		flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" || flags.Requests != nil || flags.Concurrency != nil || flags.RateRequests != nil || flags.RatePer != "" || flags.RateBurst != nil || flags.inspectionModeFromCLI
 	service := ""
-	enrolled := flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != ""
+	enrolled := flags.Enrolled || flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
 	} else if flags.Target == "" && !enrolled {
@@ -187,8 +187,8 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	return nil
 }
 
-// applyInstalledService snapshots only local target settings. installed jobs
-// reuse their saved URL policy and never create a URL from project settings.
+// applyInstalledService snapshots local target settings before setup selects a
+// saved URL and hands its scoped identity to the supervisor.
 func (c projectConfiguration) applyInstalledService(flags *publishCommand) error {
 	service := flags.Target
 	definition, found := c.Config.Services[service]

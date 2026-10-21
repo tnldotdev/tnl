@@ -33,7 +33,7 @@ const (
 )
 
 type harnessArguments struct {
-	Service string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime" help:"Disposable service for the test command."`
+	Service string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime,publisher-install" help:"Disposable service for the test command."`
 	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
@@ -46,7 +46,7 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 	if _, err := parser.Parse(arguments); err != nil {
 		return parsed, err
 	}
-	if parsed.Service == "dns" || parsed.Service == "runtime" {
+	if parsed.Service == "dns" || parsed.Service == "runtime" || parsed.Service == "publisher-install" {
 		if len(arguments) != 1 {
 			return parsed, errors.New("dns and runtime do not take a test command")
 		}
@@ -84,6 +84,9 @@ func run() error {
 	}
 	if arguments.Service == "runtime" {
 		return runRuntime(ctx, root)
+	}
+	if arguments.Service == "publisher-install" {
+		return runPublisherInstall(ctx, root)
 	}
 	command := arguments.Command
 	switch arguments.Service {

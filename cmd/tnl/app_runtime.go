@@ -27,6 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/localpublisher"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -138,6 +139,7 @@ func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root 
 		return privateprotocol.Endpoint{}, err
 	}
 	command := exec.Command(executable, "runtime", "serve", "--directory", project.Root, "--state-dir", root, "--snapshot-stdin")
+	command.Env = observability.LaunchEnvironment(ctx, os.Environ())
 	command.Stdin = bytes.NewReader(snapshot)
 	if err := command.Start(); err != nil {
 		return privateprotocol.Endpoint{}, err
@@ -253,7 +255,9 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 	return services
 }
 
-func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
+func runRuntimeServe(ctx context.Context, options runtimeOptions) (result error) {
+	ctx, finishStartup := observability.ClientOperation(ctx, "native.app.startup")
+	defer func() { finishStartup(result) }()
 	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
@@ -291,15 +295,20 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		}
 	}
 	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration}
-	a.manager, err = clientruntime.New(ctx, project.Root, state, configuredRuntimeServices(project), a.workers.Run)
+	a.manager, err = clientruntime.New(observability.Independent(ctx), project.Root, state, configuredRuntimeServices(project), a.workers.Run)
 	if err != nil {
 		return err
 	}
 	a.workers.Manager = a.manager
 	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
-	defer a.manager.Close()
+	defer func() {
+		_, finish := observability.ClientOperation(observability.Independent(context.WithoutCancel(ctx)), "native.app.shutdown")
+		a.manager.Close()
+		finish(nil)
+	}()
 	// unregister joins the publication after draining its visitor streams.
-	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
+	requestBase := observability.Independent(ctx)
+	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() {
@@ -312,6 +321,8 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer privateprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
+	finishStartup(nil)
+	ctx = observability.Independent(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -339,13 +350,13 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, Register: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, AppService: func(name string) bool {
+	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, AppService: func(name string) bool {
 		service, found := a.project.Config.Services[name]
 		return found && config.TargetType(service) == "app"
 	}}).Handler()
 }
 
-func (a *appRuntime) register(request privateprotocol.Registration) error {
+func (a *appRuntime) register(ctx context.Context, request privateprotocol.Registration) error {
 	a.mu.Lock()
 	preparation, found := a.prepared[request.RegistrationID]
 	a.mu.Unlock()
@@ -354,7 +365,7 @@ func (a *appRuntime) register(request privateprotocol.Registration) error {
 	}
 	// retain the app's reported origin for renewal, but never treat its
 	// hostname as a container address. the worker resolves the selected service.
-	return a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
+	return a.manager.RegisterContext(ctx, request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
 }
 
 func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (privateprotocol.Assignment, error) {
@@ -425,7 +436,7 @@ func (a *appRuntime) acquire(ctx context.Context, request privateprotocol.Lease)
 	a.prepared[id] = appPreparation{project: a.project}
 	a.mu.Unlock()
 	registration := privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
-	if err := a.manager.Register(id, request.Owner, registration.Target, ""); err != nil {
+	if err := a.manager.RegisterContext(ctx, id, request.Owner, registration.Target, ""); err != nil {
 		_ = a.manager.Unregister(id, request.Owner)
 		return privateprotocol.Registration{}, err
 	}
@@ -559,7 +570,11 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 				return projectpublisher.Configuration{}, err
 			}
 		}
-		cfg.Mounts = append(cfg.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
+		mountTarget := ""
+		if mounted.Target != nil {
+			mountTarget = string(*mounted.Target)
+		}
+		cfg.Mounts = append(cfg.Mounts, localproxy.Mount{Prefix: prefix, Target: mountTarget, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
 			for _, candidate := range a.manager.Snapshot().Services {
 				if candidate.Name == mount.Service && a.manager.Current(candidate.Name, candidate.RegistrationID, candidate.Target, 0) {
 					return candidate.Target

@@ -16,8 +16,8 @@ type serviceAccessStore interface {
 	ResolveCompanyAccount(context.Context, string, string) (string, error)
 	ListPrivateServices(context.Context, string, string, string) ([]controlstate.PrivateServiceRecord, string, error)
 	GetPrivateService(context.Context, string, string) (controlstate.PrivateServiceRecord, error)
-	ListPrivateServiceGrants(context.Context, string, string) ([]controlstate.PrivateServiceGrant, error)
-	ListPrivateServiceInvitations(context.Context, string, string) ([]controlstate.PrivateServiceInvitation, error)
+	ListPrivateServiceGrants(context.Context, string, string, string) ([]controlstate.PrivateServiceGrant, string, error)
+	ListPrivateServiceInvitations(context.Context, string, string, string) ([]controlstate.PrivateServiceInvitation, string, error)
 	InvitePrivateServiceVisitor(context.Context, string, string, string, string, time.Time, time.Time) (controlstate.PrivateServiceInvitation, error)
 	PreviewPrivateServiceInvitation(context.Context, string, string, time.Time) (controlstate.PrivateServiceInvitationPreview, error)
 	AcceptPrivateServiceInvitation(context.Context, string, string, time.Time) (controlstate.PrivateServiceGrant, error)
@@ -105,36 +105,50 @@ func (h *handler) GetWebsitePrivateService(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, serviceaccess.Service(row))
 }
 
-func (h *handler) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ authorityv1.ListWebsitePrivateServiceGrantsParams) {
+func (h *handler) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, p authorityv1.ListWebsitePrivateServiceGrantsParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	rows, err := s.ListPrivateServiceGrants(r.Context(), id, actor)
+	cursor := ""
+	if p.Cursor != nil {
+		cursor = *p.Cursor
+	}
+	rows, next, err := s.ListPrivateServiceGrants(r.Context(), id, actor, cursor)
 	if err != nil {
 		serviceAccessError(w, "list website service grants", err)
 		return
 	}
-	result := make([]controlv1.PrivateServiceGrant, 0, len(rows))
+	result := controlv1.PrivateServiceGrantPage{Grants: make([]controlv1.PrivateServiceGrant, 0, len(rows))}
 	for _, row := range rows {
-		result = append(result, serviceaccess.Grant(row))
+		result.Grants = append(result.Grants, serviceaccess.Grant(row))
+	}
+	if next != "" {
+		result.NextCursor = &next
 	}
 	writeJSON(w, 200, result)
 }
 
-func (h *handler) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ authorityv1.ListWebsitePrivateServiceInvitationsParams) {
+func (h *handler) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, p authorityv1.ListWebsitePrivateServiceInvitationsParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	rows, err := s.ListPrivateServiceInvitations(r.Context(), id, actor)
+	cursor := ""
+	if p.Cursor != nil {
+		cursor = *p.Cursor
+	}
+	rows, next, err := s.ListPrivateServiceInvitations(r.Context(), id, actor, cursor)
 	if err != nil {
 		serviceAccessError(w, "list website service invitations", err)
 		return
 	}
-	result := make([]controlv1.PrivateServiceInvitation, 0, len(rows))
+	result := controlv1.PrivateServiceInvitationPage{Invitations: make([]controlv1.PrivateServiceInvitation, 0, len(rows))}
 	for _, row := range rows {
-		result = append(result, serviceaccess.Invitation(row))
+		result.Invitations = append(result.Invitations, serviceaccess.Invitation(row))
+	}
+	if next != "" {
+		result.NextCursor = &next
 	}
 	writeJSON(w, 200, result)
 }
@@ -150,7 +164,11 @@ func (h *handler) InviteWebsitePrivateServiceVisitor(w http.ResponseWriter, r *h
 		serviceAccessError(w, "invite website service visitor", err)
 		return
 	}
-	writeJSON(w, 201, serviceaccess.Invitation(row))
+	status := http.StatusCreated
+	if row.Secret == "" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, serviceaccess.Invitation(row))
 }
 
 func (h *handler) PreviewWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.PreviewWebsitePrivateServiceInvitationParams) {

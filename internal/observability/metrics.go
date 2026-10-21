@@ -23,6 +23,8 @@ import (
 
 // Metrics owns one process's OTel instruments, providers, and scrape exporter.
 type Metrics struct {
+	clientOperations            *histogram
+	clientLifecycle             *counter
 	publisherData               publisherData
 	targetDiscovery             *histogram
 	targetDiscoveryCache        *counter
@@ -119,6 +121,8 @@ func New(role string) *Metrics {
 
 func (metrics *Metrics) initInstruments(role Role) {
 	m := metrics.meter
+	metrics.clientOperations = newHistogram(m, "tnl_client_operation_duration_seconds", "Finite native CLI and private IPC operations; excludes process lifetime and application work.", DurationBucketsSeconds(), Operation, OutcomeKey)
+	metrics.clientLifecycle = newCounter(m, "tnl_client_lifecycle_events_total", "Native app registration and publication-ready transitions, emitted once by the lifecycle owner; reads do not emit transitions.", Event)
 	metrics.initPublisherReadiness()
 	metrics.initPublisherData()
 	metrics.targetDiscovery = newHistogram(m, "tnl_target_discovery_duration_seconds", "Publisher AWS metadata refresh duration by fixed provider, target type, protocol and result; excludes cache hits.", DurationBucketsSeconds(), targetProvider, targetType, ServiceProtocol, targetDiscoveryOutcome)

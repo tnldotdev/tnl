@@ -8,5 +8,12 @@
     "skipLibCheck": true,
     "types": ["node", "react", "react-dom"]
   },
-  "files": ["config-type-test.ts", "next-type-test.ts", "runtime-type-test.ts", "vite-type-test.ts"]
+  "files": [
+    "config-type-test.ts",
+    "next-type-test.ts",
+    "runtime-type-test.ts",
+    "vite-type-test.ts",
+    "workload-type-test.ts",
+    "workload-cjs-type-test.cts"
+  ]
 }

@@ -81,6 +81,10 @@ only the assignments for their group and acknowledge the revision and health.
 Infrastructure runs those members; control does not provision their machines.
 Hosted and self-hosted control use this same boundary.
 
+for one process hosting an explicit list of provisioned identities across teams,
+see [fixed-list publisher groups](publisher-groups.md). each group keeps its own
+runtime lease, assignments, local dependencies and durable certificate scope.
+
 ```text
 Git project configuration
           |

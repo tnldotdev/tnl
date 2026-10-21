@@ -30,6 +30,12 @@ and apimachinery API types (Apache-2.0), developed by the Kubernetes Authors.
 
 The Node connection helper uses Undici (MIT), developed by the Undici team and
 contributors, for scoped native HTTPS dispatch without changing application headers.
+Node SDK and framework lifecycle tracing uses the OpenTelemetry JavaScript API
+(Apache-2.0), developed by the OpenTelemetry Authors, with the application's provider.
+
+The Node workload SDK uses the official Vercel OIDC helper (Apache-2.0),
+developed by Vercel, and Zod (MIT), developed by Colin McDonnell and contributors.
+Its generated dependency license texts are included in dist/third-party-licenses.txt.
 
 The GitHub connection action uses the official Actions toolkit (MIT), developed
 by GitHub, and Zod (MIT), developed by Colin McDonnell and contributors. The

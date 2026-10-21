@@ -87,8 +87,8 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				"db":           {Publisher: &private, Protocol: &pgProtocol, Target: net.JoinHostPort(pg.Host, strconv.Itoa(int(pg.Port)))},
 			}
 			keys := []string{"private-tcp", "public-tcp", "private-http", "public-http", "db"}
-			policies := map[string]controlv1.ProjectCI{"test": {Github: controlv1.ProjectCIGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: keys, MaxDurationSeconds: 205}}
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Ci: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{private: {}, public: {Public: new(true)}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: keys, MaxDurationSeconds: 205}}
+			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{private: {}, public: {Public: new(true)}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +100,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertion := issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now()))
-			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", "test", assertion, keys)
+			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			unrenewedClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			unrenewedClaims["check_run_id"], unrenewedClaims["jti"] = "444", "unrenewed-execution"
-			unrenewedSession, err := unrenewed.Exchange(t.Context(), f.identity.teamID, "workload", "test", issuer.Sign(t, unrenewedClaims), keys)
+			unrenewedSession, err := unrenewed.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, unrenewedClaims), keys)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,13 +138,13 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", "test", assertion, keys); err == nil {
+			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys); err == nil {
 				t.Fatal("execution key takeover")
 			}
 			// revocation traverses the same paths while the main job keeps renewing.
 			claims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
 			claims["check_run_id"], claims["jti"] = "333", "revoked-execution"
-			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", "test", issuer.Sign(t, claims), keys); err != nil {
+			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, claims), keys); err != nil {
 				t.Fatal(err)
 			}
 			revokedPaths := openWorkloadPaths(t, f, other, byName, pg)
@@ -157,7 +157,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				waitRuntimeTime(t, at)
 				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
 				before, _ := job.Session()
-				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", "test", assertion, keys)
+				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
 				if err != nil || !replayed.ExpiresAt.Equal(session.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
 					t.Fatal("replay extended fixed expiry", err)
 				}
@@ -224,8 +224,8 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	group, protocol := "public", controlv1.PrivateHttp
-	policies := map[string]controlv1.ProjectCI{"test": {Github: controlv1.ProjectCIGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 60}}
-	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Ci: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 60}}
+	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = job.Exchange(t.Context(), f.identity.teamID, "workload", "test", issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), nil); err != nil {
+	if _, err = job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())), nil); err != nil {
 		t.Fatal(err)
 	}
 	inventory, err := job.ListServices(t.Context())
@@ -285,7 +285,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	request("/__tnl/login", true, 403)
 }
 
-func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, transport string) {
+func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, transport string, wrappers ...func(privatepublisher.RunControl) privatepublisher.RunControl) {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -324,9 +324,13 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 			quic = privateDisabledConnector()
 		}
 		ctx, cancel := context.WithCancel(t.Context())
+		var control privatepublisher.RunControl = native
+		for _, wrap := range wrappers {
+			control = wrap(control)
+		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+			done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
 				return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 			}})
 		}()

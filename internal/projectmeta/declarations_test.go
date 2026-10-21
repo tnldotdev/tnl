@@ -43,7 +43,7 @@ export default defineConfig(({worktree}) => ({
   },
   aliases: { review: { service: "web" } },
   webhooks: { stripe: { service: "web", path: "/hooks/stripe", provider: "stripe", methods: ["POST"] } },
-  ci: { deploy: { github: { workflow: ".github/workflows/deploy.yml", ref: "refs/heads/main", events: ["push"] }, services: ["db"] } },
+  workloads: { deploy: { provider: "github", github: { workflow: ".github/workflows/deploy.yml", ref: "refs/heads/main", events: ["push"] }, services: ["db"] } },
 }));`
 			usage := `import { tnl } from "@tnldotdev/tnl";
 tnl.services.db.protocol satisfies "postgres" | "mysql";

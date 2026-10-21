@@ -1,9 +1,9 @@
 name: tnl connect
-description: Prepare native connections for one saved tnl CI policy across job steps
+description: Prepare native connections for one saved tnl workload across job steps
 author: tnldotdev
 inputs:
-  ci:
-    description: Required CI policy key from the project's tnl configuration
+  workload:
+    description: Required workload key from the project's tnl configuration
     required: true
   version:
     description: Exact npm release version to install; otherwise use the installed project package
@@ -16,7 +16,7 @@ inputs:
     description: Explicit native tnl executable, relative to working-directory or absolute
     required: false
   services:
-    description: Newline-separated service keys narrowing the selected CI policy
+    description: Newline-separated service keys narrowing the selected workload
     required: false
   timeout:
     description: Startup timeout in seconds (1-300); does not change the workload deadline

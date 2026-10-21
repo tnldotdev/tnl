@@ -44,11 +44,53 @@ type GroupPublisher struct {
 	Discovery *targetdiscovery.Resolver
 }
 
+type GroupInstall struct {
+	Job     Job
+	Private ed25519.PrivateKey
+}
+
+func (GroupInstall) String() string   { return "publisher group installation" }
+func (GroupInstall) GoString() string { return "publisher group installation" }
+
+// ReplaceGroups installs the fixed startup list as one desired-state snapshot.
+// it is available only to an identity-only standalone registry. an omitted job
+// cannot accidentally resume from a previous invocation's list.
+func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) error {
+	if !r.groups || r.user || len(inputs) == 0 || len(inputs) > 256 {
+		return ErrScope
+	}
+	jobs := make([]Job, 0, len(inputs))
+	seen, replicas := map[string]bool{}, map[string]bool{}
+	for _, input := range inputs {
+		job := input.Job
+		if validateJob(&job) != nil || job.Kind != KindGroup || len(input.Private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(input.Private.Seed()), input.Private) {
+			return ErrScope
+		}
+		owner := JobKey(job.Server, "publisher", job.PublisherID)
+		replica := JobKey(job.Server, "group", job.GroupMember.GroupId+":"+job.GroupInstance)
+		if seen[owner] || replicas[replica] || job.ID != replica {
+			return ErrJobExists
+		}
+		seen[owner], replicas[replica] = true, true
+		job.Enabled, job.Revision, job.Status = true, 1, Status{State: "starting"}
+		jobs = append(jobs, job)
+	}
+	return r.update(ctx, func(existing *[]Job) error {
+		for i, job := range jobs {
+			if err := r.retainGroup(ctx, job, *job.GroupMember, inputs[i].Private); err != nil {
+				return err
+			}
+		}
+		*existing = jobs
+		return nil
+	})
+}
+
 func (GroupPublisher) String() string   { return "publisher group publications" }
 func (GroupPublisher) GoString() string { return "publisher group publications" }
 
 func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
-	if assignment.ServiceKind != "private_service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 {
+	if assignment.ServiceKind != "private_service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 || assignment.Configuration.Publisher == nil || *assignment.Configuration.Publisher == "" || *assignment.Configuration.Publisher == "local" {
 		return grouppublisher.ErrAssignment
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.PrivateService, PrivateServiceId: &assignment.ServiceId}
@@ -101,7 +143,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 // InstallGroup captures the task's own signing identity. no person session or
 // project checkout is required by the supervisor after installation.
 func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) error {
-	if !r.user || job.Kind != KindGroup || job.GroupMember == nil || *job.GroupMember != member || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) {
+	if !r.groups || job.Kind != KindGroup || job.GroupMember == nil || *job.GroupMember != member || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) {
 		return ErrScope
 	}
 	if err := validateJob(&job); err != nil {
@@ -110,6 +152,9 @@ func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.P
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID != job.ID {
+				if existing.Server == job.Server && (existing.PublisherID == job.PublisherID || existing.GroupMember != nil && existing.GroupMember.GroupId == member.GroupId && existing.GroupInstance == job.GroupInstance) {
+					return ErrJobExists
+				}
 				continue
 			}
 			if existing.GroupMember == nil || !credentialfile.SameGroupIdentity(*existing.GroupMember, member) || existing.Server != job.Server || existing.GroupInstance != job.GroupInstance {

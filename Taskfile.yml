@@ -245,14 +245,26 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi -run='^TestIntegrationControlOwnedDeviceLogin$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   go:test:integration:workload:
-    desc: Check GitHub workload sessions, saved policy races, and visitor admission without live GitHub or AWS
+    desc: Check provider workload sessions, saved policy races, and visitor admission with signed local issuer fixtures
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='^TestIntegrationWorkload' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:workload-runtime:
     desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadTransport' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  go:test:integration:workload-http:
+    desc: Check key-bound workload HTTP certificates, streaming and replacement subject isolation with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/tnldruntime -run='^TestIntegrationWorkloadHTTP' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:integration:provider-http:
+    desc: Check shared native workload SDK/IPC and real workload HTTP certificate boundaries locally
+    cmds:
+      - task: js:test:connections
+      - task: go:test:connections
+      - task: go:test:integration:workload-http
 
   go:test:aws-bootstrap:
     desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
@@ -264,6 +276,11 @@ tasks:
     cmds:
       - go test ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/publisherjob ./internal/privatepublisher ./internal/targettransport ./internal/observability
       - go test ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
+
+  go:test:integration:http-services:
+    desc: Check applied HTTP settings, visitor admission, and managed HTTP streams with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/tnldruntime -run='^TestIntegration(AppliedProjectHTTPContracts|ManagedHTTPAuthentication)' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   go:test:target-discovery:race:
     desc: Check publisher discovery and target preparation with the race detector
@@ -280,14 +297,47 @@ tasks:
     desc: Check private owner IPC, verified connector HTTPS, Kubernetes, and connection lifetimes
     deps: [js:build]
     cmds:
-      - go test -race ./internal/connectionruntime -count=1 -timeout=3m
+      - go test -race ./internal/connectionruntime ./internal/workloadclient ./internal/oidcauth -count=1 -timeout=3m
       - go test -race ./cmd/tnl -run='^Test(Connection|IntegrationConnectionNativeOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  go:test:connections:budget:
+    desc: Measure verified cold/warm native control work and prepared-only sibling reads with local TLS fixtures
+    cmds:
+      - go test -race -v ./cmd/tnl -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
+
+  go:test:client-tracing:
+    desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
+    cmds:
+      - go test -race ./internal/observability ./internal/connectionruntime ./internal/privateprotocol ./internal/localpublisher ./internal/clientruntime ./internal/grouppublisher ./internal/publisherjob ./internal/tcpconnect -count=1 -timeout=3m
+      - go test -race ./cmd/tnl -run='^Test(Observability|VersionBypasses|ClientTracing|Connection|PublisherGroupDiscovery)' -count=1 -timeout=3m
+
+  js:test:client-tracing:
+    desc: Check SDK and framework tracing, native carriers and lifecycle cleanup
+    deps: [js:build]
+    cmds:
+      - pnpm exec vitest run packages/ts/tracing.test.ts packages/ts/app-runtime.test.ts packages/ts/connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/adhoc-open.test.ts packages/ts/adhoc-fetch.test.ts packages/ts/vite.test.ts packages/ts/next.test.ts
 
   go:test:integration:connections:
     desc: Migrate disposable PostgreSQL with real Drizzle Kit and prepared connector options
     deps: [js:build]
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectionDrizzleKit$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+
+  go:test:integration:vercel:
+    desc: Qualify workload-owned Vercel Node 24 artifacts against real local server roles and disposable PostgreSQL
+    deps: [js:build]
+    preconditions:
+      - sh: |
+          node -e 'process.exit(process.versions.node === "24.20.0" ? 0 : 1)'
+        msg: "Put pinned Node 24.20.0 on PATH (locally use mise exec node@24.20.0 -- task go:test:integration:vercel)"
+    vars:
+      ARTIFACTS: '{{default (printf "%s/.local/vercel-function-check" .ROOT_DIR) .ARTIFACTS}}'
+      LINUX_NODE_IMAGE: '{{default "" .LINUX_NODE_IMAGE}}'
+    cmds:
+      - pnpm --dir tools/vercel-function-check install --frozen-lockfile
+      - pnpm --dir tools/vercel-function-check typecheck
+      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives tools/vercel-function-check/*.ts
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadVercelFunction$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-vercel-artifacts='{{.ARTIFACTS}}' -tnl-vercel-linux-node-image='{{.LINUX_NODE_IMAGE}}'
 
   go:test:integration:kubernetes:
     desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)
@@ -372,13 +422,14 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   go:test:integration:tcp-clients:
     desc: Verify psql, mysql, and native drivers through both admissions with disposable TLS providers
+    deps: [js:build]
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationManagedDatabaseProviders/postgres' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationManagedDatabaseProviders/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/postgres' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:tcp-lifecycle:
     desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
@@ -417,6 +468,11 @@ tasks:
     cmds:
       - go test -race -v ./internal/publishertarget -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
 
+  go:test:integration:publisher-install:
+    desc: Verify installation, reboot, and Compose enrollment in disposable Ubuntu/systemd with disposable PostgreSQL (Docker opt-in)
+    cmds:
+      - go -C tools/testharness run . publisher-install
+
   deploy:publishers:check:
     desc: Validate publisher templates, TypeScript contracts, and CloudFormation schemas without AWS
     cmds:
@@ -432,6 +488,20 @@ tasks:
     desc: Check the portable group identity file and injected-secret contract
     cmds:
       - go test -race ./internal/publisheridentity/credentialfile -run='^TestGroupIdentity' -count=1
+
+  go:test:publisher-groups:
+    desc: Check scoped group dependencies, ownership, retries, and joined shutdown
+    cmds:
+      - go test -race ./internal/publisherjob ./internal/publisheridentity/credentialfile ./internal/grouppublisher -count=1
+      - go test -race ./cmd/tnl -run='^Test(FixedGroups|PublisherGroupDiscovery|GroupIdentity)' -count=1
+
+  go:test:integration:publisher-groups:
+    desc: Verify one CLI process serving independent cross-team groups with disposable PostgreSQL
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: Group CLI integration requires Linux for isolated credential protection
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationCLIFixedGroupsCrossTeamIsolation$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:publisher-state:
     desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
@@ -600,6 +670,12 @@ tasks:
   js:test:
     cmds:
       - pnpm test
+
+  js:test:connections:
+    desc: Check native connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
+    deps: [js:build]
+    cmds:
+      - pnpm exec vitest run packages/ts/connection.test.ts packages/ts/awaitable-connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-ipc.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/workload-native.test.ts packages/ts/workload-provider.test.ts packages/ts/workload-contract.test.ts
 
   installer:test:
     desc: Test the shell installer without accessing GitHub or client state

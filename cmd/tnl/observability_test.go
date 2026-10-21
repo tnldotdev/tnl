@@ -22,6 +22,10 @@ func TestObservabilityRoleFollowsOwningCommand(t *testing.T) {
 	if commandObservabilityRole("publish <service-or-target>", flags) != observability.RoleClient {
 		t.Fatal("launcher was classified as publisher")
 	}
+	flags.Publisher.Serve.Install = true
+	if commandObservabilityRole("publisher serve", flags) != observability.RoleClient || persistentObservabilityOwner("publisher serve", flags) {
+		t.Fatal("finite group installer was classified as a persistent owner")
+	}
 }
 
 func TestVersionBypassesInvalidObservabilityConfiguration(t *testing.T) {

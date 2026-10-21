@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/internal/publisherjob"
@@ -29,24 +27,28 @@ import (
 
 type publisherServeCommand struct {
 	scopedTeamFlags `embed:""`
-	Group           string `name:"group" required:"" help:"Configured publisher group name."`
-	ProjectKey      string `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
-	EnrollmentKey   string `name:"enroll-key" env:"TNL_GROUP_ENROLL_KEY" help:"One-use group enrollment key; use - to read stdin. Without a saved or portable identity, bootstrap with the saved person session once."`
-	IdentityFile    string `name:"identity-file" type:"path" help:"Private portable group identity; alternatively inject JSON with TNL_GROUP_IDENTITY. Cannot combine with enrollment."`
-	IdentityDir     string `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
-	Instance        string `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
-	Foreground      bool   `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach          bool   `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install         bool   `name:"install" help:"Run durably with the user publisher supervisor."`
-	System          bool   `name:"system" hidden:""`
-	SystemStateDir  string `name:"system-state-dir" type:"path"`
-	DetachedChild   string `name:"detached-child" hidden:""`
+	Group           string   `name:"group" help:"Configured publisher group name; omit to use the identities bound in --identity-file."`
+	ProjectKey      string   `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
+	EnrollmentKey   string   `name:"enroll-key" env:"TNL_GROUP_ENROLL_KEY" help:"One-use group enrollment key; use - to read stdin. Without a saved or portable identity, bootstrap with the saved person session once."`
+	IdentityFile    []string `name:"identity-file" type:"path" help:"Private portable group identity. Repeat for independent groups in this process, omitting --group. Single-group mode also accepts TNL_GROUP_IDENTITY."`
+	BindingFile     []string `name:"binding-file" type:"path" help:"Operator-owned local dependency binding for an immutable group identity. Repeat per group; omitted bindings deny secret and cloud access."`
+	IdentityDir     string   `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
+	Instance        string   `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
+	Foreground      bool     `name:"foreground" help:"Run in this terminal (the default)."`
+	Detach          bool     `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Install         bool     `name:"install" help:"Run durably with the user publisher supervisor."`
+	System          bool     `name:"system" hidden:""`
+	SystemStateDir  string   `name:"system-state-dir" type:"path"`
+	DetachedChild   string   `name:"detached-child" hidden:""`
 
 	identityInputRead bool
 	identity          *credentialfile.GroupFile
 }
 
 func validatePublisherServe(flags publisherServeCommand) error {
+	if flags.fixedList() {
+		return validateFixedPublisherGroups(flags)
+	}
 	if flags.Group == "local" || !naming.ValidServiceName(flags.Group) || !naming.ValidServiceName(flags.Instance) {
 		return publisherCLIError("select a configured publisher group other than local and a lowercase instance name")
 	}
@@ -115,6 +117,9 @@ func publisherGroupEnrollmentBounds(flags publisherEnrollCommand) (int, int, err
 }
 
 func runPublisherServe(ctx context.Context, flags publisherServeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if flags.fixedList() {
+		return runFixedPublisherGroups(ctx, flags, diagnostics)
+	}
 	if err := validatePublisherServe(flags); err != nil {
 		return err
 	}
@@ -304,6 +309,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		}
 		return writeSystemJobs(ctx, registry, output, "tnl publisher serve", job.ID)
 	}
+	// setup has finished; the reusable runner acquires the immutable selection
+	// lock and the durable publisher.lock for its full serving lifetime.
+	if err := lock.Close(); err != nil {
+		return err
+	}
 	detachedPublicationStarting(ctx)
 	return servePublisherGroup(ctx, job, profile, private, func(revision int64, healthy bool) error {
 		if healthy {
@@ -321,62 +331,20 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 			member = current.Member
 		}
 		return writeHumanFrame(diagnostics, "tnl publisher serve", state, "", clioutput.Fields(clioutput.Field{Label: "group", Value: member.GroupName}, clioutput.Field{Label: "project key", Value: member.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(revision, 10)}))
-	}, func(service string, event publisher.Event) error {
-		if event.Type == publisher.EventProvisioningStep {
-			return writeHumanFrame(diagnostics, "tnl publisher serve", "provisioning", "", clioutput.Fields(clioutput.Field{Label: "service", Value: service}, clioutput.Field{Label: "stage", Value: event.ProvisioningStage}))
-		}
-		return nil
 	})
 }
 
-func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, progress ...func(string, publisher.Event) error) error {
-	return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, nil, progress...)
+func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) error {
+	return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, nil)
 }
 
-func servePublisherGroupWithDiscovery(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider targetdiscovery.Provider, progress ...func(string, publisher.Event) error) error {
+func servePublisherGroupWithDiscovery(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider targetdiscovery.Provider) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
 	if err != nil {
 		return err
 	}
-	if job.IdentityDir != "" {
-		var err error
-		profile, err = profile.WithIdentityDirectory(job.IdentityDir)
-		if err != nil {
-			return err
-		}
+	if provider == nil {
+		provider = targetdiscovery.AWS{}
 	}
-	client, err := publisherjob.GroupClient(job)
-	if err != nil {
-		return err
-	}
-	control, authority, err := publisherjob.Clients(job)
-	if err != nil {
-		return err
-	}
-	member := *job.GroupMember
-	resolver, err := targetdiscovery.New(provider, targetdiscovery.Options{})
-	if err != nil {
-		return err
-	}
-	// Runtime.Serve joins its assignments before returning; only then may shared
-	// discovery work be canceled and joined. nil provider uses the AWS chain.
-	defer resolver.Close()
-	publications := publisherjob.GroupPublisher{Member: member, Private: private, State: profile, Control: control, Authority: authority, Discovery: resolver}
-	return withPublisherCertificateState(ctx, job, profile, private, client, func(ctx context.Context) error {
-		err := (grouppublisher.Runtime{Control: client, Member: member, Private: private, Deployment: deployment, Observe: observe, MemberChanged: func(current controlv1.PublisherGroupMember) error {
-			value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, current, private)
-			if err != nil {
-				return err
-			}
-			if err := credentialfile.RetainGroup(ctx, profile, value); err != nil {
-				return err
-			}
-			_, err = credentialfile.ImportGroup(ctx, profile, value, job.Server, current.ProjectKey, current.GroupName, job.GroupInstance)
-			return err
-		}, Publish: publications.Publish}).Serve(ctx)
-		if errors.Is(err, grouppublisher.ErrAssignment) {
-			return errors.Join(publisherjob.ErrScope, err)
-		}
-		return err
-	})
+	return (publisherjob.GroupRunner{Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
 }

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,7 +32,7 @@ type Handle struct {
 	ConfigDigest string    `json:"config_digest"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	Executable   string    `json:"executable"`
-	CI           string    `json:"ci,omitempty"`
+	Workload     string    `json:"workload,omitempty"`
 	TeamID       string    `json:"team_id,omitempty"`
 }
 
@@ -185,7 +186,7 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	if request.Schema != Schema || request.Directory != h.Directory || request.ConfigDigest != h.ConfigDigest {
 		return ErrUnauthorized
 	}
-	if operation != "status" && operation != "connect" && operation != "prepared" && operation != "stop" && operation != "kube-credential" {
+	if operation != "status" && operation != "connect" && operation != "prepare" && operation != "prepared" && operation != "stop" && operation != "kube-credential" && operation != "attach" {
 		return ErrInvalid
 	}
 	data, err := json.Marshal(request)
@@ -200,6 +201,7 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	}
 	req.Header.Set("Authorization", "Bearer "+h.Key)
 	req.Header.Set("Content-Type", "application/json")
+	observability.InjectLocalTrace(ctx, req.Header)
 	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	response, err := client.Do(req)
@@ -214,6 +216,9 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 		}
 		if response.StatusCode == 410 {
 			return ErrExpired
+		}
+		if response.StatusCode == 425 {
+			return ErrUnprepared
 		}
 		return ErrUnavailable
 	}

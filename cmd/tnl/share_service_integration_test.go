@@ -5,15 +5,19 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/authorityapi"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlapi"
@@ -56,6 +60,8 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	}
 	owner, admin := person("operator", "owner@example.test"), person("manager", "manager@example.test")
 	mux := http.NewServeMux()
+	var loseInvitationResponse atomic.Bool
+	var lostInvitationID atomic.Value
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	control, err := controlapi.NewHandler(controlapi.Config{ControlURL: server.URL, OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d, d, nil)
@@ -71,6 +77,22 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		if pattern != "/" {
 			authority.ServeHTTP(w, r)
 		} else {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/invitations") && loseInvitationResponse.CompareAndSwap(true, false) {
+				recorded := httptest.NewRecorder()
+				control.ServeHTTP(recorded, r)
+				var invitation controlv1.PrivateServiceInvitation
+				if recorded.Code != http.StatusCreated || json.Unmarshal(recorded.Body.Bytes(), &invitation) != nil || invitation.Secret == nil {
+					t.Error("lost-response fixture did not commit an invitation")
+				}
+				lostInvitationID.Store(invitation.Id)
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_ = conn.Close()
+				return
+			}
 			control.ServeHTTP(w, r)
 		}
 	}))
@@ -197,6 +219,81 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 			assertNoVisit()
 		})
 	}
+	t.Run("complete inventory and revoke beyond first page", func(t *testing.T) {
+		conn, err := pgx.Connect(ctx, url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close(ctx)
+		for _, query := range []string{
+			`INSERT INTO control.private_service_grants(id,private_service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,revoked_at)
+			 SELECT 'psgr_'||lpad(n::text,22,'0'),$1,$2,'identity',$3,$3,'cli-page-grant/'||n,sha256(convert_to('grant/'||n,'UTF8')),$4::timestamptz,
+			 CASE WHEN n<=120 THEN $4::timestamptz END FROM generate_series(1,205) n`,
+			`INSERT INTO control.private_service_invitations(id,private_service_id,team_id,normalized_email,token_digest,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)
+			 SELECT 'psivt_'||lpad(n::text,22,'0'),$1,$2,'owner@example.test',sha256(convert_to('token/'||n,'UTF8')),$3,'cli-page-invite/'||n,sha256(convert_to('request/'||n,'UTF8')),$4::timestamptz,$4::timestamptz+interval '1 hour',
+			 CASE WHEN n<=120 THEN $4::timestamptz END FROM generate_series(1,205) n`,
+		} {
+			if _, err := conn.Exec(ctx, query, remote.Id, team.Id, owner.Identity.Identity.ID, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, err := call(admin.AccessToken.String(), "list", "remote")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var listed struct {
+			Grants      []controlv1.PrivateServiceGrant      `json:"grants"`
+			Invitations []controlv1.PrivateServiceInvitation `json:"invitations"`
+		}
+		if err := json.Unmarshal(data, &listed); err != nil || len(listed.Grants) < 205 || len(listed.Invitations) != 207 || bytes.Contains(data, []byte(`"secret"`)) {
+			t.Fatal("CLI did not list all secretless access history", err)
+		}
+		for _, id := range []string{fmt.Sprintf("psgr_%022d", 205), fmt.Sprintf("psivt_%022d", 205)} {
+			if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, id); err != nil {
+				t.Fatal("CLI could not revoke access beyond the first page", err)
+			}
+		}
+		assertNoVisit()
+	})
+	t.Run("lost committed response and explicit reissue", func(t *testing.T) {
+		deadline := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+		args := []string{"create", remote.Id, "--email=owner@example.test", "--expires-at=" + deadline.Format(time.RFC3339Nano), "--idempotency-key=cli-lost-response"}
+		loseInvitationResponse.Store(true)
+		data, firstErr := call(admin.AccessToken.String(), "invite", args...)
+		// net/http may itself retry an idempotent POST on a reused connection.
+		if firstErr == nil {
+			var recovered controlv1.PrivateServiceInvitation
+			if err := json.Unmarshal(data, &recovered); err != nil || recovered.Secret != nil {
+				t.Fatal("automatic retry returned a new secret", err)
+			}
+		}
+		data, err := call(admin.AccessToken.String(), "invite", args...)
+		if err != nil {
+			t.Fatal("lost committed invitation did not recover", err)
+		}
+		var recovered controlv1.PrivateServiceInvitation
+		if err := json.Unmarshal(data, &recovered); err != nil || recovered.Id != lostInvitationID.Load() || recovered.Secret != nil || recovered.PrivateServiceId != remote.Id || !recovered.ExpiresAt.Equal(deadline) {
+			t.Fatal("retry lost the original exact-service ID", err)
+		}
+		changed := append([]string(nil), args...)
+		changed[2] = "--email=other@example.test"
+		if _, err := call(admin.AccessToken.String(), "invite", changed...); !errors.Is(err, controlclient.ErrStatusConflict) {
+			t.Fatal("changed retry did not conflict", err)
+		}
+		if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, recovered.Id); err != nil {
+			t.Fatal(err)
+		}
+		args[len(args)-1] = "--idempotency-key=cli-reissued"
+		data, err = call(admin.AccessToken.String(), "invite", args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reissued controlv1.PrivateServiceInvitation
+		if err := json.Unmarshal(data, &reissued); err != nil || reissued.Secret == nil || reissued.Id == recovered.Id {
+			t.Fatal("explicit reissue did not create a deliverable invitation", err)
+		}
+		assertNoVisit()
+	})
 	if _, err := ownerAuthority.SetMembershipRole(ctx, team.Id, membership.Id, "member"); err != nil {
 		t.Fatal(err)
 	}

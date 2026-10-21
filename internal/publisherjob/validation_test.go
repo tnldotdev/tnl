@@ -144,6 +144,9 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				mutations["project service"] = func(j *Job) { j.ProjectService = "database" }
 				mutations["publisher pool"] = func(j *Job) { j.PublisherPool = true }
 			}
+			if kind != KindPublicURL {
+				mutations["public readiness"] = func(j *Job) { j.ReadinessPath = "/health" }
+			}
 			if kind == KindPublicURL || kind == KindGroup {
 				mutations["private trust"] = func(j *Job) { j.Trust = &privatetrust.Snapshot{} }
 				mutations["private revision"] = func(j *Job) { j.TrustRevision = 1 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -186,7 +187,7 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 func TestInstallPreflightLeavesEnrollmentAndStateUntouched(t *testing.T) {
 	_, a, _, selection := backgroundFixture(t)
 	root := filepath.Join(t.TempDir(), "not-installed")
-	flags := publishCommand{Target: "127.0.0.1:5432"}
+	flags := publishCommand{Target: "http://127.0.0.1:5432"}
 	flags.ServerURL = "https://control.example"
 	err := runEnrolledBackgroundPublish(t.Context(), flags, selection, backgroundPublishFlags{Install: true, SystemStateDir: root}, io.Discard, strings.NewReader(""), publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
 		t.Fatal("missing service reached the manager")
@@ -195,8 +196,8 @@ func TestInstallPreflightLeavesEnrollmentAndStateUntouched(t *testing.T) {
 	if err == nil || a.redemptions != 0 {
 		t.Fatalf("preflight: err=%v redemptions=%d", err, a.redemptions)
 	}
-	if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.ServiceNotInstalled {
-		t.Fatalf("missing service used the wrong failure reason: %v", err)
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+		t.Fatalf("unavailable target used the wrong failure reason: %v", err)
 	}
 	if _, statErr := os.Lstat(root); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("preflight created state: %v", statErr)
@@ -209,7 +210,7 @@ func configuredInstallFixture(t *testing.T) (projectConfiguration, publishComman
 	protocol := "http"
 	project := projectConfiguration{Project: projectconfig.Project{Root: t.TempDir(), Config: config.TNL{
 		Server: &server, Services: config.Services{
-			"orders": {Protocol: &protocol, Tunnel: &config.Tunnel{PublicURL: &hostname}, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+			"orders": {Protocol: &protocol, Tunnel: &config.Tunnel{PublicURL: &hostname}, Target: &config.ServiceTarget{Type: "address", Address: &target}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}},
 			"api":    {Target: &config.ServiceTarget{Type: "app"}},
 		},
 	}}}
@@ -257,6 +258,34 @@ func TestConfiguredInstallUsesOnlySelectedStableService(t *testing.T) {
 	err = backgroundSelection(flags, enrolledPublishSelection{}, backgroundPublishFlags{System: true})
 	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.InstalledPublisherSelectionMissing {
 		t.Fatalf("system install fell back to a user project grant: %v", err)
+	}
+}
+
+func TestConfiguredInstallPersistsReadinessWithExactGrant(t *testing.T) {
+	r, a, c, selection := backgroundFixture(t)
+	_, flags := configuredInstallFixture(t)
+	c.publicURL.CanonicalHostname = "orders.example"
+	clients := func(publisherjob.Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error) {
+		return c, a, nil
+	}
+	var id string
+	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{ServiceName: flags.ServiceName, System: true}, strings.NewReader(""), clients, &id); err != nil {
+		t.Fatal(err)
+	}
+	job, err := r.ResolveJob(t.Context(), id)
+	if err != nil || job.ReadinessPath != "/health" || job.PublisherID != a.identity.ClientId || job.GrantID != a.identity.GrantId || job.Revision != 1 {
+		t.Fatal("configured readiness or exact grant was lost", err)
+	}
+	service := flags.project.Config.Services[flags.Service]
+	service.HTTP = &config.HTTPService{Readiness: &config.Readiness{Path: "/ready"}}
+	flags.project.Config.Services[flags.Service] = service
+	selection = enrolledPublishSelection{PublisherID: job.PublisherID}
+	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{ServiceName: flags.ServiceName, System: true}, strings.NewReader(""), clients, nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := r.ResolveJob(t.Context(), id)
+	if err != nil || updated.ReadinessPath != "/ready" || updated.Revision != job.Revision+1 || updated.GrantID != job.GrantID || a.redemptions != 1 {
+		t.Fatal("readiness update lost its job revision or changed the grant", err)
 	}
 }
 
@@ -387,8 +416,8 @@ func TestConfiguredInstallPreflightDoesNotOpenProjectOrServiceState(t *testing.T
 		t.Fatal("missing supervisor reached the manager")
 		return nil
 	}))
-	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled {
-		t.Fatalf("configured install skipped supervisor preflight: %v", err)
+	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetUnavailable {
+		t.Fatalf("configured install skipped target preflight: %v", err)
 	}
 	for _, path := range []string{flags.StateDir, serviceRoot} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {

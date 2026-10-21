@@ -39,16 +39,17 @@ host, port = db.host, db.port
 
 Each handle property reads current material. Use `snapshot()` when several
 settings must come from the same read. Synchronous access never starts an owner
-or signs in. Without a prepared owner, await the handle first. Python runs
-bounded native CLI subprocesses for reads; it does not run nested event loops
-or implement the connection transport. Awaited operations run those same calls
-in a worker thread.
+or contacts control. An unprepared sibling fails without opening its listener.
+Without prepared settings, await the handle first. Python runs bounded native
+CLI subprocesses for synchronous reads. Async preparation uses a reusable,
+authenticated private IPC connection in a worker thread; native code owns the
+service transport and authorization.
 
 The SDK uses the platform wheel's existing native binary resolver, then these
 schema-1 commands:
 
 ```text
-tnl --no-telemetry runtime connections start --directory DIR --parent-pid PID --service NAME
+tnl --no-telemetry runtime connections start --directory DIR --parent-pid PID
 tnl --no-telemetry runtime connections read --handle FILE --service NAME
 tnl --no-telemetry runtime connections stop --handle FILE
 ```
@@ -60,11 +61,19 @@ authorization, listener setup, renewal, and cleanup. Python passes no secrets in
 arguments and discards native diagnostic output rather than exposing provider
 details. stdout is bounded to 128 KiB and each command to 65 seconds.
 
+Each async workload call reacquires its source assertion. Only exact assertion
+bytes with a control-confirmed binding and expiry may reuse identity selection.
+Native-only Fly acquisition intentionally retains per-await native identity
+selection because Python does not hold those assertion bytes. Synchronous reads
+never acquire or attach assertions.
+
 ## lifecycle and expiry
 
-Handles for the same canonical directory, service, and mounted handle share
-one session within a Python process. Concurrent threads and awaiters coalesce
-startup. Different services can have different owners. A failed startup is
+Handles for the same canonical directory and mounted handle share
+one human owner within a Python process. Workload handles share only after
+control verifies the same immutable identity and policy. Services prepare
+incrementally within that owner. Concurrent threads and awaiters coalesce
+startup. A failed startup is
 shared until the handle is closed; it does not repeatedly trigger sign-in.
 
 Call `handle.close()` or `await handle.aclose()` when finished. Closing affects
@@ -76,10 +85,26 @@ and retains those same cleanup boundaries. Imports perform no discovery,
 authentication, process startup, or environment mutation.
 
 Snapshots have `expires_at`. Read another snapshot before opening a new client
-connection; expired material fails closed. The SDK does not mutate existing
-driver settings or refresh an existing pool. Drain and recreate pools with a
-fresh snapshot before expiry. If the native session itself expired or was
-revoked, close its handle and explicitly prepare a new one.
+connection; expired material fails closed. Human owner lifetime follows the
+application rather than a one-hour timer. Workload sessions keep their fixed
+deadline and renewable lease separately. A fresh verified assertion can authorize
+a replacement reusable-provider session for future accepts on the same listener.
+An early native process death is recoverable only after native proves its OS
+lifetime lock is released. A temporary IPC failure never permits a second owner.
+
+Synchronous properties and `snapshot()` on a known-expired owned session raise
+`sdk.connection_expired`; they never start a replacement. A shorter snapshot
+expiry or a transient native read failure does not replace a live owner. Await
+the handle explicitly when fresh preparation is needed.
+
+Existing snapshots stay immutable. The SDK does not mutate driver settings or
+refresh an existing pool. Drain and recreate database pools or connections with
+newly awaited settings; tnl never replays SQL during owner replacement.
+An owner supplied through `TNL_CONNECTION_HANDLE` remains caller-owned, including
+fixed-deadline workload sessions. After its expiry the caller must prepare a new
+owner and select its handle; the SDK does not stop or replace it. Revocation is
+not permission to recover old access: any new preparation must pass current
+native authorization.
 
 ## portable project types
 

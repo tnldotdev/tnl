@@ -221,7 +221,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
 					return
 				}
-				if transport, ok := base.Transport.(*http.Transport); ok {
+				if transport, ok := base.Transport.(interface{ CloseIdleConnections() }); ok {
 					transport.CloseIdleConnections()
 				}
 				base, currentAddress, currentIdentity = selected, canonical, identity
@@ -256,7 +256,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 				mu.Lock()
 				if current != target {
 					if upstream != nil {
-						if transport, ok := upstream.Transport.(*http.Transport); ok {
+						if transport, ok := upstream.Transport.(interface{ CloseIdleConnections() }); ok {
 							transport.CloseIdleConnections()
 						}
 					}
@@ -462,6 +462,12 @@ func NormalizeTarget(target string) (string, error) {
 		}
 		scheme = strings.ToLower(parsed.Scheme)
 		hostname, portText = parsed.Hostname(), parsed.Port()
+		if portText == "" && !strings.HasSuffix(parsed.Host, ":") {
+			portText = "80"
+			if scheme == "https" {
+				portText = "443"
+			}
+		}
 		if scheme == "http" && strings.EqualFold(hostname, "localhost") {
 			hostname = "127.0.0.1"
 		}

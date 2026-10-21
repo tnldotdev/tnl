@@ -21,6 +21,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	api "github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
@@ -301,6 +302,7 @@ func callEndpoint(ctx context.Context, e Endpoint, method, path string, input, o
 		timeout = 75 * time.Second
 	}
 	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	observability.InjectLocalTrace(ctx, request.Header)
 	response, err := client.Do(request)
 	if err != nil {
 		return err

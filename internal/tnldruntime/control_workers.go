@@ -63,6 +63,7 @@ func (d *daemon) startControlWorkers(
 		return runRoutingHistoryCleanup(lifetime, database, metrics)
 	})
 	d.start("clean up service audit", func() error { return runServiceAuditCleanup(lifetime, database, metrics) })
+	d.start("clean up workload history", func() error { return runWorkloadCleanup(lifetime, database, metrics) })
 	if err := database.CompleteStorageKeyRotation(ctx); err != nil {
 		return fmt.Errorf("rotate stored secrets: %w", err)
 	}

@@ -238,6 +238,9 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if pub.ServiceKind != "private_service" || pub.Configuration.TargetTls == nil || pub.Configuration.TargetTls.Hostname != hostname || pub.Configuration.PublicUrl.Hostname != nil || pub.Configuration.PublicUrl.Access.Mode == nil || *pub.Configuration.PublicUrl.Access.Mode != mode {
 		t.Fatal("wire dropped managed HTTP scope or target trust")
 	}
+	if pub.Configuration.Target != "192.0.2.5:8443" {
+		t.Fatal("assigned wire configuration lost its target address")
+	}
 	if err = anonymous.AcknowledgePublisherGroupConfiguration(ctx, lease.AccessToken, controlv1.PublisherGroupAcknowledgement{Revision: assignments.Revision, ConfigurationHash: assignments.ConfigurationHash, Healthy: true}); err != nil {
 		t.Fatal(err)
 	}

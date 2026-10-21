@@ -14,22 +14,24 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 )
 
 type Server struct {
-	Capabilities *privateprotocol.Capabilities
-	Manager      *clientruntime.Manager
-	Database     *clientstate.Database
-	Project      string
-	Prepare      func(context.Context, privateprotocol.Prepare) (privateprotocol.Assignment, error)
-	Register     func(privateprotocol.Registration) error
-	Acquire      func(context.Context, privateprotocol.Lease) (privateprotocol.Registration, error)
-	Invocation   func(context.Context, privateprotocol.Invocation) (privateprotocol.Registration, error)
-	Check        func(context.Context, []string) (clientruntime.Snapshot, error)
-	AppService   func(string) bool
+	Capabilities    *privateprotocol.Capabilities
+	Manager         *clientruntime.Manager
+	Database        *clientstate.Database
+	Project         string
+	Prepare         func(context.Context, privateprotocol.Prepare) (privateprotocol.Assignment, error)
+	Register        func(privateprotocol.Registration) error
+	RegisterContext func(context.Context, privateprotocol.Registration) error
+	Acquire         func(context.Context, privateprotocol.Lease) (privateprotocol.Registration, error)
+	Invocation      func(context.Context, privateprotocol.Invocation) (privateprotocol.Registration, error)
+	Check           func(context.Context, []string) (clientruntime.Snapshot, error)
+	AppService      func(string) bool
 }
 
 func (s *Server) Handler() http.Handler {
@@ -150,10 +152,12 @@ func (s *Server) Handler() http.Handler {
 					Problem(w, privateprotocol.ErrForbidden)
 					return
 				}
-				if s.Register != nil {
+				if s.RegisterContext != nil {
+					err = s.RegisterContext(r.Context(), request)
+				} else if s.Register != nil {
 					err = s.Register(request)
 				} else {
-					err = s.Manager.Register(request.RegistrationID, request.Owner, request.Target, service.Framework)
+					err = s.Manager.RegisterContext(r.Context(), request.RegistrationID, request.Owner, request.Target, service.Framework)
 				}
 			case "renew":
 				err = s.Manager.RenewTarget(request.RegistrationID, request.Owner, request.Target)
@@ -225,7 +229,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		privateprotocol.Write(w, 200, snapshot)
 	})
-	return s.Capabilities.Handler(mux)
+	return observability.LocalRequests(s.Capabilities.Handler(mux))
 }
 
 func Problem(w http.ResponseWriter, err error) {

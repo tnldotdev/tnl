@@ -150,7 +150,9 @@ func main() {
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
 	var telemetry *asyncTelemetryReporter
-	err := run(context.WithValue(ctx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
+	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
+	_ = os.Unsetenv(observability.LaunchTraceparent)
+	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
 		telemetry = newTelemetryReporter(root)
 		return telemetry
 	})
@@ -336,12 +338,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	machineIntent = strings.HasPrefix(parsedCommand, "runtime connections ")
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
-	if strings.HasPrefix(parsedCommand, "runtime connections ") {
-		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
-	}
-	if parsedCommand == "connect kube-credential" {
-		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
-	}
 	if parsedCommand == "generate" {
 		return runGenerate(ctx, flags, stdout)
 	}
@@ -358,10 +354,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		if err != nil {
 			return err
 		}
-		defer metrics.Shutdown(context.Background())
+		defer func() {
+			budget := observability.CLIShutdownTimeout
+			if persistentObservabilityOwner(parsedCommand, flags) {
+				budget = observability.ShutdownTimeout
+			}
+			shutdown, cancel := context.WithTimeout(context.Background(), budget)
+			defer cancel()
+			_ = metrics.Shutdown(shutdown)
+		}()
+	}
+	ctx, finishCommand := observability.ClientCommand(ctx, parsedCommand)
+	defer func() { finishCommand(result) }()
+	if flags.Publish.Install || flags.Publisher.Serve.Install || flags.Connect.Start.Install {
+		var finishInstall func(error)
+		ctx, finishInstall = observability.ClientOperation(ctx, "client.install")
+		defer func() { finishInstall(result) }()
+	}
+	if strings.HasPrefix(parsedCommand, "runtime connections ") {
+		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
+	}
+	if parsedCommand == "connect kube-credential" {
+		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
 	}
 	if parsedCommand == "publisher serve" {
 		serve := &flags.Publisher.Serve
+		if serve.fixedList() {
+			return runFixedPublisherGroups(ctx, *serve, stderr)
+		}
 		if err := validatePublisherServe(*serve); err != nil {
 			return err
 		}
@@ -523,33 +543,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>":
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Install {
-			if !flags.Publish.System {
-				scope := systemStateFlags{SystemStateDir: flags.Publish.SystemStateDir}
-				options, scopeErr := scope.options()
-				if scopeErr != nil {
-					return scopeErr
-				}
-				if err := requireInstalledService(ctx, options, nil); err != nil {
-					return err
-				}
-				selection, _, selectErr := selectProjectConfiguration(ctx, flags)
-				if selectErr != nil {
-					return selectErr
-				}
-				if selection.Path == "" {
-					break
-				}
-				projectStateRoot, err = commandStateRoot(parsed)
-				if err != nil {
-					return err
-				}
-				project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
-				if err != nil {
-					return err
-				}
-				if err := project.applyInstalledService(&flags.Publish); err != nil {
-					return err
-				}
+			selection, _, selectErr := selectProjectConfiguration(ctx, flags)
+			if selectErr != nil {
+				return selectErr
+			}
+			if selection.Path == "" {
+				break
+			}
+			projectStateRoot, err = commandStateRoot(parsed)
+			if err != nil {
+				return err
+			}
+			project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
+			if err != nil {
+				return err
+			}
+			if err := project.applyInstalledService(&flags.Publish); err != nil {
+				return err
 			}
 			break
 		}
@@ -677,6 +687,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
 	case "service install":
 		return runServiceInstall(ctx, flags.Service.Install, stdout, nil)
+	case "service register":
+		return runPublicationRegister(ctx, flags.Service.Register, os.Stdin, stdout, nil)
 	case "service start <job>":
 		return runServiceStart(ctx, flags.Service.Start, stdout, nil)
 	case "service stop <job>":
@@ -843,6 +855,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 
 type nativeProcessKey struct{}
 
+func persistentObservabilityOwner(command string, flags cli) bool {
+	return commandObservabilityRole(command, flags) == observability.RolePublisher || command == "runtime connections serve" || command == "connect start <name>" && !flags.Connect.Start.Detach && !flags.Connect.Start.Install
+}
+
 func commandObservabilityRole(command string, flags cli) observability.Role {
 	switch command {
 	case "publish <service-or-target>":
@@ -850,7 +866,7 @@ func commandObservabilityRole(command string, flags cli) observability.Role {
 			return observability.RolePublisher
 		}
 	case "publisher serve":
-		if !flags.Publisher.Serve.Detach {
+		if !flags.Publisher.Serve.Detach && !flags.Publisher.Serve.Install {
 			return observability.RolePublisher
 		}
 	case "runtime serve", "service serve":

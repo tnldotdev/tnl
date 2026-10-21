@@ -25,6 +25,7 @@ from ._protocol import (
     RegistrationLost,
     TnlError,
 )
+from ._workload import configure_workload
 
 __all__ = [
     "AccessPolicy",
@@ -52,6 +53,7 @@ __all__ = [
     "Server",
     "handler",
     "connect",
+    "configure_workload",
     "open",
     "prepare",
     "run",

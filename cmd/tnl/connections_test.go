@@ -30,7 +30,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
 	}
-	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publishers":{"production":{}},"services":{"database":{"protocol":"postgres","publisher":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher":"production","public_url":{},"target":{"type":"address","address":"http://unused.invalid:3001"}}},"ci":{"migrate":{"github":{"workflow":".github/workflows/migrate.yml","ref":"refs/heads/main","events":["push"]},"services":["database"]}}}}`
+	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publishers":{"production":{}},"services":{"database":{"protocol":"postgres","publisher":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher":"production","public_url":{},"target":{"type":"address","address":"http://unused.invalid:3001"}}},"workloads":{"migrate":{"provider":"github","github":{"workflow":".github/workflows/migrate.yml","ref":"refs/heads/main","events":["push"]},"services":["database"]}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,9 +52,9 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	if _, _, err := connectionProject(t.Context(), all); !errors.Is(err, connectionruntime.ErrInvalid) {
 		t.Fatal("native context selected a public URL declaration", err)
 	}
-	options.CI = "migrate"
-	if _, _, err := connectionProject(t.Context(), options); !errors.Is(err, connectionruntime.ErrTeam) {
-		t.Fatal("unbound team name did not fail closed", err)
+	options.Workload = "migrate"
+	if _, scope, err := connectionProject(t.Context(), options); err != nil || scope.TeamID != "acme" {
+		t.Fatal("team selector was not retained for saved-policy exchange", err)
 	}
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	if err := connectionruntime.WriteBinding(root, connectionruntime.Binding{Schema: 1, Server: local.Server, Team: "acme", TeamID: team, ProjectKey: local.ProjectKey, SourceID: local.SourceID}); err != nil {
@@ -73,7 +73,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	if output, err := exec.CommandContext(t.Context(), "git", "-C", root, "remote", "set-url", "origin", "https://github.com/fixture/replaced.git").CombinedOutput(); err != nil {
 		t.Fatalf("replace origin: %v %s", err, output)
 	}
-	if _, _, err := connectionProject(t.Context(), options); !errors.Is(err, connectionruntime.ErrTeam) {
+	if _, scope, err := connectionProject(t.Context(), options); err != nil || scope.TeamID != "acme" {
 		t.Fatal("binding crossed project sources", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
 	localCluster, localRegion := "unapplied-local", "us-west-2"
-	b := nativeConnectionBackend{directory: directory, executable: "/absolute/tnl", scope: connectionruntime.Context{CI: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
+	b := nativeConnectionBackend{directory: directory, executable: "/absolute/tnl", scope: connectionruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
 	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
 	p := preparedConnection{service: controlv1.PrivateService{Id: service, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}, connection: connectionruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"}}
 	if err := b.prepareKube(t.Context(), "cluster", &p); err != nil {

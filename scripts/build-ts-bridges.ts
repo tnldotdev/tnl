@@ -28,7 +28,7 @@ const lazyNodeImports: Plugin = {
   },
 };
 
-for (const entry of ["index", "internal/connection"]) {
+for (const entry of ["index", "workload", "internal/connection"]) {
   await build({
     entryPoints: [path.join(source, `${entry}.ts`)],
     outfile: path.join(output, `${entry}.cjs`),
@@ -39,7 +39,10 @@ for (const entry of ["index", "internal/connection"]) {
     packages: "external",
     define: { "import.meta.url": "__tnlModuleURL" },
     banner: { js: 'const __tnlModuleURL = require("node:url").pathToFileURL(__filename).href;' },
-    plugins: [sharedErrors(entry === "index" ? "./errors.js" : "../errors.js"), lazyNodeImports],
+    plugins: [
+      sharedErrors(entry === "internal/connection" ? "../errors.js" : "./errors.js"),
+      lazyNodeImports,
+    ],
   });
 }
 

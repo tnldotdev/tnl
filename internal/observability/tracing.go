@@ -23,6 +23,9 @@ func (m *Metrics) tracer() trace.Tracer {
 // hostnames, errors or other external input as the name. errors become a fixed
 // outcome; raw causes are never recorded as span status or exception events.
 func Start(ctx context.Context, name operationName, options ...trace.SpanStartOption) (context.Context, func(error)) {
+	if link, ok := ctx.Value(schedulingLinkKey{}).(trace.Link); ok && !trace.SpanContextFromContext(ctx).IsValid() {
+		options = append(options, trace.WithLinks(link))
+	}
 	options = parentOnlyLinks(options)
 	options = append(options, trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
 	ctx, span := FromContext(ctx).tracer().Start(ctx, name.String(), options...)
@@ -86,7 +89,7 @@ func WithVisitor(ctx context.Context, id string) context.Context {
 // these spans end at the operation boundary, not when the publisher exits.
 func PublisherOperation(ctx context.Context, operation operationName) (context.Context, func(error)) {
 	switch operation {
-	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "group_lease":
+	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "group_lease", "group_startup", "group_shutdown", "group_assignments", "group_acknowledge":
 	default:
 		return ctx, func(error) {}
 	}

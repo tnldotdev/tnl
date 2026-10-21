@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -70,6 +73,7 @@ type jobControl struct {
 	public          ed25519.PublicKey
 	runs            chan string
 	runError        error
+	renewError      error
 	runtimeMu       sync.Mutex
 	runtimeRequests []controlv1.PublisherRuntimeRequest
 }
@@ -78,6 +82,9 @@ func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRu
 	c.runtimeMu.Lock()
 	c.runtimeRequests = append(c.runtimeRequests, r)
 	c.runtimeMu.Unlock()
+	if r.Action == controlv1.RuntimeRenew && c.renewError != nil {
+		return controlv1.PublisherRuntimeResponse{}, c.renewError
+	}
 	kid, err := publisheridentity.KeyID(r.Assertion)
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
@@ -90,6 +97,68 @@ func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRu
 		epoch++
 	}
 	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(2 * time.Minute))}, nil
+}
+
+func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
+	for _, fenced := range []bool{false, true} {
+		t.Run(fmt.Sprint(fenced), func(t *testing.T) {
+			registry := testRegistry(t)
+			job, identity, key := fixture(t, "web")
+			control, authority := jobBoundary(job, identity, key)
+			if fenced {
+				control.renewError = controlclient.ErrStatusConflict
+			}
+			if err := registry.Install(t.Context(), job, identity, key); err != nil {
+				t.Fatal(err)
+			}
+			var attempts atomic.Int64
+			engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond,
+				Clients: func(Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error) {
+					return control, authority, nil
+				},
+				Publish: func(ctx context.Context, cfg publisher.Config) error {
+					if attempts.Add(1) == 1 {
+						return controlclient.ErrStatusConflict
+					}
+					if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 2, PublicURL: "https://web.example"}); err != nil {
+						return err
+					}
+					<-ctx.Done()
+					return nil
+				}}
+			cancel, done := startEngine(t, engine)
+			await(t, func() bool {
+				jobs, err := registry.List(t.Context())
+				if err != nil || len(jobs) != 1 {
+					return false
+				}
+				if fenced {
+					return jobs[0].Status.State == "blocked" && jobs[0].Status.Failure == string(failure.ServerConflict)
+				}
+				return jobs[0].Status.State == "ready"
+			})
+			joinEngine(t, cancel, done)
+			want := int64(2)
+			if fenced {
+				want = 1
+			}
+			if attempts.Load() != want {
+				t.Fatal("conflict retried across the runtime fence")
+			}
+			inspects, starts := 0, 0
+			for _, request := range control.runtimeRequests {
+				if request.Action == controlv1.RuntimeInspect {
+					inspects++
+				}
+				if request.Action == controlv1.RuntimeStart {
+					starts++
+				}
+			}
+			if inspects != 1 || starts != 1 {
+				t.Fatal("retry reclaimed another runtime epoch")
+			}
+		})
+	}
 }
 
 func (c *jobControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {

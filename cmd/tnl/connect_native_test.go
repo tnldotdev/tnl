@@ -3,15 +3,91 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestNativeHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing.T) {
+	service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Protocol: controlv1.PrivateHttp, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "orders.example.test", Port: 25443, Public: true}}
+	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
+		profile, err := serviceConnectionProfile(service, listen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		instructions := strings.Join(profile.Instructions, " ")
+		if !strings.Contains(instructions, "local hosts file") || !strings.Contains(instructions, "exact managed hostname") {
+			t.Fatal("browser instructions rely on public DNS", instructions)
+		}
+		if profile.Port != profile.ManagedPort {
+			if strings.Contains(instructions, profile.URL) || !strings.Contains(instructions, "--listen=") || !strings.Contains(instructions, "allocated port") {
+				t.Fatal("overridden listener advertised a directly usable browser URL", instructions)
+			}
+		} else if !strings.Contains(instructions, profile.Host+" "+profile.Hostname) || !strings.Contains(instructions, profile.URL) {
+			t.Fatal("browser origin omitted its exact loopback mapping", instructions)
+		}
+		var output bytes.Buffer
+		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "curl url") || !strings.Contains(output.String(), listen) {
+			t.Fatal("HTTP output did not qualify its URL and local listener", output.String())
+		}
+	}
+}
+
+func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		t.Skip("curl is required to exercise the printed native command")
+	}
+	var requests atomic.Int64
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "example.com:25443" || r.TLS.ServerName != "example.com" {
+			t.Error("curl lost the allocated HTTP authority or TLS identity")
+			w.WriteHeader(http.StatusMisdirectedRequest)
+			return
+		}
+		requests.Add(1)
+		_, _ = io.WriteString(w, "local connector reached")
+	}))
+	defer target.Close()
+	caFile := filepath.Join(t.TempDir(), "roots.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// even a configured HTTPS proxy must not divert this local connector command.
+	t.Setenv("https_proxy", "http://127.0.0.1:1")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Protocol: controlv1.PrivateHttp, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "example.com", Port: 25443, Public: true}}
+	invoke := func() ([]byte, error) {
+		t.Helper()
+		profile, err := serviceConnectionProfile(service, target.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := append([]string{"--cacert", caFile, "--silent", "--show-error", "--fail", "--max-time", "5"}, profile.Command[1:]...)
+		return exec.CommandContext(t.Context(), curl, args...).CombinedOutput()
+	}
+	if output, err := invoke(); err != nil || string(output) != "local connector reached" || requests.Load() != 1 {
+		t.Fatalf("printed curl command missed the local listener: %v %s", err, output)
+	}
+	service.ManagedTls.Hostname = "wrong.example.test"
+	if _, err := invoke(); err == nil || requests.Load() != 1 {
+		t.Fatal("printed curl command bypassed managed hostname verification")
+	}
+}
 
 func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 	for _, public := range []bool{false, true} {
@@ -33,7 +109,7 @@ func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 					t.Fatal("psql lost independent dial address or verified hostname", profile.Command)
 				}
 			case controlv1.PrivateHttp:
-				if profile.URL != "https://"+approved.Hostname+":25443/" || strings.Join(profile.Command, " ") != "curl --connect-to "+approved.Hostname+":25443:127.0.0.1:15432 "+profile.URL {
+				if profile.URL != "https://"+approved.Hostname+":25443/" || strings.Join(profile.Command, " ") != "curl --noproxy "+approved.Hostname+" --connect-to "+approved.Hostname+":25443:127.0.0.1:15432 "+profile.URL {
 					t.Fatal("curl would dial public DNS or verify loopback", profile.Command)
 				}
 			case controlv1.Mysql:

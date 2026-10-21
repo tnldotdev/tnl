@@ -59,6 +59,7 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
       port: address.port,
       url: origin,
       expires_at: new Date(Date.now() + 60_000).toISOString(),
+      transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
       ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true, ca: cert },
     };
     const fetch = managedFetch(origin, async () => parseConnection(value));
@@ -80,7 +81,10 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
     await expect(fetch("https://outside.tnl.invalid/")).rejects.toMatchObject({
       code: "sdk.configuration_invalid",
     });
-    await expect(fetch("/redirect")).rejects.toThrow();
+    const redirect = await fetch("/redirect", { redirect: "follow" });
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("https://outside.tnl.invalid/");
+    await redirect.body?.cancel();
     expect(visits).toHaveLength(2);
     const untrusted = managedFetch(origin, async () =>
       parseConnection({
@@ -90,6 +94,26 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
     );
     await expect(untrusted("/")).rejects.toThrow();
     expect(visits).toHaveLength(2);
+
+    const upload = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("streamed-"));
+        controller.enqueue(new TextEncoder().encode("upload"));
+        controller.close();
+      },
+    });
+    const uploaded = await fetch("/echo", {
+      method: "POST",
+      body: upload,
+      headers: { Authorization: "Bearer application-owned" },
+    });
+    expect(await uploaded.text()).toBe("streamed-upload");
+    const connections = sni.length;
+    for (let i = 0; i < 6; i++) {
+      const pooled = await fetch("/echo", { method: "POST", body: "pooled" });
+      expect(await pooled.text()).toBe("pooled");
+    }
+    expect(sni.length).toBeLessThanOrEqual(connections + 1);
 
     const abort = new AbortController();
     const streaming = await fetch("/body-hang", { signal: abort.signal });
@@ -102,5 +126,106 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
     );
     server.closeAllConnections();
     await closed;
+  }
+});
+
+test("streamed response bodies can outlive 30 seconds without an SDK total abort", async () => {
+  const server = createServer({ key, cert }, (_request, response) => {
+    response.writeHead(200).write("start\n");
+    const heartbeat = setInterval(() => response.write("tick\n"), 100);
+    const finish = setTimeout(() => response.end("done\n"), 31_000);
+    response.once("close", () => {
+      clearInterval(heartbeat);
+      clearTimeout(finish);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing listener");
+    const origin = "https://api.tnl.invalid:8443";
+    const fetch = managedFetch(origin, async () =>
+      parseConnection({
+        schema: 1,
+        protocol: "http",
+        host: "127.0.0.1",
+        port: address.port,
+        url: origin,
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
+        ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true, ca: cert },
+      }),
+    );
+    const response = await fetch("/stream");
+    expect((await response.text()).endsWith("done\n")).toBe(true);
+  } finally {
+    const closed = new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    server.closeAllConnections();
+    await closed;
+  }
+}, 40_000);
+
+test("session generation changes replace a same-address pool without replay or transferring an old stream", async () => {
+  const sockets = new WeakMap<object, number>();
+  let sequence = 0;
+  const bodies: string[] = [];
+  let finishOld: (() => void) | undefined;
+  const server = createServer({ key, cert }, (request, response) => {
+    if (request.url === "/old-stream") {
+      response.writeHead(200).write("old-start\n");
+      finishOld = () => response.end("old-finish\n");
+      return;
+    }
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body = Buffer.concat(chunks).toString();
+      bodies.push(body);
+      if (request.url === "/drop") {
+        response.destroy();
+        return;
+      }
+      response.end(`${sockets.get(request.socket)}:${body}`);
+    });
+  });
+  server.on("secureConnection", (socket) => sockets.set(socket, ++sequence));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing listener");
+    const origin = "https://api.tnl.invalid:8443";
+    let generation = "ctg_aaaaaaaaaaaaaaaaaaaaaa";
+    const fetch = managedFetch(origin, async () =>
+      parseConnection({
+        schema: 1,
+        protocol: "http",
+        host: "127.0.0.1",
+        port: address.port,
+        url: origin,
+        ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true, ca: cert },
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        transport_id: generation,
+      }),
+    );
+    await (await fetch("/echo", { method: "POST", body: "warm" })).text();
+    const old = await fetch("/old-stream");
+    const reader = old.body?.getReader();
+    if (reader === undefined) throw new Error("missing body");
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("old-start\n");
+    const idle = await (await fetch("/echo", { method: "POST", body: "idle" })).text();
+    generation = "ctg_bbbbbbbbbbbbbbbbbbbbbb";
+    const current = await (await fetch("/echo", { method: "POST", body: "once" })).text();
+    expect(current.split(":")[0]).not.toBe(idle.split(":")[0]);
+    finishOld?.();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("old-finish\n");
+    expect((await reader.read()).done).toBe(true);
+    expect(bodies).toEqual(["warm", "idle", "once"]);
+    await expect(fetch("/drop", { method: "POST", body: "drop-once" })).rejects.toThrow();
+    expect(bodies).toEqual(["warm", "idle", "once", "drop-once"]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

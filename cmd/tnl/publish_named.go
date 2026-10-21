@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localpublisher"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -75,7 +76,9 @@ func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error
 // parent CLI resolves project/config flags and calls this for named services.
 // replacement owners are rediscovered and receive a fresh lease; an old owner
 // capability or registration is never replayed against the replacement.
-func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, stateDir string, output *publishOutput) error {
+func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, stateDir string, output *publishOutput) (result error) {
+	ctx, finishStartup := observability.ClientOperation(ctx, "client.publish.startup")
+	defer func() { finishStartup(result) }()
 	project, name := invocation.project, invocation.service
 	if _, found := project.Config.Services[name]; !found {
 		return failure.Wrap("publish service", failure.ServiceNotConfigured, errors.New("service is not configured"))
@@ -106,9 +109,10 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 		return ensureRuntimeOwner(ctx, project, root)
 	}, Request: privateprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest}}
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanup, cancel := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 10*time.Second)
 		defer cancel()
-		_ = lease.Close(cleanup)
+		cleanup, finish := observability.ClientOperation(cleanup, "client.publish.shutdown")
+		finish(lease.Close(cleanup))
 	}()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -120,7 +124,16 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 		if ctx.Err() != nil {
 			return output.stopped()
 		}
-		endpoint, registration, err := lease.Renew(ctx)
+		attempt, finishAttempt := ctx, func(error) {}
+		if lastOwner != "" {
+			if ownerRecoveryDeadline.IsZero() {
+				attempt, finishAttempt = observability.ClientOperation(ctx, "client.publish.renew")
+			} else {
+				attempt, finishAttempt = observability.ClientOperation(ctx, "client.publish.recover")
+			}
+		}
+		endpoint, registration, err := lease.Renew(attempt)
+		finishAttempt(err)
 		if err != nil {
 			var response *privateprotocol.ResponseError
 			if errors.As(err, &response) {
@@ -152,12 +165,19 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 			}
 		}
 		ownerRecoveryDeadline = time.Time{}
+		if lastOwner == "" {
+			finishStartup(nil)
+			ctx = observability.Independent(ctx)
+		}
 		if endpoint.OwnerId != lastOwner {
 			lastOwner = endpoint.OwnerId
 			lastRun = 0
 		}
 		var snapshot clientruntime.Snapshot
-		if err := privateprotocol.Call(ctx, endpoint, "GET", "/v1/status", nil, &snapshot); err == nil {
+		status, finishStatus := observability.ClientOperation(ctx, "client.publish.status")
+		statusErr := privateprotocol.Call(status, endpoint, "GET", "/v1/status", nil, &snapshot)
+		finishStatus(statusErr)
+		if statusErr == nil {
 			for _, service := range snapshot.Services {
 				if service.Name != name || service.RegistrationID != registration.RegistrationID {
 					continue

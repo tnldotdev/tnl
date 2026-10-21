@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -160,8 +161,10 @@ func stripTnlCookies(request *http.Request) *http.Request {
 	clean := make([]string, 0, len(request.Header.Values("Cookie")))
 	for _, header := range request.Header.Values("Cookie") {
 		for _, pair := range strings.Split(header, ";") {
-			pair = strings.TrimSpace(pair)
+			pair = textproto.TrimString(pair)
 			name, _, found := strings.Cut(pair, "=")
+			// net/http trims the name separately from the cookie pair.
+			name = textproto.TrimString(name)
 			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && name != browserLoginAttemptCookieName && pair != "" {
 				clean = append(clean, pair)
 			}

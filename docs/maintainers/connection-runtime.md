@@ -17,18 +17,53 @@ const credentials = {
 };
 ```
 
-the application supplies SQL account settings. the result contains `host`,
-`port`, and `ssl: {servername, rejectUnauthorized: true, ca?}`. every service uses
-an authenticated loopback connector, including services with public endpoints.
-`host` is `127.0.0.1`; `port` is the actual listener port; `ssl.servername` is the
-approved managed hostname. no snapshot contains an application client certificate
-or key. `ca` is omitted so the driver uses its normal server roots.
+the application supplies SQL account settings. every service uses an authenticated
+loopback connector, including services with public endpoints. PostgreSQL settings
+contain `host: "127.0.0.1"`, the actual listener `port`, and
+`ssl: {servername, rejectUnauthorized: true, ca?}`. `ssl.servername` is the approved
+managed hostname. no snapshot contains an application client certificate or key.
+`ca` is normally omitted so the driver uses its normal server roots.
 
-HTTP returns `{url, fetch}`. its dedicated Undici dispatcher checks the managed
-origin, dials the loopback listener with the managed TLS server name, limits active requests to 64, and
-bounds requests and response bodies to 30 seconds or the credential deadline.
-it preserves ordinary `Request`, body, `Response`, redirect, and cancellation
-handling. redirects outside the managed origin fail. application `Authorization`
+MySQL settings use mysql2's supported `host`, `port`, `ssl`, and `stream` options:
+`host` is the managed hostname, `ssl.verifyIdentity` is `true`, and `stream()`
+creates a fresh socket to the native loopback listener. mysql2 ignores
+`ssl.servername`; giving it the loopback IP as `host` would lose hostname
+verification. its `ssl` object is a fresh mutable copy because the driver writes
+`rejectUnauthorized` during connection setup. a pool calls the stream factory
+for each new connection. use the returned settings directly:
+
+```ts
+import mysql from "mysql2/promise";
+import { tnl } from "@tnldotdev/tnl";
+
+const database = await tnl.connect("database");
+const pool = mysql.createPool({
+  ...database,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
+```
+
+`mysql` 2.18.1 is unsupported: it ignores these identity/stream options, has no
+supported hostname-verification setting, and cannot authenticate with
+`caching_sha2_password`. a legacy-auth account can make a query succeed while a
+wrong-name certificate is accepted. do not treat that as compatible verified TLS.
+
+pg's default `enableChannelBinding: false` works through publisher TLS termination.
+turning it on selects SCRAM-PLUS when the target offers it and fails with SQLSTATE
+`0A000`; the frontend and target certificates have different channel bindings.
+Postgres.js 3.4.9 uses non-PLUS SCRAM and accepts the returned `host`, `port`, and
+`ssl` directly. its application settings are ordinary `user`, `password`,
+`database`, `max`, and `prepare` options. the accounts adapter's `max: 5` and
+`prepare: false` need no `connection.channel_binding` parameter.
+
+HTTP returns `{url, fetch}`. its reusable Undici pool checks the managed
+origin and dials the loopback listener with the managed TLS server name. eight
+connections, a bounded pending-call budget, and four draining pool generations
+bound local resources. caller cancellation controls streamed bodies without a
+hidden 30-second total abort. redirects are manual, including same-origin
+redirects; no body is replayed. application `Authorization`
 headers are passed through; tnl adds no application bearer token.
 
 opaque TCP returns the loopback TLS helper's `{host, port}`. the helper owns
@@ -48,16 +83,17 @@ version` and normal generated help retain their existing contracts.
 
 ```console
 /absolute/tnl runtime connections capabilities
-/absolute/tnl runtime connections context --directory /checkout/shop --ci migrate
-/absolute/tnl runtime connections start --directory /checkout/shop --ci migrate --runner-temp /runner/temp
+/absolute/tnl runtime connections context --directory /checkout/shop --workload migrate
+/absolute/tnl runtime connections start --directory /checkout/shop --workload migrate --runner-temp /runner/temp
 /absolute/tnl runtime connections status --handle /runner/temp/tnl-connections-.../handle.json
 /absolute/tnl runtime connections read --handle /runner/temp/tnl-connections-.../handle.json --service database
+/absolute/tnl runtime connections prepare --handle /runner/temp/tnl-connections-.../handle.json --service database
 /absolute/tnl runtime connections stop --handle /runner/temp/tnl-connections-.../handle.json
 ```
 
 `capabilities` returns `schema: 1`, the operation names, `workload_private`,
 `opaque_private_preflight`, and
-`team_names: "applied_binding"`. both transport capabilities are true. check this
+`team_names: "saved_policy"` and `workload_manifest: true`. both transport capabilities are true. check this
 response before requesting an OIDC assertion.
 
 `context` evaluates configuration and source/worktree identity without opening
@@ -75,34 +111,39 @@ human client state. its nonsecret response contains:
   "source_id": "source fingerprint",
   "worktree_key": "selected worktree key",
   "project_label": "shop",
-  "ci": "migrate",
+  "workload": "migrate",
   "services": ["database"]
 }
 ```
 
-`--service NAME` may repeat to narrow the CI declaration; omission selects its
+`--service NAME` may repeat to narrow the workload declaration; omission selects its
 declared services. the fingerprint covers evaluated configuration, selected
 server, Git source, and worktree. names such as `team: acme` use
 `.tnl/generated/connections.json`, written after a successful administrator
 `tnl apply`. commit this nonsecret binding alongside project declarations. it
 binds server, configured team selector, exact team ID, project key, and source
-fingerprint. it grants nothing; exchange still checks the saved policy. a
-missing or mismatched binding fails before any JWT request. `--team-id` is an
-explicit operator binding override. CI needs no human login or extra GitHub API
-token to resolve its team.
+fingerprint. it grants nothing; exchange still checks the saved policy. without
+a matching binding, the exact configured team name remains a selector that
+control resolves during exchange. `--team-id` is an explicit operator selector.
+workloads need no human login or extra GitHub API token to resolve their team.
+`--workload-manifest .tnl/generated/workloads.json` loads build-time context
+directly without Git or project config evaluation; see [workload sessions](workload-sessions.md).
 
-`start` requires exactly this bounded JSON object on **stdin** for CI:
+`start` requires exactly this bounded JSON object on **stdin** for workloads:
 
 ```ts
-{ schema: 1, context, assertion: githubOIDCAssertion }
+{ schema: 1, context, assertion: providerOIDCAssertion }
 ```
 
 the parent recomputes the context and starts the same absolute executable as one
 detached child. the child receives the request over a private pipe and creates
 the ephemeral signing key in memory. assertion-request bearer environment
 variables are removed; `RUNNER_TRACKING_ID` remains inherited. startup returns
-only after selected native connections are ready. partial failure cancels and
-joins earlier helpers and attempts workload revocation.
+after identity, session, and owner IPC are ready for an SDK-owned process.
+service listeners and verified preflight are lazy, selected by that service's
+first explicit `prepare` operation. a service failure does not stop another prepared service.
+caller-prepared CLI startup verifies its selected service set before reporting
+ready, retaining the action and plain-client preparation contract.
 
 the success response is:
 
@@ -123,12 +164,35 @@ the handle is mode 0600 in a mode-0700 owner directory under `RUNNER_TEMP`.
 it contains a random IPC proof, loopback URL, project fingerprint, executable,
 and deadline. it contains no JWT, workload credential, human credential, or TLS
 key. the workload lease renews every 30 seconds within its fixed execution
-deadline; failed renewal stops every helper. local SDK preparation uses an
-existing human sign-in, passes `--service NAME` to prepare only the requested service,
-and stops it on app exit or its bounded parent/deadline check.
+deadline. data-plane admission fails closed after a failed renewal; an SDK-owned
+process retains IPC so a fresh assertion can authorize future connections.
+local human preparation uses an existing sign-in. SDK startup selects the
+authorized service scope, then prepares only the awaited service. the process
+stops on app exit or its parent check.
 
-all listeners bind `127.0.0.1` at the allocated managed service port.
-collision is an error; the owner never chooses a replacement port. HTTP and
+process-owned capabilities have a process-lifetime `ready.expires_at`, separate
+from the current connection snapshot's authorization deadline. human renewal has
+no one-hour owner cutoff. reusable workload providers can attach fresh verified
+assertions and replace expired sessions for future accepts while keeping the
+same listener. old streams retain their old subjects and deadlines.
+
+TypeScript and Python recover an early owner death only after native's
+`recover --handle` proves that its OS lifetime lock is released. IPC timeouts,
+service denial, and malformed recovery replies do not authorize a second owner.
+bounded caller-owned sessions still require joined cleanup after expiry.
+
+synchronous handle reads cannot replace an expired owner: TypeScript reports
+`sdk.connection_unprepared`, and Python reports `sdk.connection_expired`.
+the implementer must await fresh settings and recreate any database pool or
+connection that needs them. returned snapshots stay stable (mysql2 receives its
+own mutable `ssl` copy); tnl does not
+mutate old driver settings or replay SQL. this recovery applies only to
+SDK-started owners. `TNL_CONNECTION_HANDLE` owners remain caller-owned and retain
+their original fixed deadline, including workload sessions.
+
+SDK-owned listeners bind an ephemeral port on `127.0.0.1`, so distinct verified
+identities can coexist without sharing a capability. caller-prepared CLI owners
+bind the allocated managed service port and report collisions. HTTP and
 database readiness performs verified native TLS negotiation without logging in
 or issuing an SQL query. opaque TCP uses the native outer-TLS helper. the service's
 approved public setting, hostname, and port remain unchanged in browser-safe
@@ -137,7 +201,9 @@ metadata; private connection snapshots describe the local listener separately.
 `read --handle FILE --service NAME` synchronously reads the current prepared
 schema-1 wrapper through the existing owner's `prepared` IPC operation. it pairs
 `public_runtime` with `connection` under the same owner's operation lock.
-it does not start an owner, evaluate configuration, or authenticate. only the
+it reads existing local state only. it does not start an owner, session, listener,
+provider acquisition, control request, or repair. an unprepared sibling fails;
+awaiting the SDK handle sends `prepare` instead. only the
 handle path and service name appear in argv; the capability stays in the private
 handle and HTTP header. the operation is bounded to five seconds and expired
 handles, owners, or snapshots fail with `TNL_CLIENT_CONNECTION_EXPIRED`. callers
@@ -164,6 +230,7 @@ must prepare again after expiration; a read never replaces the owner.
     "protocol": "postgres",
     "host": "127.0.0.1",
     "port": 25443,
+    "transport_id": "ctg_aaaaaaaaaaaaaaaaaaaaaa",
     "ssl": { "servername": "database.production.shop.example", "rejectUnauthorized": true },
     "expires_at": "2026-10-20T18:00:00Z"
   }
@@ -190,7 +257,7 @@ const context = await nativeJSON(binary, [
   "context",
   "--directory",
   project,
-  "--ci",
+  "--workload",
   policy,
 ]);
 const assertion = await getIDToken(context.audience);
@@ -202,7 +269,7 @@ const started = await nativeJSON(
     "start",
     "--directory",
     project,
-    "--ci",
+    "--workload",
     policy,
     "--runner-temp",
     runnerTemp,
@@ -238,13 +305,15 @@ existing owner's exact scope, including when an action prepared it. reads do not
 recompute project context or resolve an executable from handle contents.
 `TNL_PROJECT_RUNTIME` never directs a file read.
 
-| method | path                              | result                                             |
-| ------ | --------------------------------- | -------------------------------------------------- |
-| POST   | `/v1/connections/status`          | the nonsecret startup/status shape                 |
-| POST   | `/v1/connections/connect`         | private current connection snapshot                |
-| POST   | `/v1/connections/prepared`        | same-owner public metadata and private snapshot    |
-| POST   | `/v1/connections/kube-credential` | composed Kubernetes exec credential                |
-| POST   | `/v1/connections/stop`            | stop acknowledgement; CLI waits for joined cleanup |
+| method | path                              | result                                                    |
+| ------ | --------------------------------- | --------------------------------------------------------- |
+| POST   | `/v1/connections/status`          | the nonsecret startup/status shape                        |
+| POST   | `/v1/connections/connect`         | private current connection snapshot                       |
+| POST   | `/v1/connections/prepared`        | same-owner public metadata and private snapshot           |
+| POST   | `/v1/connections/prepare`         | explicit service preparation and verified assertion reuse |
+| POST   | `/v1/connections/kube-credential` | composed Kubernetes exec credential                       |
+| POST   | `/v1/connections/stop`            | stop acknowledgement; CLI waits for joined cleanup        |
+| POST   | `/v1/connections/attach`          | authenticated assertion attachment through authority      |
 
 `connect` returns prepared connection options on private IPC. snapshots
 include `schema`, protocol, host, port, `expires_at`, protocol-specific fields,
@@ -252,6 +321,22 @@ and optional `ssl`. Kubernetes's helper is pinned to the same executable and
 handle. stopping closes listeners and streams, joins connector workers, removes
 the owned session kubeconfig, and revokes the workload. a nonsecret terminal
 record preserves whether cleanup succeeded.
+
+async SDK calls use a bounded persistent authenticated loopback HTTP connection
+after loading the mode-0600 handle from its mode-0700 owner directory. native
+subprocesses remain responsible for startup, identity selection on a new
+assertion, synchronous prepared-only reads, recovery proof, and joined stop.
+each new adapter has a fresh opaque `transport_id`; HTTP pool selection includes
+that ID even when the managed origin, local port, and TLS options stay unchanged.
+retired pools drain their old responses and cannot receive a future request.
+
+authority returns the verified `assertion_expires_at` for identity selection,
+exchange, and attachment. SDKs cache only an exact assertion digest and its
+control-confirmed binding/expiry, never decoded JWT claims. acquisition still
+reads the current request or file every time. native reuse additionally requires
+a live matching session and rechecks assertion policy and service access at most
+30 seconds apart. explicit `attach` always goes through authority. cached
+metadata is not a visitor grant; admission and active guards remain authoritative.
 
 ## native transport ownership and qualification
 
@@ -262,15 +347,15 @@ trust revision, protocol, and managed TLS endpoint. no human ID substitutes for
 a workload. closing a service adapter releases only its own assignments; the
 owner retains session renewal/revocation.
 
-the native owner generates one ephemeral signing key for workload exchange and
-connector proofs. current authorization retains the exact workload service set,
+the native owner generates one ephemeral signing key per workload session for
+exchange and connector proofs. current authorization retains the exact workload service set,
 fixed execution deadline, and renewable lease. no human device represents a workload.
 
-before reporting ready, every connector opens one authorized stream through its
+before returning its first prepared snapshot, the selected connector opens one authorized stream through its
 existing ingress paths, verifies managed TLS with the approved protocol, and
 closes it without sending application bytes. native HTTP, PostgreSQL, MySQL, and
 Kubernetes keep their native TLS bytes for later local clients. a TLS
-rejection fails startup. Kubernetes defaults use control's saved `KubernetesAuth`
+rejection fails only that service's preparation. Kubernetes defaults use control's saved `KubernetesAuth`
 hint, including workload inventory, rather than unapplied local selectors.
 
 ```console
@@ -291,3 +376,32 @@ that spreads `tnl.connect("database")`. it verifies the created table through th
 installed SDK and directly in PostgreSQL. the same installed-package path checks
 HTTP managed origins and local Kubernetes settings. the SDK owner tests SQL option
 shapes, malformed/expired snapshots, opaque TCP, and browser rejection.
+
+`task go:test:integration:tcp-clients` also installs the packed SDK and matching
+native binary in an isolated pnpm consumer, using Node 22.23.2. the disposable
+TLS PostgreSQL and MySQL providers own real password authentication and SQL
+queries. production ingress port selection and `publisher.ManagedStream` perform
+native PostgreSQL/MySQL negotiation and independent frontend/target TLS. a real
+connection owner serves prepared IPC to the installed binary; policy and placement
+are fixture decisions, without a control service or deployed authority exchange.
+
+the pinned installed-driver cases cover:
+
+| client      | version | evidence                                                                                                                                                   |
+| ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pg          | 8.23.1  | ESM/CommonJS SDK, auth/query, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password, opt-in PLUS rejection                                    |
+| Postgres.js | 3.4.9   | ESM/CommonJS SDK, SCRAM auth/query with `max: 5, prepare: false`, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password                       |
+| mysql2      | 3.24.6  | ESM/CommonJS SDK, fresh `caching_sha2_password` full auth/query, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password, frozen-ssl regression |
+| mysql       | 2.18.1  | unsupported: modern auth rejection and wrong-name certificate acceptance with an isolated legacy-auth account                                              |
+| Drizzle ORM | 0.45.4  | real queries through its pg, postgres-js, and mysql2 adapters                                                                                              |
+| Drizzle Kit | 0.31.11 | separate connections target; synchronous ordinary config and verified migration, without a preload                                                         |
+
+the TCP target retains real `psql` and `mysql` command checks from the digest-pinned
+provider images through certificate and connector admission. these results qualify
+the listed versions and paths; they do not establish compatibility for every SQL
+driver, another runtime, or the accounts application's complete database workflow.
+
+`task go:test:integration:vercel` qualifies the installed SDK in a real emitted
+Vercel Node 24 function with an external prepared owner. see
+[local Vercel qualification](vercel-functions.md) for artifact checks, invocation
+evidence, platform limits, and the separate deployed startup boundary.

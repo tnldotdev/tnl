@@ -53,13 +53,19 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 	if err != nil || controlURL.Scheme != "https" || controlURL.Host == "" || controlURL.User != nil || controlURL.RawQuery != "" || controlURL.Fragment != "" {
 		return ErrManagedTLS
 	}
+	live, cancel := context.WithCancel(ctx)
+	defer cancel()
+	guard := newManagedHTTPGuard(f, client)
+	done := make(chan struct{})
+	go func() { defer close(done); guard.run(live) }()
+	defer func() { cancel(); <-done }()
 	authority := net.JoinHostPort(f.Hostname, strconv.Itoa(int(f.Port)))
 	browser := &browserAccess{subject: f.Subject, client: managedBrowserClient{f}, runID: f.RunID, version: uint64(f.Number), token: f.Token, controlURL: strings.TrimSuffix(f.Control.ControlURL(), "/")}
 	scheme := "http"
 	if target.Transport.TLS != nil {
 		scheme = "https"
 	}
-	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, func(ctx context.Context) (net.Conn, error) {
+	return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: target.Address}, func(ctx context.Context) (net.Conn, error) {
 		setup, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		conn, err := observability.DialTarget(setup, "tcp", target.Address)
@@ -74,6 +80,8 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 		return secured, nil
 	}, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// consume the reserved header even for denied and internal dispatch.
+			credential, credentialErr := managedHTTPCredential(r, client.ConnectionState())
 			w.Header().Set("Cache-Control", "no-store")
 			if r.Host != authority || r.URL.IsAbs() || r.URL.Host != "" {
 				managedHTTPDenied(w, http.StatusMisdirectedRequest)
@@ -82,7 +90,7 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 			// authentication endpoints cannot consume unbounded bodies or promote
 			// application capacity. ingress bounds their bytes and total lifetime.
 			if strings.HasPrefix(r.URL.Path, "/__tnl/") {
-				if workloadClientCertificate(client.ConnectionState()) {
+				if credentialErr != nil || credential.Kind == "workload" || workloadClientCertificate(client.ConnectionState()) {
 					managedHTTPDenied(w, http.StatusForbidden)
 					return
 				}
@@ -94,19 +102,18 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 					return
 				}
 				if sharePath(r.URL.Path) && r.Method == http.MethodGet {
-					f.share(w, r)
+					f.share(w, r, guard)
 					return
 				}
 				http.NotFound(w, r)
 				return
 			}
-			credential, err := managedHTTPCredential(r, client.ConnectionState())
-			if err != nil {
+			if credentialErr != nil {
 				managedHTTPDenied(w, http.StatusForbidden)
 				return
 			}
 			check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			decision, err := f.authorize(check, credential)
+			decision, err := guard.authorize(check, credential)
 			cancel()
 			if err != nil || !decision.Allowed || !decision.Admitted || !decision.ValidUntil.After(time.Now()) {
 				if err == nil && credential.Kind == "none" && browser.redirectRestricted(w, r) {
@@ -269,7 +276,7 @@ func (f ManagedHTTP) authorize(ctx context.Context, credential controlv1.Managed
 	}
 }
 
-func (f ManagedHTTP) share(w http.ResponseWriter, r *http.Request) {
+func (f ManagedHTTP) share(w http.ResponseWriter, r *http.Request, guard *managedHTTPGuard) {
 	secret := strings.TrimPrefix(r.URL.Path, "/__tnl/share/")
 	if !validManagedGrantSecret(secret) {
 		managedHTTPDenied(w, 403)
@@ -279,7 +286,7 @@ func (f ManagedHTTP) share(w http.ResponseWriter, r *http.Request) {
 	// redemption; the following request must independently present the cookie.
 	check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	decision, err := f.authorize(check, controlv1.ManagedHTTPCredential{Kind: "share", Secret: &secret})
+	decision, err := guard.authorize(check, controlv1.ManagedHTTPCredential{Kind: "share", Secret: &secret})
 	if err != nil || !decision.Allowed || !decision.Admitted {
 		managedHTTPDenied(w, managedHTTPDecisionStatus(err))
 		return

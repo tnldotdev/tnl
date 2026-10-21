@@ -15,13 +15,14 @@ import (
 )
 
 type serviceCommand struct {
-	Install serviceInstallCommand `cmd:"" help:"Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."`
-	Start   serviceJobCommand     `cmd:"" help:"Start one installed publication."`
-	Stop    serviceJobCommand     `cmd:"" help:"Stop one local job without revoking its grant."`
-	Remove  serviceJobCommand     `cmd:"" help:"Remove a stopped publication and its local job identity."`
-	List    serviceListCommand    `cmd:"" help:"List installed publications and their run state."`
-	Status  serviceJobCommand     `cmd:"" help:"Show one installed publication and its run state."`
-	Serve   serviceServeCommand   `cmd:"" hidden:"" help:"Run the enrolled system publisher service."`
+	Install  serviceInstallCommand  `cmd:"" help:"Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."`
+	Start    serviceJobCommand      `cmd:"" help:"Start one installed publication."`
+	Stop     serviceJobCommand      `cmd:"" help:"Stop one local job without revoking its grant."`
+	Remove   serviceJobCommand      `cmd:"" help:"Remove a stopped publication and its local job identity."`
+	List     serviceListCommand     `cmd:"" help:"List installed publications and their run state."`
+	Status   serviceJobCommand      `cmd:"" help:"Show one installed publication and its run state."`
+	Serve    serviceServeCommand    `cmd:"" hidden:"" help:"Run the enrolled system publisher service."`
+	Register serviceRegisterCommand `cmd:"" hidden:"" help:"Receive a private publication installation on stdin."`
 }
 
 type systemStateFlags struct {
@@ -42,6 +43,10 @@ type serviceListCommand struct {
 }
 type serviceServeCommand struct {
 	systemStateFlags `embed:""`
+}
+type serviceRegisterCommand struct {
+	systemStateFlags `embed:""`
+	PrivateResult    bool `name:"private-result" hidden:""`
 }
 
 var serviceUserRoot = publisherjob.DefaultUserRoot
@@ -224,7 +229,11 @@ func runServiceStatus(ctx context.Context, flags serviceJobCommand, output io.Wr
 		return err
 	}
 	defer registry.Close()
-	return writeSystemJobs(ctx, registry, output, "tnl service status", flags.Job)
+	job, err := registry.ResolveJob(ctx, flags.Job)
+	if err != nil {
+		return err
+	}
+	return writeSystemJobs(ctx, registry, output, "tnl service status", job.ID)
 }
 
 func runServiceServe(ctx context.Context, flags serviceServeCommand) error {
@@ -302,7 +311,10 @@ func renderSystemJobs(output io.Writer, command string, jobs []publisherjob.Job,
 		} else if job.Kind == "private" || job.Kind == "connector" {
 			fields = append(fields, clioutput.Field{Label: "private service ID", Value: job.PrivateServiceID})
 		} else {
-			fields = append(fields, clioutput.Field{Label: "public URL", Value: job.PublicURLID})
+			fields = append(fields, clioutput.Field{Label: "public URL ID", Value: job.PublicURLID})
+			if job.Status.PublicURL != "" {
+				fields = append(fields, clioutput.Field{Label: "public URL", Value: job.Status.PublicURL})
+			}
 		}
 		if job.Kind == "connector" {
 			fields = append(fields, clioutput.Field{Label: "listen", Value: job.Target})

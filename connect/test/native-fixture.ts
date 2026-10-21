@@ -102,7 +102,7 @@ if (op === "oidc") {
     capabilities: ["context", "start", "status", "stop"],
     workload_private: true,
     opaque_private_preflight: true,
-    team_names: "applied_binding",
+    team_names: "saved_policy",
   });
 } else if (op === "context") {
   emit({
@@ -116,7 +116,7 @@ if (op === "oidc") {
     source_id: "source",
     worktree_key: "worktree",
     project_label: "fixture",
-    ci: flag("--ci"),
+    workload: flag("--workload"),
     services: ["database"],
   });
 } else if (op === "start") {

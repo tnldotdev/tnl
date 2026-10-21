@@ -73,6 +73,18 @@ type Querier interface {
 	CleanupVisitorHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupWorkloadAssertions(ctx context.Context, arg CleanupWorkloadAssertionsParams) (int64, error)
+	CleanupWorkloadAudit(ctx context.Context, arg CleanupWorkloadAuditParams) (int64, error)
+	CleanupWorkloadCertificates(ctx context.Context, arg CleanupWorkloadCertificatesParams) (int64, error)
+	CleanupWorkloadConnectors(ctx context.Context, arg CleanupWorkloadConnectorsParams) (int64, error)
+	CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error)
+	CleanupWorkloadIngressRequests(ctx context.Context, arg CleanupWorkloadIngressRequestsParams) (int64, error)
+	// keep the exact service snapshot until all other session references are gone.
+	CleanupWorkloadServiceRights(ctx context.Context, arg CleanupWorkloadServiceRightsParams) (int64, error)
+	CleanupWorkloadSessions(ctx context.Context, arg CleanupWorkloadSessionsParams) (int64, error)
+	// each phase has its own budget so a busy leaf cannot starve its parents.
+	// select only unreferenced candidates before LIMIT; never cascade subject state.
+	CleanupWorkloadStreams(ctx context.Context, arg CleanupWorkloadStreamsParams) (int64, error)
 	ClosePrivateServiceRun(ctx context.Context, arg ClosePrivateServiceRunParams) (int64, error)
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
@@ -153,6 +165,8 @@ type Querier interface {
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
 	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
+	// the caller rechecks current management before recovering metadata, never secrets.
+	FindPrivateServiceInvitationRequest(ctx context.Context, arg FindPrivateServiceInvitationRequestParams) (ControlPrivateServiceInvitation, error)
 	FindSeedTeam(ctx context.Context, displayName string) (ControlTeam, error)
 	FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error)
 	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
@@ -340,8 +354,8 @@ type Querier interface {
 	// never modify a connected or ready slot that still has its matching live
 	// relay lease. its streams and assignment remain owned by that relay.
 	ListPrivateServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListPrivateServiceConnectionSlotsNeedingReplacementParams) ([]ControlPrivateServiceConnectionSlot, error)
-	ListPrivateServiceGrants(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceGrant, error)
-	ListPrivateServiceInvitations(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceInvitation, error)
+	ListPrivateServiceGrants(ctx context.Context, arg ListPrivateServiceGrantsParams) ([]ControlPrivateServiceGrant, error)
+	ListPrivateServiceInvitations(ctx context.Context, arg ListPrivateServiceInvitationsParams) ([]ControlPrivateServiceInvitation, error)
 	ListPrivateServiceRoutingEvents(ctx context.Context, arg ListPrivateServiceRoutingEventsParams) ([]ControlPrivateServiceRoutingEvent, error)
 	ListPrivateServiceRoutingSnapshot(ctx context.Context, arg ListPrivateServiceRoutingSnapshotParams) ([]ControlPrivateServiceRoutingEvent, error)
 	ListPrivateServicesForTeam(ctx context.Context, arg ListPrivateServicesForTeamParams) ([]ControlPrivateService, error)

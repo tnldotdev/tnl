@@ -26,27 +26,36 @@ const WorkloadLease = 90 * time.Second
 const WorkloadRenewAfter = 30 * time.Second
 
 type WorkloadSession struct {
-	ID             string         `json:"id"`
-	Credential     string         `json:"credential"`
-	TeamID         string         `json:"team_id"`
-	ProjectKey     string         `json:"project_key"`
-	CI             string         `json:"ci"`
-	Subject        VisitorSubject `json:"subject"`
-	LeaseExpiresAt time.Time      `json:"lease_expires_at"`
-	ExpiresAt      time.Time      `json:"expires_at"`
-	RenewAfter     time.Time      `json:"renew_after"`
-	ServiceIDs     []string       `json:"service_ids"`
-	RunID          string         `json:"run_id"`
-	RunAttempt     string         `json:"run_attempt"`
-	CheckRunID     string         `json:"check_run_id"`
+	ID                 string                   `json:"id"`
+	Credential         string                   `json:"credential"`
+	TeamID             string                   `json:"team_id"`
+	ProjectKey         string                   `json:"project_key"`
+	Workload           string                   `json:"workload"`
+	Provider           string                   `json:"provider"`
+	Subject            VisitorSubject           `json:"subject"`
+	LeaseExpiresAt     time.Time                `json:"lease_expires_at"`
+	ExpiresAt          time.Time                `json:"expires_at"`
+	RenewAfter         time.Time                `json:"renew_after"`
+	ServiceIDs         []string                 `json:"service_ids"`
+	Binding            string                   `json:"binding"`
+	AssertionExpiresAt *time.Time               `json:"assertion_expires_at,omitempty"`
+	GitHub             *WorkloadGitHubExecution `json:"github,omitempty"`
 }
 
-type ExchangeGitHubWorkloadRequest struct {
-	TeamID, ProjectKey, CI string
-	Execution              oidcauth.GitHubExecution
-	PublicKey              ed25519.PublicKey
-	Signature              []byte
-	Services               []string
+type WorkloadGitHubExecution struct {
+	RepositoryID      string `json:"repository_id"`
+	RepositoryOwnerID string `json:"repository_owner_id"`
+	RunID             string `json:"run_id"`
+	RunAttempt        string `json:"run_attempt"`
+	CheckRunID        string `json:"check_run_id"`
+}
+
+type ExchangeWorkloadRequest struct {
+	TeamID, ProjectKey, Workload, SourceFingerprint, Nonce string
+	Execution                                              oidcauth.WorkloadExecution
+	PublicKey                                              ed25519.PublicKey
+	Signature                                              []byte
+	Services                                               []string
 }
 
 func workloadSubject(id string) VisitorSubject {
@@ -54,13 +63,18 @@ func workloadSubject(id string) VisitorSubject {
 }
 func workloadCredentialContext(id string) string { return "workload-credential/" + id }
 
-// exchange is called only after GitHub signature/issuer/audience verification.
+// exchange is called only after provider signature/issuer/audience verification.
 // jobs cannot establish repository metadata or alter applied policy here.
-func (d *Database) ExchangeGitHubWorkload(ctx context.Context, r ExchangeGitHubWorkloadRequest, now time.Time) (result WorkloadSession, retErr error) {
+func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadRequest, now time.Time) (result WorkloadSession, retErr error) {
 	c := r.Execution
-	if c.Validate(now) != nil || len(r.PublicKey) != 32 || len(r.Signature) != 64 || !ed25519.Verify(r.PublicKey, workloadproof.Digest(r.TeamID, r.ProjectKey, r.CI, c.AssertionDigest, r.Services), r.Signature) {
+	if c.Validate(now) != nil || !workloadproof.ValidNonce(r.Nonce) || !fingerprintPattern.MatchString(r.SourceFingerprint) || len(r.PublicKey) != 32 || len(r.Signature) != 64 || !ed25519.Verify(r.PublicKey, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, c.AssertionDigest, r.Services), r.Signature) {
 		return result, ErrWorkloadDenied
 	}
+	team, err := d.workloadTeam(ctx, r.TeamID)
+	if err != nil {
+		return result, err
+	}
+	r.TeamID = team
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -78,8 +92,8 @@ func (d *Database) ExchangeGitHubWorkload(ctx context.Context, r ExchangeGitHubW
 	if err != nil {
 		return result, err
 	}
-	p, found := configuration.CI[r.CI]
-	if !found || !p.GitHub.matches(c) {
+	p, found := configuration.Workloads[r.Workload]
+	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) {
 		return result, ErrWorkloadDenied
 	}
 	services := slices.Clone(r.Services)
@@ -97,11 +111,16 @@ func (d *Database) ExchangeGitHubWorkload(ctx context.Context, r ExchangeGitHubW
 	}
 	requested := slices.Clone(r.Services)
 	slices.Sort(requested)
-	request, _ := json.Marshal([]any{r.CI, requested})
+	request, _ := json.Marshal([]any{r.Workload, r.SourceFingerprint, requested, c.IdentityDigest()})
 	requestDigest := sha256.Sum256(request)
 	var id string
 	var public, previous []byte
-	err = tx.QueryRow(ctx, `SELECT id,public_key,request_digest FROM control.workload_sessions WHERE team_id=$1 AND project_key=$2 AND repository_id=$3 AND run_id=$4 AND run_attempt=$5 AND check_run_id=$6 FOR UPDATE`, r.TeamID, r.ProjectKey, c.RepositoryID, c.RunID, c.RunAttempt, c.CheckRunID).Scan(&id, &public, &previous)
+	var repository, run, attempt, check string
+	if c.GitHub != nil {
+		g := c.GitHub
+		repository, run, attempt, check = g.RepositoryID, g.RunID, g.RunAttempt, g.CheckRunID
+	}
+	err = tx.QueryRow(ctx, `SELECT id,public_key,request_digest FROM control.workload_sessions WHERE team_id=$1 AND project_key=$2 AND (session_nonce=$3 OR (provider='github' AND repository_id=$4 AND run_id=$5 AND run_attempt=$6 AND check_run_id=$7)) FOR UPDATE`, r.TeamID, r.ProjectKey, r.Nonce, repository, run, attempt, check).Scan(&id, &public, &previous)
 	if err == nil {
 		if !bytes.Equal(public, r.PublicKey) || !bytes.Equal(previous, requestDigest[:]) {
 			return result, ErrWorkloadConflict
@@ -126,7 +145,7 @@ func (d *Database) ExchangeGitHubWorkload(ctx context.Context, r ExchangeGitHubW
 		claims, _ := json.Marshal(c)
 		deadline := now.Add(time.Duration(p.MaxDurationSeconds) * time.Second)
 		lease := minTime(now.Add(WorkloadLease), deadline)
-		_, err = tx.Exec(ctx, `INSERT INTO control.workload_sessions(id,team_id,project_key,ci_name,repository_id,run_id,run_attempt,check_run_id,public_key,request_digest,claims,credential_digest,credential_ciphertext,storage_key_id,created_at,renewed_at,lease_expires_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13,$14,$15,$15,$16,$17)`, id, r.TeamID, r.ProjectKey, r.CI, c.RepositoryID, c.RunID, c.RunAttempt, c.CheckRunID, []byte(r.PublicKey), requestDigest[:], claims, digestValue[:], sealed, d.storageKey.CurrentID(), now, lease, deadline)
+		_, err = tx.Exec(ctx, `INSERT INTO control.workload_sessions(id,team_id,project_key,workload_name,repository_id,run_id,run_attempt,check_run_id,public_key,request_digest,claims,credential_digest,credential_ciphertext,storage_key_id,created_at,renewed_at,lease_expires_at,expires_at,provider,session_nonce,binding) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20)`, id, r.TeamID, r.ProjectKey, r.Workload, nullableText(repository), nullableText(run), nullableText(attempt), nullableText(check), []byte(r.PublicKey), requestDigest[:], claims, digestValue[:], sealed, d.storageKey.CurrentID(), now, lease, deadline, c.Provider, r.Nonce, workloadBinding(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, c))
 		if err != nil {
 			return result, err
 		}
@@ -146,15 +165,17 @@ func (d *Database) ExchangeGitHubWorkload(ctx context.Context, r ExchangeGitHubW
 		return result, err
 	}
 	// one signed jti may only resume its exact committed session/assertion.
-	jti := sha256.Sum256([]byte(oidcauth.GitHubIssuer + "\x00" + c.JTI))
-	var saved string
-	var assertion []byte
-	err = tx.QueryRow(ctx, `INSERT INTO control.workload_assertions(jti_digest,assertion_digest,workload_session_id,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(jti_digest) DO UPDATE SET jti_digest=EXCLUDED.jti_digest RETURNING workload_session_id,assertion_digest`, jti[:], c.AssertionDigest[:], id, time.Unix(c.ExpiresAt, 0)).Scan(&saved, &assertion)
-	if err != nil {
-		return result, err
-	}
-	if saved != id || !bytes.Equal(assertion, c.AssertionDigest[:]) {
-		return result, ErrWorkloadConflict
+	if c.GitHub != nil {
+		var reused bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.workload_sessions WHERE team_id=$1 AND project_key=$2 AND session_nonce=$3 AND id<>$4)`, r.TeamID, r.ProjectKey, r.Nonce, id).Scan(&reused); err != nil {
+			return result, err
+		}
+		if reused {
+			return result, ErrWorkloadConflict
+		}
+		if err = consumeWorkloadAssertion(ctx, tx, id, c); err != nil {
+			return result, err
+		}
 	}
 	result, err = d.workloadSession(ctx, tx, id, now)
 	if err != nil {
@@ -174,9 +195,24 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if err != nil {
 		return r, publisherLookupError(err, ErrWorkloadDenied)
 	}
-	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, CI: row.CiName, RunID: row.RunID, RunAttempt: row.RunAttempt, CheckRunID: row.CheckRunID, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time)}
-	if row.RevokedAt.Valid || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) {
+	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time)}
+	r.Binding = row.Binding
+	if row.Provider == "github" {
+		var claims oidcauth.WorkloadExecution
+		if err = json.Unmarshal(row.Claims, &claims); err != nil {
+			return r, err
+		}
+		if claims.GitHub == nil {
+			return r, ErrWorkloadDenied
+		}
+		g := claims.GitHub
+		r.GitHub = &WorkloadGitHubExecution{RepositoryID: g.RepositoryID, RepositoryOwnerID: g.RepositoryOwnerID, RunID: row.RunID.String, RunAttempt: row.RunAttempt.String, CheckRunID: row.CheckRunID.String}
+	}
+	if row.RevokedAt.Valid {
 		return r, ErrWorkloadDenied
+	}
+	if !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) {
+		return r, ErrWorkloadExpired
 	}
 	secret, _, err := d.storageKey.Open(row.StorageKeyID, workloadCredentialContext(id), row.CredentialCiphertext)
 	if err != nil {
@@ -185,7 +221,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	defer clear(secret)
 	r.Credential = string(secret)
 	r.Subject = workloadSubject(id)
-	observability.WorkloadExecution(ctx, id, r.RunID, r.RunAttempt, r.CheckRunID)
+	observability.WorkloadExecution(ctx, id, row.RunID.String, row.RunAttempt.String, row.CheckRunID.String)
 	r.ServiceIDs = []string{}
 	services, err := q.ListWorkloadSessionServices(ctx, id)
 	if err != nil {
@@ -214,7 +250,7 @@ func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, n
 		return "", publisherLookupError(err, ErrWorkloadDenied)
 	}
 	var run, attempt, check string
-	err = tx.QueryRow(ctx, `SELECT id,run_id,run_attempt,check_run_id FROM control.workload_sessions WHERE id=$1 AND revoked_at IS NULL AND lease_expires_at>$2 AND expires_at>$2 FOR UPDATE`, id, now).Scan(&id, &run, &attempt, &check)
+	err = tx.QueryRow(ctx, `SELECT id,COALESCE(run_id,''),COALESCE(run_attempt,''),COALESCE(check_run_id,'') FROM control.workload_sessions WHERE id=$1 AND revoked_at IS NULL AND lease_expires_at>$2 AND expires_at>$2 FOR UPDATE`, id, now).Scan(&id, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, id, run, attempt, check)
 	}
@@ -254,18 +290,28 @@ func (d *Database) RevokeWorkloadSession(ctx context.Context, id, credential str
 		return err
 	}
 	defer rollback(ctx, tx, "revoke workload", &retErr)()
-	current, err := lockWorkloadCredential(ctx, tx, credential, now)
+	digest := sha256.Sum256([]byte(credential))
+	var team string
+	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.workload_sessions WHERE id=$1 AND credential_digest=$2`, id, digest[:]).Scan(&team); err != nil {
+		return publisherLookupError(err, ErrWorkloadDenied)
+	}
+	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, team); err != nil {
+		return err
+	}
+	// retention may have removed the proof while this request waited for the
+	// team lock. authenticate again under a row lock before confirming deletion.
+	var authenticated string
+	if err = tx.QueryRow(ctx, `SELECT id FROM control.workload_sessions WHERE id=$1 AND credential_digest=$2 FOR UPDATE`, id, digest[:]).Scan(&authenticated); err != nil {
+		return publisherLookupError(err, ErrWorkloadDenied)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE control.workload_sessions SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL`, id, now)
 	if err != nil {
 		return err
 	}
-	if current != id {
-		return ErrWorkloadDenied
-	}
-	if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET revoked_at=$2 WHERE id=$1`, id, now); err != nil {
-		return err
-	}
-	if err = workloadAudit(ctx, tx, id, "revoke", "", now); err != nil {
-		return err
+	if tag.RowsAffected() != 0 {
+		if err = workloadAudit(ctx, tx, id, "revoke", "", now); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -297,7 +343,7 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 	var until time.Time
 	var revision int64
 	var run, attempt, check string
-	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,$3::timestamptz+interval '90 seconds'),p.revision,w.run_id,w.run_attempt,w.check_run_id FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.private_service_id=$2 JOIN control.private_services s ON s.id=rights.private_service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.expires_at>$3`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
+	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.private_service_id=$2 JOIN control.private_services s ON s.id=rights.private_service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.expires_at>$3`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, subject.WorkloadSessionID, run, attempt, check)
 	}
@@ -325,7 +371,10 @@ func (d *Database) CheckWorkloadService(ctx context.Context, credential, service
 
 // a trace-safe execution reference contains no JWT, credential or public key.
 func (r WorkloadSession) ExecutionReference() string {
-	return r.RunID + "/" + r.RunAttempt + "/" + r.CheckRunID
+	if r.GitHub == nil {
+		return ""
+	}
+	return r.GitHub.RunID + "/" + r.GitHub.RunAttempt + "/" + r.GitHub.CheckRunID
 }
 
 func workloadRequestScope(id, key string) string {

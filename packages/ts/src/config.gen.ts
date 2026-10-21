@@ -935,10 +935,112 @@ export interface TnlConfig {
       | undefined;
   };
   /**
-   * Named GitHub workflow policies granting access to exact configured services.
+   * Named provider identities granting access to exact configured services.
    */
-  ci?: {
-    [k: string]: CI | undefined;
+  workloads?: {
+    [k: string]:
+      | {
+          provider: "github";
+          /**
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          github: {
+            repository?: string;
+            workflow: string;
+            environment?: string;
+            ref: string;
+            /**
+             * @minItems 1
+             */
+            events: [
+              (
+                | "push"
+                | "pull_request"
+                | "pull_request_target"
+                | "workflow_dispatch"
+                | "workflow_call"
+                | "schedule"
+                | "release"
+                | "merge_group"
+                | "repository_dispatch"
+                | "workflow_run"
+              ),
+              ...(
+                | "push"
+                | "pull_request"
+                | "pull_request_target"
+                | "workflow_dispatch"
+                | "workflow_call"
+                | "schedule"
+                | "release"
+                | "merge_group"
+                | "repository_dispatch"
+                | "workflow_run"
+              )[],
+            ];
+            reusableWorkflow?: string;
+          };
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
+        }
+      | {
+          provider: "vercel";
+          /**
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          environment: string;
+          issuerMode?: "team" | "global";
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
+          projectId: string;
+          teamId: string;
+          teamSlug?: string;
+        }
+      | {
+          provider: "fly";
+          /**
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          org: string;
+          app: string;
+          appId: string;
+          machineId?: string;
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
+          orgId: string;
+        }
+      | {
+          provider: "oidc";
+          /**
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          issuer: string;
+          audience: string;
+          claims: {
+            [k: string]: string | undefined;
+          };
+          jwksUrl: string;
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
+          tokenFile?: string;
+        }
+      | undefined;
   };
   /**
    * Defaults applied only to explicit services.NAME.public_url blocks. These defaults never enable a public URL for another service.
@@ -1013,53 +1115,6 @@ export interface Inspection1 {
   mode?: "none" | "summary";
   retention?: TnlRatePeriod;
   maxBytes?: TnlByteSize;
-}
-export interface CI {
-  github: {
-    repository?: string;
-    workflow: string;
-    environment?: string;
-    ref: string;
-    /**
-     * @minItems 1
-     */
-    events: [
-      (
-        | "push"
-        | "pull_request"
-        | "pull_request_target"
-        | "workflow_dispatch"
-        | "workflow_call"
-        | "schedule"
-        | "release"
-        | "merge_group"
-        | "repository_dispatch"
-        | "workflow_run"
-      ),
-      ...(
-        | "push"
-        | "pull_request"
-        | "pull_request_target"
-        | "workflow_dispatch"
-        | "workflow_call"
-        | "schedule"
-        | "release"
-        | "merge_group"
-        | "repository_dispatch"
-        | "workflow_run"
-      )[],
-    ];
-    reusableWorkflow?: string;
-  };
-  /**
-   * @minItems 1
-   * @maxItems 32
-   */
-  services: [string, ...string[]];
-  /**
-   * Maximum GitHub-hosted run duration; defaults to 1h and must be positive and at most 6h.
-   */
-  maxDuration?: TnlRatePeriod;
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

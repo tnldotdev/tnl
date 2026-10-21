@@ -56,7 +56,6 @@
         "TNL_CLIENT_AWS_BOOTSTRAP_VERSION_CONFLICT",
         "TNL_CLIENT_BROWSER_OPEN_FAILED",
         "TNL_CLIENT_CERTIFICATE_UNAVAILABLE",
-        "TNL_CLIENT_CI_REPOSITORY_METADATA_UNAVAILABLE",
         "TNL_CLIENT_CONNECTION_CLEANUP_FAILED",
         "TNL_CLIENT_CONNECTION_EXPIRED",
         "TNL_CLIENT_CONNECTION_HANDLE_INVALID",
@@ -96,6 +95,7 @@
         "TNL_CLIENT_INIT_PACKAGE_MANAGER",
         "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS",
         "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING",
+        "TNL_CLIENT_INSTALLED_PUBLISH_RUN_PENDING",
         "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE",
         "TNL_CLIENT_INSTALLED_TARGET_MISSING",
         "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED",
@@ -122,8 +122,10 @@
         "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID",
         "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID",
         "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED",
+        "TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED",
         "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
         "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_UNAVAILABLE",
+        "TNL_CLIENT_PUBLISHER_INSTALL_SOURCE_INVALID",
         "TNL_CLIENT_SERVER_CONFLICT",
         "TNL_CLIENT_SERVER_DENIED",
         "TNL_CLIENT_SERVER_RATE_LIMITED",
@@ -160,6 +162,8 @@
         "TNL_CLIENT_WEBHOOK_OWNER_UNREADY",
         "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT",
         "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY",
+        "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE",
+        "TNL_CLIENT_WORKLOAD_REPOSITORY_METADATA_UNAVAILABLE",
         "TNL_DNS_SETUP_PENDING",
         "TNL_IP_POLICY_DENIED",
         "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
@@ -384,7 +388,8 @@
         "routing_floor",
         "routing_prune",
         "service_audit",
-        "guest_private_state"
+        "guest_private_state",
+        "workloads"
       ],
       "semantics": "cleanup domain",
       "dimension_policy": "bounded"
@@ -463,7 +468,36 @@
     },
     {
       "key": "tnl.event",
-      "semantics": "closed per-instrument lifecycle event, including queued, delivered, dropped, and operational_failure",
+      "values": [
+        "queued",
+        "delivered",
+        "retry",
+        "dropped",
+        "accepted",
+        "duplicate",
+        "connected",
+        "expected_close",
+        "unexpected_close",
+        "operational_failure",
+        "incomplete",
+        "finalized",
+        "retried",
+        "rejected",
+        "issued",
+        "allocated",
+        "ready",
+        "expired",
+        "ready_limit",
+        "transfer_limit",
+        "cleanup",
+        "opened",
+        "closed",
+        "failed",
+        "bound",
+        "registered",
+        "publication_ready"
+      ],
+      "semantics": "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; status/watch readers do not emit transitions",
       "dimension_policy": "bounded"
     },
     {
@@ -926,6 +960,45 @@
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_client_lifecycle_events_total",
+      "semantics": "Native app registration and publication-ready transitions, emitted once by the lifecycle owner; reads do not emit transitions.",
+      "kind": "counter",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.event"
+      ]
+    },
+    {
+      "name": "tnl_client_operation_duration_seconds",
+      "semantics": "Finite native CLI and private IPC operations; excludes process lifetime and application work.",
+      "kind": "histogram",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
       ]
     },
     {

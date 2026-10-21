@@ -10,6 +10,12 @@ export type TnlErrorCode =
   | "sdk.connection_unavailable"
   | "sdk.connection_unprepared"
   | "sdk.connection_server_only"
+  | "sdk.workload_required"
+  | "sdk.workload_manifest_invalid"
+  | "sdk.workload_assertion_unavailable"
+  | "sdk.workload_denied"
+  | "sdk.workload_unavailable"
+  | "sdk.workload_response_invalid"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
   | "sdk.project_unavailable"
@@ -87,6 +93,40 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "after_change",
     message: "native connections require Node.js or Bun; call tnl.connect from server code",
+  },
+  "sdk.workload_required": {
+    class: "invalid",
+    retry: "after_change",
+    message:
+      "select one saved workload with TNL_WORKLOAD or configureWorkload before calling tnl.connect",
+  },
+  "sdk.workload_manifest_invalid": {
+    class: "invalid",
+    retry: "after_change",
+    message:
+      "the workload manifest is missing or invalid; package .tnl/generated/workloads.json from tnl generate with the server artifact",
+  },
+  "sdk.workload_assertion_unavailable": {
+    class: "unavailable",
+    retry: "after_change",
+    message:
+      "the selected workload assertion is unavailable; check its request-scoped provider or configured token source",
+  },
+  "sdk.workload_denied": {
+    class: "conflict",
+    retry: "after_change",
+    message: "workload access was denied; check the saved workload policy and service access",
+  },
+  "sdk.workload_unavailable": {
+    class: "unavailable",
+    retry: "later",
+    message:
+      "workload request preparation failed; check control availability before trying a new request",
+  },
+  "sdk.workload_response_invalid": {
+    class: "internal",
+    retry: "after_change",
+    message: "control returned an invalid workload response; check server and SDK compatibility",
   },
   "sdk.runtime_invalid": {
     class: "invalid",
@@ -178,6 +218,15 @@ export class TnlError extends Error {
     this.class = definitions[code].class;
     this.retry = definitions[code].retry;
   }
+}
+
+// private causes can contain assertions, headers, or response bodies. retain
+// their identity without exposing them through Error.cause, inspection, or JSON.
+const privateCauses = new WeakMap<TnlError, unknown>();
+export function privateTnlError(code: TnlErrorCode, cause: unknown): TnlError {
+  const error = new TnlError(code);
+  privateCauses.set(error, cause);
+  return error;
 }
 
 export class TnlCleanupError extends TnlError {

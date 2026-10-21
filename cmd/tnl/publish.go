@@ -37,6 +37,7 @@ type publishCommand struct {
 	TargetTLS              *bool             `name:"target-tls" help:"Verify publisher-to-target TLS using native protocol negotiation. Independent of visitor TLS."`
 	TargetTLSName          string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	EnrollmentKey          string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
+	Enrolled               bool              `name:"enrolled" help:"Use only this target's retained publisher identity; enroll on first start with TNL_ENROLL_KEY."`
 	PublisherID            string            `name:"publisher" env:"TNL_PUBLISHER" help:"Saved scoped publisher identity ID."`
 	PublisherFile          string            `name:"publisher-file" env:"TNL_PUBLISHER_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
 	Output                 publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
@@ -54,6 +55,13 @@ type publishCommand struct {
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
+	if flags.Enrolled {
+		var err error
+		flags, err = retainedPublishFlags(ctx, flags)
+		if err != nil {
+			return err
+		}
+	}
 	selection := enrolledPublishSelection{EnrollmentKey: flags.EnrollmentKey, PublisherID: flags.PublisherID, PublisherFile: flags.PublisherFile}
 	if flags.Foreground && (flags.Install || flags.Detach) {
 		return publisherCLIError("select only one of --foreground, --detach, or --install")
@@ -91,6 +99,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if flags.Install {
 		if flags.Output != "human" {
 			return publisherCLIError("--install requires --output=human")
+		}
+		if !credentialOwned && (flags.Service == "" || flags.System) {
+			return runPublicationInstall(ctx, flags, stdout, stderr)
 		}
 		return runEnrolledBackgroundPublish(ctx, flags, selection, flags.backgroundPublishFlags, stdout, os.Stdin, nil)
 	}

@@ -19,6 +19,7 @@ const entrypoints = [
   "@tnldotdev/tnl/config",
   "@tnldotdev/tnl/next",
   "@tnldotdev/tnl/vite",
+  "@tnldotdev/tnl/workload",
 ];
 const workspace = parseJSON(
   await readFile(path.join(root, "package.json"), "utf8"),
@@ -37,9 +38,29 @@ try {
   const tarball = path.join(directory, filename);
   const { stdout: manifestData } = await run("tar", ["-xOzf", tarball, "package/package.json"]);
   const manifest = parseJSON(manifestData, packageManifestSchema, "packed manifest");
+  const { stdout: licenses } = await run("tar", [
+    "-xOzf",
+    tarball,
+    "package/dist/third-party-licenses.txt",
+  ]);
+  for (const name of [
+    "@vercel/oidc",
+    "@vercel/cli-config",
+    "@vercel/cli-exec",
+    "jose",
+    "zod",
+    "undici",
+  ])
+    assert(licenses.includes(`package: ${name}\n`));
   assert.equal(manifest.name, packageName);
   assert(manifest.exports, "package must define public exports");
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", "./config", "./next", "./vite"]);
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [
+    ".",
+    "./config",
+    "./next",
+    "./vite",
+    "./workload",
+  ]);
   assert(!JSON.stringify(manifest).includes("workspace:"));
 
   await writeFile(
@@ -94,7 +115,8 @@ try {
  if (modules[0].tnl?.port !== 3000 || typeof modules[0].tnl?.prepare !== "function" || typeof modules[0].tnl?.open !== "function") throw new Error("missing root app integration");
 if (typeof modules[1].defineConfig !== "function") throw new Error("missing config export");
 if (typeof modules[2].withTnl !== "function") throw new Error("missing Next.js export");
-if (typeof modules[3].default !== "function") throw new Error("missing Vite export");`,
+if (typeof modules[3].default !== "function") throw new Error("missing Vite export");
+if (typeof modules[4].configureWorkload !== "function") throw new Error("missing server workload export");`,
     ],
     { cwd: directory },
   );
@@ -111,12 +133,19 @@ if (typeof modules[3].default !== "function") throw new Error("missing Vite expo
     const cjs = require("@tnldotdev/tnl");
     assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
     assert.equal(cjs.TnlError, esm.TnlError);
+    const workload = require("@tnldotdev/tnl/workload");
+    const workloadESM = await import("@tnldotdev/tnl/workload");
+    assert.deepEqual(Object.keys(workload).sort(), Object.keys(workloadESM).sort());
     for (const root of [esm, cjs]) {
       const handle = root.tnl.connect("database");
       assert.equal(typeof handle.then, "function");
       assert.equal(Object.getOwnPropertyDescriptor(handle, "then").enumerable, false);
       assert.throws(() => ({ ...handle }), error => error instanceof root.TnlError && error.code === "sdk.connection_unprepared");
     }
+    const token = async () => "request-scoped-assertion";
+    workloadESM.configureWorkload({name: "worker", token});
+    workload.configureWorkload({name: "worker", token});
+    assert.throws(() => workload.configureWorkload({name: "worker", token: async () => "replacement"}), error => error instanceof esm.TnlError && error.code === "sdk.workload_required");
   `,
     ],
     { cwd: directory, env: { ...process.env, TNL_CONNECTION_HANDLE: undefined } },
@@ -157,10 +186,24 @@ if (typeof modules[3].default !== "function") throw new Error("missing Vite expo
     });
     assert(
       Object.keys(browser.metafile.inputs).every(
-        (input) => !/internal\/(connection|launcher)|undici|index\.cjs$/.test(input),
+        (input) =>
+          !/internal\/(connection|launcher|workload)|@vercel|zod|undici|index\.cjs$/.test(input),
       ),
     );
   }
+  await assert.rejects(
+    build({
+      stdin: {
+        contents:
+          'import {configureWorkload} from "@tnldotdev/tnl/workload"; configureWorkload({name:"worker", token:async()=>"secret"});',
+        resolveDir: directory,
+      },
+      bundle: true,
+      write: false,
+      platform: "browser",
+      logLevel: "silent",
+    }),
+  );
 } finally {
   await rm(directory, { force: true, recursive: true });
 }

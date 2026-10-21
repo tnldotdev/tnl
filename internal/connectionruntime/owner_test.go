@@ -44,8 +44,14 @@ func (b *fixtureBackend) Connect(ctx context.Context, name string) (Connection, 
 	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}}, nil
 }
 func (b *fixtureBackend) Renew(context.Context) (time.Time, error) { return b.deadline, nil }
-func (b *fixtureBackend) Close(context.Context) error              { b.closed.Store(true); return nil }
-func (b *fixtureBackend) Done() <-chan error                       { return b.failed }
+func (b *fixtureBackend) Prepared(name string) (Connection, error) {
+	if name != "database" || b.credential.Load() == 0 {
+		return Connection{}, ErrUnprepared
+	}
+	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}, nil
+}
+func (b *fixtureBackend) Close(context.Context) error { b.closed.Store(true); return nil }
+func (b *fixtureBackend) Done() <-chan error          { return b.failed }
 
 func fixtureScope(t *testing.T) Context {
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -54,6 +60,51 @@ func fixtureScope(t *testing.T) Context {
 	}
 	return Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example", Audience: "https://control.example", ProjectKey: "project-test", SourceID: "source-test", WorktreeKey: "worktree-test", Services: []string{"database"}}
 }
+
+type lazyFixtureBackend struct {
+	fixtureBackend
+	prepared map[string]bool
+	network  atomic.Int32
+}
+
+func (b *lazyFixtureBackend) Connect(_ context.Context, name string) (Connection, error) {
+	b.network.Add(1)
+	b.prepared[name] = true
+	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline}, nil
+}
+func (b *lazyFixtureBackend) Prepared(name string) (Connection, error) {
+	if !b.prepared[name] {
+		return Connection{}, ErrUnavailable
+	}
+	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline}, nil
+}
+
+func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {
+	scope := fixtureScope(t)
+	scope.Services = append(scope.Services, "sibling")
+	directory, err := NewDirectory(scope.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &lazyFixtureBackend{fixtureBackend: fixtureBackend{deadline: time.Now().Add(time.Hour)}, prepared: map[string]bool{}}
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer func() { cancel(); <-done }()
+	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", b, writer) }()
+	var status Status
+	if err := json.NewDecoder(reader).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "sibling"}
+	if err := Call(t.Context(), status.PrivateHandle, "prepared", request, new(Prepared)); err == nil {
+		t.Error("synchronous sibling read prepared a service")
+	}
+	if got := b.network.Load(); got != 0 {
+		t.Errorf("synchronous sibling read performed %d network operations; want zero", got)
+	}
+}
+
 func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 	scope := fixtureScope(t)
 	directory, err := NewDirectory(scope.Directory)
@@ -86,7 +137,7 @@ func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 	if err := Call(t.Context(), state.PrivateHandle, "prepared", request, &prepared); err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Schema != Schema || prepared.Connection.SSL == nil || prepared.PublicRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName || prepared.Connection.Host != "127.0.0.1" || b.credential.Load() != 3 {
+	if prepared.Schema != Schema || prepared.Connection.SSL == nil || prepared.PublicRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName || prepared.Connection.Host != "127.0.0.1" || b.credential.Load() != 2 {
 		t.Fatal("prepared read did not pair the same owner's metadata and fresh connection")
 	}
 	wrong := request

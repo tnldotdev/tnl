@@ -272,6 +272,15 @@ var typeScriptKeyMappings = map[string]string{
 	"public_url":           "publicURL",
 	"publisher_pool":       "publisherPool",
 	"max_duration":         "maxDuration",
+	"team_id":              "teamId",
+	"project_id":           "projectId",
+	"team_slug":            "teamSlug",
+	"issuer_mode":          "issuerMode",
+	"org_id":               "orgId",
+	"app_id":               "appId",
+	"machine_id":           "machineId",
+	"jwks_url":             "jwksUrl",
+	"token_file":           "tokenFile",
 	"reusable_workflow":    "reusableWorkflow",
 }
 

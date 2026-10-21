@@ -1455,6 +1455,30 @@ func (e WebhookProviderSourceResponseSource1Kind) Valid() bool {
 	}
 }
 
+// Defines values for WorkloadProvider.
+const (
+	WorkloadFly    WorkloadProvider = "fly"
+	WorkloadGitHub WorkloadProvider = "github"
+	WorkloadOIDC   WorkloadProvider = "oidc"
+	WorkloadVercel WorkloadProvider = "vercel"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadProvider enum.
+func (e WorkloadProvider) Valid() bool {
+	switch e {
+	case WorkloadFly:
+		return true
+	case WorkloadGitHub:
+		return true
+	case WorkloadOIDC:
+		return true
+	case WorkloadVercel:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
 type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
@@ -2428,6 +2452,12 @@ type PrivateServiceGrantKind string
 // PrivateServiceGrantID defines model for PrivateServiceGrantID.
 type PrivateServiceGrantID = string
 
+// PrivateServiceGrantPage defines model for PrivateServiceGrantPage.
+type PrivateServiceGrantPage struct {
+	Grants     []PrivateServiceGrant  `json:"grants"`
+	NextCursor *PrivateServiceGrantID `json:"next_cursor,omitempty"`
+}
+
 // PrivateServiceID defines model for PrivateServiceID.
 type PrivateServiceID = string
 
@@ -2440,7 +2470,7 @@ type PrivateServiceInvitation struct {
 	PrivateServiceId PrivateServiceID           `json:"private_service_id"`
 	RevokedAt        *time.Time                 `json:"revoked_at,omitempty"`
 
-	// Secret Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.
+	// Secret Returned only for a new creation (HTTP 201). Exact creation retries (HTTP 200) and lists omit it. If delivery was lost, revoke the returned ID and create with a new key; secrets cannot be recovered.
 	Secret *string `json:"secret,omitempty"`
 }
 
@@ -2451,6 +2481,12 @@ type PrivateServiceInvitationCredential struct {
 
 // PrivateServiceInvitationID defines model for PrivateServiceInvitationID.
 type PrivateServiceInvitationID = string
+
+// PrivateServiceInvitationPage defines model for PrivateServiceInvitationPage.
+type PrivateServiceInvitationPage struct {
+	Invitations []PrivateServiceInvitation  `json:"invitations"`
+	NextCursor  *PrivateServiceInvitationID `json:"next_cursor,omitempty"`
+}
 
 // PrivateServiceMetadata defines model for PrivateServiceMetadata.
 type PrivateServiceMetadata struct {
@@ -2587,37 +2623,16 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectCI defines model for ProjectCI.
-type ProjectCI struct {
-	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
-	Github             ProjectCIGitHub `json:"github"`
-	MaxDurationSeconds int             `json:"max_duration_seconds"`
-	Services           []string        `json:"services"`
-}
-
-// ProjectCIGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
-type ProjectCIGitHub struct {
-	Environment       *string  `json:"environment,omitempty"`
-	Events            []string `json:"events"`
-	JobWorkflowRef    *string  `json:"job_workflow_ref,omitempty"`
-	Ref               string   `json:"ref"`
-	Repository        string   `json:"repository"`
-	RepositoryId      string   `json:"repository_id"`
-	RepositoryOwnerId string   `json:"repository_owner_id"`
-	WorkflowRef       string   `json:"workflow_ref"`
-}
-
 // ProjectConfiguration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
 type ProjectConfiguration struct {
-	Ci *map[string]ProjectCI `json:"ci,omitempty"`
-
 	// Oauth Desired local app-led OAuth integration URL declaration. Control stores the declaration and revision; applying it does not provision a handler on a named publisher group.
 	Oauth      bool                                   `json:"oauth"`
 	Publishers map[string]ProjectPublisherGroup       `json:"publishers"`
 	Services   map[string]ProjectServiceConfiguration `json:"services"`
 
 	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
-	Webhooks map[string]ProjectWebhook `json:"webhooks"`
+	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
+	Workloads *map[string]ProjectWorkload `json:"workloads,omitempty"`
 }
 
 // ProjectHTTPApplicationLimits defines model for ProjectHTTPApplicationLimits.
@@ -2744,6 +2759,28 @@ type ProjectWebhook struct {
 	Provider  WebhookProvider `json:"provider"`
 	Service   string          `json:"service"`
 	SourceIps *[]string       `json:"source_ips,omitempty"`
+}
+
+// ProjectWorkload defines model for ProjectWorkload.
+type ProjectWorkload struct {
+	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+	Github             *ProjectWorkloadGitHub `json:"github,omitempty"`
+	MaxDurationSeconds int                    `json:"max_duration_seconds"`
+	Provider           WorkloadProvider       `json:"provider"`
+	Services           []string               `json:"services"`
+	Trust              WorkloadTrust          `json:"trust"`
+}
+
+// ProjectWorkloadGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+type ProjectWorkloadGitHub struct {
+	Environment       *string  `json:"environment,omitempty"`
+	Events            []string `json:"events"`
+	JobWorkflowRef    *string  `json:"job_workflow_ref,omitempty"`
+	Ref               string   `json:"ref"`
+	Repository        string   `json:"repository"`
+	RepositoryId      string   `json:"repository_id"`
+	RepositoryOwnerId string   `json:"repository_owner_id"`
+	WorkflowRef       string   `json:"workflow_ref"`
 }
 
 // PublicURL defines model for PublicURL.
@@ -3531,6 +3568,9 @@ type WorkloadIngressAssignments struct {
 	Subject VisitorSubject `json:"subject"`
 }
 
+// WorkloadProvider defines model for WorkloadProvider.
+type WorkloadProvider string
+
 // WorkloadServiceAuthorization defines model for WorkloadServiceAuthorization.
 type WorkloadServiceAuthorization struct {
 	PolicyRevision int64  `json:"policy_revision"`
@@ -3554,6 +3594,15 @@ type WorkloadServices struct {
 		Protocol   PrivateServiceProtocol `json:"protocol"`
 		Service    string                 `json:"service"`
 	} `json:"services"`
+}
+
+// WorkloadTrust defines model for WorkloadTrust.
+type WorkloadTrust struct {
+	Audience string            `json:"audience"`
+	Claims   map[string]string `json:"claims"`
+	Issuer   string            `json:"issuer"`
+	JwksUrl  string            `json:"jwks_url"`
+	Provider WorkloadProvider  `json:"provider"`
 }
 
 // CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
@@ -3648,6 +3697,11 @@ type CreatePrivateServiceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListPrivateServiceGrantsParams defines parameters for ListPrivateServiceGrants.
+type ListPrivateServiceGrantsParams struct {
+	Cursor *PrivateServiceGrantID `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // CreatePrivateServiceGrantParams defines parameters for CreatePrivateServiceGrant.
 type CreatePrivateServiceGrantParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -3664,6 +3718,11 @@ type CreateVisitorIngressAssignmentJSONBody struct {
 type CreateVisitorIngressAssignmentsJSONBody struct {
 	DeviceId       string         `json:"device_id"`
 	IdempotencyKey IdempotencyKey `json:"idempotency_key"`
+}
+
+// ListPrivateServiceInvitationsParams defines parameters for ListPrivateServiceInvitations.
+type ListPrivateServiceInvitationsParams struct {
+	Cursor *PrivateServiceInvitationID `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // InvitePrivateServiceVisitorParams defines parameters for InvitePrivateServiceVisitor.
@@ -4436,7 +4495,9 @@ type ClientInterface interface {
 	IssueServiceClientCertificate(ctx context.Context, privateServiceId PrivateServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPrivateServiceGrants performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
-	ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	//
+	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+	ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePrivateServiceGrantWithBody performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
 	// with any type of body and a specified content type.
@@ -4494,14 +4555,20 @@ type ClientInterface interface {
 	CreateVisitorIngressAssignments(ctx context.Context, privateServiceId PrivateServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPrivateServiceInvitations performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
-	ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	//
+	// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+	ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InvitePrivateServiceVisitorWithBody performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	InvitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// InvitePrivateServiceVisitor performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	InvitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokePrivateServiceInvitation performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
@@ -6006,8 +6073,10 @@ func (c *Client) IssueServiceClientCertificate(ctx context.Context, privateServi
 }
 
 // ListPrivateServiceGrants performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
-func (c *Client) ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPrivateServiceGrantsRequest(c.Server, privateServiceId)
+//
+// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+func (c *Client) ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrivateServiceGrantsRequest(c.Server, privateServiceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6184,8 +6253,10 @@ func (c *Client) CreateVisitorIngressAssignments(ctx context.Context, privateSer
 }
 
 // ListPrivateServiceInvitations performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
-func (c *Client) ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPrivateServiceInvitationsRequest(c.Server, privateServiceId)
+//
+// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+func (c *Client) ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrivateServiceInvitationsRequest(c.Server, privateServiceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6198,6 +6269,8 @@ func (c *Client) ListPrivateServiceInvitations(ctx context.Context, privateServi
 
 // InvitePrivateServiceVisitorWithBody performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
+//
+// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 func (c *Client) InvitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvitePrivateServiceVisitorRequestWithBody(c.Server, privateServiceId, params, contentType, body)
 	if err != nil {
@@ -6212,6 +6285,8 @@ func (c *Client) InvitePrivateServiceVisitorWithBody(ctx context.Context, privat
 
 // InvitePrivateServiceVisitor performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 func (c *Client) InvitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInvitePrivateServiceVisitorRequest(c.Server, privateServiceId, params, body)
 	if err != nil {
@@ -10039,7 +10114,7 @@ func NewIssueServiceClientCertificateRequestWithBody(server string, privateServi
 }
 
 // NewListPrivateServiceGrantsRequest constructs an http.Request for the ListPrivateServiceGrants method
-func NewListPrivateServiceGrantsRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+func NewListPrivateServiceGrantsRequest(server string, privateServiceId PrivateServiceID, params *ListPrivateServiceGrantsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10062,6 +10137,33 @@ func NewListPrivateServiceGrantsRequest(server string, privateServiceId PrivateS
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -10390,7 +10492,7 @@ func NewCreateVisitorIngressAssignmentsRequestWithBody(server string, privateSer
 }
 
 // NewListPrivateServiceInvitationsRequest constructs an http.Request for the ListPrivateServiceInvitations method
-func NewListPrivateServiceInvitationsRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+func NewListPrivateServiceInvitationsRequest(server string, privateServiceId PrivateServiceID, params *ListPrivateServiceInvitationsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10413,6 +10515,33 @@ func NewListPrivateServiceInvitationsRequest(server string, privateServiceId Pri
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -15381,8 +15510,10 @@ type ClientWithResponsesInterface interface {
 
 	// ListPrivateServiceGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
 	//
+	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+	//
 	// Returns a wrapper object for the known response body format(s).
-	ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error)
+	ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error)
 
 	// CreatePrivateServiceGrantWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
 	// with any type of body and a specified content type.
@@ -15455,17 +15586,23 @@ type ClientWithResponsesInterface interface {
 
 	// ListPrivateServiceInvitationsWithResponse performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
 	//
+	// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+	//
 	// Returns a wrapper object for the known response body format(s).
-	ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error)
+	ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error)
 
 	// InvitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	InvitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error)
 
 	// InvitePrivateServiceVisitorWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 	InvitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error)
 
 	// RevokePrivateServiceInvitationWithResponse performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
@@ -17974,13 +18111,13 @@ type ListPrivateServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]PrivateServiceGrant
+	JSON200 *PrivateServiceGrantPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPrivateServiceGrantsResponse) GetJSON200() *[]PrivateServiceGrant {
+func (r ListPrivateServiceGrantsResponse) GetJSON200() *PrivateServiceGrantPage {
 	return r.JSON200
 }
 
@@ -18344,13 +18481,13 @@ type ListPrivateServiceInvitationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]PrivateServiceInvitation
+	JSON200 *PrivateServiceInvitationPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPrivateServiceInvitationsResponse) GetJSON200() *[]PrivateServiceInvitation {
+func (r ListPrivateServiceInvitationsResponse) GetJSON200() *PrivateServiceInvitationPage {
 	return r.JSON200
 }
 
@@ -18391,10 +18528,17 @@ func (r ListPrivateServiceInvitationsResponse) ContentType() string {
 type InvitePrivateServiceVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceInvitation
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *PrivateServiceInvitation
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InvitePrivateServiceVisitorResponse) GetJSON200() *PrivateServiceInvitation {
+	return r.JSON200
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -23406,9 +23550,11 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 
 // ListPrivateServiceGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
 //
+// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+//
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error) {
-	rsp, err := c.ListPrivateServiceGrants(ctx, privateServiceId, reqEditors...)
+func (c *ClientWithResponses) ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceGrantsParams, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error) {
+	rsp, err := c.ListPrivateServiceGrants(ctx, privateServiceId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -23552,9 +23698,11 @@ func (c *ClientWithResponses) CreateVisitorIngressAssignmentsWithResponse(ctx co
 
 // ListPrivateServiceInvitationsWithResponse performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
 //
+// Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+//
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error) {
-	rsp, err := c.ListPrivateServiceInvitations(ctx, privateServiceId, reqEditors...)
+func (c *ClientWithResponses) ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *ListPrivateServiceInvitationsParams, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error) {
+	rsp, err := c.ListPrivateServiceInvitations(ctx, privateServiceId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -23563,6 +23711,8 @@ func (c *ClientWithResponses) ListPrivateServiceInvitationsWithResponse(ctx cont
 
 // InvitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
 // with any type of body and a specified content type.
+//
+// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) InvitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error) {
@@ -23575,6 +23725,8 @@ func (c *ClientWithResponses) InvitePrivateServiceVisitorWithBodyWithResponse(ct
 
 // InvitePrivateServiceVisitorWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
 func (c *ClientWithResponses) InvitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error) {
 	rsp, err := c.InvitePrivateServiceVisitor(ctx, privateServiceId, params, body, reqEditors...)
 	if err != nil {
@@ -26510,7 +26662,7 @@ func ParseListPrivateServiceGrantsResponse(rsp *http.Response) (*ListPrivateServ
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []PrivateServiceGrant
+		var dest PrivateServiceGrantPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -26766,7 +26918,7 @@ func ParseListPrivateServiceInvitationsResponse(rsp *http.Response) (*ListPrivat
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []PrivateServiceInvitation
+		var dest PrivateServiceInvitationPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -26798,6 +26950,13 @@ func ParseInvitePrivateServiceVisitorResponse(rsp *http.Response) (*InvitePrivat
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest PrivateServiceInvitation
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -29980,7 +30139,7 @@ type ServerInterface interface {
 	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
 
 	// (GET /v1/private-services/{private_service_id}/grants)
-	ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+	ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params ListPrivateServiceGrantsParams)
 
 	// (POST /v1/private-services/{private_service_id}/grants)
 	CreatePrivateServiceGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params CreatePrivateServiceGrantParams)
@@ -30004,7 +30163,7 @@ type ServerInterface interface {
 	CreateVisitorIngressAssignments(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
 
 	// (GET /v1/private-services/{private_service_id}/invitations)
-	ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+	ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params ListPrivateServiceInvitationsParams)
 
 	// (POST /v1/private-services/{private_service_id}/invitations)
 	InvitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params InvitePrivateServiceVisitorParams)
@@ -31358,8 +31517,24 @@ func (siw *ServerInterfaceWrapper) ListPrivateServiceGrants(w http.ResponseWrite
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPrivateServiceGrantsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPrivateServiceGrants(w, r, privateServiceId)
+		siw.Handler.ListPrivateServiceGrants(w, r, privateServiceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -31612,8 +31787,24 @@ func (siw *ServerInterfaceWrapper) ListPrivateServiceInvitations(w http.Response
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPrivateServiceInvitationsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPrivateServiceInvitations(w, r, privateServiceId)
+		siw.Handler.ListPrivateServiceInvitations(w, r, privateServiceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

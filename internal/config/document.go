@@ -45,7 +45,7 @@ type TNL struct {
 	Services   Services             `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."`
 	Webhooks   map[string]Webhook   `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases    map[string]Alias     `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
-	CI         map[string]CI        `json:"ci,omitempty" yaml:"ci,omitempty" jsonschema_description:"Named GitHub workflow policies granting access to exact configured services."`
+	Workloads  map[string]Workload  `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
 }
 
 type Services map[string]Service

@@ -47,16 +47,22 @@ paths:
       - { $ref: "#/components/parameters/ServiceActorToken" }
     get:
       operationId: listWebsitePrivateServiceGrants
+      description: Up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization. Inventory is not proof of visitor access.
       security: [{ webServiceAuth: [] }]
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrantID" }
       responses:
         "200":
           description: Exact service grants, including expired and revoked records
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrant" }
+                {
+                  $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceGrantPage",
+                }
         default: { $ref: "#/components/responses/Problem" }
   /v1/service/private-services/{private_service_id}/grants/{grant_id}:
     parameters:
@@ -81,21 +87,26 @@ paths:
       - { $ref: "#/components/parameters/ServiceActorToken" }
     get:
       operationId: listWebsitePrivateServiceInvitations
+      description: Up to 100 records ordered by ID, including accepted, expired and revoked history, without secrets. Follow next_cursor until absent. Each page requires a fresh assertion bound to the exact query and current manager/source authorization.
       security: [{ webServiceAuth: [] }]
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitationID" }
       responses:
         "200":
           description: Exact service invitations without secrets
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  {
-                    $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitation",
-                  }
+                {
+                  $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitationPage",
+                }
         default: { $ref: "#/components/responses/Problem" }
     post:
       operationId: inviteWebsitePrivateServiceVisitor
+      description: Keep the same key and exact request when retrying with a fresh signed assertion. Current manager and company source checks run again. An exact retry returns HTTP 200 with the original ID and current state but no secret. If delivery was lost, explicitly revoke that ID and create with a new key and deadline. A changed service, email or deadline with the same actor/key returns conflict. No secret is retained for recovery.
       security: [{ webServiceAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -107,6 +118,14 @@ paths:
                 $ref: "../../control/v1/openapi.yaml#/components/schemas/CreatePrivateServiceInvitationRequest",
               }
       responses:
+        "200":
+          description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceInvitation",
+                }
         "201":
           description: Exact service invitation; secret returned only at creation
           content:
@@ -219,15 +238,49 @@ paths:
       responses:
         "204": { description: Exact managed HTTP credential revoked }
         default: { $ref: "#/components/responses/Problem" }
-  /v1/workload-sessions/github:
+  /v1/workload-sessions/identity:
     post:
-      operationId: exchangeGitHubWorkload
+      operationId: identifyWorkload
       security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/GitHubWorkloadExchange" }
+            schema: { $ref: "#/components/schemas/WorkloadIdentityRequest" }
+      responses:
+        "200":
+          description: Control-verified execution and policy binding, without creating a session or granting visitor access
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadIdentity" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}/assertions:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: attachWorkloadAssertion
+      security: [{ workloadAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadAssertion" }
+      responses:
+        "200":
+          description: Same key-bound session after verifying a rotating assertion against its immutable execution identity and current saved policy; never extends its deadline or service snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSession" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload-sessions/exchange:
+    post:
+      operationId: exchangeWorkload
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadExchange" }
       responses:
         "200":
           description: Retry-stable visitor-only key-bound session; 90 second lease, renew after 30 seconds, fixed absolute deadline
@@ -1210,14 +1263,63 @@ components:
         name: { type: string }
         protocol: { type: string }
         expires_at: { type: string, format: date-time }
-    GitHubWorkloadExchange:
+    WorkloadIdentityRequest:
       type: object
       additionalProperties: false
-      required: [team_id, project_key, ci, assertion, public_key, signature]
+      required: [team_id, project_key, source_fingerprint, workload, assertion]
       properties:
         team_id: { type: string, maxLength: 128 }
         project_key: { type: string, maxLength: 128 }
-        ci: { type: string, maxLength: 32 }
+        source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        workload: { type: string, maxLength: 32 }
+        assertion: { type: string, minLength: 1, maxLength: 32768 }
+    WorkloadIdentity:
+      type: object
+      additionalProperties: false
+      required: [binding, services, assertion_expires_at]
+      properties:
+        binding: { type: string, pattern: "^[0-9a-f]{64}$" }
+        services: { type: array, maxItems: 32, items: { type: string } }
+        assertion_expires_at:
+          {
+            type: string,
+            format: date-time,
+            description: Expiry verified by authority for the exact supplied assertion.,
+          }
+    WorkloadAssertion:
+      type: object
+      additionalProperties: false
+      required: [assertion, signature]
+      properties:
+        assertion: { type: string, minLength: 1, maxLength: 32768 }
+        signature:
+          type: string
+          description: Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-attach/v1", session_id, assertion_sha256_base64url].
+    WorkloadExchange:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          project_key,
+          source_fingerprint,
+          workload,
+          nonce,
+          assertion,
+          public_key,
+          signature,
+        ]
+      properties:
+        team_id:
+          {
+            type: string,
+            maxLength: 128,
+            description: Exact team ID or unique team-name selector. The response contains the canonical team ID.,
+          }
+        project_key: { type: string, maxLength: 128 }
+        workload: { type: string, maxLength: 32 }
+        source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        nonce: { type: string, pattern: "^[A-Za-z0-9_-]{16,128}$" }
         assertion: { type: string, minLength: 1, maxLength: 32768 }
         public_key: { type: string, description: Unpadded base64url Ed25519 public key }
         signature:
@@ -1228,6 +1330,24 @@ components:
         services:
           { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
     WorkloadSession:
+      # use the fields model so generated Go decoding still rejects unknown fields.
+      x-go-type: WorkloadSessionFields
+      allOf:
+        - $ref: "#/components/schemas/WorkloadSessionFields"
+        - oneOf:
+            - required: [github]
+              properties:
+                provider:
+                  type: string
+                  enum: [github]
+                  x-enum-varnames: [WorkloadSessionGitHub]
+            - not: { required: [github] }
+              properties:
+                provider:
+                  type: string
+                  enum: [vercel, fly, oidc]
+                  x-enum-varnames: [WorkloadSessionVercel, WorkloadSessionFly, WorkloadSessionOIDC]
+    WorkloadSessionFields:
       type: object
       additionalProperties: false
       required:
@@ -1236,30 +1356,44 @@ components:
           credential,
           team_id,
           project_key,
-          ci,
+          workload,
+          provider,
           subject,
           lease_expires_at,
           expires_at,
           renew_after,
           service_ids,
-          run_id,
-          run_attempt,
-          check_run_id,
+          binding,
         ]
       properties:
         id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
         credential: { type: string }
         team_id: { type: string }
         project_key: { type: string }
-        ci: { type: string }
+        workload: { type: string }
+        provider: { $ref: "../../control/v1/openapi.yaml#/components/schemas/WorkloadProvider" }
         subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
         lease_expires_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         renew_after: { type: string, format: date-time }
         service_ids: { type: array, maxItems: 32, items: { type: string } }
-        run_id: { type: string }
-        run_attempt: { type: string }
-        check_run_id: { type: string }
+        binding: { type: string, pattern: "^[0-9a-f]{64}$" }
+        github: { $ref: "#/components/schemas/WorkloadGitHubExecution" }
+        assertion_expires_at:
+          type: string
+          format: date-time
+          description: Verified expiry of the supplied assertion on exchange or attachment. Omitted on renewal; never extends the session window.
+    WorkloadGitHubExecution:
+      type: object
+      description: Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
+      additionalProperties: false
+      required: [repository_id, repository_owner_id, run_id, run_attempt, check_run_id]
+      properties:
+        repository_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        repository_owner_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        run_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        run_attempt: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        check_run_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
     CompanyConnections:
       type: object
       additionalProperties: false

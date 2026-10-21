@@ -65,7 +65,7 @@ func NewGitHubWorkloadVerifier(controlOrigin string, client *http.Client) (*GitH
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	c.Transport = keyFetchTransport{base: base}
+	c.Transport = keyFetchTransport{base: base, algorithms: []string{"RS256"}}
 	return &GitHubWorkloadVerifier{audience: audience, client: c, keys: oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), c), githubJWKS)}, nil
 }
 

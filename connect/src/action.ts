@@ -100,8 +100,8 @@ export async function main(options: {
 
 async function setup(options: Parameters<typeof main>[0]): Promise<void> {
   checkCancelled(options.signal);
-  const ci = core.getInput("ci");
-  if (!serviceKey.safeParse(ci).success) throw new ActionError("TNL_ACTION_CI_INVALID");
+  const workload = core.getInput("workload");
+  if (!serviceKey.safeParse(workload).success) throw new ActionError("TNL_ACTION_WORKLOAD_INVALID");
   const timeout = Number(core.getInput("timeout") || "90");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 300)
     throw new ActionError("TNL_ACTION_TIMEOUT_INVALID");
@@ -176,8 +176,8 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     const scopeArgs = [
       "--directory",
       directory,
-      "--ci",
-      ci,
+      "--workload",
+      workload,
       ...services.flatMap((key) => ["--service", key]),
     ];
     const parsed = contextSchema.safeParse(
@@ -198,7 +198,7 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       server.protocol !== "https:" ||
       server.origin !== context.server ||
       context.audience !== context.server ||
-      context.ci !== ci ||
+      context.workload !== workload ||
       (!inside(context.directory, directory) && context.directory !== directory) ||
       services.some((key) => !context.services.includes(key))
     )

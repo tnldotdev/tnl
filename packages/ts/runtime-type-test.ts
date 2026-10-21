@@ -12,6 +12,21 @@ declare const database: TnlConnectionRegistry["postgres"];
   dialect: "postgresql",
   dbCredentials: { ...database, user: "app", database: "app", password: "application-owned" },
 }) satisfies import("drizzle-kit").Config;
+({
+  ...database,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+  max: 5,
+  prepare: false,
+}) satisfies import("postgres").Options<{}>;
+declare const mysql: TnlConnectionRegistry["mysql"];
+({
+  ...mysql,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+}) satisfies import("mysql2").ConnectionOptions;
 
 tnl.port satisfies number;
 tnl.dev satisfies boolean;
@@ -22,7 +37,7 @@ const connection = tnl.connect("any-service");
 // @ts-expect-error an ungenerated service has a protocol union, never any.
 void connection.ssl;
 if ("ssl" in connection) {
-  connection.host satisfies "127.0.0.1";
+  connection.host satisfies string;
   connection.ssl.rejectUnauthorized satisfies true;
   // @ts-expect-error narrowing a SQL connection does not add HTTP settings.
   void connection.fetch;

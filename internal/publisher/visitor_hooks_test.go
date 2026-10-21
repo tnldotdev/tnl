@@ -150,6 +150,56 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	}
 }
 
+func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
+	var forwarded atomic.Int32
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if r.Header.Get("Authorization") != "caller-value" || r.Header.Get(localproxy.ReadinessProbeHeader) != "" {
+			t.Error("application auth or readiness credential separation failed")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	options := localproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}
+	if err := localproxy.PreflightWithOptions(t.Context(), upstream.URL, options); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.Load() != 0 {
+		t.Fatal("preflight sent an HTTP request to the target")
+	}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "public-test", Number: 8}
+	proof, err := NewReadinessProof(run, "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := localproxy.NewWithMountsHooksOptions(upstream.URL, run.Hostname, 1, nil, localproxy.ResponseHooks{}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Handler: proxy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	secret := proof.HeaderValue()
+	for _, want := range []int{http.StatusNoContent, http.StatusForbidden} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
+		r.Host = run.Hostname
+		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
+		r.Header.Set(localproxy.ReadinessProbeHeader, secret)
+		r.Header.Set("Authorization", "caller-value")
+		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
+		w := httptest.NewRecorder()
+		route.http.Handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("readiness status = %d, want %d", w.Code, want)
+		}
+	}
+	if forwarded.Load() != 1 || proof.HeaderValue() != "" {
+		t.Fatal("readiness proof was not consumed exactly once")
+	}
+}
+
 func TestHTTPPromotionRunsOncePerVisitorAndBeforeTarget(t *testing.T) {
 	var promoted atomic.Int32
 	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),

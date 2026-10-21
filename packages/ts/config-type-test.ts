@@ -572,6 +572,20 @@ defineConfig(remoteMount);
 // @ts-expect-error combined byte rates are removed.
 ({ publicURL: { limits: { traffic: { rate: { bytes: 1024, per: "1s" } } } } }) satisfies TnlConfig;
 
+({
+  services: {
+    api: {
+      target: {
+        type: "address",
+        address: "https://api.example",
+        tls: {},
+        // @ts-expect-error application authentication is not target configuration.
+        auth: {},
+      },
+    },
+  },
+}) satisfies TnlConfig;
+
 defineConfig({
   publishers: { production: { aws: { replicas: 2 } } },
   services: {
@@ -585,8 +599,9 @@ defineConfig({
       target: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
     },
   },
-  ci: {
+  workloads: {
     deploy: {
+      provider: "github",
       github: {
         workflow: ".github/workflows/deploy.yml",
         ref: "refs/heads/main",
@@ -599,15 +614,48 @@ defineConfig({
 });
 defineConfig({
   services: { api: {} },
-  ci: {
+  workloads: {
     deploy: {
+      provider: "github",
       github: {
         workflow: ".github/workflows/deploy.yml",
         ref: "refs/heads/main",
         events: ["push"],
       },
-      // @ts-expect-error CI policies select existing service keys.
+      // @ts-expect-error workload policies select existing service keys.
       services: ["missing"],
+    },
+  },
+});
+defineConfig({
+  services: {
+    inventory: {},
+    models: { protocol: "postgres", target: { type: "address", address: "localhost:5432" } },
+  },
+  workloads: {
+    storefront: {
+      provider: "vercel",
+      teamId: "team_one",
+      projectId: "prj_store",
+      environment: "production",
+      services: ["inventory", "models"],
+    },
+    machine: {
+      provider: "fly",
+      org: "acme",
+      orgId: "123",
+      app: "store",
+      appId: "456",
+      services: ["inventory"],
+    },
+    worker: {
+      provider: "oidc",
+      issuer: "https://issuer.example",
+      jwksUrl: "https://issuer.example/.well-known/jwks",
+      audience: "tnl-store",
+      claims: { sub: "service:store" },
+      tokenFile: "/run/provider/token",
+      services: ["models"],
     },
   },
 });

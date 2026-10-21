@@ -21,7 +21,7 @@ func TestIntegrationManagedServiceGroupMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := first.Services[0]
-	grants, err := d.ListPrivateServiceGrants(t.Context(), old.ServiceID, r.ActorID)
+	grants, _, err := d.ListPrivateServiceGrants(t.Context(), old.ServiceID, r.ActorID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestIntegrationManagedServiceGroupMove(t *testing.T) {
 	if endpoint.ServiceID != old.ServiceID || endpoint.Port != old.Port || endpoint.Hostname == old.Hostname || !strings.HasPrefix(endpoint.Hostname, "database.staging.") {
 		t.Fatal("move did not retain identity and change namespace", old, endpoint)
 	}
-	after, err := d.ListPrivateServiceGrants(t.Context(), old.ServiceID, r.ActorID)
+	after, _, err := d.ListPrivateServiceGrants(t.Context(), old.ServiceID, r.ActorID, "")
 	if err != nil || len(after) != len(grants) {
 		t.Fatal("move lost visitor grants", after, err)
 	}

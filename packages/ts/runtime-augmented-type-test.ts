@@ -64,21 +64,40 @@ db.port = 5432;
 // @ts-expect-error TLS verification is read-only.
 db.ssl.servername = "other.example";
 const mysql = await tnl.connect("mysql");
+mysql.host satisfies string;
 mysql.ssl.servername satisfies string;
 mysql.ssl.rejectUnauthorized satisfies true;
+mysql.ssl.verifyIdentity satisfies true;
+({
+  ...mysql,
+  user: "app",
+  password: "application-owned",
+  database: "app",
+}) satisfies import("mysql2").ConnectionOptions;
 const cluster = await tnl.connect("cluster");
 cluster.server satisfies `https://${string}`;
 cluster.kubeconfig satisfies string;
 cluster.context satisfies string;
 const api = await tnl.connect("api");
 api.fetch satisfies typeof fetch;
+const immediateAPI = tnl.connect("api");
+immediateAPI.fetch("/stock") satisfies Promise<Response>;
+// @ts-expect-error HTTP options are read-only before and after preparation.
+immediateAPI.url = "https://other.example";
+// @ts-expect-error HTTP options never expose a local driver port.
+void api.port;
 // @ts-expect-error HTTP clients do not expose TLS keys as metadata.
 void api.ssl;
 // @ts-expect-error SQL account credentials belong to the application.
 void db.password;
 const privateTLS = { servername: "db.example", rejectUnauthorized: true } as const;
 ({ host: "127.0.0.1", port: 5432, ssl: privateTLS }) satisfies TnlConnectionRegistry["postgres"];
-({ host: "127.0.0.1", port: 3306, ssl: privateTLS }) satisfies TnlConnectionRegistry["mysql"];
+({
+  host: "db.example",
+  port: 3306,
+  ssl: { ...privateTLS, verifyIdentity: true },
+  stream: mysql.stream,
+}) satisfies TnlConnectionRegistry["mysql"];
 
 type Union = TnlProjectFromConfig<{
   services: { choice: { protocol: "postgres" } | { protocol: "mysql" } };

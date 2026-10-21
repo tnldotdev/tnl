@@ -159,6 +159,11 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	if n.route.Id == "" || n.route.Id != id {
 		return controlv1.PublishRunSetup{}, ErrScope
 	}
+	// a deployed owner must still hold its accepted epoch before creating a
+	// replacement run. a stale heartbeat must not loop into another signed run.
+	if err := n.renewRuntime(ctx); err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
 	token, err := n.Access(ctx)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err

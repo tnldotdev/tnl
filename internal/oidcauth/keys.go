@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
@@ -32,7 +33,10 @@ type keyFetchError struct{ cause error }
 func (e *keyFetchError) Error() string { return "OIDC signing keys are unavailable" }
 func (e *keyFetchError) Unwrap() error { return e.cause }
 
-type keyFetchTransport struct{ base http.RoundTripper }
+type keyFetchTransport struct {
+	base       http.RoundTripper
+	algorithms []string
+}
 
 func (t keyFetchTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(request)
@@ -65,9 +69,9 @@ func (t keyFetchTransport) RoundTrip(request *http.Request) (*http.Response, err
 		if err := json.Unmarshal(raw, &metadata); err != nil {
 			return nil, &keyFetchError{err}
 		}
-		// only RS256 can authenticate this server. ignore unrelated algorithms
-		// and unsupported key types as required by the JWK set contract.
-		if metadata.Algorithm != "" && metadata.Algorithm != "RS256" {
+		// ignore algorithms outside this verifier's trust boundary and
+		// unsupported key types as required by the JWK set contract.
+		if metadata.Algorithm != "" && !slices.Contains(t.algorithms, metadata.Algorithm) {
 			continue
 		}
 		var key jose.JSONWebKey
@@ -117,6 +121,6 @@ func providerKeySet(ctx context.Context, provider *oidc.Provider) (oidc.KeySet, 
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	client.Transport = keyFetchTransport{base: base}
+	client.Transport = keyFetchTransport{base: base, algorithms: []string{"RS256"}}
 	return oidc.NewRemoteKeySet(oidc.ClientContext(ctx, &client), metadata.URI), nil
 }

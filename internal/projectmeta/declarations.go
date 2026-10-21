@@ -54,24 +54,35 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		}
 		shape["publishers"] = publishers
 		policies := map[string]any{}
-		for name, policy := range configuration.CI {
-			github := map[string]any{"workflow": policy.GitHub.Workflow, "ref": policy.GitHub.Ref, "events": policy.GitHub.Events}
-			if policy.GitHub.Repository != nil {
-				github["repository"] = *policy.GitHub.Repository
+		for name, policy := range configuration.Workloads {
+			value := map[string]any{"provider": policy.Provider, "services": policy.Services}
+			if policy.GitHub != nil {
+				github := map[string]any{"workflow": policy.GitHub.Workflow, "ref": policy.GitHub.Ref, "events": policy.GitHub.Events}
+				if policy.GitHub.Repository != nil {
+					github["repository"] = *policy.GitHub.Repository
+				}
+				if policy.GitHub.Environment != nil {
+					github["environment"] = *policy.GitHub.Environment
+				}
+				if policy.GitHub.ReusableWorkflow != nil {
+					github["reusableWorkflow"] = *policy.GitHub.ReusableWorkflow
+				}
+				value["github"] = github
 			}
-			if policy.GitHub.Environment != nil {
-				github["environment"] = *policy.GitHub.Environment
+			for k, v := range map[string]string{"teamId": policy.TeamID, "projectId": policy.ProjectID, "environment": policy.Environment, "teamSlug": policy.TeamSlug, "issuerMode": policy.IssuerMode, "org": policy.Org, "orgId": policy.OrgID, "app": policy.App, "appId": policy.AppID, "machineId": policy.MachineID, "issuer": policy.Issuer, "jwksUrl": policy.JWKSURL, "audience": policy.Audience, "tokenFile": policy.TokenFile} {
+				if v != "" {
+					value[k] = v
+				}
 			}
-			if policy.GitHub.ReusableWorkflow != nil {
-				github["reusableWorkflow"] = *policy.GitHub.ReusableWorkflow
+			if len(policy.Claims) > 0 {
+				value["claims"] = policy.Claims
 			}
-			value := map[string]any{"services": policy.Services, "github": github}
 			if policy.MaxDuration != nil {
 				value["maxDuration"] = policy.MaxDuration.Value().String()
 			}
 			policies[name] = value
 		}
-		shape["ci"] = policies
+		shape["workloads"] = policies
 		aliases := map[string]any{}
 		for name, alias := range configuration.Aliases {
 			aliases[name] = map[string]any{"service": alias.Service}

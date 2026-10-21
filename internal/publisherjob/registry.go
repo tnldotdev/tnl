@@ -21,11 +21,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
+	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -43,6 +46,9 @@ const registryName = "publisher-jobs-v1"
 type OpenOptions struct {
 	Root string
 	User bool
+	// StandaloneGroups permits identity-only group jobs under the current uid,
+	// independently of user-session connector support.
+	StandaloneGroups bool
 	// tests must explicitly select their uid for isolated system state.
 	TestOwnerUID *int
 }
@@ -80,6 +86,8 @@ type Job struct {
 	Target           string                          `json:"target"`
 	Protocol         config.ProtocolName             `json:"protocol"`
 	TargetTLSName    string                          `json:"target_tls_name,omitempty"`
+	VerifyReadiness  bool                            `json:"verify_readiness,omitempty"`
+	ReadinessPath    string                          `json:"readiness_path,omitempty"`
 	// trust is captured at install time, so boot never depends on a user's files.
 	TargetCAPEM []byte                      `json:"target_ca_pem,omitempty"`
 	ServerCAPEM []byte                      `json:"server_ca_pem,omitempty"`
@@ -99,6 +107,7 @@ func (j Job) GoString() string { return j.String() }
 
 // status contains approved observations only; errors and tokens never enter it.
 type Status struct {
+	PublicURL        string `json:"public_url,omitempty"`
 	ObservedRevision int64  `json:"observed_revision,omitempty"`
 	State            string `json:"state"`
 	Failure          string `json:"failure,omitempty"`
@@ -112,6 +121,7 @@ type Registry struct {
 	root     string
 	owner    int
 	user     bool
+	groups   bool
 	pins     map[string]os.FileInfo
 	key      []byte
 }
@@ -119,7 +129,7 @@ type Registry struct {
 // Open uses a standalone database and file wrapping key, including on macOS.
 func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	owner := 0
-	if options.User {
+	if options.User || options.StandaloneGroups {
 		owner = os.Getuid()
 	}
 	if options.TestOwnerUID != nil {
@@ -151,7 +161,7 @@ func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, pins: map[string]os.FileInfo{}}
+	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, groups: options.User || options.StandaloneGroups, pins: map[string]os.FileInfo{}}
 	// pin the registry lock before any reader or writer can use it.
 	lock, err := filelock.AcquireContext(ctx, filepath.Join(r.root, "jobs.lock"), owner)
 	if err == nil {
@@ -180,6 +190,16 @@ func (r *Registry) Profile(ctx context.Context, server string) (*clientstate.Sto
 		return nil, err
 	}
 	return r.database.Server(ctx, server)
+}
+
+// Credential exports only an installed job's exact scoped signing identity for
+// a private installer handoff. control sessions are outside this representation.
+func (r *Registry) Credential(ctx context.Context, job Job) (credentialfile.File, error) {
+	identity, private, _, err := r.signingIdentity(ctx, job)
+	if err != nil {
+		return credentialfile.File{}, err
+	}
+	return credentialfile.New(job.Server, identity, private)
 }
 
 // Install binds a key to this job, server, and exact grant. a failed registry
@@ -415,7 +435,7 @@ func (r *Registry) load(ctx context.Context) ([]Job, error) {
 		return nil, err
 	}
 	var jobs []Job
-	if json.Unmarshal(value, &jobs) != nil || len(jobs) > 1024 {
+	if httpjson.Decode(json.NewDecoder(bytes.NewReader(value)), &jobs) != nil || len(jobs) > 1024 {
 		return nil, ErrUnsafeState
 	}
 	seen := map[string]bool{}
@@ -472,6 +492,9 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 }
 
 func validateJob(job *Job) error {
+	if job.ReadinessPath != "" && (job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !localproxy.ValidMountPrefix(job.ReadinessPath)) {
+		return ErrScope
+	}
 	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
 		return ErrScope
 	}

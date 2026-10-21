@@ -45,7 +45,8 @@ WHERE id = sqlc.arg(id) AND private_service_id = sqlc.arg(private_service_id) AN
 
 -- name: ListPrivateServiceGrants :many
 SELECT * FROM control.private_service_grants WHERE private_service_id = sqlc.arg(private_service_id)
-ORDER BY id LIMIT 101;
+AND id COLLATE "C" > sqlc.arg(after_id)
+ORDER BY id COLLATE "C" LIMIT 101;
 
 -- name: InsertPrivateServiceInvitation :one
 INSERT INTO control.private_service_invitations(id, private_service_id, team_id, normalized_email,
@@ -82,7 +83,14 @@ WHERE invitation_id = sqlc.arg(invitation_id) AND private_service_id = sqlc.arg(
 
 -- name: ListPrivateServiceInvitations :many
 SELECT * FROM control.private_service_invitations
-WHERE private_service_id = sqlc.arg(private_service_id) ORDER BY id LIMIT 101;
+WHERE private_service_id = sqlc.arg(private_service_id) AND id COLLATE "C" > sqlc.arg(after_id)
+ORDER BY id COLLATE "C" LIMIT 101;
+
+-- name: FindPrivateServiceInvitationRequest :one
+-- the caller rechecks current management before recovering metadata, never secrets.
+SELECT * FROM control.private_service_invitations
+WHERE created_by_identity_id = sqlc.arg(created_by_identity_id)
+AND idempotency_key = sqlc.arg(idempotency_key) FOR UPDATE;
 
 -- name: ListAvailablePrivateServices :many
 -- visitor inventory includes authorized saved services while the publisher is
@@ -340,9 +348,10 @@ WHERE id = sqlc.arg(id) AND identity_id = sqlc.arg(identity_id) AND revoked_at I
 -- name: CleanupPrivateConnectorSessions :exec
 DELETE FROM control.private_connector_sessions session WHERE session.id IN
     (SELECT expired.id FROM control.private_connector_sessions expired
-        WHERE expired.expires_at <= sqlc.arg(now) LIMIT 100)
-    AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream
-        WHERE stream.connector_session_id = session.id);
+        WHERE expired.workload_session_id IS NULL AND expired.expires_at <= sqlc.arg(now)
+        AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream
+            WHERE stream.connector_session_id = expired.id)
+        ORDER BY expired.expires_at, expired.id LIMIT 100 FOR UPDATE SKIP LOCKED);
 
 -- name: RecheckPrivateServiceVisitor :one
 -- revalidate the admitted stream, live device, grant and exact run. identity

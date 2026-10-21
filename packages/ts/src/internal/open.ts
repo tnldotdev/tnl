@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { isIP } from "node:net";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
+import { operation, independent, scheduled, background, bound } from "./tracing.js";
 import {
   startRuntime,
   runtimeRequest,
@@ -64,13 +65,22 @@ const dependencies: Dependencies = {
 };
 
 // registration acknowledges a listener; filtered status identifies its exact run.
-export async function openServer(
+export function openServer(
   server: LocalHTTPServer,
   options: OpenOptions = {},
   runtime: Dependencies = dependencies,
 ): Promise<AdHocTunnel> {
+  return operation("sdk.open", () => openServerUntraced(server, options, runtime));
+}
+
+async function openServerUntraced(
+  server: LocalHTTPServer,
+  options: OpenOptions,
+  runtime: Dependencies,
+): Promise<AdHocTunnel> {
   validateOptions(options);
   const target = await listeningTarget(server, options);
+  bound();
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
   const invocationID = `ivk_${Array.from(
@@ -152,10 +162,10 @@ export async function openServer(
     process.off("beforeExit", beforeExit);
     if (!isBunServer(server)) server.off("close", onListenerClose);
     if (!terminal && !readyReached) rejectReady(aborted());
-    closePromise = (async () => {
+    closePromise = operation("sdk.open.cleanup", async () => {
       await monitoring;
       await runtime.request(endpoint, "unregister", registration);
-    })().then(
+    }).then(
       () => {
         if (!terminal) {
           terminal = true;
@@ -196,8 +206,9 @@ export async function openServer(
   const onAbort = () => {
     fail(aborted());
   };
+  const exitCleanup = scheduled(close);
   const beforeExit = () => {
-    void close().catch(() => {});
+    void exitCleanup().catch(() => {});
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   process.once("beforeExit", beforeExit);
@@ -221,12 +232,24 @@ export async function openServer(
     } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
   // registering acknowledges the listener, not routability.
-  const monitoring = (async () => {
+  const statusRequest = independent("sdk.open.status", () => runtime.request(endpoint, "status"));
+  const renew = independent("sdk.open.renew", () =>
+    runtime.request(endpoint, "renew", registration),
+  );
+  const recover = independent("sdk.open.recover", async () => {
+    endpoint = await runtime.start(directory, undefined, selection);
+    registration = parseRegistration(
+      await runtime.request(endpoint, "ad-hoc/register", request),
+      owner,
+      target,
+    );
+  });
+  const monitoring = background(async () => {
     while (!closed && !terminal) {
       try {
         if (!isBunServer(server) && !server.listening) throw new TnlError("sdk.listener_failed");
         const status = parseStatus(
-          await runtime.request(endpoint, "status"),
+          await statusRequest(),
           invocationID,
           registration.registration_id,
           target,
@@ -236,7 +259,7 @@ export async function openServer(
         await Promise.race([runtime.pause(250), closingSignal]);
         if (closed || terminal) break;
         if (Date.now() - lastRenew >= 5_000) {
-          await runtime.request(endpoint, "renew", registration);
+          await renew();
           lastRenew = Date.now();
         }
       } catch (cause) {
@@ -246,12 +269,7 @@ export async function openServer(
           (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.registration_stale")
         ) {
           try {
-            endpoint = await runtime.start(directory, undefined, selection);
-            registration = parseRegistration(
-              await runtime.request(endpoint, "ad-hoc/register", request),
-              owner,
-              target,
-            );
+            await recover();
             continue;
           } catch (restartError) {
             if (
@@ -270,7 +288,7 @@ export async function openServer(
         break;
       }
     }
-  })();
+  });
   if (isBunServer(server)) {
     const original = server.stop.bind(server);
     server.stop = async (force) => {

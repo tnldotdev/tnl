@@ -58,7 +58,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	} else if !errors.Is(err, controlclient.ErrNotFound) {
 		return err
 	}
-	if err = bindProjectCI(ctx, project, &declaration, existing.Configuration); err != nil {
+	if err = bindProjectWorkloads(ctx, project, &declaration, existing.Configuration); err != nil {
 		return err
 	}
 	applied, err := session.authenticated.Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
@@ -71,7 +71,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if applied.ProjectKey != source.Key || applied.TeamId != current.team.Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 {
 		return failure.Wrap("read applied project", failure.ServerResponseInvalid, errors.New("control returned another project configuration"))
 	}
-	if len(project.Config.CI) != 0 {
+	if len(project.Config.Workloads) != 0 {
 		team := ""
 		if project.Config.Team != nil {
 			team = *project.Config.Team

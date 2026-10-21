@@ -23,24 +23,68 @@ import (
 )
 
 func workloadConfiguration() ProjectConfiguration {
-	return ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "production", Target: "api.internal:3000"}, "db": {Publisher: "production", Protocol: "postgres", Target: "db.internal:5432"}}, CI: map[string]ProjectCI{"test": {GitHub: ProjectCIGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
+	return ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "production", Target: "api.internal:3000"}, "db": {Publisher: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
 }
 
-func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time.Time) (ExchangeGitHubWorkloadRequest, ed25519.PrivateKey) {
+func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time.Time) (ExchangeWorkloadRequest, ed25519.PrivateKey) {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := oidcauth.GitHubExecution{Subject: "repo:example/repository:ref:refs/heads/main", JTI: "assertion", Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Event: "push", RunID: "111", RunAttempt: "1", CheckRunID: "222", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix()}
-	request := ExchangeGitHubWorkloadRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, CI: "test", Execution: c, PublicKey: public}
+	request := ExchangeWorkloadRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Nonce: rand.Text(), Workload: "test", Execution: oidcauth.WorkloadExecution{Provider: "github", Issuer: oidcauth.GitHubIssuer, Subject: c.Subject, GitHub: &c, IssuedAt: c.IssuedAt, NotBefore: c.NotBefore, ExpiresAt: c.ExpiresAt}, PublicKey: public}
 	signWorkloadRequest(&request, key)
 	return request, key
 }
-func signWorkloadRequest(r *ExchangeGitHubWorkloadRequest, key ed25519.PrivateKey) {
+func signWorkloadRequest(r *ExchangeWorkloadRequest, key ed25519.PrivateKey) {
 	data, _ := json.Marshal(r.Execution)
 	r.Execution.AssertionDigest = sha256.Sum256(data)
-	r.Signature = ed25519.Sign(key, workloadproof.Digest(r.TeamID, r.ProjectKey, r.CI, r.Execution.AssertionDigest, r.Services))
+	r.Signature = ed25519.Sign(key, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, r.Execution.AssertionDigest, r.Services))
+}
+
+func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "workload_reusable")
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = workloadConfiguration()
+	trust := oidcauth.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
+	r.Configuration.Workloads = map[string]ProjectWorkload{"storefront": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
+	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	request, key := workloadExchange(t, r, now)
+	request.Workload = "storefront"
+	request.Execution = oidcauth.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(2 * time.Hour).Unix(), Vercel: &oidcauth.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
+	signWorkloadRequest(&request, key)
+	session, err := d.ExchangeWorkload(t.Context(), request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for at := now.Add(30 * time.Second); at.Before(session.ExpiresAt); at = at.Add(30 * time.Second) {
+		renewed, e := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, at)
+		if e != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) {
+			t.Fatal("renew changed fixed window", e)
+		}
+	}
+	if _, err = d.ExchangeWorkload(t.Context(), request, session.ExpiresAt.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("nonce retry resurrected expired window", err)
+	}
+	_, otherKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := request
+	other.PublicKey = otherKey.Public().(ed25519.PublicKey)
+	signWorkloadRequest(&other, otherKey)
+	if _, err = d.ExchangeWorkload(t.Context(), other, now); !errors.Is(err, ErrWorkloadConflict) {
+		t.Fatal("new key took over original nonce", err)
+	}
+	other.Nonce = rand.Text()
+	signWorkloadRequest(&other, otherKey)
+	next, err := d.ExchangeWorkload(t.Context(), other, session.ExpiresAt.Add(time.Second))
+	if err != nil || next.ID == session.ID || !next.ExpiresAt.Equal(session.ExpiresAt.Add(time.Hour+time.Second)) {
+		t.Fatal("valid reusable token did not start a new fixed session", err)
+	}
 }
 
 func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
@@ -58,7 +102,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		}
 	}
 	exchange, _ := workloadExchange(t, r, now)
-	first, err := d.ExchangeGitHubWorkload(ctx, exchange, now)
+	first, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +132,9 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		t.Fatal("replayed handle revived expired lease", err)
 	}
 	secondRequest, key := workloadExchange(t, r, expired)
-	secondRequest.Execution.CheckRunID, secondRequest.Execution.JTI = "333", "second"
+	secondRequest.Execution.GitHub.CheckRunID, secondRequest.Execution.GitHub.JTI = "333", "second"
 	signWorkloadRequest(&secondRequest, key)
-	second, err := d.ExchangeGitHubWorkload(ctx, secondRequest, expired)
+	second, err := d.ExchangeWorkload(ctx, secondRequest, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,16 +156,16 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		}
 	}
 	r.ExpectedRevision = applied.Revision
-	policy := r.Configuration.CI["test"]
+	policy := r.Configuration.Workloads["test"]
 	policy.MaxDurationSeconds = 6 * 60 * 60
-	r.Configuration.CI["test"] = policy
+	r.Configuration.Workloads["test"] = policy
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	maximumRequest, key := workloadExchange(t, r, expired)
-	maximumRequest.Execution.CheckRunID, maximumRequest.Execution.JTI = "444", "maximum"
+	maximumRequest.Execution.GitHub.CheckRunID, maximumRequest.Execution.GitHub.JTI = "444", "maximum"
 	signWorkloadRequest(&maximumRequest, key)
-	maximum, err := d.ExchangeGitHubWorkload(ctx, maximumRequest, expired)
+	maximum, err := d.ExchangeWorkload(ctx, maximumRequest, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +204,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	results := make(chan WorkloadSession, 8)
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Go(func() { v, err := d.ExchangeGitHubWorkload(ctx, exchange, now); results <- v; errs <- err })
+		wg.Go(func() { v, err := d.ExchangeWorkload(ctx, exchange, now); results <- v; errs <- err })
 	}
 	wg.Wait()
 	close(results)
@@ -184,25 +228,27 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	replacement := exchange
 	replacement.PublicKey = newKey.Public().(ed25519.PublicKey)
 	signWorkloadRequest(&replacement, newKey)
-	if _, err = d.ExchangeGitHubWorkload(ctx, replacement, now); !errors.Is(err, ErrWorkloadConflict) {
+	if _, err = d.ExchangeWorkload(ctx, replacement, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("new key stole session", err)
 	}
-	for name, edit := range map[string]func(*ExchangeGitHubWorkloadRequest){"repository-id": func(r *ExchangeGitHubWorkloadRequest) { r.Execution.RepositoryID = "999" }, "owner-id": func(r *ExchangeGitHubWorkloadRequest) { r.Execution.RepositoryOwnerID = "999" }, "workflow": func(r *ExchangeGitHubWorkloadRequest) {
-		r.Execution.WorkflowRef = "example/repository/.github/workflows/evil.yml@refs/heads/main"
-	}, "ref": func(r *ExchangeGitHubWorkloadRequest) { r.Execution.Ref = "refs/heads/other" }, "event": func(r *ExchangeGitHubWorkloadRequest) { r.Execution.Event = "pull_request" }} {
+	for name, edit := range map[string]func(*ExchangeWorkloadRequest){"repository-id": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.RepositoryID = "999" }, "owner-id": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.RepositoryOwnerID = "999" }, "workflow": func(r *ExchangeWorkloadRequest) {
+		r.Execution.GitHub.WorkflowRef = "example/repository/.github/workflows/evil.yml@refs/heads/main"
+	}, "ref": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.Ref = "refs/heads/other" }, "event": func(r *ExchangeWorkloadRequest) { r.Execution.GitHub.Event = "pull_request" }} {
 		t.Run(name, func(t *testing.T) {
 			bad := exchange
+			bad.Execution.GitHub = new(*exchange.Execution.GitHub)
 			edit(&bad)
 			signWorkloadRequest(&bad, key)
-			if _, err := d.ExchangeGitHubWorkload(ctx, bad, now); !errors.Is(err, ErrWorkloadDenied) {
+			if _, err := d.ExchangeWorkload(ctx, bad, now); !errors.Is(err, ErrWorkloadDenied) {
 				t.Fatal("wrong claims accepted", err)
 			}
 		})
 	}
 	replay := exchange
-	replay.Execution.CheckRunID = "333"
+	replay.Execution.GitHub = new(*exchange.Execution.GitHub)
+	replay.Execution.GitHub.CheckRunID = "333"
 	signWorkloadRequest(&replay, key)
-	if _, err = d.ExchangeGitHubWorkload(ctx, replay, now); !errors.Is(err, ErrWorkloadConflict) {
+	if _, err = d.ExchangeWorkload(ctx, replay, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("jti moved to another execution", err)
 	}
 	renewed, err := d.RenewWorkloadSession(ctx, original.ID, original.Credential, now.Add(30*time.Second))
@@ -214,9 +260,9 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	p := r.Configuration.CI["test"]
+	p := r.Configuration.Workloads["test"]
 	p.Services = []string{"api"}
-	r.Configuration.CI["test"] = p
+	r.Configuration.Workloads["test"] = p
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +273,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 		t.Fatal("narrowing failed", services, err)
 	}
 	p.Services = []string{"api", "db"}
-	r.Configuration.CI["test"] = p
+	r.Configuration.Workloads["test"] = p
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +283,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatal("re-added service expanded issued session", services, err)
 	}
-	if _, err = d.ExchangeGitHubWorkload(ctx, exchange, now.Add(time.Minute)); err != nil {
+	if _, err = d.ExchangeWorkload(ctx, exchange, now.Add(time.Minute)); err != nil {
 		t.Fatal("same JWT/key could not resume after policy addition", err)
 	}
 	for at := now.Add(90 * time.Second); at.Before(original.ExpiresAt); at = at.Add(30 * time.Second) {
@@ -258,9 +304,9 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
-	p := r.Configuration.CI["test"]
+	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
-	r.Configuration.CI["test"] = p
+	r.Configuration.Workloads["test"] = p
 	group := r.Configuration.Publishers["production"]
 	group.Public = true
 	r.Configuration.Publishers["production"] = group
@@ -281,7 +327,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	run := readyAppliedPrivateRun(t, d, access, replica.private, service, leases, now)
 	exchange, key := workloadExchange(t, r, now)
-	session, err := d.ExchangeGitHubWorkload(ctx, exchange, now)
+	session, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +435,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	// policy removal denies still-live admissions before their earlier deadline.
 	r.ExpectedRevision = applied.Revision
-	r.Configuration.CI = nil
+	r.Configuration.Workloads = nil
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +460,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 	exchange, key := workloadExchange(t, r, now)
 	exchange.Services = []string{"api"}
 	signWorkloadRequest(&exchange, key)
-	first, err := d.ExchangeGitHubWorkload(ctx, exchange, now)
+	first, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +470,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 	broader := exchange
 	broader.Services = []string{"api", "db"}
 	signWorkloadRequest(&broader, key)
-	if _, err = d.ExchangeGitHubWorkload(ctx, broader, now); !errors.Is(err, ErrWorkloadConflict) {
+	if _, err = d.ExchangeWorkload(ctx, broader, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("execution unioned service grants", err)
 	}
 	var wg sync.WaitGroup
@@ -434,10 +480,12 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			request := exchange
-			request.Execution.CheckRunID = fmt.Sprint(1000 + i)
-			request.Execution.JTI = fmt.Sprint(1000 + i)
+			request.Execution.GitHub = new(*exchange.Execution.GitHub)
+			request.Nonce = rand.Text()
+			request.Execution.GitHub.CheckRunID = fmt.Sprint(1000 + i)
+			request.Execution.GitHub.JTI = fmt.Sprint(1000 + i)
 			signWorkloadRequest(&request, key)
-			_, err := d.ExchangeGitHubWorkload(ctx, request, now)
+			_, err := d.ExchangeWorkload(ctx, request, now)
 			if err != nil && !errors.Is(err, ErrWorkloadDenied) {
 				errs <- err
 			} else {
@@ -445,7 +493,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 			}
 		})
 	}
-	r.Configuration.CI = nil
+	r.Configuration.Workloads = nil
 	wg.Go(func() { <-start; _, err := d.ApplyProjectConfiguration(ctx, r); errs <- err })
 	close(start)
 	wg.Wait()

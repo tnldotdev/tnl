@@ -194,14 +194,18 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		}
 		until := time.Now().Add(time.Minute)
 		write(w, controlv1.PublisherRuntimeResponse{Epoch: 1, LeaseExpiresAt: &until, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: until}})
-	case "/v1/publisher-groups/lease":
+	case "/v1/publisher-groups/lease", "/v1/publisher-groups/verify":
 		var request controlv1.PublisherGroupLeaseRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		if !f.verify(t, request.Assertion, m.GroupId, f.Server.URL+r.URL.Path) {
 			w.WriteHeader(401)
 			return
 		}
-		write(w, controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: time.Now().Add(time.Minute)})
+		if r.URL.Path == "/v1/publisher-groups/verify" {
+			write(w, controlv1.PublisherGroupVerification{Member: m, GroupNames: []string{m.GroupName}})
+		} else {
+			write(w, controlv1.PublisherGroupLease{AccessToken: "fixture-group", ExpiresAt: time.Now().Add(time.Minute)})
+		}
 	case "/v1/publisher-groups/assignments":
 		if r.Header.Get("Authorization") != "Bearer fixture-group" {
 			t.Error("assignment lacked group lease")

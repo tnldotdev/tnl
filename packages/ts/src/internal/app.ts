@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { TnlError } from "../errors.js";
+import { operation, independent, scheduled, bound as observeBound } from "./tracing.js";
 import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import {
   startRuntime,
@@ -91,11 +92,22 @@ export function prepareService(
   return prepared;
 }
 
-export async function createPreparedService(
+export function createPreparedService(
   options: PrepareOptions,
   framework: Framework,
   dependencies: Dependencies,
   onClose: () => void = () => {},
+): Promise<PreparedService> {
+  return operation("sdk.prepare", () =>
+    createPreparedServiceUntraced(options, framework, dependencies, onClose),
+  );
+}
+
+async function createPreparedServiceUntraced(
+  options: PrepareOptions,
+  framework: Framework,
+  dependencies: Dependencies,
+  onClose: () => void,
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
@@ -135,27 +147,28 @@ export async function createPreparedService(
     owner,
     ...(target === undefined ? {} : { target }),
   });
-  const reconnect = async () => {
-    const replacementEndpoint = await dependencies.start(directory, undefined, selection);
-    const replacement = parseAssignment(
-      await dependencies.request(replacementEndpoint, "prepare", prepareRequest),
-    );
-    if (
-      replacement.publicURL !== initial.publicURL ||
-      replacement.service !== initial.service ||
-      replacement.service !== replacementEndpoint.service
-    ) {
-      await dependencies.request(replacementEndpoint, "unregister", {
-        version: 1,
-        registration_id: replacement.registrationID,
-        owner,
-      });
-      throw new TnlError("sdk.response_invalid");
-    }
-    endpoint = replacementEndpoint;
-    assignment = replacement;
-    released = false;
-  };
+  const reconnect = () =>
+    operation("sdk.app.recover", async () => {
+      const replacementEndpoint = await dependencies.start(directory, undefined, selection);
+      const replacement = parseAssignment(
+        await dependencies.request(replacementEndpoint, "prepare", prepareRequest),
+      );
+      if (
+        replacement.publicURL !== initial.publicURL ||
+        replacement.service !== initial.service ||
+        replacement.service !== replacementEndpoint.service
+      ) {
+        await dependencies.request(replacementEndpoint, "unregister", {
+          version: 1,
+          registration_id: replacement.registrationID,
+          owner,
+        });
+        throw new TnlError("sdk.response_invalid");
+      }
+      endpoint = replacementEndpoint;
+      assignment = replacement;
+      released = false;
+    });
   const release = async () => {
     clearTimeout(timer);
     try {
@@ -168,8 +181,8 @@ export async function createPreparedService(
   const schedule = () => {
     if (closed || released) return;
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      void enqueue(async () => {
+    const renew = independent("sdk.app.renew", () =>
+      enqueue(async () => {
         if (closed || released) return;
         try {
           if (server !== undefined && !isBunServer(server) && !server.listening) {
@@ -190,24 +203,28 @@ export async function createPreparedService(
         } finally {
           schedule();
         }
-      }).catch(() => {});
+      }),
+    );
+    timer = setTimeout(() => {
+      void renew().catch(() => {});
     }, 5_000);
     timer.unref();
   };
   const setTarget = async (bound: CanonicalTarget, listener?: LocalHTTPServer) => {
     if (closed) throw new TnlError("sdk.registration_stale");
     if (released) await reconnect();
+    if (target !== bound || server !== listener) observeBound();
     target = bound;
     server = listener;
     const current = ++revision;
     if (listener !== undefined) {
-      const stopped = () => {
+      const stopped = independent("sdk.app.cleanup", async () => {
         if (server === listener && revision === current && !closed)
           return enqueue(async () => {
             if (server === listener && revision === current) await release();
           });
         return Promise.resolve();
-      };
+      });
       if (isBunServer(listener)) {
         const original = listener.stop.bind(listener);
         listener.stop = async (force) => {
@@ -240,11 +257,19 @@ export async function createPreparedService(
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);
     onClose();
-    closing = enqueue(release);
+    closing = operation(
+      framework === "next"
+        ? "next.cleanup"
+        : framework === "vite"
+          ? "vite.cleanup"
+          : "sdk.app.cleanup",
+      () => enqueue(release),
+    );
     return closing;
   };
+  const exitCleanup = scheduled(close);
   const beforeExit = () => {
-    void close().catch(() => {});
+    void exitCleanup().catch(() => {});
   };
   process.once("beforeExit", beforeExit);
   schedule();
@@ -254,18 +279,26 @@ export async function createPreparedService(
     hostname: assignment.hostname,
     publicURL: assignment.publicURL,
     register: (listener: LocalHTTPServer) =>
-      enqueue(async () => {
-        await setTarget(await listeningTarget(listener), listener);
-      }),
+      operation("sdk.app.register", () =>
+        enqueue(async () => {
+          await setTarget(await listeningTarget(listener), listener);
+        }),
+      ),
     close,
   });
   frameworkTargets.set(handle, (bound) =>
-    enqueue(async () => {
-      const parsed = new URL(bound);
-      if (canonicalLoopbackTarget(parsed.hostname, Number(parsed.port)) !== bound)
-        throw new TnlError("sdk.target_invalid");
-      await setTarget(bound);
-    }),
+    operation(
+      framework === "next" && target !== undefined && target !== bound
+        ? "next.restart"
+        : "sdk.app.register",
+      () =>
+        enqueue(async () => {
+          const parsed = new URL(bound);
+          if (canonicalLoopbackTarget(parsed.hostname, Number(parsed.port)) !== bound)
+            throw new TnlError("sdk.target_invalid");
+          await setTarget(bound);
+        }),
+    ),
   );
   return handle;
 }

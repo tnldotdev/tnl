@@ -47,7 +47,7 @@ jobs:
         run: task connect:fixture:prepare
       - uses: ./connect # zizmor: ignore[self-repository] exercises the checked-out action bundle
         with:
-          ci: deploy
+          workload: deploy
           cli-path: ${{ steps.fixture.outputs.binary }}
           working-directory: ${{ steps.fixture.outputs.project }}
           services: database

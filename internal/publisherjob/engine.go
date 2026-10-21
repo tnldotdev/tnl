@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"math/rand/v2"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -51,11 +52,15 @@ type Engine struct {
 	Registry *Registry
 	// UserJobs lets the user-login supervisor host another job kind with its
 	// own registry and credentials. the system publisher service leaves it empty.
-	UserJobs     []UserJobRunner
-	Clients      ClientFactory
-	Publish      func(context.Context, publisher.Config) error
-	Connect      func(context.Context, Job, func() error) error
-	Group        func(context.Context, Job, func(int64, bool) error) error
+	UserJobs []UserJobRunner
+	Clients  ClientFactory
+	Publish  func(context.Context, publisher.Config) error
+	Connect  func(context.Context, Job, func() error) error
+	Group    func(context.Context, Job, func(int64, bool) error) error
+	Observe  func(Job, Status) error
+	// Initialize runs local desired-state setup while holding service.lock,
+	// before any worker starts. it must not contact remote services.
+	Initialize   func(context.Context) error
 	PollInterval time.Duration
 	RetryMin     time.Duration
 	RetryMax     time.Duration
@@ -108,6 +113,11 @@ func (e Engine) Serve(ctx context.Context) error {
 		return err
 	}
 	defer serviceLock.Close()
+	if e.Initialize != nil {
+		if err := e.Initialize(ctx); err != nil {
+			return err
+		}
+	}
 	for _, runner := range e.UserJobs {
 		if runner == nil {
 			return ErrScope
@@ -208,7 +218,7 @@ func (e Engine) run(ctx context.Context, job Job) {
 	var attempts uint64
 	for ctx.Err() == nil {
 		attempts++
-		if err := e.Registry.status(ctx, job.ID, job.Revision, Status{State: "starting", Attempts: attempts}); err != nil {
+		if err := e.status(ctx, job, Status{State: "starting", Attempts: attempts}); err != nil {
 			return
 		}
 		ready, err := e.attempt(ctx, job, attempts, &runtime)
@@ -222,14 +232,14 @@ func (e Engine) run(ctx context.Context, job Job) {
 		// bad grants and settings wait for local Start rather than hammering control.
 		if blockedFailure(err) {
 			status.State = "blocked"
-			_ = e.Registry.status(ctx, job.ID, job.Revision, status)
+			_ = e.status(ctx, job, status)
 			<-ctx.Done()
 			return
 		}
-		if err := e.Registry.status(ctx, job.ID, job.Revision, status); err != nil {
+		if err := e.status(ctx, job, status); err != nil {
 			return
 		}
-		if err := wait(ctx, backoff); err != nil {
+		if err := wait(ctx, backoff+time.Duration(rand.Int64N(int64(backoff/4)+1))); err != nil {
 			return
 		}
 		backoff = min(e.RetryMax, backoff*2)
@@ -240,8 +250,8 @@ func blockedFailure(err error) bool {
 	if errors.Is(err, nativeauth.ErrScope) || errors.Is(err, ErrScope) || errors.Is(err, ErrUnsafeState) || errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) || errors.Is(err, controlclient.ErrNotFound) || errors.Is(err, authorityclient.ErrNotFound) {
 		return true
 	}
-	if typed, ok := failure.Of(err); ok {
-		definition, _ := failure.DefinitionFor(typed.Reason())
+	if reason, ok := failure.ReasonOf(err); ok {
+		definition, _ := failure.DefinitionFor(reason)
 		return definition.Retry != failure.RetryLater
 	}
 	return false
@@ -263,8 +273,8 @@ func safeFailure(err error) string {
 	if errors.Is(err, controlclient.ErrNotFound) {
 		return "saved URL unavailable"
 	}
-	if typed, ok := failure.Of(err); ok {
-		return string(typed.Reason())
+	if reason, ok := failure.ReasonOf(err); ok {
+		return string(reason)
 	}
 	return "publication unavailable"
 }
@@ -274,7 +284,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		return false, err
 	}
 	if job.Kind == KindGroup {
-		if e.Group == nil || !e.Registry.user {
+		if e.Group == nil || !e.Registry.groups {
 			return false, ErrScope
 		}
 		var ready atomic.Bool
@@ -284,7 +294,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 			if healthy {
 				state = "ready"
 			}
-			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: state, Attempts: attempts, ObservedRevision: revision})
+			return e.status(ctx, job, Status{State: state, Attempts: attempts, ObservedRevision: revision})
 		})
 		return ready.Load(), err
 	}
@@ -352,6 +362,15 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
+	if discovery, ok := control.(interface {
+		Discovery(context.Context) (controlv1.ControlDiscovery, error)
+	}); ok {
+		server, err := discovery.Discovery(ctx)
+		if err != nil {
+			return false, err
+		}
+		cfg.BrowserLoginAvailable = server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable
+	}
 	cfg.PublisherID = native.PublisherID()
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}
@@ -359,7 +378,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	var mu sync.Mutex
 	ready := false
 	cfg.Observe = func(event publisher.Event) error {
-		status := Status{State: "provisioning", Attempts: attempts, PublishRunNumber: event.PublishRunNumber}
+		status := Status{State: "provisioning", Attempts: attempts, PublishRunNumber: event.PublishRunNumber, PublicURL: event.PublicURL}
 		switch event.Type {
 		case publisher.EventReady:
 			mu.Lock()
@@ -378,12 +397,35 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		defer cancel()
 		return e.Registry.status(observationCtx, job.ID, job.Revision, status)
 	}
+	if job.VerifyReadiness {
+		VerifyPublicationReadiness(ctx, &cfg, job.ReadinessPath)
+	}
 	// native runtime log messages can contain external error text. system jobs
 	// expose only approved observations through the registry and CLI renderer.
 	err = e.Publish(ctx, cfg)
+	if ctx.Err() == nil && errors.Is(err, controlclient.ErrStatusConflict) {
+		// an abrupt reboot can leave the previous run open until its lease
+		// expires. retry only while this same runtime owner remains current;
+		// a fenced epoch must block instead of inspecting and claiming again.
+		if _, currentErr := (*runtime).Renew(ctx); currentErr != nil {
+			err = currentErr
+		} else {
+			err = failure.Wrap("wait for previous publish run", failure.InstalledPublishRunPending, err)
+		}
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	return ready, err
+}
+
+func (e Engine) status(ctx context.Context, job Job, status Status) error {
+	if err := e.Registry.status(ctx, job.ID, job.Revision, status); err != nil {
+		return err
+	}
+	if e.Observe != nil {
+		return e.Observe(job, status)
+	}
+	return nil
 }
 
 func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config, error) {

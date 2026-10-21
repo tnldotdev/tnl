@@ -92,7 +92,7 @@ func (p Project) GitHubRepository(ctx context.Context) (string, error) {
 	command.Dir = p.Worktree.Root
 	output, err := command.Output()
 	if err != nil {
-		return "", fmt.Errorf("read ci GitHub origin: %w", err)
+		return "", fmt.Errorf("read workload GitHub origin: %w", err)
 	}
 	remote, err := NormalizeGitRemote(string(output))
 	if err != nil {
@@ -100,7 +100,7 @@ func (p Project) GitHubRepository(ctx context.Context) (string, error) {
 	}
 	repository, ok := strings.CutPrefix(remote, "github.com/")
 	if !ok || len(strings.Split(repository, "/")) != 2 {
-		return "", errors.New("ci repository inference requires a github.com origin; set ci.github.repository explicitly")
+		return "", errors.New("workload repository inference requires a github.com origin; set workloads.NAME.github.repository explicitly")
 	}
 	return repository, nil
 }

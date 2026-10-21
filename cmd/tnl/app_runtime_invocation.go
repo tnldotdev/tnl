@@ -140,7 +140,7 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
 	a.mu.Unlock()
-	if err := a.manager.Register(id, request.Owner, request.Target, ""); err != nil {
+	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
 		cleanup()
 		_ = a.manager.Unregister(id, request.Owner)
 		return privateprotocol.Registration{}, err

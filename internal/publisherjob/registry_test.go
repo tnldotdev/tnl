@@ -25,6 +25,11 @@ func testOptions(t *testing.T) OpenOptions {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"} {
+		if err := os.WriteFile(filepath.Join(parent, name), []byte("fixture legal file"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return OpenOptions{Root: filepath.Join(parent, "system"), TestOwnerUID: &owner}
 }
 
@@ -64,6 +69,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	}
 	job, identity, private := fixture(t, "web")
 	job.Target, job.TargetTLSName = "https://127.0.0.1:3000", "web.internal"
+	job.ReadinessPath = "/health"
 	if err := r.Install(t.Context(), job, identity, private); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +82,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	}
 	defer r.Close()
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || !jobs[0].Enabled || jobs[0].TargetTLSName != "web.internal" {
+	if err != nil || len(jobs) != 1 || !jobs[0].Enabled || jobs[0].TargetTLSName != "web.internal" || jobs[0].ReadinessPath != "/health" {
 		t.Fatalf("restart: %+v, %v", jobs, err)
 	}
 	loaded, key, _, err := r.signingIdentity(t.Context(), jobs[0])

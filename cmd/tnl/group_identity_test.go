@@ -169,7 +169,7 @@ func TestGroupIdentityBindsControlBeforeProjectDefaults(t *testing.T) {
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &projectServer, Team: &team}}}
 	for _, selected := range []string{"", value.ControlURL + "/"} {
 		var flags cli
-		flags.Publisher.Serve = publisherServeCommand{IdentityFile: path, Group: "production", Instance: "replica-1", ProjectKey: "shop", scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: selected}}}
+		flags.Publisher.Serve = publisherServeCommand{IdentityFile: []string{path}, Group: "production", Instance: "replica-1", ProjectKey: "shop", scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: selected}}}
 		if err := preparePublisherGroupIdentity(&flags.Publisher.Serve); err != nil {
 			t.Fatal(err)
 		}

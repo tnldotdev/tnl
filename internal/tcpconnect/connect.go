@@ -190,6 +190,8 @@ func Stream(ctx context.Context, local net.Conn, config Config) error {
 type connectionConsumer func(context.Context, func(context.Context, net.Conn) error) error
 
 func serveConnections(ctx context.Context, config Config, single bool, consume connectionConsumer) (result error) {
+	startupCtx, finishStartup := observability.ClientOperation(ctx, "connector.startup")
+	defer func() { finishStartup(result) }()
 	if config.Control == nil || !opaqueid.Valid(config.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		(config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix)) || !validProtocol(config.Protocol) || config.TrustRevision < 1 {
 		return ErrPrivateConnection
@@ -214,7 +216,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	}
 	serveCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	signer, err := config.Control.PrivateConnectorSigner(ctx, config.IdentityID)
+	signer, err := config.Control.PrivateConnectorSigner(startupCtx, config.IdentityID)
 	if err != nil {
 		return err
 	}
@@ -224,7 +226,9 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
 	attempted := make(map[string]bool)
-	paths, err := tunnel.NewSlots(serveCtx, tunnel.SlotsConfig{Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
+	paths, err := tunnel.NewSlots(observability.LinkContext(serveCtx, startupCtx), tunnel.SlotsConfig{Connect: func(ctx context.Context, slot uint8, preferTCP bool) (_ tunnel.SlotSession, result error) {
+		ctx, finish := observability.ClientOperation(ctx, "connector.path.connect")
+		defer func() { finish(result) }()
 		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, signer.Subject, slot)
 		if err != nil {
 			_, definition, known := failure.Describe(err)
@@ -242,9 +246,13 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		if used {
 			return nil, ErrPrivateConnection
 		}
+		releaseContext := observability.Independent(context.WithoutCancel(ctx))
 		release := func() error {
 			if control, ok := config.Control.(assignmentReleaser); ok {
-				return control.ReleasePrivateConnectorAssignment(context.WithoutCancel(ctx), assignment.SessionID)
+				cleanup, finish := observability.ClientOperation(releaseContext, "connector.path.release")
+				err := control.ReleasePrivateConnectorAssignment(cleanup, assignment.SessionID)
+				finish(err)
+				return err
 			}
 			return nil
 		}
@@ -305,7 +313,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			_ = session.Close()
 			return nil, ErrPrivateConnection
 		}
-		lifetime, cancel := context.WithCancel(context.Background())
+		lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 		path := &connectorPath{PrivateConnectorSession: session, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
 		go func() {
 			defer close(path.watchDone)
@@ -424,7 +432,8 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 		next.Store(0)
 	}
-	return consume(serveCtx, forward)
+	finishStartup(nil)
+	return consume(observability.LinkContext(serveCtx, startupCtx), forward)
 }
 
 func validProtocol(protocol string) bool {

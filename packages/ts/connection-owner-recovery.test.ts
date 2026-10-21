@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { createServer } from "node:net";
 import * as z from "zod";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import {
@@ -65,9 +67,29 @@ async function holdCredential(file: string): Promise<() => Promise<void>> {
   };
 }
 
+async function waitForDeadline(file: string): Promise<void> {
+  const descriptor = z
+    .object({ expires_at: z.string().datetime() })
+    .parse(JSON.parse(await readFile(file, "utf8")) as unknown);
+  await delay(Math.max(0, Date.parse(descriptor.expires_at) - Date.now() + 50));
+}
+
+async function assertPortFree(port: number): Promise<void> {
+  const listener = createServer();
+  await new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(port, "127.0.0.1", resolve);
+  });
+  await new Promise<void>((resolve, reject) =>
+    listener.close((error) => (error ? reject(error) : resolve())),
+  );
+}
+
 beforeEach(async () => {
   vi.resetModules();
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
+  for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
+    vi.stubEnv(name, undefined);
   root = await realpath(await mkdtemp(path.join(tmpdir(), "tnl-owner-recovery-")));
   binary = path.join(root, "tnl.mts");
   const fixture = pathToFileURL(
@@ -148,12 +170,10 @@ test("canceling HTTP preparation leaves the shared owner and other awaiters inta
     .poll(async () => (await events()).filter((event) => event.event === "read").length, {
       timeout: 10_000,
     })
-    .toBe(3);
+    .toBe(2);
   abort.abort(reason);
   await rejected;
-  await expect
-    .poll(async () => (await events()).filter((event) => event.event === "read-canceled").length)
-    .toBe(1);
+  expect((await events()).filter((event) => event.event === "read-canceled")).toHaveLength(0);
   await release();
   expect(await waiting).toMatchObject({ url: settings.url });
   expect({ ...handle }).toMatchObject({ url: settings.url });
@@ -199,7 +219,7 @@ test("failed initial validation joins cleanup before any same-port replacement",
   expect((await owner()).pid).not.toBe(original.pid);
 }, 20_000);
 
-test("an initial read timeout cancels the new owner and joins its listener before retry", async () => {
+test("an initial service read timeout retains the new shared owner for later preparation", async () => {
   await configure({ prepared: "blocked" });
   const { connectionHandle } = await import("./src/internal/connection.js");
   const handle = connectionHandle("database", vi.fn());
@@ -207,10 +227,98 @@ test("an initial read timeout cancels the new owner and joins its listener befor
     code: "sdk.connection_unavailable",
   });
   const original = await owner();
-  expect((await events()).filter((event) => event.event === "closed")).toHaveLength(1);
+  expect((await events()).filter((event) => event.event === "closed")).toHaveLength(0);
+  await (await control(original.file, "/fixture/release")).arrayBuffer();
   await configure({ prepared: "ready" });
   const settings = await handle;
   expect({ ...handle }).toEqual(settings);
-  expect((await owner()).pid).not.toBe(original.pid);
-  expect((await events()).filter((event) => event.event === "start")).toHaveLength(2);
+  expect((await owner()).pid).toBe(original.pid);
+  expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
+}, 20_000);
+
+test("concurrent awaits after a known deadline join and replace one same-port owner", async () => {
+  await configure({ lifetimeMs: 4000, cleanupDelayMs: 500 });
+  const { connectionHandle } = await import("./src/internal/connection.js");
+  const handle = connectionHandle("database", vi.fn());
+  const first = await handle;
+  const frozenFirst = JSON.stringify(first);
+  const original = await owner();
+  const port = Number(await readFile(path.join(root, "port"), "utf8"));
+  await waitForDeadline(original.file);
+  const before = (await events()).filter((event) =>
+    ["start", "read", "stop"].includes(event.event),
+  );
+  expect(() => ({ ...handle })).toThrow(
+    expect.objectContaining({ code: "sdk.connection_unprepared" }),
+  );
+  expect(
+    (await events()).filter((event) => ["start", "read", "stop"].includes(event.event)),
+  ).toEqual(before);
+  const current = await Promise.all(
+    Array.from({ length: 8 }, () => Promise.resolve(connectionHandle("database", vi.fn()))),
+  );
+  expect(current.every((settings) => Object.isFrozen(settings))).toBe(true);
+  expect(current[0]).toMatchObject({ server: `https://127.0.0.1:${port}` });
+  expect(current.every((settings) => JSON.stringify(settings) === JSON.stringify(current[0]))).toBe(
+    true,
+  );
+  expect(Object.isFrozen(first)).toBe(true);
+  expect(JSON.stringify(first)).toBe(frozenFirst);
+  expect(current[0]).not.toEqual(first);
+  expect({ ...handle }).toEqual(current[0]);
+  const replacement = await owner();
+  expect(replacement.pid).not.toBe(original.pid);
+  const history = await events();
+  expect(history.filter((event) => event.event === "start")).toHaveLength(2);
+  expect(history.findIndex((event) => event.event === "closed")).toBeLessThan(
+    history.findLastIndex((event) => event.event === "start"),
+  );
+  await run(binary, [
+    "--no-telemetry",
+    "runtime",
+    "connections",
+    "stop",
+    "--handle",
+    replacement.file,
+  ]);
+  await assertPortFree(port);
+}, 20_000);
+
+test("expired caller-owned handles fail without SDK replacement or cleanup", async () => {
+  await configure({ lifetimeMs: 4000 });
+  const { stdout } = await run(binary, ["--no-telemetry", "runtime", "connections", "start"]);
+  const external = z.object({ private_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
+  vi.stubEnv("TNL_CONNECTION_HANDLE", external.private_handle);
+  const { connectionHandle } = await import("./src/internal/connection.js");
+  const handle = connectionHandle("database", vi.fn());
+  await handle;
+  await waitForDeadline(external.private_handle);
+  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+    code: "sdk.connection_unavailable",
+  });
+  expect(() => ({ ...handle })).toThrow();
+  expect((await events()).filter((event) => event.event === "start")).toHaveLength(1);
+  expect((await events()).filter((event) => event.event === "stop")).toHaveLength(0);
+}, 20_000);
+
+test("expiry recovery reports current authentication denial instead of reusing old rights", async () => {
+  await configure({ lifetimeMs: 4000 });
+  const { connectionHandle } = await import("./src/internal/connection.js");
+  const handle = connectionHandle("database", vi.fn());
+  await handle;
+  const original = await owner();
+  const port = Number(await readFile(path.join(root, "port"), "utf8"));
+  await configure({ authorization: "deny" });
+  await waitForDeadline(original.file);
+  await expect(Promise.all([handle, connectionHandle("database", vi.fn())])).rejects.toMatchObject({
+    code: "sdk.authentication_required",
+  });
+  const history = await events();
+  expect(history.filter((event) => event.event === "start")).toHaveLength(2);
+  expect(history.filter((event) => event.event === "ready")).toHaveLength(1);
+  expect(history.filter((event) => event.event === "closed")).toHaveLength(1);
+  expect(() => ({ ...handle })).toThrow(
+    expect.objectContaining({ code: "sdk.connection_unprepared" }),
+  );
+  await assertPortFree(port);
 }, 20_000);
