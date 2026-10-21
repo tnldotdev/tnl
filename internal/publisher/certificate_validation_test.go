@@ -88,7 +88,7 @@ func TestCertificateIssuanceRejectsInconsistentIdentityAndState(t *testing.T) {
 		{"plan_key", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.CacheKey = "another-key" }},
 		{"plan_scope", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.Scope = "another-scope" }},
 		{"plan_identifiers", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.Identifiers = []string{"member.example"} }},
-		{"plan_method", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.ChallengeMethod = controlv1.TlsAlpn01 }},
+		{"plan_method", func(i *controlv1.CertificateIssuance) { i.CertificatePlan.ChallengeMethod = "unsupported" }},
 		{"unknown_state", func(i *controlv1.CertificateIssuance) { i.State = "unknown" }},
 		{"installed_without_material", func(i *controlv1.CertificateIssuance) { i.State = controlv1.CertificateIssuanceStateInstalled }},
 		{"pending_with_material", func(i *controlv1.CertificateIssuance) { i.CertificatePem = pointer("invalid") }},

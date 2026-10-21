@@ -1,0 +1,314 @@
+package projectpublisher
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+)
+
+type Configuration struct {
+	RunPrivate       func(context.Context, func(uint64, bool) error) error
+	CheckPrivate     func(context.Context, clientruntime.Service) clientruntime.Observation
+	Publisher        publisher.Config
+	Inspection       inspection.Policy
+	PrimaryRoot      string
+	SharedRoot       string
+	IntegrationGroup string
+	TargetBinding    *TargetBinding
+	Attach           func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
+}
+
+type proofEntry struct {
+	service      clientruntime.Service
+	run          publisher.PublishRunIdentity
+	proof        *publisher.ReadinessProof
+	target       *TargetBinding
+	check        sync.Mutex
+	privateCheck func(context.Context, clientruntime.Service) clientruntime.Observation
+}
+
+type Workers struct {
+	Database      *clientstate.Database
+	Manager       *clientruntime.Manager
+	Configure     func(context.Context, clientruntime.Service) (Configuration, error)
+	RunPublisher  func(context.Context, publisher.Config) error
+	HTTPTransport http.RoundTripper
+	mu            sync.Mutex
+	proofs        map[string]*proofEntry
+}
+
+func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
+	configuration, err := w.Configure(ctx, service)
+	if err != nil {
+		return err
+	}
+	if configuration.RunPrivate != nil {
+		return w.runPrivate(ctx, service, configuration, observe)
+	}
+	cfg := configuration.Publisher
+	var captured TargetSnapshot
+	if configuration.TargetBinding != nil {
+		captured, err = configuration.TargetBinding.Capture(ctx)
+		if err != nil {
+			return err
+		}
+		if captured.Address != cfg.Target {
+			return diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("target changed before publication"))
+		}
+	}
+	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: service.Name, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
+	if err != nil {
+		return err
+	}
+	ctx = tunnel.Context()
+	defer func() {
+		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finish, result))
+	}()
+	if err := w.Manager.BindTunnel(service.Name, service.RegistrationID, service.Target, tunnel.ID()); err != nil {
+		return err
+	}
+	if configuration.PrimaryRoot == "" {
+		configuration.PrimaryRoot = cfg.ProjectRoot
+	}
+	if configuration.SharedRoot == "" {
+		configuration.SharedRoot = configuration.PrimaryRoot
+	}
+	var recorder *clientstate.InspectionRecorder
+	if configuration.Inspection.Mode == inspection.SummaryMode {
+		recorder = tunnel.NewInspectionRecorder(configuration.PrimaryRoot, cfg.ProjectRoot, configuration.SharedRoot, service.Name, configuration.Inspection)
+		defer recorder.Close()
+	}
+	// attachments can start alias publishers immediately. give them the same
+	// current target check before they copy the entry service's request hook.
+	if configuration.TargetBinding != nil {
+		prior := cfg.AdmitRequest
+		cfg.AdmitRequest = func(request *http.Request, run publisher.PublishRunIdentity) error {
+			if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, 0) {
+				return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
+			}
+			if _, err := configuration.TargetBinding.Capture(request.Context()); err != nil {
+				return diagnostic.Wrap(diagnostic.TargetUnavailable, err)
+			}
+			if prior != nil {
+				return prior(request, run)
+			}
+			return nil
+		}
+	}
+	if configuration.Attach != nil {
+		stop, err := configuration.Attach(ctx, tunnel, &cfg)
+		if err != nil {
+			return err
+		}
+		if stop != nil {
+			defer stop()
+		}
+	}
+	cfg.InspectionMode = configuration.Inspection.Mode
+	previousSummary := cfg.ObserveSummary
+	cfg.ObserveSummary = func(summary inspection.Summary) {
+		if previousSummary != nil {
+			previousSummary(summary)
+		}
+		if recorder != nil {
+			recorder.Observe(clientstate.InspectionRecord{Protocol: controlv1.PublicURLServiceProtocol(summary.Protocol), ReceivedAt: summary.ReceivedAt, Method: summary.Method, Path: summary.Path, Status: summary.Status, DurationMS: summary.Duration.Milliseconds(), Origin: summary.Origin, Operation: summary.Operation, Result: summary.Result, RedisCommand: summary.Command, SQLState: summary.SQLState, Rows: summary.Rows, ResultSets: int64(summary.ResultSets), MySQLErrorCode: int64(summary.MySQLErrorCode)})
+		}
+	}
+	current := func(run uint64) error {
+		if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, run) {
+			return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
+		}
+		return nil
+	}
+	currentTarget := func(ctx context.Context) error {
+		if configuration.TargetBinding != nil {
+			if _, err := configuration.TargetBinding.Capture(ctx); err != nil {
+				return diagnostic.Wrap(diagnostic.TargetUnavailable, err)
+			}
+		}
+		return nil
+	}
+	admit := cfg.AdmitRequest
+	cfg.AdmitRequest = func(request *http.Request, run publisher.PublishRunIdentity) error {
+		if err := current(run.Number); err != nil {
+			return err
+		}
+		if err := currentTarget(request.Context()); err != nil {
+			return err
+		}
+		if admit != nil {
+			return admit(request, run)
+		}
+		return nil
+	}
+	guard := cfg.AdmitVisitor
+	cfg.AdmitVisitor = func(ctx context.Context, visitor publisher.Visitor) error {
+		if err := current(visitor.Run.Number); err != nil {
+			return err
+		}
+		if err := currentTarget(ctx); err != nil {
+			return err
+		}
+		if guard != nil {
+			return guard(ctx, visitor)
+		}
+		return nil
+	}
+	// nil promotion lets the publisher use its authenticated sideband. a
+	// successful ownership check must never substitute for that decision.
+	warning := cfg.OnWarning
+	cfg.OnWarning = func(reason string) {
+		w.Manager.RecordWarning(service.Name, service.RegistrationID, reason)
+		if warning != nil {
+			warning(reason)
+		}
+	}
+	var entry *proofEntry
+	if cfg.ServiceProtocol == "http" || cfg.ServiceProtocol == "" {
+		cfg.ReadinessProof = func(run publisher.PublishRunIdentity) *publisher.ReadinessProof {
+			path := service.Readiness.Path
+			if path == "" {
+				path = "/"
+			}
+			proof, err := publisher.NewReadinessProof(run, path)
+			if err != nil {
+				return nil
+			}
+			entry = &proofEntry{service: service, run: run, proof: proof, target: configuration.TargetBinding}
+			w.mu.Lock()
+			if w.proofs == nil {
+				w.proofs = map[string]*proofEntry{}
+			}
+			w.proofs[service.RegistrationID] = entry
+			w.mu.Unlock()
+			return proof
+		}
+	}
+	defer func() {
+		w.mu.Lock()
+		if w.proofs[service.RegistrationID] == entry {
+			delete(w.proofs, service.RegistrationID)
+		}
+		w.mu.Unlock()
+	}()
+	previous := cfg.Observe
+	cfg.Observe = func(event publisher.Event) error {
+		if previous != nil {
+			if err := previous(event); err != nil {
+				return err
+			}
+		}
+		switch event.Type {
+		case publisher.EventPublicURLAssigned:
+			return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
+		case publisher.EventProvisioning:
+			if cfg.ServiceProtocol != "http" && cfg.ServiceProtocol != "" {
+				entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: event.PublishRunNumber}, target: configuration.TargetBinding}
+				w.mu.Lock()
+				if w.proofs == nil {
+					w.proofs = map[string]*proofEntry{}
+				}
+				w.proofs[service.RegistrationID] = entry
+				w.mu.Unlock()
+			}
+			if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
+				return err
+			}
+			return observe(event.PublishRunNumber, false)
+		case publisher.EventReady:
+			if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
+				return err
+			}
+			return observe(event.PublishRunNumber, true)
+		case publisher.EventDraining:
+			if err := tunnel.SetDraining(ctx); err != nil {
+				return err
+			}
+			return observe(event.PublishRunNumber, false)
+		case publisher.EventProvisioningStep:
+			w.Manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
+		}
+		return nil
+	}
+	run := w.RunPublisher
+	if run == nil {
+		run = publisher.Run
+	}
+	return run(ctx, cfg)
+}
+
+// Check probes public URLs with visitor proofs and private runs at their local
+// targets. observations require the same registration, target, run and path.
+func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snapshot, error) {
+	snapshot := w.Manager.Snapshot()
+	for _, name := range names {
+		if !slices.ContainsFunc(snapshot.Services, func(s clientruntime.Service) bool { return s.Name == name }) {
+			return snapshot, errors.New("service is not configured")
+		}
+	}
+	var checks sync.WaitGroup
+	for _, service := range snapshot.Services {
+		if len(names) != 0 && !slices.Contains(names, service.Name) || !service.Registered || !service.Routable {
+			continue
+		}
+		checks.Add(1)
+		go func() {
+			defer checks.Done()
+			var entry *proofEntry
+			var captured TargetSnapshot
+			var capturedTarget bool
+			observation := clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+			defer func() {
+				if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
+					observation.Ready = false
+					observation.Reason = "runtime.target_changed"
+				}
+				if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
+					w.Manager.Observe(observation)
+				}
+			}()
+			w.mu.Lock()
+			entry = w.proofs[service.RegistrationID]
+			w.mu.Unlock()
+			if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
+				return
+			}
+			if entry.target != nil {
+				var err error
+				captured, err = entry.target.Capture(ctx)
+				if err != nil {
+					return
+				}
+				capturedTarget = true
+			}
+			if entry.privateCheck != nil {
+				observation = entry.privateCheck(ctx, service)
+			} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
+				if entry.proof == nil {
+					return
+				}
+				entry.check.Lock()
+				defer entry.check.Unlock()
+				secret, err := entry.proof.Renew()
+				if err != nil {
+					return
+				}
+				observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
+			}
+		}()
+	}
+	checks.Wait()
+	return w.Manager.Snapshot(), nil
+}

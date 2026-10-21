@@ -17,10 +17,10 @@ type accessStatusResult struct {
 	value  publisherv1.BrowserAccessStatus
 }
 
-func previewAccessStatus(config PublicURLServerConfig, denied, sharePermitted, teamPermitted bool, shareExpiry time.Time) accessStatusResult {
+func previewAccessStatus(config PublicURLServerConfig, visitorPermitted, sharePermitted, teamPermitted bool, shareExpiry time.Time) accessStatusResult {
 	value := publisherv1.BrowserAccessStatus{
 		SchemaVersion:    1,
-		Allowed:          !denied || sharePermitted || teamPermitted,
+		Allowed:          visitorPermitted || sharePermitted || teamPermitted,
 		PreviewId:        controlv1.PreviewID(config.PreviewID),
 		PublicUrlId:      controlv1.PublicURLID(config.PublicURLID),
 		PublishRunNumber: int64(config.PublishRunNumber),
@@ -28,16 +28,16 @@ func previewAccessStatus(config PublicURLServerConfig, denied, sharePermitted, t
 	status := http.StatusOK
 	method := publisherv1.BrowserAccessStatusAccessMethod("")
 	switch {
-	case !denied:
-		method = "ip"
 	case sharePermitted:
 		method = "share"
 		value.ExpiresAt = &shareExpiry
 	case teamPermitted:
 		method = "team"
+	case visitorPermitted:
+		method = "visitor"
 	default:
 		status = http.StatusForbidden
-		reason := publisherv1.BrowserAccessStatusReason(diagnostic.IPPolicyDenied)
+		reason := publisherv1.BrowserAccessStatusReason(diagnostic.VisitorAccessDenied)
 		value.Reason = &reason
 	}
 	if method != "" {

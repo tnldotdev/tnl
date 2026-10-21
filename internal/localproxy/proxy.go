@@ -25,6 +25,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
@@ -35,7 +36,7 @@ const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
 
 // DefaultRequestLimit bounds active requests to one public URL's local service,
 // across all visitor connections and HTTP/2 streams.
-const DefaultRequestLimit = 500
+const DefaultRequestLimit = 64
 
 // Preflight validates the target and verifies that it accepts a connection.
 func Preflight(ctx context.Context, target string) error {
@@ -44,7 +45,8 @@ func Preflight(ctx context.Context, target string) error {
 
 // TargetOptions configures trust for one target, independently of control and relays.
 type TargetOptions struct {
-	RootCAs *x509.CertPool
+	RootCAs    *x509.CertPool
+	ServerName string
 }
 
 // LoadTargetRootCAs adds a PEM file to the system roots used for one HTTPS target.
@@ -66,7 +68,10 @@ func LoadTargetRootCAs(path string) (*x509.CertPool, error) {
 }
 
 // PreflightWithOptions checks target reachability and HTTPS certificate trust.
-func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) error {
+func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) (result error) {
+	ctx = observability.WithPublisherProtocol(ctx, "http")
+	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
+	defer func() { finish(result) }()
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return err
@@ -75,15 +80,30 @@ func PreflightWithOptions(ctx context.Context, target string, options TargetOpti
 	if err != nil {
 		return err
 	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	var connection net.Conn
-	if parsed.Scheme == "https" {
-		connection, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs}}).DialContext(ctx, "tcp", parsed.Host)
-	} else {
-		connection, err = dialer.DialContext(ctx, "tcp", parsed.Host)
+	if parsed.Scheme != "https" && options.ServerName != "" {
+		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
 	}
+	setup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	connection, err := observability.DialTarget(setup, "tcp", parsed.Host)
 	if err != nil {
 		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+	}
+	if parsed.Scheme == "https" {
+		name := options.ServerName
+		if name == "" {
+			name = parsed.Hostname()
+		}
+		secured := tls.Client(connection, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: name})
+		tlsCtx, finish := observability.PublisherOperation(setup, "target_tls")
+		err = secured.HandshakeContext(tlsCtx)
+		observability.PublisherTLS(tlsCtx, "target", secured.ConnectionState(), err)
+		finish(err)
+		if err != nil {
+			_ = connection.Close()
+			return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+		}
+		connection = secured
 	}
 	if err := connection.Close(); err != nil {
 		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: close target connection: %w", err))
@@ -143,16 +163,27 @@ func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Moun
 }
 
 func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
-	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, true, onTargetFailure)
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, true, nil, onTargetFailure)
 }
 
 // NewWithMountsHooksOptionsAdmitted forwards requests already admitted by the publisher.
 // the publisher owns the shared admission budget for proxied and inline handlers.
 func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
-	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, nil, onTargetFailure)
 }
 
-func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, onTargetFailure []func()) (http.Handler, error) {
+// NewWithMountsHooksOptionsAdmittedDynamic resolves the base service before
+// each new request. an immutable identity fences pooled connections when a
+// container is replaced at the same address; mounted paths keep their own
+// independent target selection.
+func NewWithMountsHooksOptionsAdmittedDynamic(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, resolve func(*http.Request) (string, string, error), onTargetFailure ...func()) (http.Handler, error) {
+	if resolve == nil {
+		return nil, errors.New("localproxy: target resolver is required")
+	}
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, resolve, onTargetFailure)
+}
+
+func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, resolve func(*http.Request) (string, string, error), onTargetFailure []func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -166,6 +197,39 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 	base, err := newReverseProxy(target, requestLimit, hooks, options, onTargetFailure)
 	if err != nil {
 		return nil, err
+	}
+	var baseHandler http.Handler = base
+	if resolve != nil {
+		var mu sync.Mutex
+		var currentAddress, currentIdentity string
+		baseHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			address, identity, err := resolve(r)
+			if err != nil || address == "" || identity == "" {
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			canonical, err := NormalizeTarget(address)
+			if err != nil {
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			mu.Lock()
+			if currentAddress != canonical || currentIdentity != identity {
+				selected, err := newReverseProxy(canonical, requestLimit, hooks, options, onTargetFailure)
+				if err != nil {
+					mu.Unlock()
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					return
+				}
+				if transport, ok := base.Transport.(interface{ CloseIdleConnections() }); ok {
+					transport.CloseIdleConnections()
+				}
+				base, currentAddress, currentIdentity = selected, canonical, identity
+			}
+			selected := base
+			mu.Unlock()
+			selected.ServeHTTP(w, r)
+		})
 	}
 	type mountedProxy struct {
 		Mount
@@ -192,7 +256,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 				mu.Lock()
 				if current != target {
 					if upstream != nil {
-						if transport, ok := upstream.Transport.(*http.Transport); ok {
+						if transport, ok := upstream.Transport.(interface{ CloseIdleConnections() }); ok {
 							transport.CloseIdleConnections()
 						}
 					}
@@ -271,7 +335,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 			mount.proxy.ServeHTTP(response, request)
 			return
 		}
-		base.ServeHTTP(response, request)
+		baseHandler.ServeHTTP(response, request)
 	}), nil
 }
 
@@ -284,6 +348,9 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 	if err != nil {
 		return nil, err
 	}
+	if targetURL.Scheme != "https" && options.ServerName != "" {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
+	}
 	targetAddress := targetURL.Host
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
 	var failing atomic.Bool
@@ -291,7 +358,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 		Proxy:               nil,
 		DisableCompression:  true,
 		ForceAttemptHTTP2:   false,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs},
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: options.ServerName},
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
 		MaxConnsPerHost:     requestLimit,
@@ -300,24 +367,31 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			if network != "tcp" || address != targetAddress {
 				return nil, errors.New("localproxy: refused unexpected upstream")
 			}
-			return dialer.DialContext(ctx, "tcp", targetAddress)
+			ctx, finish := observability.PublisherOperation(ctx, "target_connect")
+			connection, err := dialer.DialContext(ctx, "tcp", targetAddress)
+			finish(err)
+			return connection, err
 		},
 	}
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			observability.PublisherHTTPForward(request.Out.Context())
+			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host
-			if hooks.ModifyHTML != nil && request.In.Header.Get(ReadinessProbeHeader) != "1" {
+			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
 				request.Out.Header.Del("Accept-Encoding")
 			}
 			// remove client forwarding identity before deriving trusted headers.
 			removeForwardingHeaders(request.Out.Header)
+			request.Out.Header.Del(ReadinessProbeHeader)
 			request.SetURL(targetURL)
 			request.Out.Host = host
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
+			observability.PublisherHTTPError(request.Context(), targetErr)
 			if code, ok := diagnostic.CodeOf(targetErr); ok {
 				diagnostic.WriteHTTP(response, request, code)
 				return
@@ -346,7 +420,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 					return err
 				}
 			}
-			if hooks.ModifyHTML != nil && (response.Request == nil || response.Request.Header.Get(ReadinessProbeHeader) != "1") {
+			if hooks.ModifyHTML != nil && !IsReadinessProbe(response.Request) {
 				if err := hooks.ModifyHTML(response); err != nil {
 					return err
 				}
@@ -354,6 +428,8 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			if hooks.OnForwarded != nil {
 				hooks.OnForwarded(response.Request)
 			}
+			observability.PublisherHTTPResponse(response.Request.Context())
+			observability.PublisherHTTPUpgrade(response)
 			return nil
 		},
 	}
@@ -386,6 +462,12 @@ func NormalizeTarget(target string) (string, error) {
 		}
 		scheme = strings.ToLower(parsed.Scheme)
 		hostname, portText = parsed.Hostname(), parsed.Port()
+		if portText == "" && !strings.HasSuffix(parsed.Host, ":") {
+			portText = "80"
+			if scheme == "https" {
+				portText = "443"
+			}
+		}
 		if scheme == "http" && strings.EqualFold(hostname, "localhost") {
 			hostname = "127.0.0.1"
 		}

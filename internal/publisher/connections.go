@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -24,28 +25,15 @@ type publisherConnectionManagerConfig struct {
 	Report         func(error)
 }
 
-type publisherConnectionPhase uint8
-
-const (
-	connectionConnecting publisherConnectionPhase = iota
-	connectionServing
-	connectionAwaitingReplacement
-)
-
-type managedPublisherConnection struct {
+type publisherConnectionAssignment struct {
 	assignment controlv1.ConnectionAssignment
-	cancel     context.CancelFunc
-	session    *tunnel.Session
-	transport  tunnel.Transport
-	preferTCP  bool
-	phase      publisherConnectionPhase
+	key        string
 }
 
 // publisherConnectionManager owns both publisher connection slots and joins
 // their workers on Close. after a claimed connection closes, it waits for a
 // new connection assignment from a heartbeat rather than reconnecting it.
 type publisherConnectionManager struct {
-	ctx              context.Context
 	config           publisherConnectionManagerConfig
 	route            *PublicURLServer
 	publishRunID     string
@@ -53,13 +41,13 @@ type publisherConnectionManager struct {
 	publishRunNumber uint64
 
 	mu           sync.Mutex
-	connections  [publisherConnectionCount]*managedPublisherConnection
-	changed      chan struct{}
+	assignments  [publisherConnectionCount]*publisherConnectionAssignment
+	sequence     uint64
+	paths        *tunnel.Slots
 	fallback     chan struct{}
 	fallbackOnce sync.Once
 	draining     bool
 	closed       bool
-	wg           sync.WaitGroup
 }
 
 func newPublisherConnectionManager(
@@ -79,10 +67,29 @@ func newPublisherConnectionManager(
 	if config.Report == nil {
 		config.Report = func(error) {}
 	}
-	return &publisherConnectionManager{
-		ctx: ctx, config: config, route: route, publishRunID: publishRunID,
-		publicURLID: publicURLID, publishRunNumber: publishRunNumber, changed: make(chan struct{}), fallback: make(chan struct{}),
-	}, nil
+	m := &publisherConnectionManager{
+		config: config, route: route, publishRunID: publishRunID,
+		publicURLID: publicURLID, publishRunNumber: publishRunNumber, fallback: make(chan struct{}),
+	}
+	ctx = observability.WithPublisherRecoveryFrom(ctx, route.life)
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	paths, err := tunnel.NewSlots(ctx, tunnel.SlotsConfig{
+		Connect: m.connect, SingleUse: true, BackoffMin: config.ReconnectDelay, BackoffMax: config.ReconnectDelay,
+		PreferTCPAfter: func(session tunnel.SlotSession, err error) bool {
+			connection := session.(*publicPublisherSlot)
+			return connection.transport == tunnel.TransportQUIC && err != nil && connection.ctx.Err() == nil
+		}, SessionEnded: func(_ uint8, session tunnel.SlotSession, err error) {
+			connection := session.(*publicPublisherSlot)
+			if err != nil && connection.ctx.Err() == nil {
+				config.Report(fmt.Errorf("publisher: publisher connection %s closed: %w", connection.ref.PublisherConnectionID, err))
+			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	m.paths = paths
+	return m, nil
 }
 
 func (m *publisherConnectionManager) Fallback() <-chan struct{} { return m.fallback }
@@ -99,7 +106,7 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 	}
 	now := time.Now()
 	for slot, assignment := range bySlot {
-		current := m.connections[slot]
+		current := m.assignments[slot]
 		if current != nil && sameConnectionAssignment(current.assignment, assignment) {
 			continue
 		}
@@ -108,24 +115,20 @@ func (m *publisherConnectionManager) Update(assignments []controlv1.ConnectionAs
 		}
 	}
 	for slot, assignment := range bySlot {
-		current := m.connections[slot]
+		current := m.assignments[slot]
 		if current != nil && sameConnectionAssignment(current.assignment, assignment) {
 			continue
 		}
-		// a relay may replace a QUIC claim before the publisher sees the failure.
-		// prefer TCP for that replacement; an authenticated TCP session resets the
-		// next replacement to QUIC-first.
-		preferTCP := current != nil && (current.preferTCP || current.phase == connectionServing && current.transport == tunnel.TransportQUIC)
-		if current != nil {
-			current.cancel()
+		m.sequence++
+		// lifecycle state is not an assignment change. a local counter also
+		// fences changed credentials/endpoints without putting secrets in keys.
+		managed := &publisherConnectionAssignment{assignment: assignment,
+			key: fmt.Sprintf("%s/%d/%d", assignment.PublisherConnectionId, assignment.ConnectionAssignmentRevision, m.sequence)}
+		m.assignments[slot] = managed
+		if err := m.paths.Set(uint8(slot), managed.key); err != nil {
+			return err
 		}
-		connectionCtx, cancel := context.WithCancel(m.ctx)
-		managed := &managedPublisherConnection{assignment: assignment, cancel: cancel, preferTCP: preferTCP}
-		m.connections[slot] = managed
-		m.wg.Add(1)
-		go m.run(connectionCtx, slot, managed)
 	}
-	m.signalLocked()
 	return nil
 }
 
@@ -135,13 +138,14 @@ func (m *publisherConnectionManager) WaitReady(ctx context.Context, minimum int)
 	}
 	for {
 		m.mu.Lock()
+		current, changed := m.paths.Snapshot()
 		ready := 0
-		for _, connection := range m.connections {
-			if connection != nil && connection.phase == connectionServing {
+		for _, connection := range current {
+			if connection != nil {
 				ready++
 			}
 		}
-		changed, stopped := m.changed, m.draining || m.closed
+		stopped := m.draining || m.closed
 		m.mu.Unlock()
 		if stopped {
 			return publisherConnectionManagerClosedError()
@@ -164,39 +168,8 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 		return publisherConnectionManagerClosedError()
 	}
 	m.draining = true
-	sessions := make([]*tunnel.Session, 0, publisherConnectionCount)
-	for _, connection := range m.connections {
-		if connection == nil {
-			continue
-		}
-		if connection.phase != connectionServing {
-			connection.cancel()
-			continue
-		}
-		sessions = append(sessions, connection.session)
-	}
-	m.signalLocked()
 	m.mu.Unlock()
-
-	drainErrors := make([]error, len(sessions))
-	var group sync.WaitGroup
-	for index, session := range sessions {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			requestID, err := opaqueid.New(opaqueid.DrainPrefix)
-			if err == nil {
-				err = session.RequestPublisherDrain(ctx, requestID)
-			}
-			// a lost transport already stopped admission and closed its visitor streams.
-			if err != nil && context.Cause(ctx) == nil && errors.Is(session.Err(), muxsession.ErrClosed) {
-				err = nil
-			}
-			drainErrors[index] = err
-		}()
-	}
-	group.Wait()
-	return errors.Join(drainErrors...)
+	return m.paths.StopAdmissions(ctx)
 }
 
 func (m *publisherConnectionManager) Close() {
@@ -206,26 +179,28 @@ func (m *publisherConnectionManager) Close() {
 		return
 	}
 	m.closed = true
-	for _, connection := range m.connections {
-		if connection != nil {
-			connection.cancel()
-		}
-	}
-	m.signalLocked()
 	m.mu.Unlock()
-	m.wg.Wait()
+	_ = m.paths.Close()
 }
 
-func (m *publisherConnectionManager) run(
+// connect adapts the public claim handshake to the role-neutral slot worker.
+// retries belong to Slots; a returned authenticated claim is always single-use.
+func (m *publisherConnectionManager) connect(
 	ctx context.Context,
-	slot int,
-	managed *managedPublisherConnection,
-) {
-	defer m.wg.Done()
-	preferTCP := managed.preferTCP
-	// failed attempts and expired credentials also wait for a new assignment.
-	defer func() { m.connectionEnded(slot, managed, preferTCP) }()
+	slot uint8,
+	preferTCP bool,
+) (tunnel.SlotSession, error) {
+	m.mu.Lock()
+	managed := m.assignments[slot]
+	stopped := m.draining || m.closed || ctx.Err() != nil
+	m.mu.Unlock()
+	if stopped || managed == nil {
+		return nil, tunnel.ErrAwaitAssignment
+	}
 	assignment := managed.assignment
+	if !assignment.PublisherConnectionCredentialExpiresAt.After(time.Now()) {
+		return nil, tunnel.ErrAwaitAssignment
+	}
 	ref := tunnelv1.PublisherConnectionRef{
 		PublishRunID:                 m.publishRunID,
 		PublicURLID:                  m.publicURLID,
@@ -240,91 +215,72 @@ func (m *publisherConnectionManager) run(
 		Role: tunnelv1.Publisher, Credential: assignment.PublisherConnectionCredential,
 		PublisherConnection: &ref,
 	}
-	// dial and transient handshake failures can retry this assignment before an
-	// authenticated session is returned, until its credential expires. after a
-	// session closes, wait for a new assignment instead of reconnecting it.
-	for time.Now().Before(assignment.PublisherConnectionCredentialExpiresAt) {
-		quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
-			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-		}, Transport: tunnel.TransportQUIC}
-		tcp := tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
-			Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-		}, Transport: tunnel.TransportTLSTCP}
-		if managed.preferTCP {
-			quic, tcp = tcp, quic
-		}
-		session, transport, err := tunnel.Race(
-			ctx, quic, tcp, m.config.FallbackDelay, hello,
-		)
-		if err == nil {
-			if !m.setSession(slot, managed, session, transport) {
-				_ = session.Close()
-				return
-			}
-			err = m.route.ServePublisherConnection(ctx, session, ref)
-			preferTCP = transport == tunnel.TransportQUIC && err != nil && ctx.Err() == nil
-			// stop reporting readiness before closing or logging the lost session.
-			m.connectionEnded(slot, managed, preferTCP)
-			_ = session.Close()
-			if err != nil && ctx.Err() == nil {
-				m.config.Report(fmt.Errorf("publisher: publisher connection %s closed: %w", assignment.PublisherConnectionId, err))
-			}
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		if tunnel.IsTerminalHandshakeError(err) {
-			m.config.Report(fmt.Errorf("publisher: publisher connection %s rejected: %w", assignment.PublisherConnectionId, err))
-			return
-		}
-		m.config.Report(fmt.Errorf("publisher: connect publisher connection %s: %w", assignment.PublisherConnectionId, err))
-		timer := time.NewTimer(m.config.ReconnectDelay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
+	quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
+		Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
+	}, Transport: tunnel.TransportQUIC}
+	tcp := tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
+		Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
+	}, Transport: tunnel.TransportTLSTCP}
+	if preferTCP {
+		quic, tcp = tcp, quic
 	}
-}
-
-func (m *publisherConnectionManager) setSession(
-	slot int,
-	managed *managedPublisherConnection,
-	session *tunnel.Session,
-	transport tunnel.Transport,
-) bool {
+	connectCtx, finish := observability.PublisherOperation(ctx, "connect")
+	session, transport, err := tunnel.Race(connectCtx, quic, tcp, m.config.FallbackDelay, hello)
+	finish(err)
+	observability.PublisherConnection(ctx, string(transport), preferTCP, err)
+	if err != nil {
+		if ctx.Err() == nil {
+			if tunnel.IsTerminalHandshakeError(err) {
+				m.config.Report(fmt.Errorf("publisher: publisher connection %s rejected: %w", assignment.PublisherConnectionId, err))
+			} else {
+				m.config.Report(fmt.Errorf("publisher: connect publisher connection %s: %w", assignment.PublisherConnectionId, err))
+			}
+		}
+		return nil, err
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.draining || m.closed || m.connections[slot] != managed || managed.phase != connectionConnecting {
-		return false
-	}
-	managed.session = session
-	managed.transport = transport
-	if transport == tunnel.TransportTLSTCP {
-		managed.preferTCP = false
+	current := !m.draining && !m.closed && ctx.Err() == nil && m.assignments[slot] == managed
+	if current && transport == tunnel.TransportTLSTCP {
+		// publish fallback before Slots can expose readiness, and only while
+		// the heartbeat's immutable assignment snapshot remains current.
 		m.fallbackOnce.Do(func() { close(m.fallback) })
 	}
-	managed.phase = connectionServing
-	m.signalLocked()
-	return true
-}
-
-func (m *publisherConnectionManager) connectionEnded(slot int, managed *managedPublisherConnection, preferTCP bool) {
-	m.mu.Lock()
-	if !m.closed && m.connections[slot] == managed && managed.phase != connectionAwaitingReplacement {
-		managed.session = nil
-		managed.phase = connectionAwaitingReplacement
-		managed.preferTCP = preferTCP
-		m.signalLocked()
-	}
 	m.mu.Unlock()
+	if !current {
+		_ = session.Close()
+		return nil, tunnel.ErrAwaitAssignment
+	}
+	return &publicPublisherSlot{ctx: ctx, session: session, transport: transport, ref: ref, route: m.route}, nil
 }
 
-func (m *publisherConnectionManager) signalLocked() {
-	close(m.changed)
-	m.changed = make(chan struct{})
+type publicPublisherSlot struct {
+	ctx       context.Context
+	session   *tunnel.Session
+	transport tunnel.Transport
+	ref       tunnelv1.PublisherConnectionRef
+	route     *PublicURLServer
+}
+
+func (c *publicPublisherSlot) Serve(ctx context.Context) error {
+	finish := observability.PublisherConnectionLifetime(ctx, string(c.transport), int(c.ref.ConnectionSlot))
+	err := c.route.ServePublisherConnection(ctx, c.session, c.ref)
+	finish(err, ctx.Err() != nil || err == nil)
+	return err
+}
+
+func (c *publicPublisherSlot) Transport() tunnel.Transport { return c.transport }
+func (c *publicPublisherSlot) Close() error                { return c.session.Close() }
+
+func (c *publicPublisherSlot) Drain(ctx context.Context) error {
+	requestID, err := opaqueid.New(opaqueid.DrainPrefix)
+	if err == nil {
+		err = c.session.RequestPublisherDrain(ctx, requestID)
+	}
+	// a lost transport already stopped admission and closed its visitor streams.
+	if err != nil && context.Cause(ctx) == nil && errors.Is(c.session.Err(), muxsession.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 func validateConnectionAssignments(

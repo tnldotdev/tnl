@@ -1,0 +1,21 @@
+services:
+  publisher:
+    # supply the immutable image@sha256 digest from a published tnl release.
+    image: ${TNL_IMAGE:?set TNL_IMAGE to the published tnl image@sha256 digest}
+    user: "0:0"
+    command: ["publish", "--enrolled", "--foreground", "--inspection-mode=none"]
+    environment:
+      TNL_IMAGE: ${TNL_IMAGE:?set TNL_IMAGE to the published tnl image@sha256 digest}
+      TNL_SERVER: ${TNL_SERVER:?set TNL_SERVER to the HTTPS control URL}
+      TNL_TARGET: ${TNL_TARGET:-http://opencode:4096}
+      TNL_ENROLL_KEY: ${TNL_ENROLL_KEY:-}
+      TNL_STATE_DIR: /var/lib/tnl/publisher
+    volumes:
+      - publisher-state:/var/lib/tnl
+    restart: unless-stopped
+    stop_grace_period: 45s
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  publisher-state:

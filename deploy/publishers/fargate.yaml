@@ -1,0 +1,2237 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 'tnl publisher group: independent single-task replicas, pinned signing identities, durable private EFS identity files, task-local runtime state.'
+Metadata:
+  tnl:parameter-contract-version: 1
+  tnl:template-version: "2"
+Parameters:
+  AdditionalSecurityGroup1:
+    Type: String
+    Description: Additional task security group in VpcId. At most five groups including the primary.
+    Default: ""
+    AllowedPattern: (sg-[0-9a-f]{8,17})?
+    MaxLength: 20
+  AdditionalSecurityGroup2:
+    Type: String
+    Description: Additional task security group in VpcId. At most five groups including the primary.
+    Default: ""
+    AllowedPattern: (sg-[0-9a-f]{8,17})?
+    MaxLength: 20
+  AdditionalSecurityGroup3:
+    Type: String
+    Description: Additional task security group in VpcId. At most five groups including the primary.
+    Default: ""
+    AllowedPattern: (sg-[0-9a-f]{8,17})?
+    MaxLength: 20
+  AdditionalSecurityGroup4:
+    Type: String
+    Description: Additional task security group in VpcId. At most five groups including the primary.
+    Default: ""
+    AllowedPattern: (sg-[0-9a-f]{8,17})?
+    MaxLength: 20
+  AssignPublicIp:
+    Type: String
+    Description: Keep disabled for private subnets with NAT/endpoints; enable only with appropriate public routing.
+    Default: DISABLED
+    AllowedValues:
+      - DISABLED
+      - ENABLED
+  CPUArchitecture:
+    Type: String
+    Description: Image architecture; the pinned digest must support this architecture.
+    Default: X86_64
+    AllowedValues:
+      - X86_64
+      - ARM64
+  ClusterName:
+    Type: String
+    Description: Optional new cluster name; overrides prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_-]+)?
+    MaxLength: 255
+  ControlURL:
+    Type: String
+    Description: HTTPS control origin supplied by bootstrap.
+    AllowedPattern: https://[a-z0-9.-]+(:[0-9]+)?
+    MaxLength: 253
+  DeploymentID:
+    Type: String
+    Description: Immutable unique deployment ID from bootstrap. Preserve on every update; never reuse for another group.
+    AllowedPattern: '[a-z0-9][a-z0-9-]{0,47}'
+    MaxLength: 48
+  EFSSecurityGroupName:
+    Type: String
+    Description: Optional new EFS security group name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ((?!sg-)[A-Za-z0-9 ._:/()#,@\[\]+=;{}!$*-]+)?
+    MaxLength: 255
+  ExistingClusterArn:
+    Type: String
+    Description: Existing cluster ARN; never owned or modified by this stack.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:ecs:[a-z0-9-]+:[0-9]{12}:cluster/[A-Za-z0-9_-]+)?
+    MaxLength: 512
+  ExistingPublisherSecurityGroupId:
+    Type: String
+    Description: Existing task security group in VpcId; customer owns its egress and inbound rules.
+    Default: ""
+    AllowedPattern: (sg-[0-9a-f]{8,17})?
+    MaxLength: 20
+  FileSystemKMSKeyArn:
+    Type: String
+    Description: Key for the stack's encrypted Regional filesystem. EFS service uses this key; task roles need no KMS decrypt permission.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
+    MaxLength: 256
+  Group:
+    Type: String
+    Description: Configuration group selector; may change without changing replica storage paths.
+    AllowedPattern: (?!local$)[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?
+    MaxLength: 32
+  LogRetentionDays:
+    Type: String
+    Description: Retention for new log groups; existing groups retain their settings.
+    Default: "30"
+    AllowedValues:
+      - "1"
+      - "3"
+      - "5"
+      - "7"
+      - "14"
+      - "30"
+      - "60"
+      - "90"
+      - "120"
+      - "150"
+      - "180"
+      - "365"
+      - "400"
+      - "545"
+      - "731"
+      - "1096"
+      - "1827"
+      - "2192"
+      - "2557"
+      - "2922"
+      - "3288"
+      - "3653"
+  LogsKMSKeyArn:
+    Type: String
+    Description: Key for new log groups only. Key policy must allow logs.REGION.URLSuffix with kms:EncryptionContext:aws:logs:arn scoped to the log group ARN.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
+    MaxLength: 256
+  MountSubnet1:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnet2:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnet3:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnet4:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnet5:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnet6:
+    Type: String
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Default: ""
+    AllowedPattern: (subnet-[0-9a-f]{8,17})?
+    MaxLength: 24
+  MountSubnetCount:
+    Type: String
+    Description: Number of distinct AZ mount subnets, one per AZ. Never put two mount subnets in the same AZ.
+    Default: "2"
+    AllowedValues:
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "5"
+      - "6"
+  PermissionsBoundaryArn:
+    Type: String
+    Description: Boundary for new IAM roles only; existing role policies and boundaries remain customer-owned.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]+)?
+    MaxLength: 512
+  PlatformVersion:
+    Type: String
+    Description: Linux Fargate platform with EFS and pinned secret-version injection.
+    Default: 1.4.0
+    AllowedValues:
+      - 1.4.0
+      - LATEST
+  ProjectKey:
+    Type: String
+    Description: Stable Git source project key; must match the provisioned identities.
+    AllowedPattern: '[a-z0-9][a-z0-9-]{0,62}'
+    MaxLength: 63
+  PublisherGroupID:
+    Type: String
+    Description: Actual immutable publisher group ID supplied by bootstrap.
+    AllowedPattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
+    MaxLength: 128
+  PublisherImage:
+    Type: String
+    Description: Publicly pullable image by digest, with /usr/local/bin/tnl and private /state owned by 65532. Private registry authentication is external.
+    AllowedPattern: '[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}'
+    MaxLength: 512
+  PublisherSecurityGroupName:
+    Type: String
+    Description: Optional new task security group name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ((?!sg-)[A-Za-z0-9 ._:/()#,@\[\]+=;{}!$*-]+)?
+    MaxLength: 255
+  Replica1DesiredCount:
+    Type: String
+    Description: One runs this independent replica; zero stops it without destroying identity state.
+    Default: "1"
+    AllowedValues:
+      - "0"
+      - "1"
+  Replica1ExecutionRoleName:
+    Type: String
+    Description: Optional new role name; requires CAPABILITY_NAMED_IAM. Overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9+=,.@_-]+)?
+    MaxLength: 64
+  Replica1ExistingExecutionRoleArn:
+    Type: String
+    Description: Existing replica-private role. Customer must supply the same scoped policy as the generated role; stack never changes it.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?
+    MaxLength: 512
+  Replica1ExistingLogGroupName:
+    Type: String
+    Description: Existing log group; customer owns retention and KMS policy.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_./#-]+)?
+    MaxLength: 512
+  Replica1ExistingTaskRoleArn:
+    Type: String
+    Description: Existing replica-private role. Customer must supply the same scoped policy as the generated role; stack never changes it.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?
+    MaxLength: 512
+  Replica1IdentityKMSKeyArn:
+    Type: String
+    Description: Customer-managed key for this replica secret; key policy must permit execution-role decrypt via Secrets Manager with SecretARN context.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
+    MaxLength: 256
+  Replica1IdentitySecretArn:
+    Type: String
+    Description: Existing replica-private Secrets Manager SecretString containing provisioned group identity JSON; never shared with another replica.
+    AllowedPattern: arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+
+    MaxLength: 512
+  Replica1IdentitySecretVersion:
+    Type: String
+    Description: Pinned secret version ID injected at every task launch, including replacements.
+    AllowedPattern: '[A-Za-z0-9-]{32,64}'
+    MaxLength: 64
+  Replica1Instance:
+    Type: String
+    Description: Provisioned instance name; must match identity JSON. EFS paths use immutable replica keys.
+    AllowedPattern: '[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?'
+    MaxLength: 32
+  Replica1LogGroupName:
+    Type: String
+    Description: Optional new log group name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ((?!aws/)[A-Za-z0-9_./#-]+)?
+    MaxLength: 512
+  Replica1PublisherIdentityID:
+    Type: String
+    Description: Public publisher identity ID returned by bootstrap; never the signing key.
+    AllowedPattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
+    MaxLength: 128
+  Replica1ServiceName:
+    Type: String
+    Description: Optional ECS service physical name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_-]+)?
+    MaxLength: 255
+  Replica1TaskFamily:
+    Type: String
+    Description: Optional task definition family; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_-]+)?
+    MaxLength: 255
+  Replica1TaskRoleName:
+    Type: String
+    Description: Optional new role name; requires CAPABILITY_NAMED_IAM. Overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9+=,.@_-]+)?
+    MaxLength: 64
+  Replica2DesiredCount:
+    Type: String
+    Description: One runs this independent replica; zero stops it without destroying identity state.
+    Default: "1"
+    AllowedValues:
+      - "0"
+      - "1"
+  Replica2ExecutionRoleName:
+    Type: String
+    Description: Optional new role name; requires CAPABILITY_NAMED_IAM. Overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9+=,.@_-]+)?
+    MaxLength: 64
+  Replica2ExistingExecutionRoleArn:
+    Type: String
+    Description: Existing replica-private role. Customer must supply the same scoped policy as the generated role; stack never changes it.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?
+    MaxLength: 512
+  Replica2ExistingLogGroupName:
+    Type: String
+    Description: Existing log group; customer owns retention and KMS policy.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_./#-]+)?
+    MaxLength: 512
+  Replica2ExistingTaskRoleArn:
+    Type: String
+    Description: Existing replica-private role. Customer must supply the same scoped policy as the generated role; stack never changes it.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?
+    MaxLength: 512
+  Replica2IdentityKMSKeyArn:
+    Type: String
+    Description: Customer-managed key for this replica secret; key policy must permit execution-role decrypt via Secrets Manager with SecretARN context.
+    Default: ""
+    AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
+    MaxLength: 256
+  Replica2IdentitySecretArn:
+    Type: String
+    Description: Existing replica-private Secrets Manager SecretString containing provisioned group identity JSON; never shared with another replica.
+    AllowedPattern: arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+
+    MaxLength: 512
+  Replica2IdentitySecretVersion:
+    Type: String
+    Description: Pinned secret version ID injected at every task launch, including replacements.
+    AllowedPattern: '[A-Za-z0-9-]{32,64}'
+    MaxLength: 64
+  Replica2Instance:
+    Type: String
+    Description: Provisioned instance name; must match identity JSON. EFS paths use immutable replica keys.
+    AllowedPattern: '[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?'
+    MaxLength: 32
+  Replica2LogGroupName:
+    Type: String
+    Description: Optional new log group name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ((?!aws/)[A-Za-z0-9_./#-]+)?
+    MaxLength: 512
+  Replica2PublisherIdentityID:
+    Type: String
+    Description: Public publisher identity ID returned by bootstrap; never the signing key.
+    AllowedPattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
+    MaxLength: 128
+  Replica2ServiceName:
+    Type: String
+    Description: Optional ECS service physical name; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_-]+)?
+    MaxLength: 255
+  Replica2TaskFamily:
+    Type: String
+    Description: Optional task definition family; overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9_-]+)?
+    MaxLength: 255
+  Replica2TaskRoleName:
+    Type: String
+    Description: Optional new role name; requires CAPABILITY_NAMED_IAM. Overrides resource prefix.
+    Default: ""
+    AllowedPattern: ([A-Za-z0-9+=,.@_-]+)?
+    MaxLength: 64
+  ResourcePrefix:
+    Type: String
+    Description: Optional physical-name prefix. Empty uses CloudFormation-generated names; IAM names require CAPABILITY_NAMED_IAM. Must not produce an sg- security group name.
+    Default: ""
+    AllowedPattern: ((?![sS][gG](?:-|$))[A-Za-z][A-Za-z0-9-]{0,31})?
+    MaxLength: 32
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing task subnets with DNS and outbound connectivity to control, relays, targets, EFS, registry, Secrets Manager and logs.
+  TaskCPU:
+    Type: String
+    Description: Fargate CPU units. Rules enforce supported memory combinations.
+    Default: "256"
+    AllowedValues:
+      - "256"
+      - "512"
+      - "1024"
+      - "2048"
+      - "4096"
+  TaskMemory:
+    Type: String
+    Description: Fargate memory MiB. Rules enforce supported CPU combinations.
+    Default: "512"
+    AllowedValues:
+      - "512"
+      - "1024"
+      - "1536"
+      - "2048"
+      - "2560"
+      - "3072"
+      - "3584"
+      - "4096"
+      - "4608"
+      - "5120"
+      - "5632"
+      - "6144"
+      - "6656"
+      - "7168"
+      - "7680"
+      - "8192"
+      - "8704"
+      - "9216"
+      - "9728"
+      - "10240"
+      - "10752"
+      - "11264"
+      - "11776"
+      - "12288"
+      - "12800"
+      - "13312"
+      - "13824"
+      - "14336"
+      - "14848"
+      - "15360"
+      - "15872"
+      - "16384"
+      - "16896"
+      - "17408"
+      - "17920"
+      - "18432"
+      - "18944"
+      - "19456"
+      - "19968"
+      - "20480"
+      - "20992"
+      - "21504"
+      - "22016"
+      - "22528"
+      - "23040"
+      - "23552"
+      - "24064"
+      - "24576"
+      - "25088"
+      - "25600"
+      - "26112"
+      - "26624"
+      - "27136"
+      - "27648"
+      - "28160"
+      - "28672"
+      - "29184"
+      - "29696"
+      - "30208"
+      - "30720"
+  TeamID:
+    Type: String
+    Description: Actual team ID supplied by bootstrap; not a mutable team name.
+    AllowedPattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
+    MaxLength: 128
+  TemplateSHA256:
+    Type: String
+    Description: Exact template byte SHA-256 from manifest.json, supplied by the consumer (a template cannot hash itself).
+    AllowedPattern: '[a-f0-9]{64}'
+    MaxLength: 64
+  VpcId:
+    Type: String
+    Description: Existing VPC for tasks and EFS mount targets.
+    AllowedPattern: vpc-[0-9a-f]{8,17}
+    MaxLength: 21
+Conditions:
+  CreateCluster:
+    Fn::Not:
+      - Condition: HasExistingClusterArn
+  CreateMountTarget1:
+    Fn::And:
+      - Fn::Or:
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "1"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "2"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "3"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "4"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "5"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "6"
+      - Condition: HasMountSubnet1
+  CreateMountTarget2:
+    Fn::And:
+      - Fn::Or:
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "2"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "3"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "4"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "5"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "6"
+      - Condition: HasMountSubnet2
+  CreateMountTarget3:
+    Fn::And:
+      - Fn::Or:
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "3"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "4"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "5"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "6"
+      - Condition: HasMountSubnet3
+  CreateMountTarget4:
+    Fn::And:
+      - Fn::Or:
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "4"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "5"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "6"
+      - Condition: HasMountSubnet4
+  CreateMountTarget5:
+    Fn::And:
+      - Fn::Or:
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "5"
+          - Fn::Equals:
+              - Ref: MountSubnetCount
+              - "6"
+      - Condition: HasMountSubnet5
+  CreateMountTarget6:
+    Fn::And:
+      - Fn::Equals:
+          - Ref: MountSubnetCount
+          - "6"
+      - Condition: HasMountSubnet6
+  CreatePublisherSecurityGroup:
+    Fn::Not:
+      - Condition: HasExistingPublisherSecurityGroupId
+  CreateReplica1ExecutionRole:
+    Fn::Not:
+      - Condition: HasReplica1ExistingExecutionRoleArn
+  CreateReplica1Logs:
+    Fn::Not:
+      - Condition: HasReplica1ExistingLogGroupName
+  CreateReplica1TaskRole:
+    Fn::Not:
+      - Condition: HasReplica1ExistingTaskRoleArn
+  CreateReplica2ExecutionRole:
+    Fn::Not:
+      - Condition: HasReplica2ExistingExecutionRoleArn
+  CreateReplica2Logs:
+    Fn::Not:
+      - Condition: HasReplica2ExistingLogGroupName
+  CreateReplica2TaskRole:
+    Fn::Not:
+      - Condition: HasReplica2ExistingTaskRoleArn
+  HasAdditionalSecurityGroup1:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AdditionalSecurityGroup1
+          - ""
+  HasAdditionalSecurityGroup2:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AdditionalSecurityGroup2
+          - ""
+  HasAdditionalSecurityGroup3:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AdditionalSecurityGroup3
+          - ""
+  HasAdditionalSecurityGroup4:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AdditionalSecurityGroup4
+          - ""
+  HasClusterName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ClusterName
+          - ""
+  HasEFSSecurityGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: EFSSecurityGroupName
+          - ""
+  HasExistingClusterArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ExistingClusterArn
+          - ""
+  HasExistingPublisherSecurityGroupId:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ExistingPublisherSecurityGroupId
+          - ""
+  HasFileSystemKMSKeyArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: FileSystemKMSKeyArn
+          - ""
+  HasLogsKMSKeyArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: LogsKMSKeyArn
+          - ""
+  HasMountSubnet1:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet1
+          - ""
+  HasMountSubnet2:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet2
+          - ""
+  HasMountSubnet3:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet3
+          - ""
+  HasMountSubnet4:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet4
+          - ""
+  HasMountSubnet5:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet5
+          - ""
+  HasMountSubnet6:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: MountSubnet6
+          - ""
+  HasPermissionsBoundaryArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: PermissionsBoundaryArn
+          - ""
+  HasPublisherSecurityGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: PublisherSecurityGroupName
+          - ""
+  HasReplica1ExecutionRoleName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1ExecutionRoleName
+          - ""
+  HasReplica1ExistingExecutionRoleArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1ExistingExecutionRoleArn
+          - ""
+  HasReplica1ExistingLogGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1ExistingLogGroupName
+          - ""
+  HasReplica1ExistingTaskRoleArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1ExistingTaskRoleArn
+          - ""
+  HasReplica1IdentityKMSKeyArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1IdentityKMSKeyArn
+          - ""
+  HasReplica1LogGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1LogGroupName
+          - ""
+  HasReplica1ServiceName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1ServiceName
+          - ""
+  HasReplica1TaskFamily:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1TaskFamily
+          - ""
+  HasReplica1TaskRoleName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica1TaskRoleName
+          - ""
+  HasReplica2ExecutionRoleName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2ExecutionRoleName
+          - ""
+  HasReplica2ExistingExecutionRoleArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2ExistingExecutionRoleArn
+          - ""
+  HasReplica2ExistingLogGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2ExistingLogGroupName
+          - ""
+  HasReplica2ExistingTaskRoleArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2ExistingTaskRoleArn
+          - ""
+  HasReplica2IdentityKMSKeyArn:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2IdentityKMSKeyArn
+          - ""
+  HasReplica2LogGroupName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2LogGroupName
+          - ""
+  HasReplica2ServiceName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2ServiceName
+          - ""
+  HasReplica2TaskFamily:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2TaskFamily
+          - ""
+  HasReplica2TaskRoleName:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: Replica2TaskRoleName
+          - ""
+  HasResourcePrefix:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ResourcePrefix
+          - ""
+Rules:
+  IndependentReplicas1And2:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: Replica2IdentitySecretArn
+                - Ref: Replica1IdentitySecretArn
+        AssertDescription: each replica requires its own identity secret container
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: Replica2Instance
+                - Ref: Replica1Instance
+        AssertDescription: each replica requires its own instance name
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: Replica2PublisherIdentityID
+                - Ref: Replica1PublisherIdentityID
+        AssertDescription: each replica requires its own publisher identity
+  MemoryForCPU256:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - - "512"
+              - "1024"
+              - "2048"
+            - Ref: TaskMemory
+        AssertDescription: select a supported Fargate CPU and memory combination
+    RuleCondition:
+      Fn::Equals:
+        - Ref: TaskCPU
+        - "256"
+  MemoryForCPU512:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - - "1024"
+              - "2048"
+              - "3072"
+              - "4096"
+            - Ref: TaskMemory
+        AssertDescription: select a supported Fargate CPU and memory combination
+    RuleCondition:
+      Fn::Equals:
+        - Ref: TaskCPU
+        - "512"
+  MemoryForCPU1024:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - - "2048"
+              - "3072"
+              - "4096"
+              - "5120"
+              - "6144"
+              - "7168"
+              - "8192"
+            - Ref: TaskMemory
+        AssertDescription: select a supported Fargate CPU and memory combination
+    RuleCondition:
+      Fn::Equals:
+        - Ref: TaskCPU
+        - "1024"
+  MemoryForCPU2048:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - - "4096"
+              - "5120"
+              - "6144"
+              - "7168"
+              - "8192"
+              - "9216"
+              - "10240"
+              - "11264"
+              - "12288"
+              - "13312"
+              - "14336"
+              - "15360"
+              - "16384"
+            - Ref: TaskMemory
+        AssertDescription: select a supported Fargate CPU and memory combination
+    RuleCondition:
+      Fn::Equals:
+        - Ref: TaskCPU
+        - "2048"
+  MemoryForCPU4096:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - - "8192"
+              - "9216"
+              - "10240"
+              - "11264"
+              - "12288"
+              - "13312"
+              - "14336"
+              - "15360"
+              - "16384"
+              - "17408"
+              - "18432"
+              - "19456"
+              - "20480"
+              - "21504"
+              - "22528"
+              - "23552"
+              - "24576"
+              - "25600"
+              - "26624"
+              - "27648"
+              - "28672"
+              - "29696"
+              - "30720"
+            - Ref: TaskMemory
+        AssertDescription: select a supported Fargate CPU and memory combination
+    RuleCondition:
+      Fn::Equals:
+        - Ref: TaskCPU
+        - "4096"
+  MountSubnet1Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet1
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Or:
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "1"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "2"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
+  MountSubnet2Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet2
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Or:
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "2"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
+  MountSubnet3Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet3
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Or:
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
+  MountSubnet4Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet4
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Or:
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
+  MountSubnet5Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet5
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Or:
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
+  MountSubnet6Required:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: MountSubnet6
+                - ""
+        AssertDescription: supply every selected mount subnet; each must be in a different AZ
+    RuleCondition:
+      Fn::Equals:
+        - Ref: MountSubnetCount
+        - "6"
+Resources:
+  Cluster:
+    Condition: CreateCluster
+    Properties:
+      ClusterName:
+        Fn::If:
+          - HasClusterName
+          - Ref: ClusterName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-cluster
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::ECS::Cluster
+  EFSSecurityGroup:
+    DeletionPolicy: Retain
+    Properties:
+      GroupDescription: 'tnl identity EFS: NFS only from publisher tasks'
+      GroupName:
+        Fn::If:
+          - HasEFSSecurityGroupName
+          - Ref: EFSSecurityGroupName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-efs
+              - Ref: AWS::NoValue
+      SecurityGroupIngress:
+        - FromPort: 2049
+          IpProtocol: tcp
+          SourceSecurityGroupId:
+            Fn::If:
+              - HasExistingPublisherSecurityGroupId
+              - Ref: ExistingPublisherSecurityGroupId
+              - Ref: PublisherSecurityGroup
+          ToPort: 2049
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      VpcId:
+        Ref: VpcId
+    Type: AWS::EC2::SecurityGroup
+    UpdateReplacePolicy: Retain
+  IdentityFileSystem:
+    DeletionPolicy: Retain
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      Encrypted: true
+      FileSystemPolicy:
+        Statement:
+          - Action: elasticfilesystem:Client*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+            Effect: Deny
+            Principal: '*'
+            Resource: '*'
+          - Action: elasticfilesystem:Client*
+            Condition:
+              StringEquals:
+                aws:PrincipalType: Anonymous
+            Effect: Deny
+            Principal: '*'
+            Resource: '*'
+        Version: "2012-10-17"
+      FileSystemTags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      KmsKeyId:
+        Fn::If:
+          - HasFileSystemKMSKeyArn
+          - Ref: FileSystemKMSKeyArn
+          - Ref: AWS::NoValue
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+    Type: AWS::EFS::FileSystem
+    UpdateReplacePolicy: Retain
+  MountTarget1:
+    Condition: CreateMountTarget1
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet1
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  MountTarget2:
+    Condition: CreateMountTarget2
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet2
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  MountTarget3:
+    Condition: CreateMountTarget3
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet3
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  MountTarget4:
+    Condition: CreateMountTarget4
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet4
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  MountTarget5:
+    Condition: CreateMountTarget5
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet5
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  MountTarget6:
+    Condition: CreateMountTarget6
+    DeletionPolicy: Retain
+    Properties:
+      FileSystemId:
+        Ref: IdentityFileSystem
+      SecurityGroups:
+        - Ref: EFSSecurityGroup
+      SubnetId:
+        Ref: MountSubnet6
+    Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
+  PublisherSecurityGroup:
+    Condition: CreatePublisherSecurityGroup
+    DeletionPolicy: Retain
+    Properties:
+      GroupDescription: 'tnl publisher tasks: no inbound, standard outbound'
+      GroupName:
+        Fn::If:
+          - HasPublisherSecurityGroupName
+          - Ref: PublisherSecurityGroupName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-publisher
+              - Ref: AWS::NoValue
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: "-1"
+        - CidrIpv6: ::/0
+          IpProtocol: "-1"
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      VpcId:
+        Ref: VpcId
+    Type: AWS::EC2::SecurityGroup
+    UpdateReplacePolicy: Retain
+  Replica1ExecutionRole:
+    Condition: CreateReplica1ExecutionRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+        Version: "2012-10-17"
+      PermissionsBoundary:
+        Fn::If:
+          - HasPermissionsBoundaryArn
+          - Ref: PermissionsBoundaryArn
+          - Ref: AWS::NoValue
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: secretsmanager:GetSecretValue
+                Condition:
+                  StringEquals:
+                    secretsmanager:VersionId:
+                      Ref: Replica1IdentitySecretVersion
+                Effect: Allow
+                Resource:
+                  Ref: Replica1IdentitySecretArn
+              - Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  Fn::Sub:
+                    - arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}:log-stream:*
+                    - LogGroup:
+                        Fn::If:
+                          - HasReplica1ExistingLogGroupName
+                          - Ref: Replica1ExistingLogGroupName
+                          - Ref: Replica1Logs
+              - Fn::If:
+                  - HasReplica1IdentityKMSKeyArn
+                  - Action: kms:Decrypt
+                    Condition:
+                      StringEquals:
+                        kms:EncryptionContext:SecretARN:
+                          Ref: Replica1IdentitySecretArn
+                        kms:ViaService:
+                          Fn::Sub: secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+                    Effect: Allow
+                    Resource:
+                      Ref: Replica1IdentityKMSKeyArn
+                  - Ref: AWS::NoValue
+            Version: "2012-10-17"
+          PolicyName: identity-and-logs
+      RoleName:
+        Fn::If:
+          - HasReplica1ExecutionRoleName
+          - Ref: Replica1ExecutionRoleName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r1-executionrole
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::IAM::Role
+  Replica1IdentityAccessPoint:
+    DeletionPolicy: Retain
+    Properties:
+      AccessPointTags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      FileSystemId:
+        Ref: IdentityFileSystem
+      PosixUser:
+        Gid: "65532"
+        Uid: "65532"
+      RootDirectory:
+        CreationInfo:
+          OwnerGid: "65532"
+          OwnerUid: "65532"
+          Permissions: "0700"
+        Path:
+          Fn::Sub: /tnl/${DeploymentID}/replica-1
+    Type: AWS::EFS::AccessPoint
+    UpdateReplacePolicy: Retain
+  Replica1Logs:
+    Condition: CreateReplica1Logs
+    DeletionPolicy: Retain
+    Properties:
+      KmsKeyId:
+        Fn::If:
+          - HasLogsKMSKeyArn
+          - Ref: LogsKMSKeyArn
+          - Ref: AWS::NoValue
+      LogGroupName:
+        Fn::If:
+          - HasReplica1LogGroupName
+          - Ref: Replica1LogGroupName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r1-logs
+              - Ref: AWS::NoValue
+      RetentionInDays:
+        Ref: LogRetentionDays
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Retain
+  Replica1Service:
+    Properties:
+      AvailabilityZoneRebalancing: DISABLED
+      Cluster:
+        Fn::If:
+          - HasExistingClusterArn
+          - Ref: ExistingClusterArn
+          - Fn::GetAtt:
+              - Cluster
+              - Arn
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: false
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      DesiredCount:
+        Ref: Replica1DesiredCount
+      EnableECSManagedTags: true
+      EnableExecuteCommand: false
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp:
+            Ref: AssignPublicIp
+          SecurityGroups:
+            - Fn::If:
+                - HasExistingPublisherSecurityGroupId
+                - Ref: ExistingPublisherSecurityGroupId
+                - Ref: PublisherSecurityGroup
+            - Fn::If:
+                - HasAdditionalSecurityGroup1
+                - Ref: AdditionalSecurityGroup1
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup2
+                - Ref: AdditionalSecurityGroup2
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup3
+                - Ref: AdditionalSecurityGroup3
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup4
+                - Ref: AdditionalSecurityGroup4
+                - Ref: AWS::NoValue
+          Subnets:
+            Ref: Subnets
+      PlatformVersion:
+        Ref: PlatformVersion
+      PropagateTags: SERVICE
+      ServiceName:
+        Fn::If:
+          - HasReplica1ServiceName
+          - Ref: Replica1ServiceName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r1
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+        - Fn::If:
+            - CreateMountTarget1
+            - Key: tnl:mount-target-1
+              Value:
+                Ref: MountTarget1
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget2
+            - Key: tnl:mount-target-2
+              Value:
+                Ref: MountTarget2
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget3
+            - Key: tnl:mount-target-3
+              Value:
+                Ref: MountTarget3
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget4
+            - Key: tnl:mount-target-4
+              Value:
+                Ref: MountTarget4
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget5
+            - Key: tnl:mount-target-5
+              Value:
+                Ref: MountTarget5
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget6
+            - Key: tnl:mount-target-6
+              Value:
+                Ref: MountTarget6
+            - Ref: AWS::NoValue
+      TaskDefinition:
+        Ref: Replica1TaskDefinition
+    Type: AWS::ECS::Service
+  Replica1TaskDefinition:
+    Properties:
+      ContainerDefinitions:
+        - Command:
+            - --no-config
+            - publisher
+            - serve
+            - --server
+            - Ref: ControlURL
+            - --project-key
+            - Ref: ProjectKey
+            - --group
+            - Ref: Group
+            - --state-dir
+            - /state
+            - --instance
+            - Ref: Replica1Instance
+            - --identity-dir
+            - /identity
+          EntryPoint:
+            - /usr/local/bin/tnl
+          Environment:
+            - Name: TNL_DEPLOYMENT_ID
+              Value:
+                Ref: DeploymentID
+            - Name: TNL_DEPLOYMENT_PROVIDER
+              Value: aws
+            - Name: TNL_DEPLOYMENT_REPLICA_KEY
+              Value: replica-1
+            - Name: TNL_DEPLOYMENT_IMAGE
+              Value:
+                Ref: PublisherImage
+            - Name: TNL_DEPLOYMENT_TEMPLATE_VERSION
+              Value: "2"
+            - Name: TNL_DEPLOYMENT_TEMPLATE_SHA256
+              Value:
+                Ref: TemplateSHA256
+          Essential: true
+          Image:
+            Ref: PublisherImage
+          LinuxParameters:
+            Capabilities:
+              Drop:
+                - ALL
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::If:
+                  - HasReplica1ExistingLogGroupName
+                  - Ref: Replica1ExistingLogGroupName
+                  - Ref: Replica1Logs
+              awslogs-region:
+                Ref: AWS::Region
+              awslogs-stream-prefix: publisher
+          MountPoints:
+            - ContainerPath: /identity
+              ReadOnly: false
+              SourceVolume: identity
+          Name: publisher
+          Secrets:
+            - Name: TNL_GROUP_IDENTITY
+              ValueFrom:
+                Fn::Sub: ${Replica1IdentitySecretArn}:::${Replica1IdentitySecretVersion}
+          StopTimeout: 120
+          User: 65532:65532
+      Cpu:
+        Ref: TaskCPU
+      ExecutionRoleArn:
+        Fn::If:
+          - HasReplica1ExistingExecutionRoleArn
+          - Ref: Replica1ExistingExecutionRoleArn
+          - Fn::GetAtt:
+              - Replica1ExecutionRole
+              - Arn
+      Family:
+        Fn::If:
+          - HasReplica1TaskFamily
+          - Ref: Replica1TaskFamily
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r1
+              - Ref: AWS::NoValue
+      Memory:
+        Ref: TaskMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture:
+          Ref: CPUArchitecture
+        OperatingSystemFamily: LINUX
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      TaskRoleArn:
+        Fn::If:
+          - HasReplica1ExistingTaskRoleArn
+          - Ref: Replica1ExistingTaskRoleArn
+          - Fn::GetAtt:
+              - Replica1TaskRole
+              - Arn
+      Volumes:
+        - EFSVolumeConfiguration:
+            AuthorizationConfig:
+              AccessPointId:
+                Ref: Replica1IdentityAccessPoint
+              IAM: ENABLED
+            FilesystemId:
+              Ref: IdentityFileSystem
+            TransitEncryption: ENABLED
+          Name: identity
+    Type: AWS::ECS::TaskDefinition
+  Replica1TaskRole:
+    Condition: CreateReplica1TaskRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+        Version: "2012-10-17"
+      PermissionsBoundary:
+        Fn::If:
+          - HasPermissionsBoundaryArn
+          - Ref: PermissionsBoundaryArn
+          - Ref: AWS::NoValue
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Condition:
+                  Bool:
+                    aws:SecureTransport: "true"
+                    elasticfilesystem:AccessedViaMountTarget: "true"
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn:
+                      Fn::GetAtt:
+                        - Replica1IdentityAccessPoint
+                        - Arn
+                Effect: Allow
+                Resource:
+                  Fn::Sub:
+                    - arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}
+                    - FileSystem:
+                        Ref: IdentityFileSystem
+            Version: "2012-10-17"
+          PolicyName: private-identity-files
+      RoleName:
+        Fn::If:
+          - HasReplica1TaskRoleName
+          - Ref: Replica1TaskRoleName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r1-taskrole
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::IAM::Role
+  Replica2ExecutionRole:
+    Condition: CreateReplica2ExecutionRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+        Version: "2012-10-17"
+      PermissionsBoundary:
+        Fn::If:
+          - HasPermissionsBoundaryArn
+          - Ref: PermissionsBoundaryArn
+          - Ref: AWS::NoValue
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: secretsmanager:GetSecretValue
+                Condition:
+                  StringEquals:
+                    secretsmanager:VersionId:
+                      Ref: Replica2IdentitySecretVersion
+                Effect: Allow
+                Resource:
+                  Ref: Replica2IdentitySecretArn
+              - Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  Fn::Sub:
+                    - arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}:log-stream:*
+                    - LogGroup:
+                        Fn::If:
+                          - HasReplica2ExistingLogGroupName
+                          - Ref: Replica2ExistingLogGroupName
+                          - Ref: Replica2Logs
+              - Fn::If:
+                  - HasReplica2IdentityKMSKeyArn
+                  - Action: kms:Decrypt
+                    Condition:
+                      StringEquals:
+                        kms:EncryptionContext:SecretARN:
+                          Ref: Replica2IdentitySecretArn
+                        kms:ViaService:
+                          Fn::Sub: secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+                    Effect: Allow
+                    Resource:
+                      Ref: Replica2IdentityKMSKeyArn
+                  - Ref: AWS::NoValue
+            Version: "2012-10-17"
+          PolicyName: identity-and-logs
+      RoleName:
+        Fn::If:
+          - HasReplica2ExecutionRoleName
+          - Ref: Replica2ExecutionRoleName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r2-executionrole
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::IAM::Role
+  Replica2IdentityAccessPoint:
+    DeletionPolicy: Retain
+    Properties:
+      AccessPointTags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      FileSystemId:
+        Ref: IdentityFileSystem
+      PosixUser:
+        Gid: "65532"
+        Uid: "65532"
+      RootDirectory:
+        CreationInfo:
+          OwnerGid: "65532"
+          OwnerUid: "65532"
+          Permissions: "0700"
+        Path:
+          Fn::Sub: /tnl/${DeploymentID}/replica-2
+    Type: AWS::EFS::AccessPoint
+    UpdateReplacePolicy: Retain
+  Replica2Logs:
+    Condition: CreateReplica2Logs
+    DeletionPolicy: Retain
+    Properties:
+      KmsKeyId:
+        Fn::If:
+          - HasLogsKMSKeyArn
+          - Ref: LogsKMSKeyArn
+          - Ref: AWS::NoValue
+      LogGroupName:
+        Fn::If:
+          - HasReplica2LogGroupName
+          - Ref: Replica2LogGroupName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r2-logs
+              - Ref: AWS::NoValue
+      RetentionInDays:
+        Ref: LogRetentionDays
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Retain
+  Replica2Service:
+    Properties:
+      AvailabilityZoneRebalancing: DISABLED
+      Cluster:
+        Fn::If:
+          - HasExistingClusterArn
+          - Ref: ExistingClusterArn
+          - Fn::GetAtt:
+              - Cluster
+              - Arn
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: false
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      DesiredCount:
+        Ref: Replica2DesiredCount
+      EnableECSManagedTags: true
+      EnableExecuteCommand: false
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp:
+            Ref: AssignPublicIp
+          SecurityGroups:
+            - Fn::If:
+                - HasExistingPublisherSecurityGroupId
+                - Ref: ExistingPublisherSecurityGroupId
+                - Ref: PublisherSecurityGroup
+            - Fn::If:
+                - HasAdditionalSecurityGroup1
+                - Ref: AdditionalSecurityGroup1
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup2
+                - Ref: AdditionalSecurityGroup2
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup3
+                - Ref: AdditionalSecurityGroup3
+                - Ref: AWS::NoValue
+            - Fn::If:
+                - HasAdditionalSecurityGroup4
+                - Ref: AdditionalSecurityGroup4
+                - Ref: AWS::NoValue
+          Subnets:
+            Ref: Subnets
+      PlatformVersion:
+        Ref: PlatformVersion
+      PropagateTags: SERVICE
+      ServiceName:
+        Fn::If:
+          - HasReplica2ServiceName
+          - Ref: Replica2ServiceName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r2
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+        - Fn::If:
+            - CreateMountTarget1
+            - Key: tnl:mount-target-1
+              Value:
+                Ref: MountTarget1
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget2
+            - Key: tnl:mount-target-2
+              Value:
+                Ref: MountTarget2
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget3
+            - Key: tnl:mount-target-3
+              Value:
+                Ref: MountTarget3
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget4
+            - Key: tnl:mount-target-4
+              Value:
+                Ref: MountTarget4
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget5
+            - Key: tnl:mount-target-5
+              Value:
+                Ref: MountTarget5
+            - Ref: AWS::NoValue
+        - Fn::If:
+            - CreateMountTarget6
+            - Key: tnl:mount-target-6
+              Value:
+                Ref: MountTarget6
+            - Ref: AWS::NoValue
+      TaskDefinition:
+        Ref: Replica2TaskDefinition
+    Type: AWS::ECS::Service
+  Replica2TaskDefinition:
+    Properties:
+      ContainerDefinitions:
+        - Command:
+            - --no-config
+            - publisher
+            - serve
+            - --server
+            - Ref: ControlURL
+            - --project-key
+            - Ref: ProjectKey
+            - --group
+            - Ref: Group
+            - --state-dir
+            - /state
+            - --instance
+            - Ref: Replica2Instance
+            - --identity-dir
+            - /identity
+          EntryPoint:
+            - /usr/local/bin/tnl
+          Environment:
+            - Name: TNL_DEPLOYMENT_ID
+              Value:
+                Ref: DeploymentID
+            - Name: TNL_DEPLOYMENT_PROVIDER
+              Value: aws
+            - Name: TNL_DEPLOYMENT_REPLICA_KEY
+              Value: replica-2
+            - Name: TNL_DEPLOYMENT_IMAGE
+              Value:
+                Ref: PublisherImage
+            - Name: TNL_DEPLOYMENT_TEMPLATE_VERSION
+              Value: "2"
+            - Name: TNL_DEPLOYMENT_TEMPLATE_SHA256
+              Value:
+                Ref: TemplateSHA256
+          Essential: true
+          Image:
+            Ref: PublisherImage
+          LinuxParameters:
+            Capabilities:
+              Drop:
+                - ALL
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group:
+                Fn::If:
+                  - HasReplica2ExistingLogGroupName
+                  - Ref: Replica2ExistingLogGroupName
+                  - Ref: Replica2Logs
+              awslogs-region:
+                Ref: AWS::Region
+              awslogs-stream-prefix: publisher
+          MountPoints:
+            - ContainerPath: /identity
+              ReadOnly: false
+              SourceVolume: identity
+          Name: publisher
+          Secrets:
+            - Name: TNL_GROUP_IDENTITY
+              ValueFrom:
+                Fn::Sub: ${Replica2IdentitySecretArn}:::${Replica2IdentitySecretVersion}
+          StopTimeout: 120
+          User: 65532:65532
+      Cpu:
+        Ref: TaskCPU
+      ExecutionRoleArn:
+        Fn::If:
+          - HasReplica2ExistingExecutionRoleArn
+          - Ref: Replica2ExistingExecutionRoleArn
+          - Fn::GetAtt:
+              - Replica2ExecutionRole
+              - Arn
+      Family:
+        Fn::If:
+          - HasReplica2TaskFamily
+          - Ref: Replica2TaskFamily
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r2
+              - Ref: AWS::NoValue
+      Memory:
+        Ref: TaskMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture:
+          Ref: CPUArchitecture
+        OperatingSystemFamily: LINUX
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+      TaskRoleArn:
+        Fn::If:
+          - HasReplica2ExistingTaskRoleArn
+          - Ref: Replica2ExistingTaskRoleArn
+          - Fn::GetAtt:
+              - Replica2TaskRole
+              - Arn
+      Volumes:
+        - EFSVolumeConfiguration:
+            AuthorizationConfig:
+              AccessPointId:
+                Ref: Replica2IdentityAccessPoint
+              IAM: ENABLED
+            FilesystemId:
+              Ref: IdentityFileSystem
+            TransitEncryption: ENABLED
+          Name: identity
+    Type: AWS::ECS::TaskDefinition
+  Replica2TaskRole:
+    Condition: CreateReplica2TaskRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+        Version: "2012-10-17"
+      PermissionsBoundary:
+        Fn::If:
+          - HasPermissionsBoundaryArn
+          - Ref: PermissionsBoundaryArn
+          - Ref: AWS::NoValue
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Condition:
+                  Bool:
+                    aws:SecureTransport: "true"
+                    elasticfilesystem:AccessedViaMountTarget: "true"
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn:
+                      Fn::GetAtt:
+                        - Replica2IdentityAccessPoint
+                        - Arn
+                Effect: Allow
+                Resource:
+                  Fn::Sub:
+                    - arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}
+                    - FileSystem:
+                        Ref: IdentityFileSystem
+            Version: "2012-10-17"
+          PolicyName: private-identity-files
+      RoleName:
+        Fn::If:
+          - HasReplica2TaskRoleName
+          - Ref: Replica2TaskRoleName
+          - Fn::If:
+              - HasResourcePrefix
+              - Fn::Sub: ${ResourcePrefix}-r2-taskrole
+              - Ref: AWS::NoValue
+      Tags:
+        - Key: tnl:deployment-id
+          Value:
+            Ref: DeploymentID
+        - Key: tnl:project-key
+          Value:
+            Ref: ProjectKey
+        - Key: tnl:publisher-group-id
+          Value:
+            Ref: PublisherGroupID
+        - Key: tnl:team-id
+          Value:
+            Ref: TeamID
+    Type: AWS::IAM::Role
+Outputs:
+  ClusterArn:
+    Value:
+      Fn::If:
+        - HasExistingClusterArn
+        - Ref: ExistingClusterArn
+        - Fn::GetAtt:
+            - Cluster
+            - Arn
+  DeploymentID:
+    Value:
+      Ref: DeploymentID
+  Group:
+    Value:
+      Ref: Group
+  IdentityFileSystemId:
+    Value:
+      Ref: IdentityFileSystem
+  OutputSchemaVersion:
+    Value: "1"
+  ProjectKey:
+    Value:
+      Ref: ProjectKey
+  PublisherGroupID:
+    Value:
+      Ref: PublisherGroupID
+  PublisherSecurityGroupId:
+    Value:
+      Fn::If:
+        - HasExistingPublisherSecurityGroupId
+        - Ref: ExistingPublisherSecurityGroupId
+        - Ref: PublisherSecurityGroup
+  Replica1ExecutionRoleArn:
+    Value:
+      Fn::If:
+        - HasReplica1ExistingExecutionRoleArn
+        - Ref: Replica1ExistingExecutionRoleArn
+        - Fn::GetAtt:
+            - Replica1ExecutionRole
+            - Arn
+  Replica1IdentityAccessPointArn:
+    Value:
+      Fn::GetAtt:
+        - Replica1IdentityAccessPoint
+        - Arn
+  Replica1IdentitySecretArn:
+    Value:
+      Ref: Replica1IdentitySecretArn
+  Replica1IdentitySecretVersion:
+    Value:
+      Ref: Replica1IdentitySecretVersion
+  Replica1LogGroupName:
+    Value:
+      Fn::If:
+        - HasReplica1ExistingLogGroupName
+        - Ref: Replica1ExistingLogGroupName
+        - Ref: Replica1Logs
+  Replica1PublisherIdentityID:
+    Value:
+      Ref: Replica1PublisherIdentityID
+  Replica1ServiceArn:
+    Value:
+      Ref: Replica1Service
+  Replica1TaskDefinitionArn:
+    Value:
+      Ref: Replica1TaskDefinition
+  Replica1TaskRoleArn:
+    Value:
+      Fn::If:
+        - HasReplica1ExistingTaskRoleArn
+        - Ref: Replica1ExistingTaskRoleArn
+        - Fn::GetAtt:
+            - Replica1TaskRole
+            - Arn
+  Replica2ExecutionRoleArn:
+    Value:
+      Fn::If:
+        - HasReplica2ExistingExecutionRoleArn
+        - Ref: Replica2ExistingExecutionRoleArn
+        - Fn::GetAtt:
+            - Replica2ExecutionRole
+            - Arn
+  Replica2IdentityAccessPointArn:
+    Value:
+      Fn::GetAtt:
+        - Replica2IdentityAccessPoint
+        - Arn
+  Replica2IdentitySecretArn:
+    Value:
+      Ref: Replica2IdentitySecretArn
+  Replica2IdentitySecretVersion:
+    Value:
+      Ref: Replica2IdentitySecretVersion
+  Replica2LogGroupName:
+    Value:
+      Fn::If:
+        - HasReplica2ExistingLogGroupName
+        - Ref: Replica2ExistingLogGroupName
+        - Ref: Replica2Logs
+  Replica2PublisherIdentityID:
+    Value:
+      Ref: Replica2PublisherIdentityID
+  Replica2ServiceArn:
+    Value:
+      Ref: Replica2Service
+  Replica2TaskDefinitionArn:
+    Value:
+      Ref: Replica2TaskDefinition
+  Replica2TaskRoleArn:
+    Value:
+      Fn::If:
+        - HasReplica2ExistingTaskRoleArn
+        - Ref: Replica2ExistingTaskRoleArn
+        - Fn::GetAtt:
+            - Replica2TaskRole
+            - Arn
+  TeamID:
+    Value:
+      Ref: TeamID
+  TemplateSHA256:
+    Value:
+      Ref: TemplateSHA256
+  TemplateVersion:
+    Value: "2"

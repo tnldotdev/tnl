@@ -1,6 +1,8 @@
 package localproxy
 
-import "strings"
+import (
+	"strings"
+)
 
 // Mount forwards one complete path prefix to another local service.
 type Mount struct {

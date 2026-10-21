@@ -410,6 +410,9 @@ func TestNormalizeTarget(t *testing.T) {
 		"https://localhost:3000":         "https://localhost:3000",
 		"HTTPS://API.EXAMPLE:0443":       "https://api.example:443",
 		"https://127.0.0.1:3000":         "https://127.0.0.1:3000",
+		"https://api.openai.com":         "https://api.openai.com:443",
+		"http://127.0.0.1":               "http://127.0.0.1:80",
+		"https://app":                    "https://app:443",
 	}
 	for target, want := range accepted {
 		t.Run(target, func(t *testing.T) {
@@ -428,7 +431,7 @@ func TestNormalizeTarget(t *testing.T) {
 		" 3000", "3000 ", "3 000", "\t3000",
 		"localhost", "localhost:", "localhost:3000/path", "localhost:3000:4000",
 		"http://localhost.:3000", "http://-app:3000", "http://app_:3000", "http://[fe80::1%25en0]:3000",
-		"http://127.0.0.1", "http://127.0.0.1:0", "https://app", "ftp://app:3000",
+		"http://127.0.0.1:0", "ftp://app:3000",
 		"http://127.0.0.1:65536", "http://127.0.0.1:bad",
 		"http://127.0.0.1:3000/", "http://127.0.0.1:3000/path",
 		"http://user@127.0.0.1:3000", "http://127.0.0.1:3000?query",
