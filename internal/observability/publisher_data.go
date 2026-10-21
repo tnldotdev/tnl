@@ -32,29 +32,29 @@ type publisherData struct {
 }
 
 func (m *Metrics) initPublisherData() {
-	keys := []string{string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure)}
-	m.publisherData.candidates = newHistogram(m.meter, "tnl_publisher_transport_candidate_duration_seconds", "Publisher transport candidate connection and authentication duration; count includes both raced candidates, not only the winner.", DurationBucketsSeconds(), append(append([]string{}, keys...), string(Transport), "outcome")...).instrument
+	keys := []MetricKey{Component, ServiceProtocol, AccessPath, Exposure}
+	m.publisherData.candidates = newHistogram(m.meter, "tnl_publisher_transport_candidate_duration_seconds", "Publisher transport candidate connection and authentication duration; count includes both raced candidates, not only the winner.", DurationBucketsSeconds(), append(append([]MetricKey{}, keys...), Transport, OutcomeKey)...).instrument
 	m.publisherData.recovery = newHistogram(m.meter, "tnl_publisher_recovery_duration_seconds", "Publisher-local time from unexpected connection loss until an observed target response (HTTP headers or stream bytes); includes waiting for traffic, not visitor delivery or outage duration.", DurationBucketsSeconds(), keys...).instrument
-	httpKeys := append(append([]string{}, keys...), string(HTTPMethod), string(HTTPStatus), string(ResponseOrigin), "outcome")
+	httpKeys := append(append([]MetricKey{}, keys...), HTTPMethod, HTTPStatus, ResponseOrigin, OutcomeKey)
 	m.publisherData.httpDuration = newHistogram(m.meter, "tnl_publisher_http_request_duration_seconds", "HTTP handler lifetime including streaming and upgrades; no request paths or query parsing.", DurationBucketsSeconds(), httpKeys...).instrument
 	m.publisherData.httpHeaders = newHistogram(m.meter, "tnl_publisher_http_response_headers_duration_seconds", "Time until final response headers, excluding informational responses.", DurationBucketsSeconds(), httpKeys...).instrument
-	declare := func(name, description string, dimensions ...string) metric.Int64Counter {
-		describe(m.meter, name, description, "counter", nil, dimensions...)
+	declare := func(name, description string, dimensions ...MetricKey) metric.Int64Counter {
+		describe(m.meter, name, description, KindCounter, nil, dimensions...)
 		instrument, _ := m.meter.Int64Counter(name, metric.WithDescription(description))
 		return instrument
 	}
-	describe(m.meter, "tnl_publisher_http_requests_active", "HTTP handlers currently executing, including streaming and upgrades.", "gauge", nil, keys...)
+	describe(m.meter, "tnl_publisher_http_requests_active", "HTTP handlers currently executing, including streaming and upgrades.", KindGauge, nil, keys...)
 	m.publisherData.httpActive, _ = m.meter.Int64UpDownCounter("tnl_publisher_http_requests_active")
-	describe(m.meter, "tnl_publisher_visitor_streams_active", "Publisher application streams currently forwarding.", "gauge", nil, keys...)
+	describe(m.meter, "tnl_publisher_visitor_streams_active", "Publisher application streams currently forwarding.", KindGauge, nil, keys...)
 	m.publisherData.streamsActive, _ = m.meter.Int64UpDownCounter("tnl_publisher_visitor_streams_active")
-	m.publisherData.bytes = declare("tnl_publisher_forwarded_bytes_total", "HTTP body bytes read for target forwarding or written from accepted target responses, and opaque application copies, observed incrementally; excludes tnl-authored responses, HTTP headers, native authentication and TLS framing.", append(append([]string{}, keys...), string(Direction))...)
-	m.publisherData.streams = declare("tnl_publisher_visitor_stream_completions_total", "Application stream copies completed by outcome.", append(append([]string{}, keys...), "outcome")...)
-	m.publisherData.authorization = declare("tnl_publisher_authorization_decisions_total", "Authorization checks distinguish denial, allowed pending admission, admission and infrastructure failure.", append(append([]string{}, keys...), "outcome", "state")...)
-	m.publisherData.tls = declare("tnl_publisher_tls_handshakes_total", "Completed TLS handshakes; negotiated version and resumption only on success.", append(append([]string{}, keys...), string(TLSLeg), string(TLSVersion), string(TLSResumed), "outcome")...)
-	connectionKeys := append(append([]string{}, keys...), string(Transport), string(ConnectionSlot))
-	describe(m.meter, "tnl_publisher_connections_active", "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.", "gauge", nil, connectionKeys...)
+	m.publisherData.bytes = declare("tnl_publisher_forwarded_bytes_total", "HTTP body bytes read for target forwarding or written from accepted target responses, and opaque application copies, observed incrementally; excludes tnl-authored responses, HTTP headers, native authentication and TLS framing.", append(append([]MetricKey{}, keys...), Direction)...)
+	m.publisherData.streams = declare("tnl_publisher_visitor_stream_completions_total", "Application stream copies completed by outcome.", append(append([]MetricKey{}, keys...), OutcomeKey)...)
+	m.publisherData.authorization = declare("tnl_publisher_authorization_decisions_total", "Authorization checks distinguish denial, allowed pending admission, admission and infrastructure failure.", append(append([]MetricKey{}, keys...), OutcomeKey, State)...)
+	m.publisherData.tls = declare("tnl_publisher_tls_handshakes_total", "Completed TLS handshakes; negotiated version and resumption only on success.", append(append([]MetricKey{}, keys...), TLSLeg, TLSVersion, TLSResumed, OutcomeKey)...)
+	connectionKeys := append(append([]MetricKey{}, keys...), Transport, ConnectionSlot)
+	describe(m.meter, "tnl_publisher_connections_active", "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.", KindGauge, nil, connectionKeys...)
 	m.publisherData.connections, _ = m.meter.Int64UpDownCounter("tnl_publisher_connections_active")
-	m.publisherData.connectionEvents = declare("tnl_publisher_connection_events_total", "Authenticated publisher connection establishment and expected or unexpected close events.", append(connectionKeys, "event", "outcome")...)
+	m.publisherData.connectionEvents = declare("tnl_publisher_connection_events_total", "Authenticated publisher connection establishment and expected or unexpected close events.", append(connectionKeys, Event, OutcomeKey)...)
 }
 
 // PublisherTransportCandidate records each bounded candidate independently of
@@ -64,7 +64,8 @@ func PublisherTransportCandidate(ctx context.Context, transport string, elapsed 
 		return
 	}
 	if m := FromContext(ctx); m != nil {
-		attrs := append(publisherDataAttributes(ctx), Transport.String(transport), OutcomeKey.String(string(ErrorOutcome(err))))
+		parsed, _ := ParseTransport(transport)
+		attrs := append(publisherDataAttributes(ctx), Transport.Value(parsed), OutcomeKey.Value(ErrorOutcome(err)))
 		m.publisherData.candidates.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
 	}
 }
@@ -76,16 +77,17 @@ func PublisherConnectionLifetime(ctx context.Context, transport string, slot int
 	if m == nil || (transport != "quic" && transport != "tls-tcp") || slot < 0 || slot > 1 {
 		return func(error, bool) {}
 	}
-	attrs := append(publisherDataAttributes(ctx), Transport.String(transport), ConnectionSlot.Int(slot))
+	parsed, _ := ParseTransport(transport)
+	attrs := append(publisherDataAttributes(ctx), Transport.Value(parsed), ConnectionSlot.Int(slot))
 	m.publisherData.connections.Add(ctx, 1, metric.WithAttributes(attrs...))
-	m.publisherData.connectionEvents.Add(ctx, 1, metric.WithAttributes(append(attrs, Event.String("connected"), OutcomeKey.String("success"))...))
+	m.publisherData.connectionEvents.Add(ctx, 1, metric.WithAttributes(append(attrs, Event.Value(EventConnected), OutcomeKey.Value(Success))...))
 	var once sync.Once
 	return func(err error, expected bool) {
 		once.Do(func() {
 			m.publisherData.connections.Add(ctx, -1, metric.WithAttributes(attrs...))
-			event := "unexpected_close"
+			event := EventUnexpectedClose
 			if expected {
-				event = "expected_close"
+				event = EventExpectedClose
 				err = nil
 			} else if recovery, ok := ctx.Value(publisherRecoveryKey{}).(*publisherRecovery); ok && recovery != nil {
 				recovery.mu.Lock()
@@ -94,7 +96,7 @@ func PublisherConnectionLifetime(ctx context.Context, transport string, slot int
 				}
 				recovery.mu.Unlock()
 			}
-			m.publisherData.connectionEvents.Add(ctx, 1, metric.WithAttributes(append(attrs, Event.String(event), OutcomeKey.String(string(ErrorOutcome(err))))...))
+			m.publisherData.connectionEvents.Add(ctx, 1, metric.WithAttributes(append(attrs, Event.Value(event), OutcomeKey.Value(ErrorOutcome(err)))...))
 		})
 	}
 }
@@ -127,25 +129,25 @@ func publisherDataAttributes(ctx context.Context) []attribute.KeyValue {
 // still waiting for admission. errors retain their owned classification.
 func PublisherAuthorization(ctx context.Context, allowed, admitted bool, err error) {
 	if m := FromContext(ctx); m != nil {
-		state, outcome := "denied", Denied
+		state, outcome := StateDenied, Denied
 		switch {
 		case err != nil && ErrorOutcome(err) == Denied:
-			state, outcome = "denied", Denied
+			state, outcome = StateDenied, Denied
 		case err != nil:
-			state, outcome = "failed", ErrorOutcome(err)
+			state, outcome = StateFailed, ErrorOutcome(err)
 		case allowed && admitted:
-			state, outcome = "admitted", Success
+			state, outcome = StateAdmitted, Success
 		case allowed:
-			state, outcome = "pending", Success
+			state, outcome = StatePending, Success
 		}
-		attrs := append(publisherDataAttributes(ctx), State.String(state), OutcomeKey.String(string(outcome)))
+		attrs := append(publisherDataAttributes(ctx), State.Value(state), OutcomeKey.Value(outcome))
 		m.publisherData.authorization.Add(ctx, 1, metric.WithAttributes(attrs...))
 		_, span := m.tracer().Start(ctx, "publisher.authorization", trace.WithAttributes(attrs...))
-		span.SetAttributes(Operation.String("publisher.authorization"))
+		span.SetAttributes(Operation.Value("publisher.authorization"))
 		if err != nil {
 			finishError(span, err)
 		} else {
-			finishSpan(span, string(outcome))
+			finishSpan(span, outcome.String())
 		}
 		span.End()
 	}
@@ -159,7 +161,7 @@ func PublisherTLS(ctx context.Context, leg string, state tls.ConnectionState, er
 	if leg == "target" {
 		err = publisherTargetTLSError(err)
 	}
-	attrs := append(publisherDataAttributes(ctx), TLSLeg.String(leg), OutcomeKey.String(string(ErrorOutcome(err))))
+	attrs := append(publisherDataAttributes(ctx), TLSLeg.String(leg), OutcomeKey.Value(ErrorOutcome(err)))
 	trace.SpanFromContext(ctx).SetAttributes(TLSLeg.String(leg))
 	if err == nil {
 		attrs = append(attrs, TLSAttributes(state)...)
@@ -264,11 +266,11 @@ func PublisherHTTPError(ctx context.Context, err error) {
 func PublisherHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fields, _ := r.Context().Value(fieldsKey{}).(Fields)
-		if fields.ServiceProtocol != "kubernetes" {
+		if fields.ServiceProtocol != ProtocolKubernetes {
 			r = r.WithContext(WithPublisherProtocol(r.Context(), "http"))
 		}
 		ctx, span := FromContext(r.Context()).tracer().Start(r.Context(), "publisher.http", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(publisherDataAttributes(r.Context())...))
-		span.SetAttributes(Operation.String("publisher.http"), HTTPMethod.String(httpMethod(r.Method)))
+		span.SetAttributes(Operation.Value("publisher.http"), HTTPMethod.String(httpMethod(r.Method)))
 		if id, ok := ctx.Value(visitorKey{}).(string); ok {
 			Visitor(ctx, id)
 		}
@@ -311,14 +313,14 @@ func PublisherHTTP(next http.Handler) http.Handler {
 			} else if err == nil && status >= 400 {
 				outcome = Rejected
 			}
-			final := append(attrs, HTTPMethod.String(httpMethod(r.Method)), ResponseOrigin.String(origin), OutcomeKey.String(string(outcome)))
+			final := append(attrs, HTTPMethod.String(httpMethod(r.Method)), ResponseOrigin.String(origin), OutcomeKey.Value(outcome))
 			if status >= 100 && status <= 599 {
 				final = append(final, HTTPStatus.Int(status))
 			}
 			finishError(span, err)
 			span.SetAttributes(final...)
 			if outcome != Success && outcome != Canceled {
-				span.SetStatus(codes.Error, string(outcome))
+				span.SetStatus(codes.Error, outcome.String())
 			}
 			span.End()
 			if m != nil {
@@ -476,7 +478,7 @@ func PublisherStream(ctx context.Context, target net.Conn) (net.Conn, func(error
 			end(err)
 			if m != nil {
 				m.publisherData.streamsActive.Add(ctx, -1, metric.WithAttributes(attrs...))
-				m.publisherData.streams.Add(ctx, 1, metric.WithAttributes(append(attrs, OutcomeKey.String(string(ErrorOutcome(err))))...))
+				m.publisherData.streams.Add(ctx, 1, metric.WithAttributes(append(attrs, OutcomeKey.Value(ErrorOutcome(err)))...))
 			}
 		})
 	}

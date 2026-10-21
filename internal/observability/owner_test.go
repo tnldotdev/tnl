@@ -119,7 +119,7 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	ctx := WithMetrics(t.Context(), m)
 	m.ObserveOperation("CreatePublishRun", nil, 25*time.Millisecond)
 	spanCtx, finish := Start(ctx, "local.fixture")
-	OperationalFailure(spanCtx, "fixture operation", failure.Unexpected, "request-fixture", errors.New("secret log cause"))
+	OperationalFailure(spanCtx, "renew publisher lease", failure.Unexpected, "request-fixture", errors.New("secret log cause"))
 	finish(errors.New("secret error body"))
 	for i := range 2010 {
 		m.publisherOperations.Record(ctx, .01, metric.WithAttributes(ServiceID.String(fmt.Sprint("service-", i))))
@@ -159,7 +159,7 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 					}
 					for _, point := range h.DataPoints {
 						for _, a := range point.Attributes {
-							if a.Key == string(MetricOverflow) {
+							if a.Key == string(MetricOverflow.Key()) {
 								if !a.Value.GetBoolValue() || len(point.Attributes) != 1 {
 									t.Fatal("invalid overflow marker", point)
 								}
@@ -212,7 +212,7 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	for _, a := range record.Attributes {
 		logAttrs[a.Key] = a.Value.GetStringValue()
 	}
-	if logAttrs[string(Operation)] != "fixture_operation" || logAttrs[string(Event)] != "operational_failure" || logAttrs[string(ErrorType)] != string(failure.Unexpected) {
+	if logAttrs[string(Operation.Key())] != "renew_publisher_lease" || logAttrs[string(Event.Key())] != "operational_failure" || logAttrs[string(ErrorType.Key())] != string(failure.Unexpected) {
 		t.Fatal("operational log loses safe machine fields", logAttrs)
 	}
 	traceID := trace.SpanContextFromContext(spanCtx).TraceID()
@@ -354,7 +354,7 @@ func TestPublisherIdentityCardinalityAndVisitorIDBoundary(t *testing.T) {
 	if strings.Contains(text, "visitor-high-churn") || !strings.Contains(text, "otel_metric_overflow") || !strings.Contains(text, `tnl_team_id="team"`) {
 		t.Fatal("identity/overflow boundary failed")
 	}
-	if spans := exporter.GetSpans(); len(spans) == 0 || !containsAttribute(spans[0].Attributes, string(VisitorConnectionID), "visitor-high-churn") {
+	if spans := exporter.GetSpans(); len(spans) == 0 || !containsAttribute(spans[0].Attributes, string(VisitorConnectionID.Key()), "visitor-high-churn") {
 		t.Fatal("visitor correlation missing from span")
 	}
 }

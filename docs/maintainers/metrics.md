@@ -2,8 +2,9 @@
 
 `internal/observability` owns each native process's metrics, finite-operation
 spans, optional operational logs, export queues, and shutdown. applications record
-each boundary once. the Go model in `vocabulary.go`, semantic result mappings in
-`contract.go`, and actual instrument declarations generate the shared contract at
+each boundary once. the attribute handles in `attributes.go`, catalog in
+`attribute_catalog.go`, semantic result mappings in `contract.go`, and actual
+instrument declarations generate the shared contract at
 `api/observability/v1/vocabulary.json`. sync that file to tnl.dev; it is neither an
 HTTP API nor a tunnel schema. regenerate with `mise exec -- task generate`.
 
@@ -84,8 +85,10 @@ are mutually exclusive. the scope derives `ServiceKind=managed_service|public_ur
 instruments and the signed control runtime lifecycle instrument allow scoped identity
 dimensions. runtime scope attaches only after control verifies the signing proof.
 
-`WithFields(ctx, Fields)` replaces the protocol/component field set. unknown enum
-values are omitted. `Attributes(ctx, allowed ...Key)` selects identity/protocol
+`WithFields(ctx, Fields)` replaces the protocol/component field set. protocol and
+transport fields use `Protocol` and `TransportValue`; parse wire strings with
+`ParseProtocol` and `ParseTransport` before setting them. unknown values are omitted.
+`Attributes(ctx, allowed ...MetricKey)` selects identity/protocol
 fields for a caller's explicit instrument allowlist. `TLSAttributes` returns only
 negotiated TLS version and session resumption. `Start(ctx, name, options...)`
 accepts standard span options, including trace links, for authored finite work.
@@ -105,6 +108,55 @@ directions are `visitor_to_publisher|publisher_to_visitor`; ingress keeps its
 explicit forwarding direction. wire bytes include protocol metadata and are not
 application payload bytes. `tnl.transport` is absent until a transport is selected;
 `tnl.transport_preference` describes the initial preference independently.
+
+## typed authoring boundaries
+
+`Key` is a catalog name with no value constructors. declared handles expose only
+the right constructor: `HTTPStatus.Int(200)`, `TLSResumed.Bool(true)`, and
+`RequestID.String(id)`. closed values use `Value`, such as
+`ServiceProtocol.Value(ProtocolHTTP)` and `OutcomeKey.Value(Success)`. protocol,
+transport, role, outcome, service kind, state, and event are distinct ordinal
+types; a string cast cannot turn supplied input into one. `New` and `StartProcess`
+validate dynamic role strings before the owner uses a typed `Role`.
+
+```go
+protocol, _ := observability.ParseProtocol(string(service.Protocol))
+ctx = observability.WithFields(ctx, observability.Fields{
+    Component: "publisher",
+    ServiceProtocol: protocol, // unknown wire values stay unspecified
+})
+ctx, finish := observability.Start(ctx, "publisher.target_preflight")
+defer func() { finish(err) }()
+```
+
+`Start`, `WorkerAttempt`, `PublisherOperation`, and authorization helpers accept
+authored string literals through an unexported operation type. dynamic strings
+cannot be passed or cast to that type by callers. `ControlOperation` validates
+wrapper arguments against its compiled operation list. the database adapter
+builds a `DatabaseOperationCatalog` from `embed.FS` SQL sources; `Lookup` returns
+an opaque `DatabaseOperationName`, normalizing unknown driver names to `unknown`.
+query, guard, and passive snapshot observations all require that token.
+
+instrument declarations take sealed `MetricKey` handles and an `InstrumentKind`.
+resource and trace/log-only keys cannot be declared as metric dimensions, except
+the explicitly metric-eligible process role used by `tnl_process_info`.
+`DimensionPolicy` describes catalog policy with a separate type. recording uses
+named `Dimension` values, independent of argument order:
+
+```go
+attempts := newCounter(meter, "tnl_example_attempts_total", "Completed attempts.",
+    ConnectionSlot, OutcomeKey)
+attempts.With(ConnectionSlot.Dimension(0), OutcomeKey.Dimension(Success)).Inc()
+```
+
+there is no positional string-label binding or arbitrary key-to-dimension adapter.
+trace/log-only handles have no `Dimension` method. bindings reject duplicate or
+undeclared keys; invalid external values are omitted. semantic result adapters
+classify domain strings into typed outcomes and bounded reasons before binding.
+scoped identity strings remain dynamic and retain their authentication and length
+checks. the SDK filter also checks value types, enums, and instrument allowlists
+for observations made directly through OTel. `.Key()` returns a handle's catalog
+name for metadata comparisons; it does not recover a value constructor.
 
 ## results and cardinality
 
@@ -220,9 +272,10 @@ adds `trace_id`/`span_id` when present, and optionally calls `OperationalFailure
 to export safe failure copy with authenticated scope. `Correlation` is available
 for other existing operational logs. these helpers never export arbitrary log
 bodies or secrets. existing context-free `Report` still writes its one-line log.
-exported operational failures use `tnl.event=operational_failure` and normalize
-the caller's authored operation words to a lowercase underscore-separated
-`tnl.operation`. the operation never comes from cause text. already measured
+exported operational failures use `tnl.event=operational_failure` and look up
+the caller's operation in the compiled log vocabulary. approved operation words
+become lowercase underscore-separated `tnl.operation` values; unknown operations
+use `operational_failure`. the operation never comes from cause text. already measured
 operation spans retain their own machine operation attribute too.
 
 export health is local and best-effort:

@@ -8,6 +8,6 @@ func (m *Metrics) ServiceAuditCount(result string, n uint64) {
 	}
 	switch result {
 	case "queued", "delivered", "retry", "dropped", "accepted", "duplicate":
-		m.serviceAudit.WithLabelValues(result).Add(float64(n))
+		m.serviceAudit.With(eventDimension(result)).Add(float64(n))
 	}
 }

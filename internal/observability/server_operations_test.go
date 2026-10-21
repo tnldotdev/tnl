@@ -17,7 +17,7 @@ func TestServerWorkerAttemptLinksSchedulingAndParentsDatabaseWork(t *testing.T) 
 	m.tracerProvider = trace.NewTracerProvider(trace.WithSyncer(exporter))
 	ctx, schedule := Start(WithMetrics(t.Context(), m), "schedule")
 	ctx, attempt := WorkerAttempt(ctx, "dns.authority.attempt")
-	m.ObserveDatabaseQueryContext(ctx, "LockAppliedProject", nil, time.Millisecond)
+	m.ObserveDatabaseQueryContext(ctx, databaseFixtureOperations.Lookup("LockAppliedProject"), nil, time.Millisecond)
 	m.ObserveDNSWorkContext(ctx, "authority", "verify", DNSWorkPending, time.Millisecond)
 	attempt(context.Canceled)
 	schedule(nil)
@@ -25,7 +25,7 @@ func TestServerWorkerAttemptLinksSchedulingAndParentsDatabaseWork(t *testing.T) 
 	if len(spans) != 4 || spans[0].Parent.SpanID() != spans[2].SpanContext.SpanID() || spans[1].Parent.SpanID() != spans[2].SpanContext.SpanID() || spans[2].Parent.IsValid() || len(spans[2].Links) != 1 || spans[2].Links[0].SpanContext.SpanID() != spans[3].SpanContext.SpanID() {
 		t.Fatal("worker parentage or scheduling link lost", spans)
 	}
-	if !containsAttribute(spans[1].Attributes, string(OutcomeKey), "success") || !containsAttribute(spans[1].Attributes, string(Reason), "pending") {
+	if !containsAttribute(spans[1].Attributes, string(OutcomeKey.Key()), "success") || !containsAttribute(spans[1].Attributes, string(Reason.Key()), "pending") {
 		t.Fatal("DNS pending is successful progress", spans[1])
 	}
 }

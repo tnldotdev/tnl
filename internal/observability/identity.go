@@ -67,7 +67,7 @@ func validIdentity(id Identity) bool {
 	if id.ServiceID != "" && id.PublicURLID != "" {
 		return false
 	}
-	if id.ServiceKind != "" && id.ServiceKind != ManagedService && id.ServiceKind != PublicURL {
+	if id.ServiceKind != 0 && id.ServiceKind != ManagedService && id.ServiceKind != PublicURL {
 		return false
 	}
 	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == ManagedService {
@@ -85,12 +85,15 @@ func identityAttributes(ctx context.Context) []attribute.KeyValue {
 	id := IdentityFromContext(ctx)
 	var out []attribute.KeyValue
 	for _, item := range []struct {
-		k Key
+		k metricStringKey
 		v string
-	}{{TeamID, id.TeamID}, {PublisherGroupID, id.PublisherGroupID}, {PublisherIdentityID, id.PublisherIdentityID}, {DeploymentID, id.DeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}, {ServiceKindKey, string(id.ServiceKind)}} {
+	}{{TeamID, id.TeamID}, {PublisherGroupID, id.PublisherGroupID}, {PublisherIdentityID, id.PublisherIdentityID}, {DeploymentID, id.DeploymentID}, {ReplicaKey, id.ReplicaKey}, {ServiceID, id.ServiceID}, {PublicURLID, id.PublicURLID}} {
 		if item.v != "" {
 			out = append(out, item.k.String(item.v))
 		}
+	}
+	if id.ServiceKind != 0 {
+		out = append(out, ServiceKindKey.Value(id.ServiceKind))
 	}
 	return out
 }

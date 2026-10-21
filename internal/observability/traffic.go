@@ -11,5 +11,5 @@ func (m *Metrics) ObserveTrafficAdmission(stage, result string) {
 	default:
 		return
 	}
-	m.trafficAdmissions.WithLabelValues(stage, result).Inc()
+	m.trafficAdmissions.With(Operation.Dimension(operationName(stage)), resultDimension(result)).Inc()
 }

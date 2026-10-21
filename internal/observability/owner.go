@@ -50,6 +50,10 @@ func WithMetrics(ctx context.Context, m *Metrics) context.Context {
 func FromContext(ctx context.Context) *Metrics { m, _ := ctx.Value(ownerKey{}).(*Metrics); return m }
 
 func newOwner(role string, config Config) (_ *Metrics, err error) {
+	parsedRole, ok := ParseRole(role)
+	if !ok {
+		return nil, errors.New("invalid observability process role")
+	}
 	if err := validateSDKProviderEnvironment(os.Getenv); err != nil {
 		return nil, err
 	}
@@ -70,27 +74,27 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	name := config.ServiceName
 	if name == "" {
 		name = "tnld"
-		if role == "publisher" || role == "client" {
+		if parsedRole == RolePublisher || parsedRole == RoleClient {
 			name = "tnl"
 		}
-		if role == "accounts" {
+		if parsedRole == RoleAccounts {
 			name = "tnl-accounts"
 		}
-		if role == "collector" {
+		if parsedRole == RoleCollector {
 			name = "otel-collector"
 		}
 	}
 	attrs := append([]attribute.KeyValue{}, config.Resource...)
 	instance := ""
 	for _, a := range attrs {
-		if a.Key == attribute.Key(ServiceInstanceID) {
+		if a.Key == attribute.Key(ServiceInstanceID.Key()) {
 			instance = a.Value.AsString()
 		}
 	}
 	if instance == "" {
 		attrs = append(attrs, ServiceInstanceID.String(rand.Text()))
 	}
-	attrs = append(attrs, ServiceNamespace.String("tnl"), ServiceName.String(name), ServiceVersion.String(buildinfo.Version), RoleKey.String(role))
+	attrs = append(attrs, ServiceNamespace.String("tnl"), ServiceName.String(name), ServiceVersion.String(buildinfo.Version), RoleKey.Value(parsedRole))
 	res := resource.NewSchemaless(attrs...)
 	registry := prometheus.NewRegistry()
 	// the supported bridge exports runtime/process collectors to OTLP. the OTel
@@ -107,14 +111,14 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 		if config.Disabled {
 			return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
 		}
-		for prefix, owner := range map[string]string{"tnl_control_": "control", "tnl_database_": "control", "tnl_ingress_": "ingress", "tnl_relay_": "relay", "tnl_publisher_": "publisher"} {
-			if strings.HasPrefix(i.Name, prefix) && role != owner && role != "standalone" {
+		for prefix, owner := range map[string]Role{"tnl_control_": RoleControl, "tnl_database_": RoleControl, "tnl_ingress_": RoleIngress, "tnl_relay_": RoleRelay, "tnl_publisher_": RolePublisher} {
+			if strings.HasPrefix(i.Name, prefix) && parsedRole != owner && parsedRole != RoleStandalone {
 				return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
 			}
 		}
 		if spec, ok := catalog.definition(i.Name); ok {
 			return sdkmetric.Stream{Name: i.Name, Description: i.Description, Unit: i.Unit, AttributeFilter: func(kv attribute.KeyValue) bool {
-				return Key(kv.Key) != MetricOverflow && slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
+				return Key(kv.Key) != MetricOverflow.key() && slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
 			}}, true
 		}
 		return sdkmetric.Stream{}, false
@@ -141,17 +145,17 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	mp := sdkmetric.NewMeterProvider(opts...)
 	catalog.Meter = mp.Meter(scope)
 	m := &Metrics{meterProvider: mp, meter: catalog, registry: registry, runtimeRegistry: runtime, resource: res, cancelExports: cancelExports}
-	m.initInstruments(role)
-	describe(m.meter, "tnl_observability_export_failures_total", "Failed export batches after bounded retries; never gates readiness.", "counter", nil, "signal")
+	m.initInstruments(parsedRole)
+	describe(m.meter, "tnl_observability_export_failures_total", "Failed export batches after bounded retries; never gates readiness.", KindCounter, nil, signalKey)
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_failures_total", metric.WithDescription("Failed export batches; export never gates readiness."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 		o.Observe(exports.metricsFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "metrics")))
 		o.Observe(exports.traceFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "traces")))
 		o.Observe(exports.logFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "logs")))
 		return nil
 	}))
-	describe(m.meter, "tnl_observability_export_lost_spans_total", "Spans lost in failed export batches; excludes queue overflow.", "counter", nil)
+	describe(m.meter, "tnl_observability_export_lost_spans_total", "Spans lost in failed export batches; excludes queue overflow.", KindCounter, nil)
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_lost_spans_total", metric.WithDescription("Spans lost in failed export batches; excludes queue overflow."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error { o.Observe(exports.lostSpans.Load()); return nil }))
-	describe(m.meter, "tnl_observability_queue_dropped_spans_total", "Sampled spans dropped by the bounded nonblocking export queue.", "counter", nil)
+	describe(m.meter, "tnl_observability_queue_dropped_spans_total", "Sampled spans dropped by the bounded nonblocking export queue.", KindCounter, nil)
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_queue_dropped_spans_total", metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 		o.Observe(exports.droppedSpans.Load())
 		return nil

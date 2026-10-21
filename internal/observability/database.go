@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -26,7 +25,7 @@ type DatabaseConnectionSnapshot struct {
 }
 
 type DatabaseOperationSnapshot struct {
-	Operation      string
+	Operation      DatabaseOperationName
 	ElapsedSeconds float64
 }
 
@@ -36,7 +35,7 @@ type DatabaseOperationSnapshot struct {
 func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 	var instruments []metric.Observable
 	gauge := func(name, help string) metric.Float64ObservableGauge {
-		describe(m.meter, "tnl_database_"+name, help, "gauge", nil, databaseKeys(name)...)
+		describe(m.meter, "tnl_database_"+name, help, KindGauge, nil, databaseKeys(name)...)
 		g, err := m.meter.Float64ObservableGauge("tnl_database_"+name, metric.WithDescription(help))
 		if err != nil {
 			panic(err)
@@ -45,7 +44,7 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 		return g
 	}
 	counter := func(name, help string) metric.Float64ObservableCounter {
-		describe(m.meter, "tnl_database_"+name, help, "counter", nil, databaseKeys(name)...)
+		describe(m.meter, "tnl_database_"+name, help, KindCounter, nil, databaseKeys(name)...)
 		c, err := m.meter.Float64ObservableCounter("tnl_database_"+name, metric.WithDescription(help))
 		if err != nil {
 			panic(err)
@@ -79,17 +78,18 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 			observer.ObserveFloat64(poolCanceled, float64(pool.CanceledAcquireCount()))
 		}
 		for purpose, counts := range snapshot.Connections {
-			observer.ObserveFloat64(connections, float64(counts.Open), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), State.String("open")))
-			observer.ObserveFloat64(connections, float64(counts.Connecting), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), State.String("connecting")))
+			observer.ObserveFloat64(connections, float64(counts.Open), metric.WithAttributes(databasePurpose.String(purpose), State.Value(StateOpen)))
+			observer.ObserveFloat64(connections, float64(counts.Connecting), metric.WithAttributes(databasePurpose.String(purpose), State.Value(StateConnecting)))
 			for event, count := range map[string]int64{"opened": counts.Opened, "closed": counts.Closed, "failed": counts.Failed} {
-				observer.ObserveFloat64(connectionEvents, float64(count), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), Event.String(event)))
+				parsed, _ := ParseEvent(event)
+				observer.ObserveFloat64(connectionEvents, float64(count), metric.WithAttributes(databasePurpose.String(purpose), Event.Value(parsed)))
 			}
 		}
 		type operationAggregate struct {
 			count  int
 			oldest float64
 		}
-		operations := make(map[string]operationAggregate)
+		operations := make(map[DatabaseOperationName]operationAggregate)
 		for _, operation := range snapshot.ActiveOperations {
 			aggregate := operations[operation.Operation]
 			aggregate.count++
@@ -97,7 +97,7 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 			operations[operation.Operation] = aggregate
 		}
 		for operation, aggregate := range operations {
-			attrs := metric.WithAttributes(Operation.String(operation))
+			attrs := metric.WithAttributes(Operation.Value(operation.operation()))
 			observer.ObserveFloat64(active, float64(aggregate.count), attrs)
 			observer.ObserveFloat64(oldest, aggregate.oldest, attrs)
 		}
@@ -109,14 +109,14 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 	}
 }
 
-func databaseKeys(name string) []string {
+func databaseKeys(name string) []MetricKey {
 	switch name {
 	case "client_connections":
-		return []string{"purpose", "state"}
+		return []MetricKey{databasePurpose, State}
 	case "client_connection_events_total":
-		return []string{"purpose", "event"}
+		return []MetricKey{databasePurpose, Event}
 	case "operations_active", "operation_oldest_age_seconds":
-		return []string{"operation"}
+		return []MetricKey{Operation}
 	}
 	return nil
 }

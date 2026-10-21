@@ -41,7 +41,7 @@ func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
 	if got := IdentityFromContext(ReplaceIdentity(child, Identity{})); got != (Identity{}) {
 		t.Fatal("empty replacement did not clear scope")
 	}
-	if got := IdentityFromContext(NarrowIdentity(child, Identity{})); got.ServiceKind != "" || got.PublicURLID != "" || got.DeploymentID != "deployment-a" {
+	if got := IdentityFromContext(NarrowIdentity(child, Identity{})); got.ServiceKind != 0 || got.PublicURLID != "" || got.DeploymentID != "deployment-a" {
 		t.Fatal("narrow did not clear service", got)
 	}
 }
@@ -52,7 +52,7 @@ func TestOwnerResourceIsUniqueAndDoesNotInstallGlobals(t *testing.T) {
 	defer first.Shutdown(context.Background())
 	defer second.Shutdown(context.Background())
 	instance := func(m *Metrics) string {
-		v, _ := m.resource.Set().Value(attribute.Key(ServiceInstanceID))
+		v, _ := m.resource.Set().Value(attribute.Key(ServiceInstanceID.Key()))
 		return v.AsString()
 	}
 	if instance(first) == "" || instance(first) == instance(second) {
@@ -60,7 +60,7 @@ func TestOwnerResourceIsUniqueAndDoesNotInstallGlobals(t *testing.T) {
 	}
 	for _, m := range []*Metrics{first, second} {
 		attrs := m.resource.Attributes()
-		if !containsAttribute(attrs, string(ServiceNamespace), "tnl") || !containsAttribute(attrs, string(ServiceName), "tnl") {
+		if !containsAttribute(attrs, string(ServiceNamespace.Key()), "tnl") || !containsAttribute(attrs, string(ServiceName.Key()), "tnl") {
 			t.Fatal(attrs)
 		}
 		for _, a := range attrs {
@@ -77,7 +77,7 @@ func TestOwnerResourceIsUniqueAndDoesNotInstallGlobals(t *testing.T) {
 func TestInstrumentAllowlistDropsTraceOnlyAndUnrelatedDimensions(t *testing.T) {
 	m := New("publisher")
 	defer m.Shutdown(context.Background())
-	m.publisherOperations.Record(t.Context(), .5, metric.WithAttributes(Operation.String("connect"), OutcomeKey.String("success"), TeamID.String("team"), VisitorConnectionID.String("secret-visitor"), HTTPRoute.String("secret-path"), attribute.String("unapproved", "secret")))
+	m.publisherOperations.Record(t.Context(), .5, metric.WithAttributes(Operation.Value("connect"), OutcomeKey.Value(Success), TeamID.String("team"), VisitorConnectionID.String("secret-visitor"), HTTPRoute.String("secret-path"), attribute.String("unapproved", "secret")))
 	text := metricsText(t, m)
 	if strings.Contains(text, "secret") || !strings.Contains(text, `tnl_team_id="team"`) {
 		t.Fatal("per-instrument allowlist failed", text)
@@ -86,7 +86,7 @@ func TestInstrumentAllowlistDropsTraceOnlyAndUnrelatedDimensions(t *testing.T) {
 		for _, key := range spec.Dimensions {
 			defs := VocabularyAttributes()
 			index := slices.IndexFunc(defs, func(d AttributeDefinition) bool { return d.Key == key })
-			if index < 0 || defs[index].DimensionPolicy == "trace_log" {
+			if index < 0 || defs[index].DimensionPolicy == PolicyTraceLog {
 				t.Fatalf("%s permits undocumented or trace-only %s", spec.Name, key)
 			}
 		}
@@ -131,7 +131,7 @@ func TestFiniteOperationsKeepParentsLinksSafeErrorsAndSingleRecording(t *testing
 	if len(spans) != 3 || len(spans[0].Links) != 1 || spans[0].Parent.SpanID() != parent.SpanContext().SpanID() {
 		t.Fatal("lost parent/link or duplicate finish", spans)
 	}
-	if !containsAttribute(spans[0].Attributes, string(ErrorType), string(failure.Authentication)) || !containsAttribute(spans[0].Attributes, string(OutcomeKey), string(Denied)) {
+	if !containsAttribute(spans[0].Attributes, string(ErrorType.Key()), string(failure.Authentication)) || !containsAttribute(spans[0].Attributes, string(OutcomeKey.Key()), Denied.String()) {
 		t.Fatal("owned failure not classified", spans[0])
 	}
 	if strings.Contains(fmt.Sprint(spans), "secret") || !errors.Is(err, cause) {

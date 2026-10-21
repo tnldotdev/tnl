@@ -127,7 +127,7 @@ func TestNativeOTLPLinksAreBoundedAttributeFreeAndParentOnly(t *testing.T) {
 	}
 	component := false
 	for _, attr := range span.Attributes {
-		component = component || attr.Key == string(Component) && attr.Value.GetStringValue() == "control"
+		component = component || attr.Key == string(Component.Key()) && attr.Value.GetStringValue() == "control"
 	}
 	if !component || len(span.Links) != 8 || span.DroppedLinksCount != 4 {
 		t.Fatal("span attributes or SDK link count changed", span)
@@ -179,7 +179,7 @@ func TestNativeHTTPParentsAndWorkerLinksExcludeVisitorState(t *testing.T) {
 					state, _ := trace.ParseTraceState("private=secret-scheduling-state")
 					scheduling := trace.ContextWithSpanContext(r.Context(), trace.SpanContextFromContext(r.Context()).WithTraceState(state))
 					worker, finish := WorkerAttempt(scheduling, "dns.authority.attempt")
-					f.owner.ObserveDatabaseQueryContext(worker, "LockAppliedProject", nil, time.Millisecond)
+					f.owner.ObserveDatabaseQueryContext(worker, databaseFixtureOperations.Lookup("LockAppliedProject"), nil, time.Millisecond)
 					finish(nil)
 					request, err := http.NewRequestWithContext(r.Context(), "GET", sink.URL, nil)
 					if err != nil {

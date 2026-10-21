@@ -12,14 +12,18 @@ import (
 // ControlOperation starts before database work so driver spans inherit the
 // operation, rather than constructing a disconnected span after completion.
 func ControlOperation(ctx context.Context, operation string) (context.Context, func(error)) {
+	name, ok := controlOperationName(operation)
+	if !ok {
+		return ctx, func(error) {}
+	}
 	m := FromContext(ctx)
 	started := time.Now()
-	ctx, end := Start(ctx, operation)
+	ctx, end := Start(ctx, name)
 	var once sync.Once
 	return ctx, func(err error) {
 		once.Do(func() {
 			if m != nil {
-				m.controlOperations.WithLabelValues(operation, durationOutcome(err)).ObserveContext(ctx, time.Since(started).Seconds())
+				m.controlOperations.With(Operation.Dimension(name), OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, time.Since(started).Seconds())
 			}
 			end(err)
 		})
@@ -29,7 +33,7 @@ func ControlOperation(ctx context.Context, operation string) (context.Context, f
 // WorkerAttempt is finite asynchronous work. link a scheduling span when one
 // exists without pretending a later worker iteration is part of that request.
 // no scheduling context, SQL, work payload, or errors are retained between runs.
-func WorkerAttempt(ctx context.Context, operation string) (context.Context, func(error)) {
+func WorkerAttempt(ctx context.Context, operation operationName) (context.Context, func(error)) {
 	options := []trace.SpanStartOption{trace.WithNewRoot()}
 	if parent := trace.SpanContextFromContext(ctx); parent.IsValid() {
 		options = append(options, trace.WithLinks(trace.Link{SpanContext: parent}))
@@ -80,38 +84,38 @@ func ObservePublisherRuntime(ctx context.Context, action, result string, elapsed
 		return
 	}
 	outcome, reason := classifyResult(result)
-	attrs := append(Attributes(ctx, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey), Operation.String(action), OutcomeKey.String(string(outcome)))
+	attrs := append(Attributes(ctx, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey), Operation.Value(operationName(action)), OutcomeKey.Value(outcome))
 	if reason != "" {
 		attrs = append(attrs, Reason.String(reason))
 	}
 	m.publisherRuntime.instrument.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
 }
 
-func (m *Metrics) completedResult(ctx context.Context, name, outcome string, elapsed time.Duration) (context.Context, func()) {
+func (m *Metrics) completedResult(ctx context.Context, name operationName, outcome string, elapsed time.Duration) (context.Context, func()) {
 	now := time.Now()
-	ctx, span := m.tracer().Start(ctx, name, trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
-	span.SetAttributes(Operation.String(name))
+	ctx, span := m.tracer().Start(ctx, name.String(), trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	span.SetAttributes(Operation.Value(name))
 	return ctx, func() {
 		finishSpan(span, outcome)
 		span.End(trace.WithTimestamp(now))
 	}
 }
 
-func (m *Metrics) ObserveDatabaseQueryContext(ctx context.Context, operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseQueryContext(ctx context.Context, operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
-	ctx, finish := m.completedOperation(ctx, "database."+operation, elapsed)
-	trace.SpanFromContext(ctx).SetAttributes(Operation.String(operation))
-	m.databaseQueryDuration.WithLabelValues(operation, durationOutcome(err)).ObserveContext(ctx, elapsed.Seconds())
+	ctx, finish := m.completedOperation(ctx, "database."+operation.operation(), elapsed)
+	trace.SpanFromContext(ctx).SetAttributes(Operation.Value(operation.operation()))
+	m.databaseQueryDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, elapsed.Seconds())
 	finish(err)
 	if err != nil {
-		phase := "query"
-		switch operation {
+		phase := operationName("query")
+		switch operation.String() {
 		case "begin", "commit", "rollback":
-			phase = operation
+			phase = operation.operation()
 		}
-		m.databaseFailures.WithLabelValues(phase, durationOutcome(err)).Inc()
+		m.databaseFailures.With(Operation.Dimension(phase), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
@@ -120,16 +124,16 @@ func (m *Metrics) ObserveDatabaseAcquireContext(ctx context.Context, err error, 
 		return
 	}
 	ctx, finish := m.completedOperation(ctx, "database.acquire", elapsed)
-	trace.SpanFromContext(ctx).SetAttributes(Operation.String("acquire"))
-	m.databaseAcquireDuration.WithLabelValues(durationOutcome(err)).ObserveContext(ctx, elapsed.Seconds())
+	trace.SpanFromContext(ctx).SetAttributes(Operation.Value("acquire"))
+	m.databaseAcquireDuration.With(OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, elapsed.Seconds())
 	finish(err)
 	if err != nil {
-		m.databaseFailures.WithLabelValues("acquire", durationOutcome(err)).Inc()
+		m.databaseFailures.With(Operation.Dimension("acquire"), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
-func (m *Metrics) ObserveDatabaseGuardContext(ctx context.Context, operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseGuardContext(ctx context.Context, operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m != nil {
-		m.databaseGuardDuration.WithLabelValues(operation, durationOutcome(err)).ObserveContext(ctx, elapsed.Seconds())
+		m.databaseGuardDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, elapsed.Seconds())
 	}
 }

@@ -16,11 +16,11 @@ func PublisherLease(ctx context.Context, expires time.Time) {
 
 func PublisherReadiness(ctx context.Context, ready bool) {
 	if m := FromContext(ctx); m != nil {
-		outcome := "not_ready"
+		outcome := StateNotReady
 		if ready {
-			outcome = "ready"
+			outcome = StateReady
 		}
-		attrs := append(publisherDataAttributes(ctx), State.String(outcome))
+		attrs := append(publisherDataAttributes(ctx), State.Value(outcome))
 		m.publisherReadiness.Record(ctx, routingTimestamp(time.Now()), metric.WithAttributes(attrs...))
 	}
 }
@@ -30,13 +30,14 @@ func PublisherConnection(ctx context.Context, transport string, preferTCP bool, 
 		if transport != "quic" && transport != "tls-tcp" {
 			transport = ""
 		}
-		preference := "quic"
+		preference := TransportQUIC
 		if preferTCP {
-			preference = "tls-tcp"
+			preference = TransportTLSTCP
 		}
-		attrs := append(publisherDataAttributes(ctx), TransportPreference.String(preference), OutcomeKey.String(durationOutcome(err)))
+		attrs := append(publisherDataAttributes(ctx), TransportPreference.Value(preference), OutcomeKey.Value(ErrorOutcome(err)))
 		if transport != "" {
-			attrs = append(attrs, Transport.String(transport))
+			parsed, _ := ParseTransport(transport)
+			attrs = append(attrs, Transport.Value(parsed))
 		}
 		m.publisherConnectionAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
@@ -46,7 +47,8 @@ func PublisherConnection(ctx context.Context, transport string, preferTCP bool, 
 // the caller's access path, exposure, connection slot, or other bounded fields.
 func WithPublisherProtocol(ctx context.Context, protocol string) context.Context {
 	fields, _ := ctx.Value(fieldsKey{}).(Fields)
-	fields.Component, fields.ServiceProtocol = "publisher", protocol
+	fields.Component = "publisher"
+	fields.ServiceProtocol, _ = ParseProtocol(protocol)
 	return WithFields(ctx, fields)
 }
 

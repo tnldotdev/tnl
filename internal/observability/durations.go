@@ -13,7 +13,7 @@ func DurationBucketsSeconds() []float64 {
 }
 
 func durationOutcome(err error) string {
-	return string(ErrorOutcome(err))
+	return ErrorOutcome(err).String()
 }
 
 // ObserveOperation records only the fixed application operations below. nil
@@ -47,27 +47,28 @@ func (m *Metrics) ObserveOperationContext(ctx context.Context, operation string,
 	default:
 		return
 	}
-	ctx, finish := m.completedOperation(ctx, operation, elapsed)
-	histogram.WithLabelValues(operation, durationOutcome(err)).ObserveContext(ctx, elapsed.Seconds())
+	name := operationName(operation) // the switch above is the closed operation boundary.
+	ctx, finish := m.completedOperation(ctx, name, elapsed)
+	histogram.With(Operation.Dimension(name), OutcomeKey.Dimension(ErrorOutcome(err))).ObserveContext(ctx, elapsed.Seconds())
 	finish(err)
 }
 
 // ObserveDatabaseQuery accepts only names sanitized by the controlstate tracer:
 // compiled sqlc operations, transaction commands, or the fixed "unknown" label.
-func (m *Metrics) ObserveDatabaseQuery(operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseQuery(operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
 	outcome := durationOutcome(err)
-	m.databaseQueryDuration.WithLabelValues(operation, outcome).Observe(elapsed.Seconds())
-	m.completedSpan("database."+operation, outcome, elapsed)
+	m.databaseQueryDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
+	m.completedSpan("database."+operation.operation(), outcome, elapsed)
 	if err != nil {
-		phase := "query"
-		switch operation {
+		phase := operationName("query")
+		switch operation.String() {
 		case "begin", "commit", "rollback":
-			phase = operation
+			phase = operation.operation()
 		}
-		m.databaseFailures.WithLabelValues(phase, outcome).Inc()
+		m.databaseFailures.With(Operation.Dimension(phase), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
@@ -75,17 +76,16 @@ func (m *Metrics) ObserveDatabaseAcquire(err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
-	outcome := durationOutcome(err)
-	m.databaseAcquireDuration.WithLabelValues(outcome).Observe(elapsed.Seconds())
+	m.databaseAcquireDuration.With(OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
 	if err != nil {
-		m.databaseFailures.WithLabelValues("acquire", outcome).Inc()
+		m.databaseFailures.With(Operation.Dimension("acquire"), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
 	}
 }
 
 // ObserveDatabaseGuard records a driver-observed guard interval. outcome is the
 // transaction-ending command's outcome, not the application operation's outcome.
-func (m *Metrics) ObserveDatabaseGuard(operation string, err error, elapsed time.Duration) {
+func (m *Metrics) ObserveDatabaseGuard(operation DatabaseOperationName, err error, elapsed time.Duration) {
 	if m != nil {
-		m.databaseGuardDuration.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+		m.databaseGuardDuration.With(Operation.Dimension(operation.operation()), OutcomeKey.Dimension(ErrorOutcome(err))).Observe(elapsed.Seconds())
 	}
 }

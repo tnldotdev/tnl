@@ -14,18 +14,22 @@ import (
 // APIRequests records matched route patterns, never URLs or resource IDs. wrap
 // the router so authentication and parameter-binding failures are counted too.
 func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
+	operationName := apiOperation(surface)
+	if operationName == "" {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithMetrics(r.Context(), m)
 		ctx = extractHTTPTrace(ctx, r.Header)
-		ctx, span := m.tracer().Start(ctx, "tnl."+surface+".request", trace.WithSpanKind(trace.SpanKindServer))
+		ctx, span := m.tracer().Start(ctx, operationName.String(), trace.WithSpanKind(trace.SpanKindServer))
 		decision := &atomic.Int32{}
 		r = r.WithContext(context.WithValue(ctx, decisionKey{}, decision))
 		started := time.Now()
 		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK, ctx: r.Context()}
-		m.apiInFlight.WithLabelValues(surface).Inc()
+		m.apiInFlight.With(Component.Dimension(surface)).Inc()
 		completed := false
 		defer func() {
-			m.apiInFlight.WithLabelValues(surface).Dec()
+			m.apiInFlight.With(Component.Dimension(surface)).Dec()
 			operation := r.Pattern
 			if operation == "" || operation == "/" {
 				operation = "unmatched"
@@ -56,7 +60,7 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 			if _, template, ok := strings.Cut(operation, " "); ok {
 				route = template
 			}
-			span.SetAttributes(Operation.String("tnl."+surface+".request"), HTTPRoute.String(route), HTTPMethod.String(httpMethod(r.Method)), Component.String(surface))
+			span.SetAttributes(Operation.Value(apiOperation(surface)), HTTPRoute.String(route), HTTPMethod.String(httpMethod(r.Method)), Component.String(surface))
 			if completed || response.wroteHeader {
 				span.SetAttributes(HTTPStatus.Int(response.status))
 			}
@@ -81,7 +85,7 @@ func DrainingRequest(ctx context.Context) {
 
 // AuthorizationDecision records the semantic result separately from HTTP status.
 // a valid HTTP 200 response may still deny access. operation is a compiled name.
-func AuthorizationDecision(ctx context.Context, operation string, allowed bool) {
+func AuthorizationDecision(ctx context.Context, operation operationName, allowed bool) {
 	result := "denied"
 	if allowed {
 		result = "allowed"
@@ -89,15 +93,15 @@ func AuthorizationDecision(ctx context.Context, operation string, allowed bool) 
 		denied.Store(1)
 	}
 	outcome, _ := classifyResult(result)
-	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.String(string(outcome)))
+	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.Value(outcome))
 	if m := FromContext(ctx); m != nil {
-		m.authDecisions.WithLabelValues(operation, result).Inc()
+		m.authDecisions.With(Operation.Dimension(operation), resultDimension(result)).Inc()
 	}
 }
 
 // AuthorizationAdmission distinguishes a valid credential from capacity/run
 // admission. an allowed visitor that was not admitted is not an access denial.
-func AuthorizationAdmission(ctx context.Context, operation string, allowed, admitted bool) {
+func AuthorizationAdmission(ctx context.Context, operation operationName, allowed, admitted bool) {
 	if !allowed || admitted {
 		AuthorizationDecision(ctx, operation, allowed)
 		return
@@ -105,9 +109,9 @@ func AuthorizationAdmission(ctx context.Context, operation string, allowed, admi
 	if decision, ok := ctx.Value(decisionKey{}).(*atomic.Int32); ok {
 		decision.CompareAndSwap(0, 2)
 	}
-	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.String(string(Rejected)), Reason.String("not_admitted"))
+	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.Value(Rejected), Reason.String("not_admitted"))
 	if m := FromContext(ctx); m != nil {
-		m.authDecisions.WithLabelValues(operation, "not_admitted").Inc()
+		m.authDecisions.With(Operation.Dimension(operation), resultDimension("not_admitted")).Inc()
 	}
 }
 

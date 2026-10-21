@@ -53,7 +53,7 @@ func TestNativeOTLPPanicIsErrorWithoutExceptionOrSecret(t *testing.T) {
 				t.Fatal("panic handler was recorded as success", spans)
 			}
 			for _, a := range span.Attributes {
-				if a.Key == string(HTTPStatus) && !wrote {
+				if a.Key == string(HTTPStatus.Key()) && !wrote {
 					t.Fatal("invented a response status for interrupted handler")
 				}
 			}
@@ -75,7 +75,7 @@ func TestNativeOTLPCompletedOperationsKeepDistinctMachineNames(t *testing.T) {
 	for name, span := range f.exported(t) {
 		found := false
 		for _, a := range span.Attributes {
-			found = found || a.Key == string(Operation) && a.Value.GetStringValue() == name
+			found = found || a.Key == string(Operation.Key()) && a.Value.GetStringValue() == name
 		}
 		if !found {
 			t.Fatal("completed operation loses its exported identity", name)
@@ -104,7 +104,7 @@ func TestNativeAPIInformationalHeadersDoNotReplaceFinalStatus(t *testing.T) {
 	}
 	found := false
 	for _, a := range span.Attributes {
-		if a.Key == string(HTTPStatus) {
+		if a.Key == string(HTTPStatus.Key()) {
 			found = a.Value.GetIntValue() == 200
 		}
 	}
@@ -274,7 +274,7 @@ func assertRuntimeContract(t *testing.T, metrics []*metricspb.Metric) {
 				continue
 			}
 			seen[m.Name] = true
-			if spec.Kind == "gauge" && m.GetGauge() == nil || spec.Kind == "counter" && (m.GetSum() == nil || !m.GetSum().IsMonotonic || m.GetSum().AggregationTemporality != metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE) || spec.Kind == "summary" && m.GetSummary() == nil {
+			if spec.Kind == KindGauge && m.GetGauge() == nil || spec.Kind == KindCounter && (m.GetSum() == nil || !m.GetSum().IsMonotonic || m.GetSum().AggregationTemporality != metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE) || spec.Kind == KindSummary && m.GetSummary() == nil {
 				t.Fatal("runtime bridge changed the shared semantic type", spec.Name)
 			}
 		}

@@ -12,7 +12,7 @@ import (
 func tunnelErrorResult(err error) (Outcome, string, bool) {
 	var rejection interface{ TunnelCode() tunnelv1.ErrorCode }
 	if !errors.As(err, &rejection) {
-		return "", "", false
+		return 0, "", false
 	}
 	code := rejection.TunnelCode()
 	outcome := Error
@@ -23,7 +23,7 @@ func tunnelErrorResult(err error) (Outcome, string, bool) {
 		outcome = Rejected
 	case tunnelv1.Unavailable, tunnelv1.Internal:
 	default:
-		return "", "", false
+		return 0, "", false
 	}
 	return outcome, "tunnel." + string(code), true
 }

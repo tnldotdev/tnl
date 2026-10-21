@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -13,37 +14,35 @@ import (
 // the exporter. all measurements enter the OTel SDK once. only absolute gauges
 // need local state, to translate Set and Add into an additive OTel instrument.
 type counter struct {
-	name       string
 	instrument metric.Float64Counter
-	keys       []string
+	keys       []MetricKey
 }
 type counterValue struct {
 	instrument metric.Float64Counter
 	attrs      attribute.Set
 }
 
-func newCounter(m metric.Meter, name, description string, keys ...string) *counter {
-	describe(m, name, description, "counter", nil, keys...)
+func newCounter(m metric.Meter, name, description string, keys ...MetricKey) *counter {
+	describe(m, name, description, KindCounter, nil, keys...)
 	instrument, err := m.Float64Counter(name, metric.WithDescription(description))
 	if err != nil {
 		panic(err)
 	} // names are compiled constants.
-	return &counter{name: name, instrument: instrument, keys: keys}
+	return &counter{instrument: instrument, keys: slices.Clone(keys)}
 }
-func (c *counter) WithLabelValues(values ...string) counterValue {
-	return counterValue{c.instrument, metricLabelSet(c.name, c.keys, values)}
+func (c *counter) With(values ...Dimension) counterValue {
+	return counterValue{c.instrument, metricDimensions(c.keys, values...)}
 }
-func (c *counter) Inc()              { c.WithLabelValues().Inc() }
-func (c *counter) Add(value float64) { c.WithLabelValues().Add(value) }
+func (c *counter) Inc()              { c.With().Inc() }
+func (c *counter) Add(value float64) { c.With().Add(value) }
 func (c counterValue) Inc()          { c.Add(1) }
 func (c counterValue) Add(value float64) {
 	c.instrument.Add(context.Background(), value, metric.WithAttributeSet(c.attrs))
 }
 
 type gauge struct {
-	name       string
 	instrument metric.Float64UpDownCounter
-	keys       []string
+	keys       []MetricKey
 	mu         sync.Mutex
 	values     map[attribute.Set]float64
 }
@@ -52,19 +51,19 @@ type gaugeValue struct {
 	attrs attribute.Set
 }
 
-func newGauge(m metric.Meter, name, description string, keys ...string) *gauge {
-	describe(m, name, description, "gauge", nil, keys...)
+func newGauge(m metric.Meter, name, description string, keys ...MetricKey) *gauge {
+	describe(m, name, description, KindGauge, nil, keys...)
 	instrument, err := m.Float64UpDownCounter(name, metric.WithDescription(description))
 	if err != nil {
 		panic(err)
 	}
-	return &gauge{name: name, instrument: instrument, keys: keys, values: make(map[attribute.Set]float64)}
+	return &gauge{instrument: instrument, keys: slices.Clone(keys), values: make(map[attribute.Set]float64)}
 }
-func (g *gauge) WithLabelValues(values ...string) gaugeValue {
-	return gaugeValue{g, metricLabelSet(g.name, g.keys, values)}
+func (g *gauge) With(values ...Dimension) gaugeValue {
+	return gaugeValue{g, metricDimensions(g.keys, values...)}
 }
-func (g *gauge) Set(value float64) { g.WithLabelValues().Set(value) }
-func (g *gauge) Add(value float64) { g.WithLabelValues().Add(value) }
+func (g *gauge) Set(value float64) { g.With().Set(value) }
+func (g *gauge) Add(value float64) { g.With().Add(value) }
 func (g gaugeValue) Set(value float64) {
 	g.gauge.mu.Lock()
 	defer g.gauge.mu.Unlock()
@@ -87,27 +86,26 @@ func (g gaugeValue) Dec()              { g.Add(-1) }
 func (g gaugeValue) SetToCurrentTime() { g.Set(routingTimestamp(time.Now())) }
 
 type histogram struct {
-	name       string
 	instrument metric.Float64Histogram
-	keys       []string
+	keys       []MetricKey
 }
 type histogramValue struct {
 	instrument metric.Float64Histogram
 	attrs      attribute.Set
 }
 
-func newHistogram(m metric.Meter, name, description string, bounds []float64, keys ...string) *histogram {
-	describe(m, name, description, "histogram", bounds, keys...)
+func newHistogram(m metric.Meter, name, description string, bounds []float64, keys ...MetricKey) *histogram {
+	describe(m, name, description, KindHistogram, bounds, keys...)
 	instrument, err := m.Float64Histogram(name, metric.WithDescription(description), metric.WithUnit("s"), metric.WithExplicitBucketBoundaries(bounds...))
 	if err != nil {
 		panic(err)
 	}
-	return &histogram{name, instrument, keys}
+	return &histogram{instrument, slices.Clone(keys)}
 }
-func (h *histogram) WithLabelValues(values ...string) histogramValue {
-	return histogramValue{h.instrument, metricLabelSet(h.name, h.keys, values)}
+func (h *histogram) With(values ...Dimension) histogramValue {
+	return histogramValue{h.instrument, metricDimensions(h.keys, values...)}
 }
-func (h *histogram) Observe(value float64) { h.WithLabelValues().Observe(value) }
+func (h *histogram) Observe(value float64) { h.With().Observe(value) }
 func (h histogramValue) Observe(value float64) {
 	h.ObserveContext(context.Background(), value)
 }
@@ -116,7 +114,7 @@ func (h histogramValue) ObserveContext(ctx context.Context, value float64) {
 }
 
 func (m *Metrics) gaugeFunc(name, description string, source func() float64) {
-	describe(m.meter, name, description, "gauge", nil)
+	describe(m.meter, name, description, KindGauge, nil)
 	_, err := m.meter.Float64ObservableGauge(name, metric.WithDescription(description), metric.WithFloat64Callback(func(_ context.Context, observer metric.Float64Observer) error {
 		observer.Observe(source())
 		return nil

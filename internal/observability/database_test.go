@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"embed"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed testdata/queries/*.sql
+var databaseFixtureSources embed.FS
+
+var databaseFixtureOperations = DatabaseOperations(databaseFixtureSources)
 
 func TestDatabaseMetricsUseOnePassiveSnapshot(t *testing.T) {
 	config, err := pgxpool.ParseConfig("postgres://postgres@127.0.0.1:1/postgres?sslmode=disable")
@@ -31,9 +37,9 @@ func TestDatabaseMetricsUseOnePassiveSnapshot(t *testing.T) {
 				"request_pool": {Open: 2, Connecting: 1, Opened: 5, Closed: 3, Failed: 4},
 			},
 			ActiveOperations: []DatabaseOperationSnapshot{
-				{Operation: "HeartbeatPublishRun", ElapsedSeconds: 2},
-				{Operation: "HeartbeatPublishRun", ElapsedSeconds: 7},
-				{Operation: "unknown", ElapsedSeconds: 3},
+				{Operation: databaseFixtureOperations.Lookup("HeartbeatPublishRun"), ElapsedSeconds: 2},
+				{Operation: databaseFixtureOperations.Lookup("HeartbeatPublishRun"), ElapsedSeconds: 7},
+				{Operation: databaseFixtureOperations.Lookup("unknown"), ElapsedSeconds: 3},
 			},
 			OperationsOmitted: 6,
 		}

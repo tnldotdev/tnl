@@ -14,11 +14,11 @@ import (
 // InstrumentDefinition is generated from the actual instrument declarations.
 // dimensions are an allowlist, not labels automatically attached to every point.
 type InstrumentDefinition struct {
-	Name           string    `json:"name"`
-	Semantics      string    `json:"semantics"`
-	Kind           string    `json:"kind"`
-	Dimensions     []Key     `json:"dimensions"`
-	ExplicitBounds []float64 `json:"explicit_bounds,omitempty"`
+	Name           string         `json:"name"`
+	Semantics      string         `json:"semantics"`
+	Kind           InstrumentKind `json:"kind"`
+	Dimensions     []Key          `json:"dimensions"`
+	ExplicitBounds []float64      `json:"explicit_bounds,omitempty"`
 }
 
 type contractMeter struct {
@@ -27,20 +27,28 @@ type contractMeter struct {
 	specs map[string]InstrumentDefinition
 }
 
-func (m *contractMeter) describe(name, semantics, kind string, bounds []float64, keys ...string) {
+func (m *contractMeter) describe(name, semantics string, kind InstrumentKind, bounds []float64, keys ...MetricKey) {
+	if kind.String() == "" {
+		panic("instrument kind is unspecified")
+	}
 	var dimensions []Key
 	for _, key := range keys {
-		k := dimensionKey(name, key)
+		k := key.key()
+		if k == "" {
+			panic("instrument dimension has no declared key")
+		}
 		dimensions = append(dimensions, k)
-		if k == OutcomeKey {
-			dimensions = append(dimensions, Reason)
+		if k == OutcomeKey.key() {
+			dimensions = append(dimensions, Reason.key())
 		}
 	}
 	// the SDK creates overflow points after applying the instrument view. this
 	// exception is boolean true only, never a caller-supplied dimension.
-	dimensions = append(dimensions, MetricOverflow)
+	dimensions = append(dimensions, MetricOverflow.key())
 	if strings.HasPrefix(name, "tnl_publisher_") {
-		dimensions = append(dimensions, TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID, ServiceKindKey)
+		for _, k := range []MetricKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID, ServiceKindKey} {
+			dimensions = append(dimensions, k.key())
+		}
 	}
 	slices.Sort(dimensions)
 	dimensions = slices.Compact(dimensions)
@@ -59,7 +67,7 @@ func (m *contractMeter) definition(name string) (InstrumentDefinition, bool) {
 	return spec, ok
 }
 
-func describe(m metric.Meter, name, semantics, kind string, bounds []float64, keys ...string) {
+func describe(m metric.Meter, name, semantics string, kind InstrumentKind, bounds []float64, keys ...MetricKey) {
 	if c, ok := m.(*contractMeter); ok {
 		c.describe(name, semantics, kind, bounds, keys...)
 	}
@@ -103,63 +111,6 @@ func SharedVocabulary() Vocabulary {
 	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), instruments}
 }
 
-func dimensionKey(name, key string) Key {
-	if strings.Contains(key, ".") {
-		return Key(key)
-	}
-	switch key {
-	case "role":
-		return RoleKey
-	case "resource":
-		return CapacityResource
-	case "class":
-		return "tnl.connection_class"
-	case "surface":
-		return Component
-	case "pool":
-		return "tnl.ingress_pool"
-	case "purpose":
-		if strings.HasPrefix(name, "tnl_database_") {
-			return "tnl.database_purpose"
-		}
-		return "tnl.public_url_purpose"
-	case "plan":
-		return "tnl.certificate_plan"
-	case "kind":
-		switch {
-		case strings.Contains(name, "certificate"):
-			return CertificateKind
-		case strings.Contains(name, "dns"):
-			return DNSKind
-		case strings.Contains(name, "cleanup"):
-			return CleanupKind
-		default:
-			return ServiceKindKey
-		}
-	case "result":
-		if name == "tnl_service_audit_events_total" || name == "tnl_control_public_url_usage_items_total" {
-			return Event
-		}
-		return OutcomeKey
-	case "outcome":
-		if strings.Contains(name, "readiness_") {
-			return State
-		}
-		return OutcomeKey
-	case "stage":
-		if strings.Contains(name, "guest_trials") {
-			return Event
-		}
-		return Operation
-	case "phase", "action":
-		return Operation
-	case "milestone":
-		return Event
-	default:
-		return Key("tnl." + key)
-	}
-}
-
 // classifyResult separates the small result vocabulary from closed domain detail.
 // no fallback ever uses the supplied value as a reason.
 func classifyResult(value string) (Outcome, string) {
@@ -201,25 +152,42 @@ func domainReasons() []string {
 	return out
 }
 
-func metricLabelSet(name string, keys, values []string) attribute.Set {
-	if len(keys) != len(values) {
-		panic("instrument attribute count mismatch")
-	}
+func metricDimensions(keys []MetricKey, values ...Dimension) attribute.Set {
 	var attrs []attribute.KeyValue
-	for i, key := range keys {
-		k, v := dimensionKey(name, key), values[i]
-		if k == ConnectionSlot && v != "0" && v != "1" {
-			continue
-		}
-		if k == OutcomeKey {
-			outcome, reason := classifyResult(v)
-			attrs = append(attrs, k.String(string(outcome)))
-			if reason != "" {
-				attrs = append(attrs, Reason.String(reason))
+	seen := make(map[Key]bool)
+	for _, value := range values {
+		for _, a := range value.attrs {
+			k := Key(a.Key)
+			allowed := slices.ContainsFunc(keys, func(key MetricKey) bool { return key.key() == k || key.key() == OutcomeKey.key() && k == Reason.key() })
+			if !allowed || seen[k] {
+				panic("instrument dimension is undeclared or duplicated")
 			}
-			continue
+			seen[k] = true
+			if validMetricValue(a) {
+				attrs = append(attrs, a)
+			}
 		}
-		attrs = append(attrs, k.String(v))
 	}
 	return attribute.NewSet(attrs...)
+}
+
+// resultDimension is the legacy semantic-result boundary: supplied domain values
+// are classified before narrowing, and unknown values never become labels.
+func resultDimension(value string) Dimension {
+	outcome, reason := classifyResult(value)
+	d := OutcomeKey.Dimension(outcome)
+	if reason != "" {
+		d.attrs = append(d.attrs, Reason.String(reason))
+	}
+	return d
+}
+
+func stateDimension(value string) Dimension {
+	state, _ := ParseState(value)
+	return State.Dimension(state)
+}
+
+func eventDimension(value string) Dimension {
+	event, _ := ParseEvent(value)
+	return Event.Dimension(event)
 }

@@ -22,11 +22,11 @@ func (m *Metrics) tracer() trace.Tracer {
 // Start records a finite, authored operation. callers must not pass paths,
 // hostnames, errors or other external input as the name. errors become a fixed
 // outcome; raw causes are never recorded as span status or exception events.
-func Start(ctx context.Context, name string, options ...trace.SpanStartOption) (context.Context, func(error)) {
+func Start(ctx context.Context, name operationName, options ...trace.SpanStartOption) (context.Context, func(error)) {
 	options = parentOnlyLinks(options)
 	options = append(options, trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
-	ctx, span := FromContext(ctx).tracer().Start(ctx, name, options...)
-	span.SetAttributes(Operation.String(name))
+	ctx, span := FromContext(ctx).tracer().Start(ctx, name.String(), options...)
+	span.SetAttributes(Operation.Value(name))
 	if id, ok := ctx.Value(visitorKey{}).(string); ok {
 		Visitor(ctx, id)
 	}
@@ -56,12 +56,12 @@ func parentOnlyLinks(options []trace.SpanStartOption) []trace.SpanStartOption {
 
 func finishSpan(span trace.Span, outcome string) {
 	result, reason := classifyResult(outcome)
-	span.SetAttributes(OutcomeKey.String(string(result)))
+	span.SetAttributes(OutcomeKey.Value(result))
 	if reason != "" {
 		span.SetAttributes(Reason.String(reason))
 	}
 	if result != Success && result != Canceled {
-		span.SetStatus(codes.Error, string(result))
+		span.SetStatus(codes.Error, result.String())
 	}
 }
 
@@ -84,7 +84,7 @@ func WithVisitor(ctx context.Context, id string) context.Context {
 
 // PublisherOperation includes the scoped, authenticated identities in metrics.
 // these spans end at the operation boundary, not when the publisher exits.
-func PublisherOperation(ctx context.Context, operation string) (context.Context, func(error)) {
+func PublisherOperation(ctx context.Context, operation operationName) (context.Context, func(error)) {
 	switch operation {
 	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "group_lease":
 	default:
@@ -112,7 +112,7 @@ func PublisherOperation(ctx context.Context, operation string) (context.Context,
 				return
 			}
 			attrs := append(publisherDataAttributes(ctx), Attributes(ctx, TLSLeg, Transport, TransportPreference, ConnectionSlot)...)
-			attrs = append(attrs, Operation.String(operation), OutcomeKey.String(durationOutcome(err)))
+			attrs = append(attrs, Operation.Value(operation), OutcomeKey.Value(ErrorOutcome(err)))
 			m.publisherOperations.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attrs...))
 		})
 	}
@@ -120,24 +120,24 @@ func PublisherOperation(ctx context.Context, operation string) (context.Context,
 
 // completedSpan adapts existing observers which already own a measured interval.
 // it makes local operation spans without inventing cross-process parentage.
-func (m *Metrics) completedSpan(name, outcome string, elapsed time.Duration) {
+func (m *Metrics) completedSpan(name operationName, outcome string, elapsed time.Duration) {
 	if m == nil || elapsed < 0 {
 		return
 	}
 	now := time.Now()
-	_, span := m.tracer().Start(context.Background(), name, trace.WithTimestamp(now.Add(-elapsed)))
-	span.SetAttributes(Operation.String(name))
+	_, span := m.tracer().Start(context.Background(), name.String(), trace.WithTimestamp(now.Add(-elapsed)))
+	span.SetAttributes(Operation.Value(name))
 	finishSpan(span, outcome)
 	span.End(trace.WithTimestamp(now))
 }
 
-func (m *Metrics) completedOperation(ctx context.Context, name string, elapsed time.Duration) (context.Context, func(error)) {
+func (m *Metrics) completedOperation(ctx context.Context, name operationName, elapsed time.Duration) (context.Context, func(error)) {
 	if elapsed < 0 {
 		return ctx, func(error) {}
 	}
 	now := time.Now()
-	ctx, span := m.tracer().Start(ctx, name, trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
-	span.SetAttributes(Operation.String(name))
+	ctx, span := m.tracer().Start(ctx, name.String(), trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	span.SetAttributes(Operation.Value(name))
 	return ctx, func(err error) { finishError(span, err); span.End(trace.WithTimestamp(now)) }
 }
 
@@ -147,6 +147,9 @@ func (m *Metrics) completedOperation(ctx context.Context, name string, elapsed t
 func OwnedHTTPClient(client *http.Client, surface string) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
+	}
+	if apiOperation(surface) == "" {
+		return client
 	}
 	copy := *client
 	base := copy.Transport
@@ -167,8 +170,8 @@ func (t ownedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if m == nil {
 		return t.base.RoundTrip(r)
 	}
-	ctx, span := m.tracer().Start(r.Context(), "tnl."+t.surface+".request", trace.WithSpanKind(trace.SpanKindClient))
-	span.SetAttributes(Operation.String("tnl." + t.surface + ".request"))
+	ctx, span := m.tracer().Start(r.Context(), apiOperation(t.surface).String(), trace.WithSpanKind(trace.SpanKindClient))
+	span.SetAttributes(Operation.Value(apiOperation(t.surface)))
 	defer span.End()
 	r = r.Clone(ctx)
 	r.Header.Del("Tracestate")
