@@ -7,6 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -24,6 +25,7 @@ func heartbeatSessionAfterUpdate(
 	update func([]controlv1.ConnectionAssignment) error,
 	observePolicyDenials func(int64) error,
 	interval time.Duration,
+	observeVisitorPolicy ...func(int64),
 ) error {
 	if interval == 0 {
 		interval = heartbeatInterval
@@ -40,7 +42,13 @@ func heartbeatSessionAfterUpdate(
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
-		expiresAt = response.PublishRun.ExpiresAt
+		if observedHeartbeat {
+			for _, observe := range observeVisitorPolicy {
+				if observe != nil {
+					observe(response.VisitorPolicyRevision)
+				}
+			}
+		}
 		if update != nil && len(response.PublisherConnections) != 0 {
 			if err := update(response.PublisherConnections); err != nil {
 				if ctx.Err() != nil {
@@ -56,6 +64,10 @@ func heartbeatSessionAfterUpdate(
 				}
 				return err
 			}
+		}
+		if observedHeartbeat {
+			expiresAt = response.PublishRun.ExpiresAt
+			observability.PublisherLease(ctx, expiresAt)
 		}
 	}
 }
@@ -89,7 +101,9 @@ func heartbeatResponseOnce(
 	expiresAt time.Time,
 ) (controlv1.PublishRunHeartbeat, bool, error) {
 	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
+	callCtx, finish := observability.PublisherOperation(callCtx, "heartbeat")
 	response, err := server.HeartbeatPublishRun(callCtx, publicURLID, version, publishRunToken)
+	finish(err)
 	callTimedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded)
 	cancel()
 	if err == nil {

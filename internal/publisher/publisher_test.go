@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -12,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -81,39 +83,10 @@ func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *tes
 	_, _, err = createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", AccessMode: controlv1.Anonymous, PreserveSavedURLTarget: true,
 	})
-	if err == nil || control.updated == nil {
+	if err == nil || control.updated != nil {
 		t.Fatalf("changed visitor policy was accepted: update = %#v, err = %v", control.updated, err)
-	}
-}
-
-func TestDatabasePublisherKeepsPrivateTargetOutOfControl(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"lookup", "create", "update"}}
-	config := Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "db.example",
-		PublicURLScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Postgres,
-		Target: "db.internal:5432",
-	}
-	created, fresh, err := createOrLoadPublicURL(t.Context(), config)
-	if err != nil || !fresh || control.created == nil || control.created.Target != "" ||
-		control.created.ServiceProtocol == nil || *control.created.ServiceProtocol != controlv1.Postgres ||
-		created.PublicPort == nil || *created.PublicPort != 5432 {
-		t.Fatalf("database URL creation = %+v, fresh %t, body %+v, err %v", created, fresh, control.created, err)
-	}
-	config.Target = "other.internal:5432"
-	reused, fresh, err := createOrLoadPublicURL(t.Context(), config)
-	if err != nil || fresh || reused.Id != created.Id || control.updated != nil {
-		t.Fatalf("database URL reuse = %+v, fresh %t, update %+v, err %v", reused, fresh, control.updated, err)
-	}
-	config.AllowedIPPrefixes = []string{"192.0.2.0/24"}
-	_, fresh, err = createOrLoadPublicURL(t.Context(), config)
-	if err != nil || fresh || control.updated == nil || control.updated.Target != "" {
-		t.Fatalf("database policy update sent private target: fresh %t, update %+v, err %v", fresh, control.updated, err)
-	}
-	config.ServiceProtocol = controlv1.Mysql
-	if _, _, err := createOrLoadPublicURL(t.Context(), config); err == nil || control.lookupCalls != 4 {
-		t.Fatalf("database protocol mismatch was accepted: %v", err)
 	}
 }
 
@@ -265,6 +238,52 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 	)
 	if err != nil || observed || response.PolicyDenials != 0 {
 		t.Fatalf("fallback = %#v, observed = %t, error = %v", response, observed, err)
+	}
+}
+
+func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
+	metrics := observability.New("publisher")
+	ctx := observability.WithMetrics(t.Context(), metrics)
+	confirmed := time.Now().Add(time.Minute).Truncate(time.Second)
+	// the publication setup already confirmed this lease. a heartbeat response
+	// alone is not accepted until the session validates its connection updates.
+	observability.PublisherLease(ctx, confirmed)
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed}}, nil
+	}}
+	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || !observed {
+		t.Fatal(observed, err)
+	}
+	control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed.Add(time.Hour)}}, controlclient.ErrUnavailable
+	}
+	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || observed {
+		t.Fatal(observed, err)
+	}
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenLease, seenFailure := false, false
+	for _, family := range families {
+		if strings.Contains(family.String(), "secret") {
+			t.Fatal("heartbeat credentials or run ID reached metrics")
+		}
+		if family.GetName() == "tnl_publisher_lease_expiration_timestamp_seconds" {
+			seenLease = family.Metric[0].GetGauge().GetValue() == float64(confirmed.Unix())
+		}
+		if family.GetName() == "tnl_publisher_operation_duration_seconds" {
+			for _, point := range family.Metric {
+				for _, label := range point.Label {
+					if label.GetName() == "tnl_outcome" && label.GetValue() == "error" && point.GetHistogram().GetSampleCount() == 1 {
+						seenFailure = true
+					}
+				}
+			}
+		}
+	}
+	if !seenLease || !seenFailure {
+		t.Fatal("fallback hid a failed renewal or extended the confirmed lease")
 	}
 }
 
@@ -482,6 +501,8 @@ type publisherControlStub struct {
 	publishRunErr error
 }
 
+func (*publisherControlStub) PublisherID() string { return "pub_0123456789abcdefghijkl" }
+
 func (s *publisherControlStub) record(operation string) {
 	if !slices.Contains(s.allowed, operation) {
 		panic("unexpected publisher control operation: " + operation)
@@ -503,10 +524,6 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	protocol := controlv1.Http
 	if body.ServiceProtocol != nil {
 		protocol = *body.ServiceProtocol
-		route.PublicPort = pointer(5432)
-		if protocol == controlv1.Mysql {
-			route.PublicPort = pointer(3306)
-		}
 	}
 	route.ServiceProtocol = protocol
 	s.routes = append(s.routes, route)
@@ -580,14 +597,6 @@ func (*publisherControlStub) CreateCertificateIssuance(context.Context, string, 
 
 func (*publisherControlStub) GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
 	return controlv1.CertificateIssuance{}, errors.New("not implemented")
-}
-
-func (*publisherControlStub) MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	return controlv1.CertificateIssuance{}, errors.New("not implemented")
-}
-
-func (*publisherControlStub) MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error {
-	panic("unexpected MarkCertificateChallengeRemoved")
 }
 
 func (*publisherControlStub) MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error {

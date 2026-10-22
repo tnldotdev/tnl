@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -88,12 +89,6 @@ func (a *shareAccess) refresh(ctx context.Context) error {
 	return nil
 }
 
-func (a *shareAccess) permitsTeamLogin() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.teamAccessEnabled && !a.confirmed.IsZero() && time.Since(a.confirmed) <= shareStateFreshness
-}
-
 func (a *shareAccess) permission(request *http.Request) (time.Time, bool) {
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {
@@ -166,9 +161,11 @@ func stripTnlCookies(request *http.Request) *http.Request {
 	clean := make([]string, 0, len(request.Header.Values("Cookie")))
 	for _, header := range request.Header.Values("Cookie") {
 		for _, pair := range strings.Split(header, ";") {
-			pair = strings.TrimSpace(pair)
+			pair = textproto.TrimString(pair)
 			name, _, found := strings.Cut(pair, "=")
-			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && pair != "" {
+			// net/http trims the name separately from the cookie pair.
+			name = textproto.TrimString(name)
+			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && name != browserLoginAttemptCookieName && pair != "" {
 				clean = append(clean, pair)
 			}
 		}

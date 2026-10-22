@@ -15,18 +15,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"golang.org/x/crypto/acme"
 )
 
 func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
-	for _, phase := range []string{"create", "challenge_ready", "challenge_removed", "installed"} {
+	for _, phase := range []string{"create", "installed"} {
 		for _, committed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/committed=%t", phase, committed), func(t *testing.T) {
 				control, route, state := newCertificateTransactionTest(t)
 				var issued controlv1.CertificateIssuance
 				var firstCSR []byte
 				var firstKey string
-				lost, finalized, installed := false, false, false
+				lost, installed := false, false
 				control.create = func(csr []byte, key string) (controlv1.CertificateIssuance, error) {
 					if firstCSR == nil {
 						firstCSR, firstKey = bytes.Clone(csr), key
@@ -43,43 +42,12 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 						if err != nil {
 							return issued, err
 						}
-						issued.Challenges = pointer([]controlv1.CertificateChallenge{certificateTestChallenge()})
 					}
 					if phase == "create" && !lost {
 						lost = true
 						return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
 					}
-					if finalized {
-						return issued, nil
-					}
-					pending := issued
-					pending.State, pending.CertificatePem, pending.NotBefore, pending.NotAfter = controlv1.CertificateIssuanceStateAuthorizing, nil, nil, nil
-					return pending, nil
-				}
-				control.challengeReady = func() (controlv1.CertificateIssuance, error) {
-					if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto}}); err != nil {
-						t.Errorf("challenge-ready preceded local challenge installation: %v", err)
-					}
-					if phase == "challenge_ready" && !lost {
-						lost, finalized = true, committed
-						return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
-					}
-					finalized = true
 					return issued, nil
-				}
-				control.removed = func() error {
-					if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto}}); err == nil {
-						t.Error("challenge removal acknowledged while still served locally")
-					}
-					if phase == "challenge_removed" && !lost {
-						lost = true
-						if committed {
-							issued.Challenges = nil
-						}
-						return controlclient.ErrUnavailable
-					}
-					issued.Challenges = nil
-					return nil
 				}
 				control.installed = func(string, uint64, string, time.Time) error {
 					_, found, err := state.Staged(t.Context(), "route.example")
@@ -108,7 +76,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 				// reopen the cache and public URL server to recover locally committed,
 				// unacknowledged certificate material.
 				var err error
-				state, err = control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
+				state, err = control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -153,7 +121,7 @@ func TestCertificateTransactionPendingPollingIsBounded(t *testing.T) {
 	})
 }
 
-func TestCertificateTransactionTerminalCleanupAfterLostReadyResponse(t *testing.T) {
+func TestCertificateTransactionTerminalDNSOrderAfterLostResponse(t *testing.T) {
 	for _, terminal := range []controlv1.CertificateIssuanceState{controlv1.CertificateIssuanceStateFailed, controlv1.CertificateIssuanceStateCanceled} {
 		t.Run(string(terminal), func(t *testing.T) {
 			control, route, state := newCertificateTransactionTest(t)
@@ -168,16 +136,11 @@ func TestCertificateTransactionTerminalCleanupAfterLostReadyResponse(t *testing.
 						return issuance, err
 					}
 					issuance.State, issuance.CertificatePem, issuance.NotBefore, issuance.NotAfter = controlv1.CertificateIssuanceStateAuthorizing, nil, nil, nil
-					issuance.Challenges = pointer([]controlv1.CertificateChallenge{certificateTestChallenge()})
+					issuance.State = terminal
+					return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
 				}
 				return issuance, nil
 			}
-			control.challengeReady = func() (controlv1.CertificateIssuance, error) {
-				issuance.State, issuance.Challenges = terminal, nil
-				return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
-			}
-			removals := 0
-			control.removed = func() error { removals++; return nil }
 			_, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
 			if !errors.Is(err, controlclient.ErrUnavailable) {
 				t.Fatalf("lost ready response = %v", err)
@@ -187,11 +150,8 @@ func TestCertificateTransactionTerminalCleanupAfterLostReadyResponse(t *testing.
 			if !errors.As(err, &terminalError) {
 				t.Fatalf("terminal response = %v", err)
 			}
-			if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto}}); err == nil {
-				t.Error("terminal issuance left its TLS-ALPN challenge available after a lost ready response")
-			}
-			if removals != 1 {
-				t.Errorf("terminal challenge removal acknowledgements = %d, want 1", removals)
+			if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "route.example"}); err == nil {
+				t.Error("terminal issuance made a certificate available")
 			}
 			pending, err := state.Pending(t.Context(), "route.example")
 			if err != nil || bytes.Equal(pending.CSRDER, csr) {

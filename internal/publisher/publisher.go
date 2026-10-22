@@ -4,23 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -38,13 +36,13 @@ type PublicURLControlClient interface {
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
 	CreateCertificateIssuance(context.Context, string, uint64, credentials.PublishRunToken, []byte, string) (controlv1.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
 }
 
 type Config struct {
+	PublisherID              string
 	Control                  PublicURLControlClient
+	VisitorControl           *controlclient.Client
 	ControlURL               string
 	BrowserLoginAvailable    bool
 	TeamID                   string
@@ -60,20 +58,23 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	ResolveTarget            func(context.Context) (string, string, error)
 	ServiceProtocol          controlv1.PublicURLServiceProtocol
+	AccessMode               controlv1.VisitorAccessMode
 	TargetTLSName            string
-	TargetTLS                bool
-	VisitorTLSPassthrough    bool
 	PreserveSavedURLTarget   bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
 	AdmitRequest             func(*http.Request, PublishRunIdentity) error
 	ObserveResponse          ResponseObserver
 	Mounts                   []localproxy.Mount
-	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	Limits                   ApplicationLimits
-	ObserveRequest           func(RequestObservation)
-	InspectionMode           projectconfig.InspectionMode
+	ObserveSummary           inspection.Observer
+	PromoteVisitor           PromoteVisitor
+	AdmitVisitor             AdmitVisitor
+	ReadinessProof           func(PublishRunIdentity) *ReadinessProof
+	OnWarning                func(string)
+	InspectionMode           inspection.Mode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool
 	AllocatedPublicURL       *controlv1.PublicURL
@@ -115,9 +116,10 @@ type Event struct {
 
 // PublishRunIdentity binds a response observer to the run that served it.
 type PublishRunIdentity struct {
-	Hostname    string
-	PublicURLID string
-	Number      uint64
+	Hostname     string
+	PublicURLID  string
+	PublishRunID string
+	Number       uint64
 }
 
 type ResponseObserver func(*http.Response, PublishRunIdentity) error
@@ -126,8 +128,11 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
 	}
-	if config.RequestLimit < 0 {
-		return errors.New("publisher: request limit cannot be negative")
+	if err := config.Limits.Validate(); err != nil {
+		return err
+	}
+	if !config.InspectionMode.Valid() {
+		return errors.New("publisher: inspection mode must be none or summary")
 	}
 	if config.DrainTime < 0 || config.FallbackDelay < 0 {
 		return errors.New("publisher: drain time and fallback delay cannot be negative")
@@ -158,9 +163,13 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.ServiceProtocol == "" {
 		config.ServiceProtocol = controlv1.Http
 	}
+	if config.ServiceProtocol != controlv1.Http {
+		return errors.New("publisher: only HTTP uses public URL runs; use a private service for TCP")
+	}
+	ctx = observability.WithPublisherProtocol(ctx, "http")
 	if config.ServiceProtocol == controlv1.Http {
-		if config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
-			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS settings require a TCP service protocol"))
+		if config.TargetTLSName != "" {
+			config.TargetOptions.ServerName = config.TargetTLSName
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
 		if err != nil {
@@ -169,27 +178,15 @@ func Run(ctx context.Context, config Config) (result error) {
 		if config.Handler == nil {
 			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 		}
-	} else {
-		_, err = validateTCPForwarding(PublicURLServerConfig{
-			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
-			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
-			VisitorTLSPassthrough: config.VisitorTLSPassthrough, TargetOptions: config.TargetOptions,
-			Handler: config.Handler, Mounts: config.Mounts,
-		})
-		if err == nil {
-			var connection net.Conn
-			connection, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", config.Target)
-			if err == nil {
-				err = connection.Close()
-			} else {
-				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect TCP target: %w", err))
-			}
-		}
 	}
 	if err != nil {
 		return err
 	}
-	hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
+	config.PublisherID, err = configuredPublisherID(config)
+	if err != nil {
+		return err
+	}
+	hostLock, err := clientstate.LockPublisherHostnameContext(ctx, config.State, hostname, config.PublisherID)
 	if err != nil {
 		return err
 	}
@@ -199,6 +196,8 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	publicURLID := route.Id
+	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: route.TeamId, PublisherIdentityID: config.PublisherID, PublicURLID: route.Id})
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
 	if config.Ephemeral && createdPublicURL {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -219,9 +218,6 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
 			publicAddress := "https://" + setup.PublicUrl.CanonicalHostname
-			if setup.PublicUrl.PublicPort != nil {
-				publicAddress = net.JoinHostPort(setup.PublicUrl.CanonicalHostname, strconv.Itoa(*setup.PublicUrl.PublicPort))
-			}
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
 				PublicURL: publicAddress, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
@@ -237,7 +233,27 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 }
 
+// configuredPublisherID binds local locks and certificate material to the
+// enrolled identity. an explicit caller ID cannot override its signed adapter.
+func configuredPublisherID(config Config) (string, error) {
+	id := config.PublisherID
+	if source, ok := config.Control.(interface{ PublisherID() string }); ok {
+		selected := source.PublisherID()
+		if id != "" && id != selected {
+			return "", errors.New("public publisher identity differs from the selected grant")
+		}
+		id = selected
+	}
+	if !opaqueid.Valid(id, opaqueid.PublisherIdentityPrefix) {
+		return "", errors.New("public publisher requires an enrolled publisher identity")
+	}
+	return id, nil
+}
+
 func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
+	_, startup := observability.PublisherOperation(ctx, "startup")
+	defer func() { startup(result) }()
+	observability.PublisherLease(ctx, setup.PublishRun.ExpiresAt)
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -252,7 +268,12 @@ func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRu
 	}); err != nil {
 		return err
 	}
-	return runSession(ctx, config, setup, ready)
+	return runSession(ctx, config, setup, func() error {
+		err := ready()
+		startup(err)
+		observability.PublisherReadiness(ctx, err == nil)
+		return err
+	})
 }
 
 func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
@@ -297,12 +318,15 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
 		PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
 	}
-	if config.ServiceProtocol == controlv1.Http {
-		body.Target = config.Target
-	} else {
-		protocol := config.ServiceProtocol
-		body.ServiceProtocol = &protocol
+	integration := config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks
+	if integration {
+		mode := controlv1.Anonymous
+		body.AccessMode = &mode
+	} else if config.AccessMode != "" {
+		mode := config.AccessMode
+		body.AccessMode = &mode
 	}
+	body.Target = config.Target
 	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
 	}
@@ -322,12 +346,8 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
-		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
-			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
-		}
-	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
+	if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http {
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol is not HTTP"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
@@ -351,17 +371,28 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 		currentPolicy = *route.AllowedIpPrefixes
 	}
 	desiredPolicy := config.AllowedIPPrefixes
-	if desiredPolicy == nil {
-		desiredPolicy = []string{}
+	integration := config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks
+	if (desiredPolicy == nil || config.AccessMode != "") && !integration {
+		// a saved public URL retains live access edits when project config omits
+		// access. a configured mode is reconciled separately below.
+		desiredPolicy = slices.Clone(currentPolicy)
 	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
-		if slices.Equal(currentPolicy, desiredPolicy) {
-			return route, nil
-		}
-		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{
-			Target: route.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+	if !integration && config.AccessMode != "" && (route.AccessMode != config.AccessMode || !slices.Equal(currentPolicy, config.AllowedIPPrefixes)) {
+		client, ok := config.Control.(interface {
+			ReplaceVisitorAccess(context.Context, string, controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error)
 		})
-		return updated, classifyPublicURLConflict(err)
+		if !ok {
+			return controlv1.PublicURL{}, errors.New("publisher: current visitor policy client is required")
+		}
+		updated, err := client.ReplaceVisitorAccess(ctx, route.Id, controlv1.ReplaceVisitorAccessRequest{
+			Mode: config.AccessMode, Ip: append([]string{}, config.AllowedIPPrefixes...), ExpectedRevision: route.MutationRevision,
+		})
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
+		route = updated
+		currentPolicy = slices.Clone(config.AllowedIPPrefixes)
+		desiredPolicy = slices.Clone(currentPolicy)
 	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
 		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{

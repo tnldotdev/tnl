@@ -1,0 +1,258 @@
+[
+  {
+    "ParameterKey": "AdditionalSecurityGroup1",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AdditionalSecurityGroup2",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AdditionalSecurityGroup3",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AdditionalSecurityGroup4",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AssignPublicIp",
+    "ParameterValue": "DISABLED"
+  },
+  {
+    "ParameterKey": "CPUArchitecture",
+    "ParameterValue": "X86_64"
+  },
+  {
+    "ParameterKey": "ClusterName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ControlURL",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "DeploymentID",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "EFSSecurityGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ExistingClusterArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ExistingPublisherSecurityGroupId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "FileSystemKMSKeyArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Group",
+    "ParameterValue": "production"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "LogsKMSKeyArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "MountSubnet1",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "MountSubnet2",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "MountSubnet3",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "MountSubnet4",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "MountSubnet5",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "MountSubnet6",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "MountSubnetCount",
+    "ParameterValue": "2"
+  },
+  {
+    "ParameterKey": "PermissionsBoundaryArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "PlatformVersion",
+    "ParameterValue": "1.4.0"
+  },
+  {
+    "ParameterKey": "ProjectKey",
+    "ParameterValue": "project-example"
+  },
+  {
+    "ParameterKey": "PublisherGroupID",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "PublisherImage",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "PublisherSecurityGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1DesiredCount",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "Replica1ExecutionRoleName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1ExistingExecutionRoleArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1ExistingLogGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1ExistingTaskRoleArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1IdentityKMSKeyArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1IdentitySecretArn",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica1IdentitySecretVersion",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica1Instance",
+    "ParameterValue": "replica-1"
+  },
+  {
+    "ParameterKey": "Replica1LogGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1PublisherIdentityID",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica1ServiceName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1TaskFamily",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica1TaskRoleName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2DesiredCount",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "Replica2ExecutionRoleName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2ExistingExecutionRoleArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2ExistingLogGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2ExistingTaskRoleArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2IdentityKMSKeyArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2IdentitySecretArn",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica2IdentitySecretVersion",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica2Instance",
+    "ParameterValue": "replica-2"
+  },
+  {
+    "ParameterKey": "Replica2LogGroupName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2PublisherIdentityID",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "Replica2ServiceName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2TaskFamily",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Replica2TaskRoleName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ResourcePrefix",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "Subnets",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "TaskCPU",
+    "ParameterValue": "256"
+  },
+  {
+    "ParameterKey": "TaskMemory",
+    "ParameterValue": "512"
+  },
+  {
+    "ParameterKey": "TeamID",
+    "ParameterValue": "REQUIRED"
+  },
+  {
+    "ParameterKey": "TemplateSHA256",
+    "ParameterValue": "838a95a6450ef790545c6838c77f85f78ab85f8f9f98ef143cb4036196bc8aa5"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "REQUIRED"
+  }
+]
