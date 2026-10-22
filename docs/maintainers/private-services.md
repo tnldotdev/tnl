@@ -36,12 +36,15 @@ service default; declared groups accept `description`, `domain`, and `public`.
 See [applied projects](applied-projects.md) for remote group assignments.
 
 For a configured local private service, `tnl connect orders` reads the exact
-source-bound worktree realization from control, then selects only that immutable
-ID in the caller's visitor inventory. A unique `name` override also selects the
+directory-bound worktree realization from control, then selects only that
+immutable ID in the caller's visitor inventory. A unique `name` override also selects the
 same declaration. Local saved names are worktree-scoped; the CLI does not derive
 them or adopt another project's friendly name. Start the app or `tnl publish
 orders` first if the worktree has no realization. This visitor read never applies
 configuration or realizes a service and requires ordinary visitor access.
+Local publication and lookup need no Git repository or origin. The canonical
+directory identity survives Git initialization and origin changes; it is separate
+from the portable Git source used by apply and named groups.
 Remote declarations resolve the exact applied source fingerprint and
 configuration key through the visitor-safe project-service API. They never
 adopt a similarly named service from another project or group, and they do not
@@ -92,6 +95,10 @@ the local dial address and managed TLS identity are separate:
 - PostgreSQL uses the managed `host` and local port with loopback `hostaddr`,
   `sslmode=verify-full`, `sslrootcert=system`, `gssencmode=disable`, and
   `channel_binding=disable` across publisher TLS termination.
+  These transport options keep certificate and hostname verification enabled;
+  a required SCRAM-PLUS channel binding cannot cross the separate visitor and
+  target TLS connections. psycopg uses the same libpq options, with explicit
+  trusted roots on versions without `sslrootcert=system` support.
 - MySQL uses the managed hostname with `VERIFY_IDENTITY` and an explicit server
   CA bundle. the instructions require an exact `/etc/hosts` mapping from that
   name to the listener before running standard `mysql`. `--host=localhost`
@@ -437,6 +444,12 @@ ingress and live relay deadlines, with a hard two-minute cap. Unavailable contro
 cannot extend that deadline. Stream-copy workers join before ingress releases capacity.
 Selection, initial admission, and rechecks also stop at the managed service
 certificate's deadline; a missing or expired certificate denies a recheck.
+
+Public URL HTTP responses and WebSocket upgrades retain their own live guards
+with the same current-access and bounded-outage rules. Session renewal can keep
+an operation authorized within its original deadline; a replacement session or
+credential authorizes future work only. It cannot extend an old operation's
+original session expiry or replay bytes already admitted to a target.
 
 Connector-session expiry prevents new streams on that mux; it does not revoke
 already admitted streams. The connector obtains another authenticated path

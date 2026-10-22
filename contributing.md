@@ -95,6 +95,21 @@ service references, and local status protocols, run `task go:test:config-contrac
 through `mise exec --`. `task js:typecheck` checks the same reference restrictions
 in config literals and synchronous/asynchronous factories, along with SDK types.
 
+When editing a complete configuration example, check it with `tnl check` using
+the selected source format. Normalized control API examples also need the
+production `NormalizeProjectConfiguration` validator: OpenAPI field validation
+alone does not enforce named-group endpoint ownership. Keep example checks at
+that existing boundary rather than copying its rules into a documentation test.
+
+For configured local publication, no Git repository or origin is required.
+`LocalPublicationIdentity` and `LocalWorktreeKey` bind the canonical directory;
+portable `SourceIdentity` still requires Git for apply, AWS generation, and
+workload manifests. Owner discovery and named leases compare the evaluated
+snapshot digest, including configuration provenance and server/team selection.
+After changing configuration, stop and restart all apps and named local
+publishers for the project together. The app-workflows tier covers these fences
+and once-per-run automatic readiness with its bounded retry budget.
+
 For public HTTP live authorization, run `task go:test:live-authorization`, then
 `task go:test:live-authorization -- -race`. These use deterministic clocks for
 long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
@@ -127,6 +142,16 @@ For native database TLS and authentication, run `task go:test:database-native --
 installs the Node SDK and Python wheel into isolated consumers, and checks real
 queries, selected connection lifetimes, and the
 [native cancellation boundary](docs/maintainers/database-cancellation.md).
+
+For SDK connection lifetimes and owned HTTP transport, run
+`task js:test:connections` through `mise exec --`. Its installed ESM/CommonJS
+fixture runs actual Node and Bun processes against local TLS, including the
+managed Host/SNI and loopback dial boundary. This is local transport evidence;
+deployed provider freeze/thaw remains open. For action OIDC cancellation and
+late-result rejection, run `task connect:check`. The Python lifecycle checks in
+`task py:check` cover joined publication cleanup, fork ownership, and bounded
+native exchange. See the [review ledger](docs/maintainers/prerelease-review.md)
+for commit evidence and outstanding integration/live work.
 
 Use `RUN` to select an integration test, for example:
 

@@ -39,7 +39,7 @@ isolation boundary between mutually untrusted steps.
 | `workload`          | required key in the project's `workloads` declarations with `provider: github`; for example `deploy` |
 | `working-directory` | selected project directory, relative to the workspace; defaults to `.`                               |
 | `services`          | optional newline-separated service keys; only narrows the workload declaration                       |
-| `timeout`           | native startup wait in seconds, 1–300; defaults to 90                                                |
+| `timeout`           | per-stage OIDC acquisition and native startup wait in seconds, 1–300; defaults to 90                 |
 | `version`           | optional exact npm release version, such as `0.1.0-rc.1`; no `v`, ranges, tags, or URLs              |
 | `cli-path`          | optional explicit native executable, relative to the project directory or absolute                   |
 
@@ -78,6 +78,9 @@ post cleanup after later package installs or checkout changes.
    context's HTTPS audience. the assertion is masked and passed only on stdin.
    the checkout's context cannot authorize itself: control verifies GitHub's
    signature and claims, saved policy, service subset, audience, and one-use JTI.
+   acquisition is bounded by `timeout` and caller cancellation. a late token
+   cannot start an owner or write connection exports; a provider call that never
+   settles cannot keep the action waiting indefinitely.
 4. `... start <same-scope-flags> --runner-temp <private-session>` consumes
    `{schema: 1, context, assertion}` on stdin. the action accepts only schema-1
    `state: ready`, a future deadline no more than six hours away, the exact

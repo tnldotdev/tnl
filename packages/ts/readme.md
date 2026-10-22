@@ -19,6 +19,12 @@ script. Its integration prepares metadata and reports the bound listener to a
 local tnl publisher process. Hosted tnl.dev is the default server. Each Git
 worktree gets its own HTTPS URL; restarting an app reuses that URL.
 
+Local publication also works without Git or an origin. Its identity belongs to
+the canonical project directory and survives Git initialization, origin changes,
+and branch switches. After editing project configuration, stop and restart all
+apps and named local publishers for that project together so they use one
+evaluated configuration. An owner with a different configuration rejects reuse.
+
 Node and Bun applications use `await tnl.prepare()`, then
 `await publication.register(server)` on the returned handle. Select a service
 with `tnl.prepare({ service: "api" })` when the project has more than one app
@@ -76,6 +82,10 @@ admission and client certificates, including for public services. The applicatio
 supplies its database account settings. `tnl.services` keeps the managed hostname
 and public port.
 
+Every protocol requires the matching native `tnl` binary, including HTTP and
+Kubernetes. Package its platform dependency with deployed server code; a managed
+HTTPS URL alone does not replace the native owner or authorize a connection.
+
 Property reads and `{ ...database }` work synchronously after a human connection's
 awaited preparation in this process, or when `TNL_CONNECTION_HANDLE` selects a
 prepared native owner. A handle captures an explicitly supplied file when created;
@@ -115,14 +125,15 @@ lifetime lock is released. A failed or denied read from a live owner keeps that
 owner; it never starts a second listener. Expired synchronous reads require an
 await for fresh settings.
 
-Existing settings remain frozen snapshots. Drain and recreate database pools or
-connections with newly awaited settings; tnl does not update an existing pool or
-replay SQL. Owners supplied through `TNL_CONNECTION_HANDLE` stay caller-owned,
+Existing top-level settings remain frozen snapshots; mysql2's SSL copy stays
+mutable for its driver. Drain and recreate database pools or connections with
+newly awaited settings; tnl does not update an existing pool or replay SQL.
+Owners supplied through `TNL_CONNECTION_HANDLE` stay caller-owned,
 including fixed-deadline workload sessions. Their caller must prepare and supply
 a fresh owner after expiry; the SDK never stops or replaces them.
 
 HTTP settings contain `{ url, fetch }`. The URL retains the managed HTTPS origin;
-the native connection owner's origin-restricted `fetch` dispatcher dials loopback
+the SDK's origin-restricted `fetch` dispatcher dials the native loopback listener
 with verified TLS and the managed SNI and Host. Workload protocols use this same
 native owner, as described below.
 TCP returns `{ host, port }`; Kubernetes returns
@@ -183,6 +194,11 @@ transport on Node and Bun; it never falls back to dialing the managed address
 directly. Canceling a request while preparing its connection releases the upload
 body. Browser metadata remains address-only; absent optional services return
 `undefined`, and the workload configuration subpath is server-only.
+
+Connection preparation is not a lasting access grant. HTTP responses and
+WebSocket upgrades retain live authorization, as do database streams. A new
+assertion or session can authorize future connections; it cannot extend an old
+stream's original session deadline or replay its application traffic.
 
 Read the [quickstart](https://tnl.dev/docs),
 [Next.js and Vite setup](https://tnl.dev/docs/frameworks),

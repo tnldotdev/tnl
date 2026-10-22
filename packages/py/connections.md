@@ -23,6 +23,10 @@ the native owner; use that kubeconfig's native credential plugin.
 Opaque TCP snapshots have only `host`, `port`, `protocol`, and `expires_at`;
 native code verifies and terminates their managed visitor TLS leg.
 
+Every protocol requires the wheel's matching native `tnl` binary, including HTTP
+and Kubernetes. A public managed endpoint does not remove the native owner or
+select an alternate direct-dial SDK transport.
+
 ## prepared synchronous reads
 
 An existing native owner can be supplied through the private
@@ -115,6 +119,12 @@ fixed-deadline workload sessions. After its expiry the caller must prepare a new
 owner and select its handle; the SDK does not stop or replace it. Revocation is
 not permission to recover old access: any new preparation must pass current
 native authorization.
+
+Preparation and snapshots are not lasting visitor grants. HTTP responses,
+WebSocket upgrades, and PostgreSQL streams retain current authorization and
+close at their last successful decision deadline during control outages. A new
+workload session can authorize future accepts on the listener, but cannot extend
+an old operation's original session deadline or replay its application bytes.
 
 ## portable project types
 

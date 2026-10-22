@@ -196,8 +196,11 @@ For local services, an explicit per-service `publicURL` block enables public
 HTTPS; root public URL settings are defaults only. `name` overrides a saved service name on either the
 public or private path. `access: {team: true}` declares team access. Services
 default to the reserved built-in `local` publisher, which owns app registrations
-and local target discovery. Named `publishers` entries accept only an optional
-`description`; infrastructure owns capacity and host placement.
+and local target discovery. Named `publishers` entries accept `description`,
+`domain`, `public`, and optional `aws: {replicas: N}` generation intent;
+infrastructure owns capacity and host placement. A named HTTP service's
+`publicURL` block may narrow IP access and HTTP request limits, but cannot
+override the group's managed endpoint or enable anonymous access.
 
 `tnl apply` stores the evaluated Git project's revision, service assignments,
 group scopes, and audit context in hosted or self-hosted control. Enrolled
@@ -209,12 +212,15 @@ registers its local listener without applying remote configuration. See
 [publisher templates](../../deploy/publishers/readme.md).
 
 Externally operated replacement persists one replica's portable group signing
-identity, not its runtime leases or assignments. The Fargate template keeps
-that identity in a replica-private Secrets Manager version and restores it into
-fresh task-local SQLite without enrollment. Infrastructure owns single-replica
-replacement and separate credentials for additional replicas. SQLite WAL is
-not suitable for an NFS/EFS state mount; control does not manage AWS storage,
-credentials, or tasks.
+identity and complete durable certificate directory, not its runtime leases or
+assignments. The Fargate template bootstraps the signing identity from a
+replica-private Secrets Manager version, mounts the durable identity/certificate
+directory on EFS, and keeps SQLite WAL and its wrapping key task-local. After
+control records issuance work, a signing identity alone cannot recover missing
+certificate keys. Infrastructure owns single-replica replacement and separate
+credentials for additional replicas. Live EFS locking, permissions, and partial
+restore still require deployed qualification; local filesystem checks do not
+establish them.
 
 config factories receive the project's directory relative to its worktree and
 the structured worktree label. the label's project, optional checkout, and ID
@@ -295,6 +301,15 @@ byte sizes retain their string form in static projections and snapshots; neither
 the owner nor trust capture evaluates configuration again. runtime trust capture
 uses the already resolved target origin or TCP address. apply resolves a declared
 target once before capturing the same trust material.
+
+configured local publication uses `LocalPublicationIdentity` and
+`LocalWorktreeKey`, bound to that canonical directory without Git or an origin.
+initializing Git, changing the origin, and switching branches keep that local
+identity. portable apply and workload manifests use the separate `SourceIdentity`
+derived from the network Git origin and config path. owner discovery and named
+leases compare the complete evaluated configuration digest before reuse. after
+changing configuration, stop and restart all of the project's apps and named
+local publishers together; a mismatched owner fails with restart instructions.
 
 the same owner can serve several ad-hoc invocations. each requires a current
 namespace-scoped publisher identity from explicit local setup or a private
