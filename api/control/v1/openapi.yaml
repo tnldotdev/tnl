@@ -3232,8 +3232,8 @@ components:
         ephemeral:
           type: boolean
           default: false
-          description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups require saved pooled URLs and reject true.
-      description: Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+          description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups use managed endpoints and reject true.
+      description: Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
     ProjectPublicAccess:
       type: object
       additionalProperties: false

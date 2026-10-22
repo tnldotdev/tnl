@@ -92,7 +92,7 @@ jobs:
   clients:
     name: CLI and database clients
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,6 +142,9 @@ jobs:
 
       - name: Verify CLI workflows
         run: task go:test:integration:cli
+
+      - name: Verify repaired ownership and management boundaries
+        run: task go:test:integration:app-workflows go:test:integration:private-claims go:test:integration:service-access go:test:integration:aws-bootstrap
 
       - name: Verify private connector and publisher lifecycle
         run: task go:test:integration:tcp-lifecycle
@@ -194,6 +197,9 @@ jobs:
       - name: Verify native SDK connections
         run: task go:test:connections
 
+      - name: Verify shared owner service isolation
+        run: task go:test:integration:owner-lifecycle
+
       - name: Verify native Drizzle Kit migration
         run: task go:test:integration:connections
 
@@ -231,6 +237,9 @@ jobs:
 
       - name: Check Ubuntu and Compose publisher installation
         run: task go:test:integration:publisher-install
+
+      - name: Check exact certificate recovery and durable publisher replacement
+        run: task go:test:integration:publisher-recovery go:test:integration:publisher-replacement
 
   dns:
     name: DNS integration

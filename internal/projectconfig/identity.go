@@ -40,7 +40,7 @@ func (p Project) LocalPublicationIdentity() LocalPublicationIdentity {
 // LocalWorktreeKey identifies this project directory without sending local paths
 // to control. server, team and source identity remain separate scope checks.
 func (p Project) LocalWorktreeKey() string {
-	digest := sha256.Sum256([]byte("tnl-local-worktree-v2\x00" + p.Root))
+	digest := sha256.Sum256([]byte("tnl-local-worktree-v1\x00" + p.Root))
 	return hex.EncodeToString(digest[:])
 }
 

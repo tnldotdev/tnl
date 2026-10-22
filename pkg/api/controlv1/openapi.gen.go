@@ -2692,7 +2692,7 @@ type ProjectServiceConfiguration struct {
 	Name     *string                 `json:"name,omitempty"`
 	Protocol *PrivateServiceProtocol `json:"protocol,omitempty"`
 
-	// PublicUrl Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+	// PublicUrl Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
 	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
 	Publisher *string                  `json:"publisher,omitempty"`
 
@@ -2718,12 +2718,12 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+// ProjectServicePublicURL Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`
 
-	// Ephemeral Local deferred declarations may request an ephemeral worktree URL. Named publisher groups require saved pooled URLs and reject true.
+	// Ephemeral Local deferred declarations may request an ephemeral worktree URL. Named publisher groups use managed endpoints and reject true.
 	Ephemeral *bool                `json:"ephemeral,omitempty"`
 	Hostname  *string              `json:"hostname,omitempty"`
 	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
