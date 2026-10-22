@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 // Format includes only owned operation names, reason IDs, and authored copy.
@@ -31,11 +32,18 @@ func Format(operation failure.Operation, reason failure.Reason, requestID string
 }
 
 func Report(operation failure.Operation, reason failure.Reason, requestID string, cause error) {
+	ReportContext(context.Background(), operation, reason, requestID, cause)
+}
+
+// ReportContext preserves the one-line format and adds owned trace correlation
+// and optional safe OTLP log export through the process context.
+func ReportContext(ctx context.Context, operation failure.Operation, reason failure.Reason, requestID string, cause error) {
 	if cause != nil {
 		if specific, ok := failure.ReasonOf(cause); ok {
 			reason = specific
 		}
-		log.Print(Format(operation, reason, requestID) + safeCauseFields(cause))
+		log.Print(Format(operation, reason, requestID) + safeCauseFields(cause) + observability.Correlation(ctx))
+		observability.OperationalFailure(ctx, operation, reason, requestID, cause)
 	}
 }
 

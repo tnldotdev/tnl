@@ -96,4 +96,7 @@ const (
 	APIRequestCanceled         APIRequestOutcome = "canceled"
 	APIRequestServerError      APIRequestOutcome = "server_error"
 	APIRequestClientError      APIRequestOutcome = "client_error"
+	APIRequestDenied           APIRequestOutcome = "denied"
+	APIRequestNotAdmitted      APIRequestOutcome = "not_admitted"
+	APIRequestDraining         APIRequestOutcome = "draining"
 )

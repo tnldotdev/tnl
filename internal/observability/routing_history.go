@@ -19,6 +19,6 @@ func (m *Metrics) ObserveRoutingHistoryBatch(scanned, deleted int64, busy bool) 
 		m.routingHistorySkipped.Inc()
 		return
 	}
-	m.routingHistoryRows.WithLabelValues("scanned").Add(float64(scanned))
-	m.routingHistoryRows.WithLabelValues("deleted").Add(float64(deleted))
+	m.routingHistoryRows.With(Operation.Dimension("scanned")).Add(float64(scanned))
+	m.routingHistoryRows.With(Operation.Dimension("deleted")).Add(float64(deleted))
 }

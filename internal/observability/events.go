@@ -1,9 +1,11 @@
 package observability
 
 import (
+	"context"
 	"time"
 
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ObserveWebhookProviderSource counts catalog lookups without URL or identity labels.
@@ -19,7 +21,7 @@ func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
 	default:
 		outcome = "unavailable"
 	}
-	m.webhookProviderSources.WithLabelValues(provider, outcome).Inc()
+	m.webhookProviderSources.With(providerKey.Dimension(provider), resultDimension(outcome)).Inc()
 }
 
 func validPublicURLPurpose(purpose string) bool {
@@ -32,13 +34,13 @@ func validPublicURLPurpose(purpose string) bool {
 
 func (m *Metrics) ObservePublicURLCreated(purpose string) {
 	if m != nil && validPublicURLPurpose(purpose) {
-		m.publicURLsCreated.WithLabelValues(purpose).Inc()
+		m.publicURLsCreated.With(publicURLPurpose.Dimension(purpose)).Inc()
 	}
 }
 
 func (m *Metrics) ObservePublishRunReady(purpose string) {
 	if m != nil && validPublicURLPurpose(purpose) {
-		m.publishRunsReady.WithLabelValues(purpose).Inc()
+		m.publishRunsReady.With(publicURLPurpose.Dimension(purpose)).Inc()
 	}
 }
 
@@ -54,7 +56,7 @@ func (m *Metrics) ObserveVisitor(outcome VisitorOutcome) {
 	default:
 		outcome = VisitorOther
 	}
-	m.visitorConnections.WithLabelValues(string(outcome)).Inc()
+	m.visitorConnections.With(resultDimension(string(outcome))).Inc()
 }
 
 func (m *Metrics) ObserveVisitorOpen(success bool, elapsed time.Duration) {
@@ -65,7 +67,7 @@ func (m *Metrics) ObserveVisitorOpen(success bool, elapsed time.Duration) {
 	if success {
 		outcome = "success"
 	}
-	m.visitorOpenDuration.WithLabelValues(outcome).Observe(elapsed.Seconds())
+	m.visitorOpenDuration.With(resultDimension(outcome)).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) SetIngressConnections(class string, count int) {
@@ -74,7 +76,7 @@ func (m *Metrics) SetIngressConnections(class string, count int) {
 	}
 	switch class {
 	case "client_hello", "public", "denied", "challenge", "control", "relay_tcp":
-		m.ingressConnections.WithLabelValues(class).Set(float64(count))
+		m.ingressConnections.With(connectionClass.Dimension(class)).Set(float64(count))
 	}
 }
 
@@ -92,7 +94,21 @@ func (m *Metrics) ObservePublisherExit(unexpected bool) {
 	if unexpected {
 		reason = "unexpected"
 	}
-	m.publisherExits.WithLabelValues(reason).Inc()
+	m.publisherExits.With(Reason.Dimension(reason)).Inc()
+}
+
+func (m *Metrics) ObserveRelayTransfer(kind string, toPublisher, toVisitor int64, err error) {
+	if m == nil || kind != "public_url" && kind != "managed_service" {
+		return
+	}
+	serviceKind := NormalizeServiceKind(kind)
+	m.relayCompletions.With(ServiceKindKey.Dimension(serviceKind), OutcomeKey.Dimension(ErrorOutcome(err))).Inc()
+	if toPublisher >= 0 {
+		m.relayBytes.With(ServiceKindKey.Dimension(serviceKind), Direction.Dimension("visitor_to_publisher")).Add(float64(toPublisher))
+	}
+	if toVisitor >= 0 {
+		m.relayBytes.With(ServiceKindKey.Dimension(serviceKind), Direction.Dimension("publisher_to_visitor")).Add(float64(toVisitor))
+	}
 }
 
 func (m *Metrics) ObserveRelayStreamRejection(reason string) {
@@ -104,7 +120,7 @@ func (m *Metrics) ObserveRelayStreamRejection(reason string) {
 	default:
 		reason = "other"
 	}
-	m.relayStreamRejections.WithLabelValues(reason).Inc()
+	m.relayStreamRejections.With(Reason.Dimension(reason)).Inc()
 }
 
 func (m *Metrics) ObserveRecoveryDuration(duration time.Duration) {
@@ -128,28 +144,28 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 	default:
 		return
 	}
-	m.recoveryAttempts.WithLabelValues(string(outcome)).Inc()
+	m.recoveryAttempts.With(resultDimension(string(outcome))).Inc()
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
-	if m == nil || kind != "relay" && kind != "public_url" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" && kind != "service_queue" {
 		return
 	}
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
 		return
 	}
-	m.certificateClaims.WithLabelValues(kind, string(outcome)).Inc()
+	m.certificateClaims.With(CertificateKind.Dimension(kind), resultDimension(string(outcome))).Inc()
 }
 
-func (m *Metrics) ObserveCertificateOrder(domainKind, plan string) {
-	if m == nil || domainKind != "managed" && domainKind != "custom" || plan != "exact" && plan != "wildcard" {
+func (m *Metrics) ObserveCertificateOrder(kind, domain, plan string) {
+	if m == nil || kind != "public_url" && kind != "managed_service" || domain != "managed" && domain != "custom" || plan != "exact" && plan != "wildcard" {
 		return
 	}
-	m.certificateOrders.WithLabelValues(domainKind, plan).Inc()
+	m.certificateOrders.With(CertificateKind.Dimension(kind), domainKind.Dimension(domain), certificatePlan.Dimension(plan)).Inc()
 }
 
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
-	if m == nil || kind != "relay" && kind != "public_url" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" {
 		return
 	}
 	switch state {
@@ -157,15 +173,19 @@ func (m *Metrics) ObserveCertificateTransition(kind, state string) {
 	default:
 		return
 	}
-	m.certificateTransitions.WithLabelValues(kind, state).Inc()
+	m.certificateTransitions.With(CertificateKind.Dimension(kind), stateDimension(state)).Inc()
 }
 
 func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, elapsed time.Duration) {
+	m.ObserveDNSWorkContext(context.Background(), kind, phase, outcome, elapsed)
+}
+
+func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string, outcome DNSWorkOutcome, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
 	switch kind {
-	case "authority", "public_url", "public_url_challenge", "relay_challenge":
+	case "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge":
 	default:
 		return
 	}
@@ -179,11 +199,14 @@ func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, ela
 	default:
 		return
 	}
-	m.dnsWork.WithLabelValues(kind, phase, string(outcome)).Observe(elapsed.Seconds())
+	ctx, finish := m.completedResult(ctx, operationName("dns."+kind+"."+phase), string(outcome), elapsed)
+	trace.SpanFromContext(ctx).SetAttributes(DNSKind.String(kind), Operation.Value(operationName(phase)))
+	m.dnsWork.With(DNSKind.Dimension(kind), Operation.Dimension(operationName(phase)), resultDimension(string(outcome))).ObserveContext(ctx, elapsed.Seconds())
+	finish()
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {
-	if m == nil || kind != "authority" && kind != "public_url" {
+	if m == nil || kind != "authority" && kind != "public_url" && kind != "managed_service" {
 		return
 	}
 	switch state {
@@ -191,7 +214,7 @@ func (m *Metrics) ObserveDNSTransition(kind, state string) {
 	default:
 		return
 	}
-	m.dnsTransitions.WithLabelValues(kind, state).Inc()
+	m.dnsTransitions.With(DNSKind.Dimension(kind), stateDimension(state)).Inc()
 }
 
 func (m *Metrics) ObserveUsageWork(phase string, outcome UsageWorkOutcome) {
@@ -208,9 +231,9 @@ func (m *Metrics) ObserveUsageWork(phase string, outcome UsageWorkOutcome) {
 	default:
 		return
 	}
-	m.usageWork.WithLabelValues(phase, string(outcome)).Inc()
+	m.usageWork.With(Operation.Dimension(operationName(phase)), resultDimension(string(outcome))).Inc()
 	if phase == "finalize" && outcome == UsageWorkSuccess {
-		m.usageLastSuccess.WithLabelValues("finalize").SetToCurrentTime()
+		m.usageLastSuccess.With(Operation.Dimension("finalize")).SetToCurrentTime()
 	}
 }
 
@@ -223,9 +246,9 @@ func (m *Metrics) AddUsageItems(result string, count int) {
 	default:
 		return
 	}
-	m.usageItems.WithLabelValues(result).Add(float64(count))
+	m.usageItems.With(eventDimension(result)).Add(float64(count))
 	if result == "accepted" {
-		m.usageLastSuccess.WithLabelValues("deliver").SetToCurrentTime()
+		m.usageLastSuccess.With(Operation.Dimension("deliver")).SetToCurrentTime()
 	}
 }
 
@@ -238,7 +261,7 @@ func (m *Metrics) ObserveUsageReceiver(outcome UsageReceiverOutcome, elapsed tim
 	default:
 		return
 	}
-	m.usageReceiverDuration.WithLabelValues(string(outcome)).Observe(elapsed.Seconds())
+	m.usageReceiverDuration.With(resultDimension(string(outcome))).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) SetUsageRetained(count int) {
@@ -252,7 +275,7 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 		return
 	}
 	switch kind {
-	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune":
+	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads":
 	default:
 		return
 	}
@@ -262,11 +285,11 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 	} else if busy {
 		outcome = "busy"
 	}
-	m.cleanupRuns.WithLabelValues(kind, outcome).Inc()
+	m.cleanupRuns.With(CleanupKind.Dimension(kind), resultDimension(outcome)).Inc()
 	if outcome == "success" {
-		m.cleanupLastSuccess.WithLabelValues(kind).SetToCurrentTime()
+		m.cleanupLastSuccess.With(CleanupKind.Dimension(kind)).SetToCurrentTime()
 		if count > 0 {
-			m.cleanupItems.WithLabelValues(kind).Add(float64(count))
+			m.cleanupItems.With(CleanupKind.Dimension(kind)).Add(float64(count))
 		}
 	}
 }
@@ -283,7 +306,7 @@ func (m *Metrics) ObservePlacement(action string, outcome PlacementOutcome) {
 	default:
 		return
 	}
-	m.placementDecisions.WithLabelValues(action, string(outcome)).Inc()
+	m.placementDecisions.With(Operation.Dimension(operationName(action)), resultDimension(string(outcome))).Inc()
 }
 
 func (m *Metrics) AddAssignmentReplacements(reason string, count int) {
@@ -295,5 +318,5 @@ func (m *Metrics) AddAssignmentReplacements(reason string, count int) {
 	default:
 		return
 	}
-	m.assignmentReplacements.WithLabelValues(reason).Add(float64(count))
+	m.assignmentReplacements.With(Reason.Dimension(reason)).Add(float64(count))
 }
