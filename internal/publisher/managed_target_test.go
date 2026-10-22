@@ -72,8 +72,15 @@ func TestPublicHTTPFrontendIsCalledOnlyAfterNativeTLS(t *testing.T) {
 		if !visitor.ConnectionState().HandshakeComplete || target.Transport.Protocol != config.ProtocolHTTP {
 			t.Error("HTTP frontend bypassed native TLS or protocol ownership")
 		}
+		// a frontend must read the request before replying. an unsolicited
+		// response can race net/http assigning the newly handshaken connection.
+		request, err := http.ReadRequest(bufio.NewReader(visitor))
+		if err != nil {
+			return err
+		}
+		defer request.Body.Close()
 		called.Add(1)
-		_, err := io.WriteString(visitor, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		_, err = io.WriteString(visitor, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 		return err
 	})
 	server := publisher.ManagedStream{Protocol: config.ProtocolHTTP, Hostname: host, Target: "127.0.0.1:1", TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}}, Visitor: publisher.PublicHTTPVisitor{Frontend: frontend}}
