@@ -1266,8 +1266,11 @@ type DisconnectIdentityConnectionParams struct {
 
 // ActivateIdentityConnectionJSONBody defines parameters for ActivateIdentityConnection.
 type ActivateIdentityConnectionJSONBody struct {
-	ExpectedRevision int64  `json:"expected_revision"`
-	SetupToken       string `json:"setup_token"`
+	ExpectedRevision int64 `json:"expected_revision"`
+
+	// ProvisioningToken Random 256-bit credential durably chosen by the owner before activation. Exact retries return this credential only while its digest remains current; they never rotate it. Requires the same setup capability and fresh current owner/source authorization.
+	ProvisioningToken string `json:"provisioning_token"`
+	SetupToken        string `json:"setup_token"`
 }
 
 // ActivateIdentityConnectionParams defines parameters for ActivateIdentityConnection.

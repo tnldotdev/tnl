@@ -397,10 +397,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [expected_revision, setup_token]
+              required: [expected_revision, setup_token, provisioning_token]
               properties:
                 expected_revision: { type: integer, format: int64, minimum: 1 }
                 setup_token: { type: string }
+                provisioning_token:
+                  type: string
+                  minLength: 43
+                  maxLength: 43
+                  pattern: "^[A-Za-z0-9_-]{43}$"
+                  description: Random 256-bit credential durably chosen by the owner before activation. Exact retries return this credential only while its digest remains current; they never rotate it. Requires the same setup capability and fresh current owner/source authorization.
       responses:
         "200":
           description: Consent verified; source revision advanced and provisioning token issued

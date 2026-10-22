@@ -14,10 +14,10 @@ import (
 type companyAccessStore interface {
 	ReadCompanyConnections(context.Context, controlstate.ControlPrincipal, string, time.Time) (controlstate.CompanyConnections, error)
 	BeginIdentityConnectionSetup(context.Context, controlstate.ControlPrincipal, controlstate.CreateIdentityConnectionRequest, time.Time) (controlstate.IdentityConnectionSetup, error)
-	ActivateIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, string, int64, controlstate.OIDCIdentity, time.Time) (controlstate.IdentityConnectionSecret, error)
+	ActivateIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, string, int64, controlstate.OIDCIdentity, time.Time, string) (controlstate.IdentityConnectionSecret, error)
 	DisconnectIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, int64, time.Time) error
 	RotateCompanyProvisioningToken(context.Context, controlstate.ControlPrincipal, string, string, int64, time.Time) (controlstate.IdentityConnectionSecret, error)
-	ResolveCompanyAccount(context.Context, string, string) (string, error)
+	ResolveCompanyEligibilityAccount(context.Context, string, string, bool) (string, error)
 	ProvisionCompanyEligibility(context.Context, string, controlstate.ProvisionCompanyEligibilityRequest, time.Time) error
 	SetCompanyMembershipDecision(context.Context, controlstate.ControlPrincipal, string, string, bool, bool, bool, time.Time) error
 	SetCompanyInvitationException(context.Context, controlstate.ControlPrincipal, string, string, bool, time.Time) error
@@ -110,7 +110,7 @@ func (h *handler) ActivateIdentityConnection(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	result, err := s.ActivateIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.SetupToken, body.ExpectedRevision, controlstate.OIDCIdentity{}, time.Now())
+	result, err := s.ActivateIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.SetupToken, body.ExpectedRevision, controlstate.OIDCIdentity{}, time.Now(), body.ProvisioningToken)
 	if err != nil {
 		companyError(w, "activate company connection", err)
 		return
@@ -158,7 +158,7 @@ func (h *handler) ProvisionCompanyEligibility(w http.ResponseWriter, r *http.Req
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid eligibility delta")
 		return
 	}
-	identity, err := s.ResolveCompanyAccount(r.Context(), h.config.OIDCIssuer, body.AccountSubject)
+	identity, err := s.ResolveCompanyEligibilityAccount(r.Context(), h.config.OIDCIssuer, body.AccountSubject, body.Eligible)
 	if err != nil {
 		companyError(w, "resolve company account", err)
 		return

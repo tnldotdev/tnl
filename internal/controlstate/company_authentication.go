@@ -307,6 +307,11 @@ func (d *Database) ResolveCompanyLoginIntent(ctx context.Context, id, binding st
 }
 
 func (d *Database) ResolveCompanyAccount(ctx context.Context, issuer, subject string) (string, error) {
+	return d.ResolveCompanyEligibilityAccount(ctx, issuer, subject, true)
+}
+
+// negative eligibility may offboard a disabled identity, never reactivate it.
+func (d *Database) ResolveCompanyEligibilityAccount(ctx context.Context, issuer, subject string, eligible bool) (string, error) {
 	if !validStateText(issuer) || !validStateText(subject) || len(subject) > 256 {
 		return "", ErrAuthorityInvalid
 	}
@@ -314,7 +319,7 @@ func (d *Database) ResolveCompanyAccount(ctx context.Context, issuer, subject st
 	if err != nil {
 		return "", publisherLookupError(err, ErrControlIdentity)
 	}
-	if i.DisabledAt.Valid {
+	if i.DisabledAt.Valid && eligible {
 		return "", ErrAuthorityAccess
 	}
 	return i.ID, nil

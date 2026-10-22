@@ -478,6 +478,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi ./internal/authorityapi -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
+  go:test:integration:company:
+    desc: Check company activation replay, disabled-subject offboarding and admission boundaries on disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/authorityapi -run='^TestIntegrationCompany' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
   go:test:integration:service-access:
     desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
     cmds:

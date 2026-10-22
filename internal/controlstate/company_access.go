@@ -275,7 +275,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 		return err
 	}
 	var identity string
-	if err = tx.QueryRow(ctx, `SELECT id FROM control.identities WHERE id=$1 AND disabled_at IS NULL`, r.IdentityID).Scan(&identity); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM control.identities WHERE id=$1 AND (disabled_at IS NULL OR NOT $2)`, r.IdentityID, r.Eligible).Scan(&identity); err != nil {
 		return publisherLookupError(err, ErrAuthorityAccess)
 	}
 	// eligibility belongs to the connection, independently of membership binding.
