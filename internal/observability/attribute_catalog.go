@@ -60,7 +60,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(Reason, PolicyBounded, "closed domain reason from semantic result classification or lifecycle observer; never error text", append(domainReasons(), "expected", "unexpected", "stale_assignment", "publisher_unavailable", "failed_ready")...)
 	add(ErrorType, PolicyTraceLog, "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, PolicyBounded, "closed per-instrument readiness or state-machine value")
-	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; status/watch readers do not emit transitions", events[1:]...)
+	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)
 	add(CertificateKind, PolicyBounded, "certificate worker domain", "public_url", "relay", "managed_service", "control", "service_queue")
 	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge")
 	add(CleanupKind, PolicyBounded, "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")

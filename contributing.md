@@ -114,6 +114,14 @@ For native HTTP forwarding, run `task go:test:http-streaming` and
 HTTP/1 and HTTP/2 wires for early responses during uploads, upload deadlines,
 trailers, long responses, upgrades, cancellation, and inspection outcomes.
 
+For native observability, run `task go:test:observability` and
+`task go:test:server` through `mise exec --`. these include disabled-startup
+subprocesses with malformed ambient settings, decoded OTLP exemplars and gauge
+types, safe audit reporter causes, and metric collection during ingress
+construction. `task go:test:integration:runtime RUN='^TestIntegrationServiceAuditCleanupObservedOnce$'`
+checks the cleanup worker's exact count against an instrumented disposable
+PostgreSQL database.
+
 Use `RUN` to select an integration test, for example:
 
 ```console

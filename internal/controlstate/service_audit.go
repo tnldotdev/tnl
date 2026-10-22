@@ -243,7 +243,6 @@ func (d *Database) CleanupServiceAudit(ctx context.Context, now time.Time, limit
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	defer func() { d.activity.metrics.Load().ObserveCleanup("service_audit", int(removed), false, retErr) }()
 	q := controlstatedb.New(d.pool)
 	removed, retErr = q.CleanupServiceAuditEvents(ctx, controlstatedb.CleanupServiceAuditEventsParams{BeforeTime: timestamptz(now.Add(-serviceaudit.Retention)), BatchSize: int32(limit)})
 	if retErr != nil || removed == int64(limit) {

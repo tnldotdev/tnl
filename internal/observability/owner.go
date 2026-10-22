@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -54,12 +55,19 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	if !ok {
 		return nil, errors.New("invalid observability process role")
 	}
+	if config.Disabled {
+		// do not construct SDK providers: even explicit resource/limit options
+		// are applied after their ambient defaults have been parsed and logged.
+		m := &Metrics{meter: &contractMeter{Meter: noop.NewMeterProvider().Meter(scope), specs: make(map[string]InstrumentDefinition)}, registry: prometheus.NewRegistry(), runtimeRegistry: newRuntimeRegistry()}
+		m.initInstruments(parsedRole)
+		return m, nil
+	}
 	if err := validateSDKProviderEnvironment(os.Getenv); err != nil {
 		return nil, err
 	}
 	// SDK constructors parse ambient settings before applying explicit options.
 	// validate even overridden values before allowing those diagnostic paths.
-	if !config.Disabled && (config.Metrics.Endpoint != "" || config.Traces.Endpoint != "" || config.Logs.Endpoint != "") {
+	if config.Metrics.Endpoint != "" || config.Traces.Endpoint != "" || config.Logs.Endpoint != "" {
 		if err := validateSDKEnvironment(os.Getenv); err != nil {
 			return nil, err
 		}
@@ -100,31 +108,27 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	// the supported bridge exports runtime/process collectors to OTLP. the OTel
 	// Prometheus exporter deliberately skips bridged metrics, so scrape them from
 	// the same runtime registry directly. application metrics never use the bridge.
-	runtime := prometheus.NewRegistry()
-	runtime.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	runtime := newRuntimeRegistry()
 	scrape, err := otelprom.New(otelprom.WithRegisterer(registry), otelprom.WithoutScopeInfo(), otelprom.WithoutTargetInfo(), otelprom.WithTranslationStrategy(otlptranslator.UnderscoreEscapingWithoutSuffixes))
 	if err != nil {
 		return nil, err
 	}
 	catalog := &contractMeter{specs: make(map[string]InstrumentDefinition)}
 	opts := []sdkmetric.Option{sdkmetric.WithResource(res), sdkmetric.WithReader(scrape), sdkmetric.WithCardinalityLimit(2000), sdkmetric.WithView(func(i sdkmetric.Instrument) (sdkmetric.Stream, bool) {
-		if config.Disabled {
-			return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
-		}
 		for prefix, owner := range map[string]Role{"tnl_control_": RoleControl, "tnl_database_": RoleControl, "tnl_ingress_": RoleIngress, "tnl_relay_": RoleRelay, "tnl_publisher_": RolePublisher} {
 			if strings.HasPrefix(i.Name, prefix) && parsedRole != owner && parsedRole != RoleStandalone {
 				return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
 			}
 		}
 		if spec, ok := catalog.definition(i.Name); ok {
-			return sdkmetric.Stream{Name: i.Name, Description: i.Description, Unit: i.Unit, AttributeFilter: func(kv attribute.KeyValue) bool {
+			return sdkmetric.Stream{Name: i.Name, Description: i.Description, Unit: i.Unit, ExemplarReservoirProviderSelector: correlationOnlyReservoir, AttributeFilter: func(kv attribute.KeyValue) bool {
 				return Key(kv.Key) != MetricOverflow.key() && slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
 			}}, true
 		}
 		return sdkmetric.Stream{}, false
 	})}
 	var metricExport *metricExporter
-	if config.Metrics.Endpoint != "" && !config.Disabled {
+	if config.Metrics.Endpoint != "" {
 		s := config.Metrics
 		compression := otlpmetrichttp.NoCompression
 		if s.Gzip {
@@ -163,7 +167,7 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	// raw zero drops all link attributes rather than restoring the SDK default.
 	// links carry bounded causal IDs, never scheduling or tenant payloads.
 	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithoutPanicRecording(), sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 0})}
-	if config.Traces.Endpoint != "" && !config.Disabled {
+	if config.Traces.Endpoint != "" {
 		s := config.Traces
 		compression := otlptracehttp.NoCompression
 		if s.Gzip {
@@ -203,6 +207,12 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	return m, nil
 }
 
+func newRuntimeRegistry() *prometheus.Registry {
+	runtime := prometheus.NewRegistry()
+	runtime.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	return runtime
+}
+
 // Shutdown has one shared deadline, independent of the canceled traffic context.
 // callers invoke it after draining workers; export errors never become traffic
 // errors. the providers themselves make repeated shutdown harmless.
@@ -227,7 +237,10 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 		if m.spanQueue != nil {
 			err = m.spanQueue.Shutdown(ctx)
 		}
-		return errors.Join(err, m.tracerProvider.Shutdown(ctx))
+		if m.tracerProvider != nil {
+			err = errors.Join(err, m.tracerProvider.Shutdown(ctx))
+		}
+		return err
 	}, func(ctx context.Context) error {
 		var err error
 		if m.logProcessor != nil {
@@ -237,19 +250,34 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 			err = errors.Join(err, m.loggerProvider.Shutdown(ctx))
 		}
 		return err
-	}, m.meterProvider.Shutdown)
+	}, func(ctx context.Context) error {
+		if m.meterProvider != nil {
+			return m.meterProvider.Shutdown(ctx)
+		}
+		return nil
+	})
 }
 
 func (m *Metrics) ForceFlush(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
-	return providerWork(ctx, m.tracerProvider.ForceFlush, func(ctx context.Context) error {
+	return providerWork(ctx, func(ctx context.Context) error {
+		if m.tracerProvider != nil {
+			return m.tracerProvider.ForceFlush(ctx)
+		}
+		return nil
+	}, func(ctx context.Context) error {
 		if m.loggerProvider != nil {
 			return m.loggerProvider.ForceFlush(ctx)
 		}
 		return nil
-	}, m.meterProvider.ForceFlush)
+	}, func(ctx context.Context) error {
+		if m.meterProvider != nil {
+			return m.meterProvider.ForceFlush(ctx)
+		}
+		return nil
+	})
 }
 
 // each provider starts independently; one slow signal cannot consume another's

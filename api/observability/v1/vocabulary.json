@@ -508,9 +508,12 @@
         "failed",
         "bound",
         "registered",
-        "publication_ready"
+        "publication_ready",
+        "busy",
+        "completed",
+        "partial_failed"
       ],
-      "semantics": "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; status/watch readers do not emit transitions",
+      "semantics": "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions",
       "dimension_policy": "bounded"
     },
     {

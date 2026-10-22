@@ -40,6 +40,19 @@ type ingressRuntime struct {
 	audit              *ingressServiceAudit
 }
 
+// only fully constructed controllers enter the immutable collection snapshot.
+// metric callbacks never read the constructor-owned daemon runtime slice.
+type ingressLeaseSnapshot struct{ controllers []*ingress.Controller }
+
+func (d *daemon) publishIngressRuntime(runtime *ingressRuntime) {
+	d.ingresses = append(d.ingresses, runtime)
+	controllers := make([]*ingress.Controller, 0, len(d.ingresses))
+	for _, current := range d.ingresses {
+		controllers = append(controllers, current.controller)
+	}
+	d.ingressLeases.Store(&ingressLeaseSnapshot{controllers})
+}
+
 type ingressProcessSettings struct {
 	controlEndpoint  string
 	controlAddress   string
@@ -216,9 +229,9 @@ func (d *daemon) startIngressRuntime(
 		metrics.RegisterIngressRouting(controller.RoutingStatus)
 		metrics.RegisterIngressLease(func() time.Time {
 			deadline := controller.Lease().LeaseExpiresAt
-			for _, other := range d.ingresses {
-				if other.controller != nil {
-					deadline = minTime(deadline, other.controller.Lease().LeaseExpiresAt)
+			if snapshot := d.ingressLeases.Load(); snapshot != nil {
+				for _, other := range snapshot.controllers {
+					deadline = minTime(deadline, other.Lease().LeaseExpiresAt)
 				}
 			}
 			return deadline
@@ -348,7 +361,7 @@ func (d *daemon) startIngressRuntime(
 		}
 	}
 	if runtimeConfig.privateOnly {
-		d.ingresses = append(d.ingresses, runtime)
+		d.publishIngressRuntime(runtime)
 		owned = true
 		d.start("run private ingress control", func() error { return controller.Run(ctx) })
 		d.start("report private ingress idle coverage", func() error { return usage.Run(ctx) })
@@ -380,7 +393,7 @@ func (d *daemon) startIngressRuntime(
 		}
 	}
 	publicServer = server
-	d.ingresses = append(d.ingresses, runtime)
+	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
 	d.start("report ingress usage", func() error { return usage.Run(ctx) })

@@ -33,6 +33,7 @@ type daemon struct {
 	privateControlServer   *http.Server
 	privateControlListener net.Listener
 	ingresses              []*ingressRuntime
+	ingressLeases          atomic.Pointer[ingressLeaseSnapshot]
 	relays                 []*relayRuntime
 	controlTLS             *tls.Config
 	route53Credentials     aws.CredentialsProvider

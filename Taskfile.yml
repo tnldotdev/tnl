@@ -445,7 +445,7 @@ tasks:
   go:test:observability:
     desc: Check vocabulary, identity isolation, local HTTPS export, and correlation without cloud access
     cmds:
-      - go test -race ./internal/observability ./internal/operatorlog
+      - go test -race ./internal/observability ./internal/operatorlog ./internal/serviceaudit
 
   go:test:publisher-observability:
     desc: Check publisher measurements, readiness, wire traces, and native data-path invariants with races

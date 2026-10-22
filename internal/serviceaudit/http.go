@@ -18,6 +18,17 @@ type Destination struct {
 	PublishRunNumber int64
 }
 
+// reportError preserves classification and retry causes without displaying peer
+// addresses, response content or credentials from a provider's error string.
+type reportError struct {
+	message string
+	cause   error
+}
+
+func (e *reportError) Error() string    { return e.message }
+func (e *reportError) GoString() string { return e.message }
+func (e *reportError) Unwrap() error    { return e.cause }
+
 // HTTPReporter uses the normal API authentication on bounded background batches.
 // errors deliberately omit URL, bearer, response bodies and request contents.
 func HTTPReporter(client *http.Client, destination func(context.Context) (Destination, error)) Reporter {
@@ -27,7 +38,7 @@ func HTTPReporter(client *http.Client, destination func(context.Context) (Destin
 	return func(ctx context.Context, batch Batch) error {
 		d, err := destination(ctx)
 		if err != nil {
-			return errors.New("service audit destination unavailable")
+			return &reportError{"service audit destination unavailable", err}
 		}
 		var payload any = batch
 		if d.PublishRunNumber > 0 {
@@ -42,13 +53,13 @@ func HTTPReporter(client *http.Client, destination func(context.Context) (Destin
 		}
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, bytes.NewReader(encoded))
 		if err != nil {
-			return errors.New("invalid service audit destination")
+			return &reportError{"invalid service audit destination", errors.Join(ErrRejected, err)}
 		}
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Authorization", "Bearer "+d.Bearer)
 		response, err := client.Do(request)
 		if err != nil {
-			return errors.New("service audit request failed")
+			return &reportError{"service audit request failed", err}
 		}
 		defer response.Body.Close()
 		switch response.StatusCode {
@@ -64,8 +75,11 @@ func HTTPReporter(client *http.Client, destination func(context.Context) (Destin
 		}
 		decoder := json.NewDecoder(io.LimitReader(response.Body, 4096))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&acknowledgement) != nil || decoder.Decode(new(any)) != io.EOF {
-			return errors.New("invalid service audit acknowledgement")
+		if err := decoder.Decode(&acknowledgement); err != nil {
+			return &reportError{"invalid service audit acknowledgement", err}
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return &reportError{"invalid service audit acknowledgement", err}
 		}
 		return ValidateAcknowledgement(acknowledgement.Accepted, acknowledgement.Duplicates, len(batch.Events))
 	}
