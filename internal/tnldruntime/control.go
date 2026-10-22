@@ -126,14 +126,27 @@ func newPublicAPIHandler(
 	}), nil
 }
 
-func (d *daemon) startControl(listenAddress string, proxy controlproxy.Config, handler http.Handler) error {
-	handler, err := proxy.Handler(handler)
+type controlSettings struct {
+	listen   string
+	listener net.Listener
+	proxy    controlproxy.Config
+}
+
+func controlSettingsFrom(cfg tnldconfig.Config) controlSettings {
+	return controlSettings{listen: cfg.ControlListen, proxy: cfg.ControlProxy()}
+}
+
+func (d *daemon) startControl(settings controlSettings, handler http.Handler) error {
+	handler, err := settings.proxy.Handler(handler)
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", listenAddress)
-	if err != nil {
-		return fmt.Errorf("listen for control API: %w", err)
+	listener := settings.listener
+	if listener == nil {
+		listener, err = net.Listen("tcp", settings.listen)
+		if err != nil {
+			return fmt.Errorf("listen for control API: %w", err)
+		}
 	}
 	d.controlListener = listener
 	d.controlServer = controlHTTPServer(handler, nil)
@@ -146,10 +159,6 @@ func (d *daemon) startControl(listenAddress string, proxy controlproxy.Config, h
 	})
 	log.Printf("control API listening on %s", listener.Addr())
 	return nil
-}
-
-func controlProxyConfig(cfg tnldconfig.Config) controlproxy.Config {
-	return cfg.ControlProxy()
 }
 
 // startVisitorPermissionWorkers uses the daemon component lifetime, so expiry
@@ -181,6 +190,7 @@ type privateControlSettings struct {
 	ingressLeaseDuration time.Duration
 	relayLeaseDuration   time.Duration
 	listen               string
+	listener             net.Listener
 }
 
 func privateControlSettingsFrom(cfg tnldconfig.Config) privateControlSettings {
@@ -207,9 +217,12 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 		return err
 	}
 	handler := privateControlHandler(ingressHandler, relayHandler, metrics)
-	listener, err := net.Listen("tcp", settings.listen)
-	if err != nil {
-		return fmt.Errorf("listen for private control API: %w", err)
+	listener := settings.listener
+	if listener == nil {
+		listener, err = net.Listen("tcp", settings.listen)
+		if err != nil {
+			return fmt.Errorf("listen for private control API: %w", err)
+		}
 	}
 	d.privateControlListener = listener
 	d.privateControlServer = controlHTTPServer(handler, d.controlTLS)

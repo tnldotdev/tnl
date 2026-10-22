@@ -49,6 +49,7 @@ type relayProcessSettings struct {
 	tlsServerName          string
 	transportTLS           *tls.Config
 	internalListen         string
+	internalListener       net.Listener
 	internalAddress        string
 	tcpListen              string
 	udpListen              string
@@ -81,9 +82,12 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	if err != nil {
 		return err
 	}
-	internalListener, err := net.Listen("tcp", settings.internalListen)
-	if err != nil {
-		return fmt.Errorf("listen for internal forwarding: %w", err)
+	internalListener := settings.internalListener
+	if internalListener == nil {
+		internalListener, err = net.Listen("tcp", settings.internalListen)
+		if err != nil {
+			return fmt.Errorf("listen for internal forwarding: %w", err)
+		}
 	}
 	transportTLS := settings.transportTLS
 	var certificateChanged func(relayv1.RelayTransportCertificate) error

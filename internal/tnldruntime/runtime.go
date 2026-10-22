@@ -190,7 +190,7 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 			return err
 		}
 	case tnldconfig.RoleControl:
-		if err := d.startControl(cfg.ControlListen, controlProxyConfig(cfg), controlHandler); err != nil {
+		if err := d.startControl(controlSettingsFrom(cfg), controlHandler); err != nil {
 			return err
 		}
 		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg), metrics); err != nil {

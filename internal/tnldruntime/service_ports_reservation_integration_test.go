@@ -28,3 +28,28 @@ func TestIntegrationPrivateRuntimeReservesStandaloneServicePorts(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegrationPrivateRuntimeReservesControlPorts(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, standalone := range []bool{false, true} {
+		name := "separated"
+		if standalone {
+			name = "standalone"
+		}
+		t.Run(name, func(t *testing.T) {
+			newPrivateRuntimeFixtureTiming(t, standalone, nil, false, func(cfg *tnldconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
+				addresses := []string{cfg.ControlListen}
+				if !standalone {
+					addresses = append(addresses, cfg.PrivateControlListen)
+				}
+				for _, address := range addresses {
+					listener, err := net.Listen("tcp", address)
+					if err == nil {
+						_ = listener.Close()
+						t.Fatalf("control port %s was released before the runtime claimed it", address)
+					}
+				}
+			})
+		})
+	}
+}
