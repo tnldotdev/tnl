@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"bytes"
@@ -12,9 +12,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrScope = errors.New("publisher operation is outside the selected grant")
@@ -46,7 +46,7 @@ type Native struct {
 	authority AssertionExchanger
 	identity  nativeScope
 	private   ed25519.PrivateKey
-	route     controlv1.PublicURL
+	publicURL controlv1.PublicURL
 	traffic   *trafficlimits.Selection
 	runtime   *publisherruntime.Owner
 }
@@ -70,7 +70,7 @@ func (n *Native) Access(ctx context.Context) (string, error) {
 	return n.authority.ExchangePublisherAssertion(ctx, n.identity.clientID, n.identity.grantID, n.identity.keyID, append(ed25519.PrivateKey(nil), n.private...))
 }
 
-func (n *Native) PublisherID() string {
+func (n *Native) PublisherIdentityID() string {
 	if n == nil {
 		return ""
 	}
@@ -85,7 +85,7 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 	}
 	i := n.identity.enrollment()
 	i.GrantId, i.Kind, i.PublicUrlId, i.DomainId, i.Namespace = g.Id, authorityv1.PublisherEnrollmentResultKind(g.Kind), g.PublicUrlId, g.DomainId, g.Namespace
-	i.PrivateServiceId = g.PrivateServiceId
+	i.ServiceId = g.ServiceId
 	copy, err := NewNative(n.NativeControl, n.authority, i, n.private)
 	if err != nil {
 		return nil, err
@@ -93,26 +93,26 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 	return copy.WithTraffic(n.traffic)
 }
 
-func (n *Native) SelectRoute(route controlv1.PublicURL) error {
-	if n.identity.kind != authorityv1.SavedUrl && n.identity.kind != authorityv1.Namespace {
+func (n *Native) SelectPublicURL(publicURL controlv1.PublicURL) error {
+	if n.identity.kind != authorityv1.SavedPublicUrl && n.identity.kind != authorityv1.Namespace {
 		return ErrScope
 	}
-	if route.TeamId != n.identity.teamID || route.LifecycleState != controlv1.Enabled || !opaqueid.Valid(route.Id, opaqueid.PublicURLPrefix) || n.route.Id != "" && n.route.Id != route.Id {
+	if publicURL.TeamId != n.identity.teamID || publicURL.LifecycleState != controlv1.Enabled || !opaqueid.Valid(publicURL.Id, opaqueid.PublicURLPrefix) || n.publicURL.Id != "" && n.publicURL.Id != publicURL.Id {
 		return ErrScope
 	}
-	if n.identity.kind == "saved_url" {
-		if route.Id != n.identity.publicURLID {
+	if n.identity.kind == "saved_public_url" {
+		if publicURL.Id != n.identity.publicURLID {
 			return ErrScope
 		}
-	} else if !route.Ephemeral || route.ServiceProtocol != controlv1.Http || route.DomainId != n.identity.domainID || !strings.HasSuffix(route.CanonicalHostname, "."+n.identity.namespace) {
+	} else if !publicURL.Ephemeral || publicURL.ServiceProtocol != controlv1.Http || publicURL.DomainId != n.identity.domainID || !strings.HasSuffix(publicURL.CanonicalHostname, "."+n.identity.namespace) {
 		return ErrScope
 	}
-	n.route = clonePublicURL(route)
+	n.publicURL = clonePublicURL(publicURL)
 	return nil
 }
 
-func (n *Native) SavedURL(ctx context.Context) (controlv1.PublicURL, error) {
-	if n.identity.kind != "saved_url" {
+func (n *Native) SavedPublicURL(ctx context.Context) (controlv1.PublicURL, error) {
+	if n.identity.kind != "saved_public_url" {
 		return controlv1.PublicURL{}, ErrScope
 	}
 	token, err := n.Access(ctx)
@@ -123,7 +123,7 @@ func (n *Native) SavedURL(ctx context.Context) (controlv1.PublicURL, error) {
 	if err != nil {
 		return u, err
 	}
-	return u, n.SelectRoute(u)
+	return u, n.SelectPublicURL(u)
 }
 
 func (n *Native) Allocate(ctx context.Context, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
@@ -138,23 +138,23 @@ func (n *Native) Allocate(ctx context.Context, body controlv1.AllocateEphemeralP
 	if err != nil {
 		return u, err
 	}
-	return u, n.SelectRoute(u)
+	return u, n.SelectPublicURL(u)
 }
 
 func (n *Native) GetPublicURLByHostname(ctx context.Context, team, hostname string) (controlv1.PublicURL, error) {
-	if n.route.Id == "" {
-		if _, err := n.SavedURL(ctx); err != nil {
+	if n.publicURL.Id == "" {
+		if _, err := n.SavedPublicURL(ctx); err != nil {
 			return controlv1.PublicURL{}, err
 		}
 	}
-	if n.route.TeamId != team || n.route.CanonicalHostname != hostname {
+	if n.publicURL.TeamId != team || n.publicURL.CanonicalHostname != hostname {
 		return controlv1.PublicURL{}, ErrScope
 	}
-	return clonePublicURL(n.route), nil
+	return clonePublicURL(n.publicURL), nil
 }
 
 func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
-	if n.route.Id == "" || n.route.Id != id {
+	if n.publicURL.Id == "" || n.publicURL.Id != id {
 		return controlv1.PublishRunSetup{}, ErrScope
 	}
 	// a deployed owner must still hold its accepted epoch before creating a
@@ -166,7 +166,7 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
-	proof, err := publisheridentity.SignRun(n.private, id, retry)
+	proof, err := publisherproof.SignRun(n.private, id, retry)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
@@ -180,14 +180,8 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof)
 }
 
-func (*Native) CreatePublicURL(context.Context, controlv1.CreatePublicURLRequest, string) (controlv1.PublicURL, error) {
-	return controlv1.PublicURL{}, ErrScope
-}
-func (*Native) UpdatePublicURL(context.Context, string, controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error) {
-	return controlv1.PublicURL{}, ErrScope
-}
 func (n *Native) DeletePublicURL(ctx context.Context, id string) error {
-	if n.identity.kind != "namespace" || n.route.Id != id {
+	if n.identity.kind != "namespace" || n.publicURL.Id != id {
 		return ErrScope
 	}
 	token, err := n.Access(ctx)

@@ -11,10 +11,10 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
-	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/setup"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type groupIdentityProvisionOptions struct {
@@ -53,7 +53,7 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 		return err
 	}
 	server := session.Authenticated().ServerEndpoint
-	client, err := grouppublisher.NewClient(server, nil)
+	client, err := publishergroup.NewClient(server, nil)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if groupID == "" {
 		return publisherCLIError("publisher group is not in this applied project's selector history")
 	}
-	value, err := publisherprovision.Ensure(ctx, session.Store(), session.Authenticated().Control, client, publisherprovision.Scope{
+	value, err := setup.Ensure(ctx, session.Store(), session.Authenticated().Control, client, setup.Scope{
 		Server: server, Team: current.Team().Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
 	})
 	if err != nil {
@@ -155,7 +155,7 @@ func preparePublisherGroupIdentity(flags *publisherServeCommand) error {
 
 // importPublisherGroupIdentity requires the caller's existing group identity
 // lock. verify the signing key and exact current membership before saving it.
-func importPublisherGroupIdentity(ctx context.Context, profile *clientstate.Store, client *grouppublisher.Client, value credentialfile.GroupFile, server, project, group, instance string) (controlv1.PublisherGroupMember, ed25519.PrivateKey, error) {
+func importPublisherGroupIdentity(ctx context.Context, profile *clientstate.Store, client *publishergroup.Client, value credentialfile.GroupFile, server, project, group, instance string) (controlv1.PublisherGroupMember, ed25519.PrivateKey, error) {
 	value, err := credentialfile.ResolveGroup(ctx, client, value, server, project, group, instance)
 	if err != nil {
 		return controlv1.PublisherGroupMember{}, nil, err

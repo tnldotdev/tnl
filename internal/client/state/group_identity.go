@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // ImportPublisherGroupIdentity updates the public document and its authenticated

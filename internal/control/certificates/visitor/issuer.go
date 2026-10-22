@@ -1,7 +1,7 @@
 // package visitorcert owns control's client-certificate issuer. publishers prove
 // key possession in native TLS; control checks the exact service, identity and
 // device against current state before permitting application authentication.
-package visitorcert
+package visitor
 
 import (
 	"crypto/ecdsa"
@@ -82,7 +82,7 @@ func ValidateCSR(der []byte) (*x509.CertificateRequest, error) {
 // Issue copies only the CSR's proven public key. caller-provided subjects, SANs,
 // extensions and CA constraints never become authenticated identity claims.
 func (i *Issuer) Issue(der []byte, service, identity, device string, expires, now time.Time) ([]byte, error) {
-	if i == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) || !expires.After(now) {
+	if i == nil || !opaqueid.Valid(service, opaqueid.ServicePrefix) || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) || !expires.After(now) {
 		return nil, visitorcert.ErrInvalidCertificate
 	}
 	csr, err := ValidateCSR(der)
@@ -116,7 +116,7 @@ func (i *Issuer) Issue(der []byte, service, identity, device string, expires, no
 }
 
 func (i *Issuer) Identity(leaf *x509.Certificate, service string, now time.Time) (identity, device string, err error) {
-	if i == nil || leaf == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
+	if i == nil || leaf == nil || !opaqueid.Valid(service, opaqueid.ServicePrefix) || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
 		return "", "", visitorcert.ErrInvalidCertificate
 	}
 	roots := x509.NewCertPool()
@@ -135,7 +135,7 @@ func (i *Issuer) Identity(leaf *x509.Certificate, service string, now time.Time)
 // IssueWorkload certifies only the job's existing key and one service. the
 // session deadline, revocation and lease are checked again at every admission.
 func (i *Issuer) IssueWorkload(der []byte, service, session string, expires, now time.Time) ([]byte, error) {
-	if i == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(session, "wls_") || !expires.After(now) {
+	if i == nil || !opaqueid.Valid(service, opaqueid.ServicePrefix) || !opaqueid.Valid(session, "wls_") || !expires.After(now) {
 		return nil, visitorcert.ErrInvalidCertificate
 	}
 	csr, err := ValidateCSR(der)

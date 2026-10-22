@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"context"
@@ -24,21 +24,21 @@ type configuredControl struct{ config ControlConfig }
 
 func NewControlWithConfig(config ControlConfig) (Control, error) {
 	if config.Signer == nil || config.Assignment == nil || config.Resolve == nil || config.Release == nil || config.Close == nil {
-		return nil, ErrPrivateConnection
+		return nil, ErrServiceConnection
 	}
 	return &configuredControl{config}, nil
 }
 
-func (c *configuredControl) PrivateConnectorSigner(ctx context.Context, identity string) (Signer, error) {
+func (c *configuredControl) ConnectorSigner(ctx context.Context, identity string) (Signer, error) {
 	return c.config.Signer(ctx, identity)
 }
-func (c *configuredControl) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
+func (c *configuredControl) ConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
 	return c.config.Assignment(ctx, service, subject, slot)
 }
-func (c *configuredControl) ResolvePrivateService(ctx context.Context, service string) (Run, error) {
+func (c *configuredControl) ResolveService(ctx context.Context, service string) (Run, error) {
 	return c.config.Resolve(ctx, service)
 }
-func (c *configuredControl) ReleasePrivateConnectorAssignment(ctx context.Context, session string) error {
+func (c *configuredControl) ReleaseConnectorAssignment(ctx context.Context, session string) error {
 	return c.config.Release(ctx, session)
 }
 func (c *configuredControl) Close() error { return c.config.Close() }

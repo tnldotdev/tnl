@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -27,7 +27,7 @@ func assertDNSChallengeSubjectBinding(t *testing.T, database *Database, expected
 	}{
 		{"kind", func(s *CertificateSubject) {
 			if s.Kind == CertificateSubjectPublicURL {
-				s.Kind = CertificateSubjectManagedService
+				s.Kind = CertificateSubjectService
 			} else {
 				s.Kind = CertificateSubjectPublicURL
 			}

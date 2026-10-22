@@ -1,5 +1,5 @@
 // package tcpconnect owns the loopback visitor endpoint of private tunnels.
-package tcpconnect
+package stream
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -20,11 +20,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-var ErrPrivateConnection = errors.New("private service: authenticated connection is unavailable")
+var ErrServiceConnection = errors.New("service: authenticated connection is unavailable")
 
 // Signer binds one tagged subject to its public key and proof operation. the
 // workload adapter retains its ephemeral private key in workloadclient.
@@ -38,13 +38,13 @@ func (Signer) String() string   { return "private connector signer" }
 func (Signer) GoString() string { return "private connector signer" }
 
 type Assignment struct {
-	SessionID, PrivateServiceID string
-	Subject                     tunnelv1.VisitorSubject
-	IngressID                   string
-	Endpoint                    muxsession.Endpoint
-	Credential                  string
-	ExpiresAt                   time.Time
-	TransportTLS                *tls.Config
+	SessionID, ServiceID string
+	Subject              tunnelv1.VisitorSubject
+	IngressID            string
+	Endpoint             muxsession.Endpoint
+	Credential           string
+	ExpiresAt            time.Time
+	TransportTLS         *tls.Config
 }
 
 func (Assignment) String() string   { return "private connector assignment" }
@@ -53,27 +53,27 @@ func (Assignment) GoString() string { return "private connector assignment" }
 // Run is a current control-selected publisher and its approved TLS metadata.
 // selection never grants a stream: ingress checks the live grant separately.
 type Run struct {
-	PrivateServiceID, PrivateRunID string
-	RunNumber                      uint64
-	ValidUntil                     time.Time
-	Protocol                       string
-	TrustRevision                  int64
-	ManagedTLS                     *controlv1.ManagedServiceTLS
-	ServiceTLS                     *tls.Config `json:"-"`
+	ServiceID, ServiceRunID string
+	RunNumber               uint64
+	ValidUntil              time.Time
+	Protocol                string
+	TrustRevision           int64
+	Endpoint                *controlv1.ServiceEndpoint
+	ServiceTLS              *tls.Config `json:"-"`
 }
 
-func (Run) String() string   { return "selected private service run" }
-func (Run) GoString() string { return "selected private service run" }
+func (Run) String() string   { return "selected service run" }
+func (Run) GoString() string { return "selected service run" }
 
 type Control interface {
-	PrivateConnectorSigner(context.Context, string) (Signer, error)
-	PrivateConnectorAssignment(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
-	ResolvePrivateService(context.Context, string) (Run, error)
+	ConnectorSigner(context.Context, string) (Signer, error)
+	ConnectorAssignment(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
+	ResolveService(context.Context, string) (Run, error)
 }
 
 type Config struct {
-	Control                                Control
-	PrivateServiceID, IdentityID, Protocol string
+	Control                         Control
+	ServiceID, IdentityID, Protocol string
 	// TrustRevision is the approved metadata revision. selected metadata is
 	// authoritative; target trust is owned only by the publisher.
 	TrustRevision int64
@@ -81,7 +81,7 @@ type Config struct {
 	// infrastructure trust is independent of the optional target CA bundle.
 	TransportTLS   *tls.Config
 	MaxConnections int
-	ManagedTLS     *controlv1.ManagedServiceTLS
+	Endpoint       *controlv1.ServiceEndpoint
 	ServiceTLS     *tls.Config `json:"-"`
 	// an owner may supply one shared shutdown budget for all path releases.
 	CleanupContext func() context.Context `json:"-"`
@@ -91,7 +91,7 @@ func (Config) String() string   { return "private connector configuration" }
 func (Config) GoString() string { return "private connector configuration" }
 
 type connectorPath struct {
-	*tunnel.PrivateConnectorSession
+	*tunnel.ConnectorSession
 	transport tunnel.Transport
 	mu        sync.Mutex
 	active    int
@@ -108,7 +108,7 @@ type connectorPath struct {
 func (p *connectorPath) Close() error {
 	p.closeOnce.Do(func() {
 		p.cancel()
-		p.closeErr = p.PrivateConnectorSession.Close()
+		p.closeErr = p.ConnectorSession.Close()
 		<-p.watchDone
 		if p.release != nil {
 			p.closeErr = errors.Join(p.closeErr, p.release())
@@ -136,7 +136,7 @@ func (p *connectorPath) acquire() (func(), error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.draining || !p.Accepted.ExpiresAt.After(time.Now()) {
-		return nil, ErrPrivateConnection
+		return nil, ErrServiceConnection
 	}
 	p.active++
 	return sync.OnceFunc(func() { p.mu.Lock(); p.active--; close(p.changed); p.changed = make(chan struct{}); p.mu.Unlock() }), nil
@@ -164,11 +164,11 @@ func (p *connectorPath) Drain(ctx context.Context) error {
 // a failed live stream is closed, never migrated or replayed on the other path.
 func Serve(ctx context.Context, listener net.Listener, config Config) (result error) {
 	if listener == nil {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	address, ok := listener.Addr().(*net.TCPAddr)
 	if !ok || !address.IP.IsLoopback() {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	return serveConnections(ctx, config, false, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
 		return serveLoopback(ctx, listener, config.MaxConnections, config.Ready, func(ctx context.Context, local net.Conn) { _ = forward(ctx, local) })
@@ -180,7 +180,7 @@ func Serve(ctx context.Context, listener net.Listener, config Config) (result er
 // stream after admission or replays application bytes after a failure.
 func Stream(ctx context.Context, local net.Conn, config Config) error {
 	if local == nil || config.Protocol != "tcp" {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	defer local.Close()
 	stop := context.AfterFunc(ctx, func() { _ = local.Close() })
@@ -195,21 +195,21 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 func serveConnections(ctx context.Context, config Config, single bool, consume connectionConsumer) (result error) {
 	startupCtx, finishStartup := observability.ClientOperation(ctx, "connector.startup")
 	defer func() { finishStartup(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) ||
 		(config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix)) || !validProtocol(config.Protocol) || config.TrustRevision < 1 {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
-	if config.ManagedTLS == nil || config.ManagedTLS.Hostname == "" || config.ManagedTLS.Port < 1024 || config.ManagedTLS.Port > 65535 {
-		return ErrPrivateConnection
+	if config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
+		return ErrServiceConnection
 	}
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 64
 	}
 	if config.MaxConnections < 1 {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	cleanupContext := func() context.Context {
 		if config.CleanupContext != nil {
@@ -227,16 +227,16 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 	}()
 	if config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	serveCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	signer, err := config.Control.PrivateConnectorSigner(startupCtx, config.IdentityID)
+	signer, err := config.Control.ConnectorSigner(startupCtx, config.IdentityID)
 	if err != nil {
 		return err
 	}
 	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
@@ -244,12 +244,12 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	paths, err := tunnel.NewSlots(observability.LinkContext(serveCtx, startupCtx), tunnel.SlotsConfig{Connect: func(ctx context.Context, slot uint8, preferTCP bool) (_ tunnel.SlotSession, result error) {
 		ctx, finish := observability.ClientOperation(ctx, "connector.path.connect")
 		defer func() { finish(result) }()
-		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, signer.Subject, slot)
+		assignment, err := config.Control.ConnectorAssignment(ctx, config.ServiceID, signer.Subject, slot)
 		if err != nil {
 			_, definition, known := failure.Describe(err)
 			// assignment conflicts retire this attempt, not another slot's live
 			// authorization. the adapter discards a confirmed stale request key.
-			if single || known && definition.Retry != failure.RetryLater && !errors.Is(err, controlclient.ErrStatusConflict) {
+			if single || known && definition.Retry != failure.RetryLater && !errors.Is(err, clientcontrol.ErrStatusConflict) {
 				cancel(err)
 			}
 			return nil, err
@@ -261,14 +261,14 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 		assignmentMu.Unlock()
 		if used {
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
 		release := func() error {
 			if control, ok := config.Control.(assignmentReleaser); ok {
 				bounded, cancel := context.WithTimeout(cleanupContext(), 5*time.Second)
 				defer cancel()
 				cleanup, finish := observability.ClientOperation(bounded, "connector.path.release")
-				err := control.ReleasePrivateConnectorAssignment(cleanup, assignment.SessionID)
+				err := control.ReleaseConnectorAssignment(cleanup, assignment.SessionID)
 				finish(err)
 				return err
 			}
@@ -280,9 +280,9 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 				_ = release()
 			}
 		}()
-		if !opaqueid.Valid(assignment.SessionID, opaqueid.PrivateConnectorSessionPrefix) || assignment.PrivateServiceID != config.PrivateServiceID || assignment.Subject != signer.Subject ||
+		if !opaqueid.Valid(assignment.SessionID, opaqueid.ConnectorSessionPrefix) || assignment.ServiceID != config.ServiceID || assignment.Subject != signer.Subject ||
 			!assignment.ExpiresAt.After(time.Now()) || assignment.IngressID == "" || assignment.Endpoint.ServerName == "" || assignment.Endpoint.Address == "" {
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
 		assignmentMu.Lock()
 		distinct := assignedIngress[1-slot] != assignment.IngressID
@@ -291,24 +291,24 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 		assignmentMu.Unlock()
 		if !distinct {
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
 		roots := config.TransportTLS
 		if assignment.TransportTLS != nil {
 			if assignment.TransportTLS.InsecureSkipVerify || assignment.TransportTLS.ServerName != assignment.Endpoint.ServerName {
-				return nil, ErrPrivateConnection
+				return nil, ErrServiceConnection
 			}
 			roots = assignment.TransportTLS
 		}
 		if roots == nil {
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
 		nonce, err := tunnelv1.NewConnectorSessionNonce()
 		if err != nil {
 			return nil, err
 		}
-		hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session",
-			PrivateServiceID: config.PrivateServiceID, SessionID: assignment.SessionID, Credential: assignment.Credential,
+		hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session",
+			ServiceID: config.ServiceID, SessionID: assignment.SessionID, Credential: assignment.Credential,
 			Subject: signer.Subject, Nonce: nonce}
 		digest, err := hello.Claim().Digest()
 		if err != nil {
@@ -316,23 +316,23 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 		hello.Signature = signer.Sign(digest)
 		if !ed25519.Verify(signer.PublicKey, digest, hello.Signature) {
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
-		primary := tunnel.Candidate{Connector: muxsession.PrivateQUICConnector{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportQUIC}
-		fallback := tunnel.Candidate{Connector: muxsession.PrivateMuxTLSConnector{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportTLSTCP}
+		primary := tunnel.Candidate{Connector: muxsession.ConnectorQUIC{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportQUIC}
+		fallback := tunnel.Candidate{Connector: muxsession.ConnectorMuxTLS{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportTLSTCP}
 		if preferTCP {
 			primary, fallback = fallback, primary
 		}
-		session, transport, err := tunnel.RacePrivateConnector(ctx, primary, fallback, 250*time.Millisecond, hello)
+		session, transport, err := tunnel.RaceConnector(ctx, primary, fallback, 250*time.Millisecond, hello)
 		if err != nil {
 			return nil, err
 		}
 		if session.Accepted.ExpiresAt.After(assignment.ExpiresAt) {
 			_ = session.Close()
-			return nil, ErrPrivateConnection
+			return nil, ErrServiceConnection
 		}
 		lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
-		path := &connectorPath{PrivateConnectorSession: session, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
+		path := &connectorPath{ConnectorSession: session, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
 		go func() {
 			defer close(path.watchDone)
 			select {
@@ -375,20 +375,20 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	forward := func(forwardCtx context.Context, local net.Conn) error {
 		// resolve approved metadata before opening one publisher stream. native
 		// clients negotiate TLS through it; opaque clients use tnl's TLS helper.
-		run, err := config.Control.ResolvePrivateService(forwardCtx, config.PrivateServiceID)
+		run, err := config.Control.ResolveService(forwardCtx, config.ServiceID)
 		if err != nil {
 			return err
 		}
-		if run.PrivateServiceID != config.PrivateServiceID || !opaqueid.Valid(run.PrivateRunID, opaqueid.PrivateRunPrefix) || run.RunNumber == 0 ||
-			run.ManagedTLS == nil || !run.ValidUntil.After(time.Now()) {
-			return ErrPrivateConnection
+		if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 ||
+			run.Endpoint == nil || !run.ValidUntil.After(time.Now()) {
+			return ErrServiceConnection
 		}
 		protocol := run.Protocol
 		if !validProtocol(protocol) || run.TrustRevision < 1 {
-			return ErrPrivateConnection
+			return ErrServiceConnection
 		}
-		if protocol != config.Protocol || run.TrustRevision != config.TrustRevision || !sameManagedTLS(run.ManagedTLS, config.ManagedTLS) {
-			err := metadataReload(config.PrivateServiceID, config.TrustRevision, run.TrustRevision)
+		if protocol != config.Protocol || run.TrustRevision != config.TrustRevision || !sameEndpoint(run.Endpoint, config.Endpoint) {
+			err := metadataReload(config.ServiceID, config.TrustRevision, run.TrustRevision)
 			cancel(err)
 			return err
 		}
@@ -418,7 +418,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 					return nil
 				}
 				verification := config.ServiceTLS.Clone()
-				verification.ServerName = run.ManagedTLS.Hostname
+				verification.ServerName = run.Endpoint.Hostname
 				return (targettransport.Transport{Protocol: serviceconfig.ProtocolName(config.Protocol), TLS: verification}).PreflightConnection(forwardCtx, provider)
 			}
 			connectionCtx, cancelConnection := context.WithCancel(forwardCtx)
@@ -430,7 +430,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			_, err = streamcopy.Copy(local, provider)
 			return err
 		}
-		return ErrPrivateConnection
+		return ErrServiceConnection
 	}
 	if !single {
 		probe, cancel := context.WithTimeout(serveCtx, 10*time.Second)
@@ -489,29 +489,29 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	}
 	stop := context.AfterFunc(setup, func() { _ = stream.SetDeadline(time.Now()) })
 	defer stop()
-	entry := tunnelv1.PrivateVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateVisitorStream,
-		PrivateServiceID: run.PrivateServiceID, PrivateRunID: run.PrivateRunID, RunNumber: run.RunNumber}
+	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream,
+		ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber}
 	entry.TraceContext = observability.WireTrace(ctx)
-	if err = tunnelv1.WritePrivateVisitorEntry(stream, entry); err != nil {
+	if err = tunnelv1.WriteConnectorVisitorEntry(stream, entry); err != nil {
 		return nil, false, err
 	}
-	accepted, err := tunnelv1.ReadPrivateVisitorAccepted(stream)
+	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
 	if err != nil {
 		return nil, false, err
 	}
 	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP {
-		return nil, true, ErrPrivateConnection
+		return nil, true, ErrServiceConnection
 	}
-	if run.ManagedTLS == nil {
-		return nil, false, ErrPrivateConnection
+	if run.Endpoint == nil {
+		return nil, false, ErrServiceConnection
 	}
 	{
 		if run.Protocol == "tcp" {
 			if run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify {
-				return nil, false, ErrPrivateConnection
+				return nil, false, ErrServiceConnection
 			}
 			verification := run.ServiceTLS.Clone()
-			verification.ServerName = run.ManagedTLS.Hostname
+			verification.ServerName = run.Endpoint.Hostname
 			verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
 			secured := tls.Client(stream, verification)
 			committed = true
@@ -535,7 +535,7 @@ type privateConn struct {
 	release func()
 }
 
-func sameManagedTLS(left, right *controlv1.ManagedServiceTLS) bool {
+func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	if left == nil || right == nil {
 		return left == right
 	}

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -62,9 +62,9 @@ func TestIntegrationPublishRunCreation(t *testing.T) {
 	}, now); !errors.Is(err, ErrPublishRunOpen) {
 		t.Fatalf("attached route update: %v", err)
 	}
-	route, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
-	if err != nil || len(route.AllowedIPPrefixes) != 0 {
-		t.Fatalf("failed mutations changed route policy = %#v, %v", route, err)
+	publicURL, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
+	if err != nil || len(publicURL.AllowedIPPrefixes) != 0 {
+		t.Fatalf("failed mutations changed route policy = %#v, %v", publicURL, err)
 	}
 }
 
@@ -109,9 +109,9 @@ func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 	if err != nil || replacement.PublishRunNumber != 2 || replacement.PublishRunID == setup.PublishRunID || replacement.PublishRunToken == setup.PublishRunToken {
 		t.Fatalf("replacement session = %#v, %v", replacement, err)
 	}
-	route, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
-	if err != nil || len(route.AllowedIPPrefixes) != 0 {
-		t.Fatalf("replacement changed route policy: %#v, %v", route, err)
+	publicURL, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, request.PublicURLID)
+	if err != nil || len(publicURL.AllowedIPPrefixes) != 0 {
+		t.Fatalf("replacement changed route policy: %#v, %v", publicURL, err)
 	}
 }
 
@@ -365,16 +365,16 @@ func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.
 	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber || heartbeat.PolicyDenials != 3 {
 		t.Fatalf("heartbeat = %#v, %v", heartbeat, err)
 	}
-	route, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
-	if err != nil || route.ExpiresAt == nil || !route.ExpiresAt.Equal(heartbeatAt.Add(ephemeralPublicURLGracePeriod)) {
-		t.Fatalf("renewed ephemeral route = %#v, %v", route, err)
+	publicURL, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
+	if err != nil || publicURL.ExpiresAt == nil || !publicURL.ExpiresAt.Equal(heartbeatAt.Add(ephemeralPublicURLGracePeriod)) {
+		t.Fatalf("renewed ephemeral route = %#v, %v", publicURL, err)
 	}
 	earlier, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt.Add(-time.Second), 10*time.Second, time.Minute)
 	if err != nil || !earlier.ExpiresAt.Equal(heartbeat.ExpiresAt) {
 		t.Fatalf("nonmonotonic heartbeat = %#v, %v", earlier, err)
 	}
 	monotonic, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
-	if err != nil || monotonic.ExpiresAt == nil || !monotonic.ExpiresAt.Equal(*route.ExpiresAt) {
+	if err != nil || monotonic.ExpiresAt == nil || !monotonic.ExpiresAt.Equal(*publicURL.ExpiresAt) {
 		t.Fatalf("nonmonotonic route expiry = %#v, %v", monotonic, err)
 	}
 	for slot, connection := range heartbeat.PublisherConnections {

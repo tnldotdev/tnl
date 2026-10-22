@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"os"
@@ -114,11 +114,11 @@ func TestPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
 	}
 	private, err := project.EffectiveService("orders")
 	if err != nil || private.Tunnel != nil || private.Feedback != nil || private.OAuth || private.Inspection != nil || private.Publish == nil || config.ServiceProtocol(private.Publish) != "tcp" ||
-		private.Publish.Target != &dbTarget || config.PrivateServiceName("orders", project.Config.Services["orders"]) != "orders" {
+		private.Publish.Target != &dbTarget || config.ServiceName("orders", project.Config.Services["orders"]) != "orders" {
 		t.Fatalf("private orders inherited public access or lost target: %+v: %v", private, err)
 	}
 	if project.Config.Tunnel.Access == nil || project.Config.Tunnel.Access.VisitorMode() != "anonymous" {
-		t.Fatal("resolving private service mutated public defaults")
+		t.Fatal("resolving service mutated public defaults")
 	}
 	privateHTTP, err := project.EffectiveService("private-http")
 	if err != nil || privateHTTP.Tunnel != nil || privateHTTP.OAuth || privateHTTP.Feedback != nil {
@@ -136,17 +136,17 @@ func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
 	group, protocol := "cloud", "postgres"
 	target := config.Target("db.internal:5432")
 	project := Project{Config: config.TNL{
-		Publishers: map[string]config.Publisher{"cloud": {}},
+		PublisherGroups: map[string]config.PublisherGroup{"cloud": {}},
 		Services: config.Services{
 			"default": {},
-			"db":      {Publisher: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+			"db":      {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
 		},
 	}}
 	for _, test := range []struct {
 		name     string
 		expected string
 	}{{"default", "local"}, {"db", "cloud"}} {
-		if actual := config.PublisherName(project.Config.Services[test.name]); actual != test.expected {
+		if actual := config.PublisherGroupName(project.Config.Services[test.name]); actual != test.expected {
 			t.Fatalf("service %q group=%s", test.name, actual)
 		}
 	}

@@ -1,12 +1,12 @@
-package controlstate
+package state
 
 import "math"
 
 type CertificateSubjectKind string
 
 const (
-	CertificateSubjectPublicURL      CertificateSubjectKind = "public_url"
-	CertificateSubjectManagedService CertificateSubjectKind = "managed_service"
+	CertificateSubjectPublicURL CertificateSubjectKind = "public_url"
+	CertificateSubjectService   CertificateSubjectKind = "service"
 )
 
 // CertificateSubject binds one certificate order to exactly one service and run.
@@ -19,34 +19,21 @@ type CertificateSubject struct {
 }
 
 func (s CertificateSubject) Valid() bool {
-	return (s.Kind == CertificateSubjectPublicURL || s.Kind == CertificateSubjectManagedService) &&
+	return (s.Kind == CertificateSubjectPublicURL || s.Kind == CertificateSubjectService) &&
 		validStateText(s.ID) && validStateText(s.RunID) && s.RunNumber > 0 && s.RunNumber <= math.MaxInt64
 }
 
-func certificateSubject(publicURL, publicRun string, publicNumber int64, service, privateRun string, privateNumber int64) (CertificateSubject, error) {
+func certificateSubject(publicURL, publicRun string, publicNumber int64, service, serviceRun string, privateNumber int64) (CertificateSubject, error) {
 	var subject CertificateSubject
 	switch {
-	case service == "" && privateRun == "" && privateNumber == 0 && publicNumber > 0:
+	case service == "" && serviceRun == "" && privateNumber == 0 && publicNumber > 0:
 		subject = CertificateSubject{Kind: CertificateSubjectPublicURL, ID: publicURL, RunID: publicRun, RunNumber: uint64(publicNumber)}
 	case publicURL == "" && publicRun == "" && publicNumber == 0 && privateNumber > 0:
-		subject = CertificateSubject{Kind: CertificateSubjectManagedService, ID: service, RunID: privateRun, RunNumber: uint64(privateNumber)}
+		subject = CertificateSubject{Kind: CertificateSubjectService, ID: service, RunID: serviceRun, RunNumber: uint64(privateNumber)}
 	default:
 		return CertificateSubject{}, ErrCertificateIssuanceInvalid
 	}
 	if !subject.Valid() {
-		return CertificateSubject{}, ErrCertificateIssuanceInvalid
-	}
-	return subject, nil
-}
-
-// CertificateSubject checks compatibility fields against the subject loaded from
-// storage. callers constructing legacy work get the same exclusive validation.
-func (w ACMEOrderWork) CertificateSubject() (CertificateSubject, error) {
-	if w.PublishRunNumber > math.MaxInt64 || w.PrivateRunNumber > math.MaxInt64 {
-		return CertificateSubject{}, ErrCertificateIssuanceInvalid
-	}
-	subject, err := certificateSubject(w.PublicURLID, w.PublishRunID, int64(w.PublishRunNumber), w.PrivateServiceID, w.PrivateRunID, int64(w.PrivateRunNumber))
-	if err != nil || w.Subject != (CertificateSubject{}) && w.Subject != subject {
 		return CertificateSubject{}, ErrCertificateIssuanceInvalid
 	}
 	return subject, nil

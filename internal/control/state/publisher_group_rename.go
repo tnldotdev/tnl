@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -23,14 +23,14 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	defer rollback(ctx, tx, "rename publisher group", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return result, err
 	}
 	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	var id, current string
 	err = tx.QueryRow(ctx, `SELECT g.id,g.name FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, old).Scan(&id, &current)
@@ -51,17 +51,17 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if current != old || row.Revision != expected {
 		return result, ErrProjectConfigurationStale
 	}
-	if _, exists := c.Publishers[name]; exists {
-		return result, ErrPrivateServiceConflict
+	if _, exists := c.PublisherGroups[name]; exists {
+		return result, ErrServiceConflict
 	}
 	if err = claimPublisherGroupName(ctx, tx, team, project, name, id, now); err != nil {
 		return result, err
 	}
-	c.Publishers[name] = c.Publishers[old]
-	delete(c.Publishers, old)
+	c.PublisherGroups[name] = c.PublisherGroups[old]
+	delete(c.PublisherGroups, old)
 	for key, service := range c.Services {
-		if service.Publisher == old {
-			service.Publisher = name
+		if service.PublisherGroup == old {
+			service.PublisherGroup = name
 			c.Services[key] = service
 		}
 	}

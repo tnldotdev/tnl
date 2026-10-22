@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"
@@ -140,7 +140,7 @@ func (m Manifest) hashes() map[string]string {
 	if m.DocumentationPath != "" {
 		result[m.DocumentationPath] = m.DocumentationSHA256
 	}
-	for _, p := range m.Publishers {
+	for _, p := range m.PublisherGroups {
 		result[p.TemplatePath], result[p.ParametersExamplePath] = p.TemplateSHA256, p.ParametersExampleSHA256
 		result[p.StoragePolicyPath] = p.StoragePolicySHA256
 	}

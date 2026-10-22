@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"errors"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 )
 
 type trackedBody struct {
@@ -207,7 +207,7 @@ func TestBearerTransportRefreshFailureClosesDiscardedResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := (&bearerTransport{base: f.transport, source: f.source(t)}).RoundTrip(request)
-	if response != nil || !errors.Is(err, authorityclient.ErrUnauthenticated) || body.closes != 1 || len(f.transport.snapshot()) != 3 {
+	if response != nil || !errors.Is(err, clientauthority.ErrUnauthenticated) || body.closes != 1 || len(f.transport.snapshot()) != 3 {
 		t.Fatalf("refresh failure: closes=%d error=%v", body.closes, err)
 	}
 	f.assertSession(t, old)

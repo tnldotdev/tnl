@@ -11,9 +11,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
-// PrivateTarget selects the dial address. PrivateTransport independently selects
+// ServiceTarget selects the dial address. PrivateTransport independently selects
 // publisher-to-target negotiation from the approved target.tls snapshot.
-func PrivateTarget(ctx context.Context, plan PrivateTargetPlan) (string, func(), error) {
+func ServiceTarget(ctx context.Context, plan TargetPlan) (string, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
@@ -44,15 +44,15 @@ func PrivateTarget(ctx context.Context, plan PrivateTargetPlan) (string, func(),
 
 // PrivateTransport resolves only the publisher's approved target trust. visitor
 // certificates and service names cannot substitute for target identity.
-func PrivateTransport(plan PrivateTargetPlan) (targettransport.Transport, error) {
+func PrivateTransport(plan TargetPlan) (targettransport.Transport, error) {
 	return targettransport.FromTrust(plan.Protocol, plan.Trust)
 }
 
-func PreflightPrivate(ctx context.Context, plan PrivateTargetPlan) error {
+func PreflightPrivate(ctx context.Context, plan TargetPlan) error {
 	if (plan.Protocol == config.ProtocolHTTP || plan.Protocol == config.ProtocolKubernetes) && (strings.HasPrefix(plan.Target, "https://") && plan.Trust == nil || strings.HasPrefix(plan.Target, "http://") && plan.Trust != nil) {
 		return ErrScope
 	}
-	address, close, err := PrivateTarget(ctx, plan)
+	address, close, err := ServiceTarget(ctx, plan)
 	if err != nil {
 		return err
 	}

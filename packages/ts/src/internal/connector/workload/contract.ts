@@ -59,7 +59,7 @@ interface Inventory {
     readonly id: string;
     readonly service: string;
     readonly protocol: ServiceProtocol;
-    readonly managed_tls: {
+    readonly endpoint: {
       readonly hostname: string;
       readonly port: number;
       readonly public: boolean;
@@ -79,7 +79,7 @@ const value = z
   .refine((s) => [...s].every((c) => c.charCodeAt(0) > 31 && c.charCodeAt(0) !== 127));
 const provider = z.enum(["github", "vercel", "fly", "oidc"]);
 const protocol = z.enum(["http", "postgres", "mysql", "tcp", "kubernetes"]);
-const serviceID = z.string().regex(/^psvc_[A-Za-z0-9]{22}$/);
+const serviceID = z.string().regex(/^svc_[A-Za-z0-9]{22}$/);
 const sessionID = z.string().regex(/^wls_[A-Za-z0-9]{22}$/);
 const timestamp = z.iso.datetime({ offset: true });
 const unique = (values: readonly string[]) => new Set(values).size === values.length;
@@ -192,7 +192,7 @@ export const inventorySchema: z.ZodType<Inventory> = z
           id: serviceID,
           service: name,
           protocol,
-          managed_tls: z.strictObject({
+          endpoint: z.strictObject({
             hostname: z
               .string()
               .min(1)

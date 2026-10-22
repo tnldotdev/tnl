@@ -1,6 +1,6 @@
 // package awsbootstrap prepares publisher identity secrets and nonsecret bindings.
 // its provider interface cannot deploy compute, networking, or storage resources.
-package awsbootstrap
+package aws
 
 import (
 	"crypto/sha256"
@@ -26,12 +26,12 @@ type DeploymentFile struct {
 }
 
 type Deployment struct {
-	Name       string            `json:"name"`
-	Publisher  string            `json:"publisher"`
-	AccountID  string            `json:"account_id"`
-	Region     string            `json:"region"`
-	Parameters map[string]string `json:"parameters,omitempty"`
-	Secrets    map[string]Secret `json:"identity_secrets,omitempty"`
+	Name           string            `json:"name"`
+	PublisherGroup string            `json:"publisher_group"`
+	AccountID      string            `json:"account_id"`
+	Region         string            `json:"region"`
+	Parameters     map[string]string `json:"parameters,omitempty"`
+	Secrets        map[string]Secret `json:"identity_secrets,omitempty"`
 }
 
 type Secret struct {
@@ -77,7 +77,7 @@ func ReadDeployment(path, publisher, name string) (Deployment, error) {
 			return Deployment{}, invalid()
 		}
 		names[d.Name] = true
-		if d.Publisher == publisher && (name == "" || d.Name == name) {
+		if d.PublisherGroup == publisher && (name == "" || d.Name == name) {
 			if selected != nil {
 				return Deployment{}, invalid()
 			}
@@ -91,7 +91,7 @@ func ReadDeployment(path, publisher, name string) (Deployment, error) {
 }
 
 func (d Deployment) Validate() error {
-	if !naming.ValidServiceName(d.Name) || !naming.ValidServiceName(d.Publisher) || d.Publisher == "local" || !accountPattern.MatchString(d.AccountID) || !regionPattern.MatchString(d.Region) || len(d.Parameters) > 128 || len(d.Secrets) > 32 {
+	if !naming.ValidServiceName(d.Name) || !naming.ValidServiceName(d.PublisherGroup) || d.PublisherGroup == "local" || !accountPattern.MatchString(d.AccountID) || !regionPattern.MatchString(d.Region) || len(d.Parameters) > 128 || len(d.Secrets) > 32 {
 		return invalid()
 	}
 	for k, v := range d.Parameters {

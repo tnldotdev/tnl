@@ -1,7 +1,7 @@
 package relay
 
 import (
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -17,10 +17,10 @@ func publicTransitionRef(c relayv1.PublisherConnectionTransition) tunnelv1.Publi
 		ConnectionAssignmentRevision: uint64(c.ConnectionAssignmentRevision), RelayServiceID: c.RelayServiceId}
 }
 
-func privateClaimRef(c relayv1.PrivatePublisherConnection, slot uint8) tunnelv1.PrivatePublisherConnectionRef {
+func privateClaimRef(c relayv1.ServicePublisherConnection, slot uint8) tunnelv1.ServicePublisherConnectionRef {
 	// the control response has no slot; retain the slot authenticated by the
 	// publisher hello, and compare every field that control returns.
-	return tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: c.PrivateServiceId, PrivateRunID: c.PrivateRunId, RunNumber: uint64(c.RunNumber),
+	return tunnelv1.ServicePublisherConnectionRef{ServiceID: c.ServiceId, ServiceRunID: c.ServiceRunId, RunNumber: uint64(c.RunNumber),
 		PublisherConnectionID: c.PublisherConnectionId, ConnectionSlot: slot,
 		ConnectionAssignmentRevision: uint64(c.ConnectionAssignmentRevision), RelayServiceID: c.RelayServiceId}
 }

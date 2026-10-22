@@ -1,6 +1,6 @@
 // package localpublisher owns the private HTTP boundary for one native project
 // owner. capabilities restrict operations before project or publisher work runs.
-package localpublisher
+package localapi
 
 import (
 	"context"
@@ -10,26 +10,26 @@ import (
 	"slices"
 	"strings"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 type Server struct {
-	Capabilities        *privateprotocol.Capabilities
+	Capabilities        *publisherprotocol.Capabilities
 	Manager             *clientruntime.Manager
 	Database            *clientstate.Database
 	Project             string
-	Prepare             func(context.Context, privateprotocol.Prepare) (privateprotocol.Assignment, error)
-	Register            func(privateprotocol.Registration) error
-	RegisterContext     func(context.Context, privateprotocol.Registration) error
-	Acquire             func(context.Context, privateprotocol.Lease) (privateprotocol.Registration, error)
-	Invocation          func(context.Context, privateprotocol.Invocation) (privateprotocol.Registration, error)
+	Prepare             func(context.Context, publisherprotocol.Prepare) (publisherprotocol.Assignment, error)
+	Register            func(publisherprotocol.Registration) error
+	RegisterContext     func(context.Context, publisherprotocol.Registration) error
+	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
+	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
 	Check               func(context.Context, []string) (clientruntime.Snapshot, error)
 	AppService          func(string) bool
 	ConfigurationDigest func() (string, error)
@@ -39,8 +39,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if digest := r.URL.Query().Get("configuration_digest"); digest != "" {
-			if privateprotocol.Grant(r).Scope != "owner" || s.ConfigurationDigest == nil {
-				Problem(w, privateprotocol.ErrForbidden)
+			if publisherprotocol.Grant(r).Scope != "owner" || s.ConfigurationDigest == nil {
+				Problem(w, publisherprotocol.ErrForbidden)
 				return
 			}
 			current, err := s.ConfigurationDigest()
@@ -56,17 +56,17 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		if privateprotocol.Grant(r).Scope != "owner" {
-			Problem(w, privateprotocol.ErrForbidden)
+		if publisherprotocol.Grant(r).Scope != "owner" {
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		var request privateprotocol.CapabilityRequest
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
+		var request publisherprotocol.CapabilityRequest
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
 		if request.Scope == "app" && (request.Service == nil || s.AppService == nil || !s.AppService(*request.Service)) {
-			Problem(w, privateprotocol.ErrForbidden)
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
 		endpoint, err := s.Capabilities.Issue(request)
@@ -74,21 +74,21 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, endpoint)
+		publisherprotocol.Write(w, 200, endpoint)
 	})
 	mux.HandleFunc("POST /v1/prepare", func(w http.ResponseWriter, r *http.Request) {
-		grant := privateprotocol.Grant(r)
+		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "app" || s.Prepare == nil {
-			Problem(w, privateprotocol.ErrForbidden)
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		var request privateprotocol.Prepare
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
+		var request publisherprotocol.Prepare
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
 		if request.Service != "" && request.Service != *grant.Service {
-			Problem(w, privateprotocol.ErrForbidden)
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
 		request.Service = *grant.Service
@@ -97,19 +97,19 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, assignment)
+		publisherprotocol.Write(w, 200, assignment)
 	})
 	mux.HandleFunc("POST /v1/leases", func(w http.ResponseWriter, r *http.Request) {
-		if privateprotocol.Grant(r).Scope != "owner" || s.Acquire == nil {
-			Problem(w, privateprotocol.ErrForbidden)
+		if publisherprotocol.Grant(r).Scope != "owner" || s.Acquire == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		var request privateprotocol.Lease
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
+		var request publisherprotocol.Lease
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
-		if !privateprotocol.ValidOwner(request.Owner) || request.Pid <= 0 {
+		if !publisherprotocol.ValidOwner(request.Owner) || request.Pid <= 0 {
 			Problem(w, errors.New("invalid lease"))
 			return
 		}
@@ -118,24 +118,24 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, registration)
+		publisherprotocol.Write(w, 200, registration)
 	})
 	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
-		grant := privateprotocol.Grant(r)
+		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "invocation" || s.Invocation == nil {
-			Problem(w, privateprotocol.ErrForbidden)
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		var request privateprotocol.Invocation
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
+		var request publisherprotocol.Invocation
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
-		if request.Version != 1 || request.InvocationId != *grant.InvocationId || !privateprotocol.ValidOwner(request.Owner) || request.Pid <= 0 || request.PublisherFile != "" && request.PublisherId != "" {
-			Problem(w, privateprotocol.ErrForbidden)
+		if request.Version != 1 || request.InvocationId != *grant.InvocationId || !publisherprotocol.ValidOwner(request.Owner) || request.Pid <= 0 || request.PublisherCredentialFile != "" && request.PublisherIdentityId != "" {
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		if request.PublisherFile != "" && (!filepath.IsAbs(request.PublisherFile) || len(request.PublisherFile) > 4096 || strings.ContainsRune(request.PublisherFile, 0)) {
+		if request.PublisherCredentialFile != "" && (!filepath.IsAbs(request.PublisherCredentialFile) || len(request.PublisherCredentialFile) > 4096 || strings.ContainsRune(request.PublisherCredentialFile, 0)) {
 			Problem(w, credentialfile.ErrInvalid)
 			return
 		}
@@ -144,7 +144,7 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		if err := privateprotocol.Write(w, 200, registration); err != nil || r.Context().Err() != nil {
+		if err := publisherprotocol.Write(w, 200, registration); err != nil || r.Context().Err() != nil {
 			// a failed acknowledgment cannot leave an unrenewable invocation
 			// running. unregister joins its worker and allocation cleanup.
 			_ = s.Manager.UnregisterTarget(registration.RegistrationID, registration.Owner, registration.Target)
@@ -152,17 +152,17 @@ func (s *Server) Handler() http.Handler {
 	})
 	for _, operation := range []string{"register", "renew", "unregister"} {
 		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
-			var request privateprotocol.Registration
-			if err := privateprotocol.Decode(w, r, &request); err != nil {
+			var request publisherprotocol.Registration
+			if err := publisherprotocol.Decode(w, r, &request); err != nil {
 				Problem(w, err)
 				return
 			}
-			if request.Version != 1 || !privateprotocol.ValidOwner(request.Owner) {
-				Problem(w, privateprotocol.ErrForbidden)
+			if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) {
+				Problem(w, publisherprotocol.ErrForbidden)
 				return
 			}
 			service, found := s.Manager.ServiceForRegistration(request.RegistrationID)
-			grant := privateprotocol.Grant(r)
+			grant := publisherprotocol.Grant(r)
 			if !found || grant.Scope == "app" && service.Name != *grant.Service || grant.Scope == "invocation" && service.Name != *grant.InvocationId {
 				Problem(w, clientruntime.ErrRegistrationStale)
 				return
@@ -171,7 +171,7 @@ func (s *Server) Handler() http.Handler {
 			switch operation {
 			case "register":
 				if grant.Scope != "app" {
-					Problem(w, privateprotocol.ErrForbidden)
+					Problem(w, publisherprotocol.ErrForbidden)
 					return
 				}
 				if s.RegisterContext != nil {
@@ -195,7 +195,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		snapshot := s.Manager.Snapshot()
-		grant := privateprotocol.Grant(r)
+		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "owner" {
 			name := ""
 			if grant.Service != nil {
@@ -212,11 +212,11 @@ func (s *Server) Handler() http.Handler {
 			})
 			snapshot.Events = nil
 		}
-		privateprotocol.Write(w, 200, snapshot)
+		publisherprotocol.Write(w, 200, snapshot)
 	})
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) {
-		if privateprotocol.Grant(r).Scope != "owner" {
-			Problem(w, privateprotocol.ErrForbidden)
+		if publisherprotocol.Grant(r).Scope != "owner" {
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
 		cursor := r.URL.Query().Get("after")
@@ -229,15 +229,15 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, events)
+		publisherprotocol.Write(w, 200, events)
 	})
 	mux.HandleFunc("POST /v1/check", func(w http.ResponseWriter, r *http.Request) {
-		if privateprotocol.Grant(r).Scope != "owner" || s.Check == nil {
-			Problem(w, privateprotocol.ErrForbidden)
+		if publisherprotocol.Grant(r).Scope != "owner" || s.Check == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
-		var request privateprotocol.Check
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
+		var request publisherprotocol.Check
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
@@ -254,7 +254,7 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, snapshot)
+		publisherprotocol.Write(w, 200, snapshot)
 	})
 	return observability.LocalRequests(s.Capabilities.Handler(mux))
 }
@@ -266,9 +266,9 @@ func Problem(w http.ResponseWriter, err error) {
 	case reason == failure.AppConfigurationConflict:
 		definition, _ := failure.DefinitionFor(failure.AppConfigurationConflict)
 		status, code, message = 409, string(failure.AppConfigurationConflict), definition.Message
-	case errors.Is(err, privateprotocol.ErrUnauthorized):
+	case errors.Is(err, publisherprotocol.ErrUnauthorized):
 		status, code, message = 401, "runtime.unauthorized", "read the current private endpoint descriptor"
-	case errors.Is(err, privateprotocol.ErrForbidden):
+	case errors.Is(err, publisherprotocol.ErrForbidden):
 		status, code, message = 403, "runtime.forbidden", "use a capability for this service and operation"
 	case errors.Is(err, clientruntime.ErrOwnerConflict):
 		status, code, message = 409, "runtime.owner_conflict", "another live app owns this service; stop it before starting another"
@@ -276,17 +276,17 @@ func Problem(w http.ResponseWriter, err error) {
 		status, code, message = 409, "runtime.registration_stale", "prepare and register the listener again"
 	case errors.Is(err, clientruntime.ErrCursorExpired):
 		status, code, message = 410, "runtime.cursor_expired", "read a new status snapshot before resuming events"
-	case errors.Is(err, controlclient.ErrUnauthenticated):
+	case errors.Is(err, clientcontrol.ErrUnauthenticated):
 		status, code, message = 401, "runtime.authentication_required", "run tnl auth login, then start the app again"
-	case errors.Is(err, nativeauth.ErrSetupRequired):
+	case errors.Is(err, publisheridentity.ErrSetupRequired):
 		status, code, message = 409, "runtime.publisher_setup_required", "run tnl publisher setup --namespace, then start the app again"
 	case errors.Is(err, credentialfile.ErrInvalid):
-		status, code, message = 400, "runtime.publisher_file_invalid", "check the publisher file, its permissions, and its control URL"
+		status, code, message = 400, "runtime.publisher_credential_file_invalid", "check the publisher file, its permissions, and its control URL"
 	default:
 		if reason, ok := failure.ReasonOf(err); ok {
 			definition, _ := failure.DefinitionFor(reason)
 			code, message = string(reason), definition.Message
 		}
 	}
-	privateprotocol.Write(w, status, privateprotocol.Problem{Code: code, Message: message})
+	publisherprotocol.Write(w, status, publisherprotocol.Problem{Code: code, Message: message})
 }

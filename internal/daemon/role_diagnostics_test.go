@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -16,7 +16,7 @@ func TestRoleDiagnosticsAndDrainKeepLivenessIndependentOfReadiness(t *testing.T)
 	d.draining.Store(true)
 	m := observability.New("relay")
 	t.Cleanup(func() { _ = m.Shutdown(t.Context()) })
-	handler := d.withRoleDiagnostics(observability.ProcessHandler(m.Handler(), func() bool { return d.ready(t.Context(), tnldconfig.RoleRelay, time.Now()) == nil }), tnldconfig.RoleRelay)
+	handler := d.withRoleDiagnostics(observability.ProcessHandler(m.Handler(), func() bool { return d.ready(t.Context(), daemonconfig.RoleRelay, time.Now()) == nil }), daemonconfig.RoleRelay)
 	for _, test := range []struct {
 		path   string
 		status int

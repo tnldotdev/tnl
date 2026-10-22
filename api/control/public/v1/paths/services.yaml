@@ -1,7 +1,7 @@
 paths:
-  /v1/projects/{project_key}/private-services/{service}:
+  /v1/projects/{project_key}/services/{service}:
     get:
-      operationId: getProjectPrivateService
+      operationId: getProjectService
       security: [{ bearerAuth: [] }]
       description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
       parameters:
@@ -10,7 +10,7 @@ paths:
             name: service,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceName" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceName" },
           }
         - {
             name: team_id,
@@ -29,17 +29,17 @@ paths:
           description: Exact saved service from the applied configuration, including offline services
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateService" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services:
+  /v1/services:
     get:
-      operationId: listPrivateServices
+      operationId: listServices
       description: Team-owned saved services; never return target addresses or stream keys.
       security: [{ bearerAuth: [] }]
       parameters:
         [
           { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" },
-          { $ref: "../openapi.yaml#/components/parameters/PrivateServiceCursor" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceCursor" },
         ]
       responses:
         "200":
@@ -48,12 +48,12 @@ paths:
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServicePage" } },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServicePage" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
-      operationId: createPrivateService
+      operationId: createService
       description: Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
@@ -63,44 +63,41 @@ paths:
           content:
             {
               application/json:
-                {
-                  schema:
-                    { $ref: "../openapi.yaml#/components/schemas/CreatePrivateServiceRequest" },
-                },
+                { schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceRequest" } },
             },
         }
       responses:
         "201":
           {
-            description: Saved private service,
+            description: Saved service,
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateService" } },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/Service" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}:
+  /v1/services/{service_id}:
     put:
-      operationId: configurePrivateService
+      operationId: configureService
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceMetadata" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
       responses:
         "200":
           description: Approved protocol, publisher pool and immutable TLS trust snapshot
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateService" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     get:
-      operationId: getPrivateService
+      operationId: getService
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
         "200":
           {
@@ -108,28 +105,28 @@ paths:
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateService" } },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/Service" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
-      operationId: deletePrivateService
+      operationId: deleteService
       description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
         "204": { description: Service deleted }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/grants:
+  /v1/services/{service_id}/grants:
     get:
-      operationId: listPrivateServiceGrants
+      operationId: listServiceGrants
       description: Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - name: cursor
           in: query
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceGrantID" }
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" }
       responses:
         "200":
           {
@@ -137,18 +134,16 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceGrantPage" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantPage" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
-      operationId: createPrivateServiceGrant
+      operationId: createServiceGrant
       security: [{ bearerAuth: [] }]
       parameters:
         [
-          { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
           { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" },
         ]
       requestBody:
@@ -158,10 +153,7 @@ paths:
             {
               application/json:
                 {
-                  schema:
-                    {
-                      $ref: "../openapi.yaml#/components/schemas/CreatePrivateServiceGrantRequest",
-                    },
+                  schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceGrantRequest" },
                 },
             },
         }
@@ -172,51 +164,51 @@ paths:
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceGrant" } },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrant" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/grants/{grant_id}:
+  /v1/services/{service_id}/grants/{grant_id}:
     delete:
-      operationId: revokePrivateServiceGrant
+      operationId: revokeServiceGrant
       security: [{ bearerAuth: [] }]
       parameters:
         [
-          { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
           {
             name: grant_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceGrantID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" },
           },
         ]
       responses:
         "204": { description: Grant revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/invitations:
+  /v1/services/{service_id}/invitations:
     get:
-      operationId: listPrivateServiceInvitations
+      operationId: listServiceInvitations
       description: Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - name: cursor
           in: query
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitationID" }
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
       responses:
         "200":
           description: Invitations for service administrators
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitationPage" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationPage" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
-      operationId: invitePrivateServiceVisitor
+      operationId: inviteServiceVisitor
       description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
       security: [{ bearerAuth: [] }]
       parameters:
         [
-          { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
           { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" },
         ]
       requestBody:
@@ -227,9 +219,7 @@ paths:
               application/json:
                 {
                   schema:
-                    {
-                      $ref: "../openapi.yaml#/components/schemas/CreatePrivateServiceInvitationRequest",
-                    },
+                    { $ref: "../openapi.yaml#/components/schemas/CreateServiceInvitationRequest" },
                 },
             },
         }
@@ -238,36 +228,33 @@ paths:
           description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitation" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }
         "201":
           {
             description: One-use verified-email invitation,
             content:
               {
                 application/json:
-                  {
-                    schema:
-                      { $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitation" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/invitations/{invitation_id}:
+  /v1/services/{service_id}/invitations/{invitation_id}:
     delete:
-      operationId: revokePrivateServiceInvitation
+      operationId: revokeServiceInvitation
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - name: invitation_id
           in: path
           required: true
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitationID" }
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
       responses:
         "204": { description: Invitation and accepted identity grant revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-service-invitations/accept:
+  /v1/service-invitations/accept:
     post:
-      operationId: acceptPrivateServiceInvitation
+      operationId: acceptServiceInvitation
       security: [{ bearerAuth: [] }]
       requestBody:
         {
@@ -277,9 +264,7 @@ paths:
               application/json:
                 {
                   schema:
-                    {
-                      $ref: "../openapi.yaml#/components/schemas/PrivateServiceInvitationCredential",
-                    },
+                    { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationCredential" },
                 },
             },
         }
@@ -290,7 +275,7 @@ paths:
             content:
               {
                 application/json:
-                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceGrant" } },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrant" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

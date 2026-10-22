@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func Run(ctx context.Context, config Config) (result error) {
@@ -55,7 +55,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		config.ServiceProtocol = controlv1.Http
 	}
 	if config.ServiceProtocol != controlv1.Http {
-		return errors.New("publisher: only HTTP uses public URL runs; use a private service for TCP")
+		return errors.New("publisher: only HTTP uses public URL runs; use a service for TCP")
 	}
 	ctx = observability.WithPublisherProtocol(ctx, "http")
 	if config.ServiceProtocol == controlv1.Http {
@@ -67,43 +67,43 @@ func Run(ctx context.Context, config Config) (result error) {
 			return err
 		}
 		if config.Handler == nil {
-			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
+			err = publisherproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 		}
 	}
 	if err != nil {
 		return err
 	}
-	config.PublisherID, err = configuredPublisherID(config)
+	config.PublisherIdentityID, err = configuredPublisherIdentityID(config)
 	if err != nil {
 		return err
 	}
-	hostLock, err := clientstate.LockPublisherHostnameContext(ctx, config.State, hostname, config.PublisherID)
+	hostLock, err := clientstate.LockPublisherHostnameContext(ctx, config.State, hostname, config.PublisherIdentityID)
 	if err != nil {
 		return err
 	}
 	defer hostLock.Close()
-	route, createdPublicURL, err := createOrLoadPublicURL(ctx, config)
+	publicURL, createdPublicURL, err := createOrLoadPublicURL(ctx, config)
 	if err != nil {
 		return err
 	}
-	publicURLID := route.Id
-	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: route.TeamId, PublisherIdentityID: config.PublisherID, PublicURLID: route.Id})
+	publicURLID := publicURL.Id
+	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: publicURL.TeamId, PublisherIdentityID: config.PublisherIdentityID, PublicURLID: publicURL.Id})
 	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
 	if config.Ephemeral && createdPublicURL {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			deleteErr := config.Control.DeletePublicURL(cleanupCtx, route.Id)
+			deleteErr := config.Control.DeletePublicURL(cleanupCtx, publicURL.Id)
 			cancel()
-			if deleteErr != nil && !errors.Is(deleteErr, controlclient.ErrNotFound) {
+			if deleteErr != nil && !errors.Is(deleteErr, clientcontrol.ErrNotFound) {
 				result = errors.Join(result, fmt.Errorf("publisher: delete ephemeral public_url: %w", deleteErr))
 			}
 		}()
 	}
-	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: route.CanonicalHostname}); err != nil {
+	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: publicURL.CanonicalHostname}); err != nil {
 		return err
 	}
 	for {
-		setup, err := createPublishRun(ctx, config, route)
+		setup, err := createPublishRun(ctx, config, publicURL)
 		if err != nil {
 			return err
 		}
@@ -117,9 +117,9 @@ func Run(ctx context.Context, config Config) (result error) {
 		if ctx.Err() != nil {
 			return err
 		}
-		if !errors.Is(err, controlclient.ErrStatusConflict) {
+		if !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			return err
 		}
-		route.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
+		publicURL.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
 }

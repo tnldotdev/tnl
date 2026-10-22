@@ -2,8 +2,8 @@
 -- select only unreferenced candidates before LIMIT; never cascade subject state.
 
 -- name: CleanupWorkloadStreams :execrows
-DELETE FROM control.private_visitor_streams WHERE visitor_connection_id IN (
-    SELECT stream.visitor_connection_id FROM control.private_visitor_streams stream
+DELETE FROM control.connector_visitor_streams WHERE visitor_connection_id IN (
+    SELECT stream.visitor_connection_id FROM control.connector_visitor_streams stream
     WHERE stream.workload_session_id IS NOT NULL
       AND (stream.valid_until < sqlc.arg(before_time) OR stream.closed_at < sqlc.arg(before_time))
     ORDER BY stream.valid_until, stream.visitor_connection_id LIMIT sqlc.arg(batch_size)
@@ -20,12 +20,12 @@ DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
 );
 
 -- name: CleanupWorkloadConnectors :execrows
-DELETE FROM control.private_connector_sessions WHERE id IN (
-    SELECT session.id FROM control.private_connector_sessions session
+DELETE FROM control.connector_sessions WHERE id IN (
+    SELECT session.id FROM control.connector_sessions session
     WHERE session.workload_session_id IS NOT NULL
       AND session.expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream WHERE stream.connector_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams stream WHERE stream.connector_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 );
@@ -65,8 +65,8 @@ DELETE FROM control.workload_audit WHERE ctid IN (
 
 -- name: CleanupWorkloadServiceRights :execrows
 -- keep the exact service snapshot until all other session references are gone.
-DELETE FROM control.workload_session_services WHERE (workload_session_id, private_service_id) IN (
-    SELECT rights.workload_session_id, rights.private_service_id FROM control.workload_session_services rights
+DELETE FROM control.workload_session_services WHERE (workload_session_id, service_id) IN (
+    SELECT rights.workload_session_id, rights.service_id FROM control.workload_session_services rights
     JOIN control.workload_sessions session ON session.id = rights.workload_session_id
     WHERE session.expires_at < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
@@ -75,10 +75,10 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, privat
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY session.expires_at, rights.workload_session_id, rights.private_service_id LIMIT sqlc.arg(batch_size)
+    ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT sqlc.arg(batch_size)
     FOR UPDATE OF rights SKIP LOCKED
 );
 
@@ -93,8 +93,8 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED

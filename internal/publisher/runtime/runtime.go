@@ -1,6 +1,6 @@
 // package publisherruntime owns one explicitly deployed publisher's process
 // identity. existing runtime loops call Renew; it creates no background worker.
-package publisherruntime
+package runtime
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type Control interface {
@@ -39,7 +39,7 @@ func (*Owner) GoString() string { return "publisher runtime" }
 
 func New(control Control, server, id, key, scope string, private ed25519.PrivateKey, deployment ...*controlv1.PublisherDeploymentReport) (*Owner, error) {
 	if control == nil || server == "" || id == "" || key == "" || scope == "" || len(private) != ed25519.PrivateKeySize {
-		return nil, publisheridentity.ErrProof
+		return nil, publisherproof.ErrProof
 	}
 	var report *controlv1.PublisherDeploymentReport
 	if len(deployment) > 1 {
@@ -60,7 +60,7 @@ func New(control Control, server, id, key, scope string, private ed25519.Private
 }
 
 func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeRequestAction) (controlv1.PublisherRuntimeResponse, error) {
-	proof, err := publisheridentity.Sign(o.id, o.key, publisheridentity.RuntimeScope(o.scope, string(action), o.run, o.epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
+	proof, err := publisherproof.Sign(o.id, o.key, publisherproof.RuntimeScope(o.scope, string(action), o.run, o.epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
@@ -83,7 +83,7 @@ func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, 
 			return r, err
 		}
 		if r.Epoch < 0 || r.Epoch == math.MaxInt64 {
-			return r, failure.Wrap("read publisher runtime epoch", failure.ServerResponseInvalid, publisheridentity.ErrProof)
+			return r, failure.Wrap("read publisher runtime epoch", failure.ServerResponseInvalid, publisherproof.ErrProof)
 		}
 		o.epoch, o.prepared = r.Epoch, true
 	}
@@ -100,7 +100,7 @@ func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, 
 		expected++
 	}
 	if r.Epoch != expected || r.LeaseExpiresAt == nil || !r.LeaseExpiresAt.After(time.Now()) {
-		return r, failure.Wrap("read publisher runtime lease", failure.ServerResponseInvalid, publisheridentity.ErrProof)
+		return r, failure.Wrap("read publisher runtime lease", failure.ServerResponseInvalid, publisherproof.ErrProof)
 	}
 	o.epoch, o.started = r.Epoch, true
 	o.leaseExpires = *r.LeaseExpiresAt

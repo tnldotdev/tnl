@@ -18,7 +18,7 @@ paths:
     get:
       operationId: getLocalProjectService
       security: [{ bearerAuth: [] }]
-      description: Read the exact private service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+      description: Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
       parameters:
         - {
             name: project_key,
@@ -47,7 +47,7 @@ paths:
           }
       responses:
         "200":
-          description: Exact authorized local private service and approved visitor metadata
+          description: Exact authorized local service and approved visitor metadata
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/LocalProjectService" }

@@ -1,4 +1,4 @@
-package problemtype
+package problem
 
 import (
 	"net/http"

@@ -7,7 +7,7 @@ WITH inventory AS (
     SELECT ingress_pool_id,
         count(*) FILTER (WHERE state = 'held')::bigint AS claimed,
         count(*) FILTER (WHERE state = 'quarantined')::bigint AS quarantined
-    FROM control.managed_service_port_claims
+    FROM control.service_port_claims
     WHERE state <> 'released'
     GROUP BY ingress_pool_id
 )

@@ -12,11 +12,11 @@ securitySchemes:
     scheme: bearer
     bearerFormat: OAuth access token
 parameters:
-  PrivateServiceID:
-    name: private_service_id
+  ServiceID:
+    name: service_id
     in: path
     required: true
-    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+    schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
   ServiceActorToken:
     name: X-Tnl-Actor-Token
     in: header

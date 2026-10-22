@@ -6,26 +6,26 @@ import (
 	"fmt"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const activationRetry = 2 * time.Second
 
-func createPublishRun(ctx context.Context, config Config, route controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
+func createPublishRun(ctx context.Context, config Config, publicURL controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
 	idempotencyKey, err := opaqueID(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
 	for {
-		setup, err := config.Control.CreatePublishRun(ctx, route.Id, idempotencyKey)
+		setup, err := config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey)
 		if err == nil {
 			return setup, nil
 		}
-		if !errors.Is(err, controlclient.ErrUnavailable) {
+		if !errors.Is(err, clientcontrol.ErrUnavailable) {
 			return setup, classifyPublicURLConflict(err)
 		}
 		select {
@@ -43,7 +43,7 @@ func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRu
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		closeErr := config.Control.ClosePublishRun(closeCtx, setup.PublishRun.Id, credentials.PublishRunToken(setup.PublishRunToken))
-		if closeErr != nil && !errors.Is(closeErr, controlclient.ErrNotFound) && !errors.Is(closeErr, controlclient.ErrUnauthenticated) {
+		if closeErr != nil && !errors.Is(closeErr, clientcontrol.ErrNotFound) && !errors.Is(closeErr, clientcontrol.ErrUnauthenticated) {
 			result = errors.Join(result, fmt.Errorf("publisher: close publish run: %w", closeErr))
 		}
 	}()
@@ -79,7 +79,7 @@ func confirmPublishRunReady(
 		if err == nil || confirmed {
 			return err
 		}
-		if !errors.Is(err, controlclient.ErrUnavailable) && !errors.Is(err, controlclient.ErrStatusConflict) {
+		if !errors.Is(err, clientcontrol.ErrUnavailable) && !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			return err
 		}
 		select {

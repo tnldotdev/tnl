@@ -21,7 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -46,11 +46,11 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		t.Fatal(err)
 	}
 	route53Client := route53.NewFromConfig(awsConfig)
-	provider, err := dnscontroller.NewRoute53Provider(route53Client)
+	provider, err := dns.NewRoute53Provider(route53Client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifier, err := dnscontroller.NewAuthoritativeVerifier("")
+	verifier, err := dns.NewAuthoritativeVerifier("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dnsChallenges, err := dnscontroller.NewChallengeManager(database, provider, verifier, dnscontroller.Config{
+	dnsChallenges, err := dns.NewChallengeManager(database, provider, verifier, dns.Config{
 		ManagedDomain: "tnl.wtf", ManagedZoneID: *route53TestZoneID,
 	})
 	if err != nil {

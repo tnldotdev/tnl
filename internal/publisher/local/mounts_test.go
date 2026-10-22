@@ -17,15 +17,15 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func appWorkflowTLSTarget(t *testing.T) (string, string, <-chan struct{}) {
@@ -83,10 +83,10 @@ func TestAppWorkflowStaticMountPreservesTargetAndTLSName(t *testing.T) {
 	if mount.Options.ServerName != "target.internal" {
 		t.Fatalf("mounted TLS name lost: %+v", mount.Options)
 	}
-	if err := localproxy.PreflightWithOptions(t.Context(), resolved, mount.Options); err != nil {
+	if err := publisherproxy.PreflightWithOptions(t.Context(), resolved, mount.Options); err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := localproxy.NewWithMountsHooksOptions(target, "public.example", 2, mounts, localproxy.ResponseHooks{}, mount.Options)
+	proxy, err := publisherproxy.NewWithMountsHooksOptions(target, "public.example", 2, mounts, publisherproxy.ResponseHooks{}, mount.Options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +109,12 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	f := publishingtest.New(t, testutil.PublishingHooks{})
-	route, err := f.SavedURL(ctx, controlv1.App, target)
+	publicURL, err := f.SavedPublicURL(ctx, controlv1.App, target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	owner, _ := f.Owner()
-	enrollment, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: route.TeamId, PublicUrlId: &route.Id, Name: "tls", Kind: "installed"})
+	enrollment, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Name: "tls", Kind: "installed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,8 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, _ := state.Server(ctx, f.URL)
-	authority, _ := authorityclient.New(f.URL, f.HTTP, "")
-	_, identity, err := nativeauth.EnrollNative(ctx, profile, owner, authority, enrollment.EnrollmentKey)
+	authority, _ := clientauthority.New(f.URL, f.HTTP, "")
+	_, identity, err := publisheridentity.EnrollNative(ctx, profile, owner, authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 	})
 	defer func() { http.DefaultTransport = original }()
 	options := invocation.EnrolledOptions{PublicOptions: invocation.PublicOptions{Target: target, TargetTLSName: "target.internal", ServerURL: f.URL, StateDir: root, TargetCAFile: ca, InspectionMode: "none"}}
-	err = invocation.PublishEnrolled(ctx, options, invocation.EnrolledSelection{PublisherID: identity.ClientId}, &invocation.Presentation{}, nil)
+	err = invocation.PublishEnrolled(ctx, options, invocation.EnrolledSelection{PublisherIdentityID: identity.ClientId}, &invocation.Presentation{}, nil)
 	select {
 	case <-verified:
 	default:

@@ -102,7 +102,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 }
 
-func TestServiceSchemaKeepsPrivateServicesSeparateFromPublicURLs(t *testing.T) {
+func TestServiceSchemaKeepsServicesSeparateFromPublicURLs(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
 	if len(variants) != 6 {
 		t.Fatalf("service variants: %d", len(variants))
@@ -112,7 +112,7 @@ func TestServiceSchemaKeepsPrivateServicesSeparateFromPublicURLs(t *testing.T) {
 			t.Fatalf("private fields: %v", private.Required)
 		}
 		if tunnel, found := private.Properties.Get("public_url"); !found || tunnel != jsonschema.FalseSchema {
-			t.Fatal("private service permits public URL tunnel")
+			t.Fatal("service permits public URL tunnel")
 		}
 		if name, found := private.Properties.Get("name"); !found || name.Pattern == "" {
 			t.Fatal("explicit private name must be validated")
@@ -199,7 +199,7 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, PostgreSQL, and Kubernetes")
 	}
 	for i, service := range variants {
-		group, found := service.Properties.Get("publisher")
+		group, found := service.Properties.Get("publisher_group")
 		if !found || group.Type != "string" || group.Default != "local" {
 			t.Fatal("publisher must default to the built-in local group")
 		}

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func routingTraffic(t ingressv1.IngressTrafficLimits) (TrafficLimits, error) {

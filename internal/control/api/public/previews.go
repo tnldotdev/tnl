@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"errors"
@@ -8,7 +8,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) CreatePreview(response http.ResponseWriter, request *http.Request, _ controlv1.CreatePreviewParams) {
@@ -67,7 +67,7 @@ func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *htt
 	if !ok {
 		return
 	}
-	route, err := h.store.GetPublicURLForAuthorization(request.Context(), body.PublicUrlId)
+	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), body.PublicUrlId)
 	if errors.Is(err, controlstate.ErrPublicURLNotFound) {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 		return
@@ -76,28 +76,28 @@ func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *htt
 		writeControlStateProblem(response, "read preview public URL", err)
 		return
 	}
-	if route.TeamID != preview.TeamID {
+	if publicURL.TeamID != preview.TeamID {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 		return
 	}
-	prefixes := make([]string, len(route.AllowedIPPrefixes))
-	for index, prefix := range route.AllowedIPPrefixes {
+	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
+	for index, prefix := range publicURL.AllowedIPPrefixes {
 		prefixes[index] = prefix.String()
 	}
 	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-		Operation: authorization.OperationPublicURLUpdate, TeamID: route.TeamID,
-		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-		Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
-		PublicURLID: route.ID, PublicURLMutationRevision: route.MutationRevision,
+		Operation: authorization.OperationPublicURLUpdate, TeamID: publicURL.TeamID,
+		PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
+		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
+		Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
+		PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
 	})
 	if !ok {
 		return
 	}
 	updated, err := h.previews.AddPreviewPublicURL(request.Context(), controlstate.AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: decision.TeamID, IdentityID: decision.IdentityID,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: decision.TeamID, IdentityID: decision.IdentityID,
 		PolicyRevision:           decision.PolicyRevision,
-		ExpectedMutationRevision: route.MutationRevision,
+		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "add preview public URL", err)

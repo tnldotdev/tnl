@@ -7,25 +7,25 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestProjectDeclarationIgnoresPublisherInfrastructure(t *testing.T) {
 	group, target := "production", config.Target("http://internal.example:8080")
-	project := projectconfig.Project{Config: config.TNL{
-		Publishers: map[string]config.Publisher{group: {}},
-		Services:   config.Services{"api": {Publisher: &group, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
+	project := clientproject.Project{Config: config.TNL{
+		PublisherGroups: map[string]config.PublisherGroup{group: {}},
+		Services:        config.Services{"api": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
 	}}
 	var original []byte
 	for _, count := range []int{0, 1, 2, config.MaxPublisherReplicas} {
-		entry := config.Publisher{}
+		entry := config.PublisherGroup{}
 		if count != 0 {
-			entry.AWS = &config.PublisherAWS{Replicas: &count}
+			entry.AWS = &config.PublisherGroupAWS{Replicas: &count}
 		}
-		project.Config.Publishers[group] = entry
+		project.Config.PublisherGroups[group] = entry
 		declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
 		if err != nil {
 			t.Fatal(err)
@@ -47,19 +47,41 @@ func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
 }
 
+func TestGroupHTTPSettingsInheritDefaultsWithoutCreatingPublicURL(t *testing.T) {
+	group, address := "production", config.Target("http://app.internal:3000")
+	total, concurrency := 100, 2
+	project := clientproject.Project{Config: config.TNL{
+		PublisherGroups: map[string]config.PublisherGroup{group: {}},
+		Tunnel:          &config.Tunnel{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total}}},
+		Services:        config.Services{"api": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &address}, HTTP: &config.HTTPService{Limits: &config.WorkLimits{Concurrency: &concurrency}}}},
+	}}
+	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := declaration.Services["api"]
+	if service.PublicUrl != nil || service.Http == nil || service.Http.Access == nil || service.Http.Access.Mode == nil || *service.Http.Access.Mode != "restricted" || service.Http.Limits == nil || *service.Http.Limits.Total != total || *service.Http.Limits.Concurrency != concurrency || len(*service.Http.Access.Ip) != 1 {
+		t.Fatalf("group HTTP defaults or reachability changed: %+v", service)
+	}
+	project.Config.Tunnel.Access.Mode = "anonymous"
+	if _, err := Declaration(t.Context(), project, appliedTestContext(), nil); err == nil {
+		t.Fatal("group HTTP inherited anonymous access")
+	}
+}
+
 func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrantIntent(t *testing.T) {
 	group := "cloud"
 	remote := config.Target("http://api.internal:8080")
 	connections, total, count := 8, 100, 5
 	period := config.Duration(2 * time.Minute)
 	upload := int64(1 << 20)
-	project := projectconfig.Project{Root: t.TempDir(), Config: config.TNL{
-		Publishers: map[string]config.Publisher{group: {}},
-		Tunnel:     &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.1", "192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total, Rate: &config.Rate{Count: &count, Per: &period}}, Traffic: &config.TrafficLimits{Connections: &connections, UploadBytes: &upload}}},
+	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{
+		PublisherGroups: map[string]config.PublisherGroup{group: {}},
+		Tunnel:          &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.1", "192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total, Rate: &config.Rate{Count: &count, Per: &period}}, Traffic: &config.TrafficLimits{Connections: &connections, UploadBytes: &upload}}},
 		Services: config.Services{
 			"web":      {Tunnel: &config.Tunnel{}, Access: &config.ServiceAccess{Team: true}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "internal", StripPrefix: true}}}},
 			"internal": {Access: &config.ServiceAccess{Team: true}},
-			"remote":   {Publisher: &group, Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}},
+			"remote":   {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}},
 		},
 	}}
 	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
@@ -100,7 +122,7 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 func TestProjectDeclarationLocalDiscoveryNeedsNoRunningTarget(t *testing.T) {
 	composeService, container, port := "db", "cache", 5432
 	protocol := "postgres"
-	project := projectconfig.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{
+	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{
 		"web":   {Tunnel: &config.Tunnel{}},
 		"db":    {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Service: &composeService, Port: &port}},
 		"cache": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}},

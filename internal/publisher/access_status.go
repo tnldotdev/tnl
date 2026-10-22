@@ -6,8 +6,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
 )
 
 type accessStatusContextKey struct{}

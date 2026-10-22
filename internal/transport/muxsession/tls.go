@@ -37,37 +37,37 @@ func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Sess
 	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ALPN, nil)
 }
 
-// PrivateALPN identifies the shared infrastructure connector listener.
-const PrivateALPN = "tnl-private/1"
+// ConnectorALPN identifies the shared infrastructure connector listener.
+const ConnectorALPN = "tnl-connector/1"
 
-// PrivateMuxTLSConnector uses the shared private ALPN; identity authentication
+// ConnectorMuxTLS uses the shared private ALPN; identity authentication
 // happens on the first mux stream, identically to QUIC.
-type PrivateMuxTLSConnector struct {
+type ConnectorMuxTLS struct {
 	TLSConfig *tls.Config
 	Config    TLSYamuxConfig
 }
 
-func (c PrivateMuxTLSConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, PrivateALPN, nil)
+func (c ConnectorMuxTLS) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN, nil)
 }
 
-func AcceptPrivateMuxTLS(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, error) {
-	return acceptTLSYamux(ctx, network, tlsConfig, config, PrivateALPN, nil)
+func AcceptConnectorMuxTLS(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, error) {
+	return acceptTLSYamux(ctx, network, tlsConfig, config, ConnectorALPN, nil)
 }
 
-// PrivateTLSYamuxConnector sends the session credential on the authenticated
+// ConnectorTLSYamux sends the session credential on the authenticated
 // outer TLS connection before any yamux stream can be opened.
-type PrivateTLSYamuxConnector struct {
+type ConnectorTLSYamux struct {
 	TLSConfig  *tls.Config
 	Config     TLSYamuxConfig
 	WriteHello func(io.Writer) error
 }
 
-func (c PrivateTLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+func (c ConnectorTLSYamux) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
 	if c.WriteHello == nil {
 		return nil, errors.New("muxsession: private connector hello is required")
 	}
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, PrivateALPN, c.WriteHello)
+	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN, c.WriteHello)
 }
 
 func connectTLSYamux(ctx context.Context, endpoint Endpoint, config *tls.Config, transport TLSYamuxConfig, alpn string, writeHello func(io.Writer) error) (Session, error) {
@@ -116,14 +116,14 @@ func AcceptTLSYamux(
 	return acceptTLSYamux(ctx, network, tlsConfig, config, ALPN, nil)
 }
 
-// AcceptPrivateTLSYamux authenticates the outer TLS connection before yamux
+// AcceptConnectorTLSYamux authenticates the outer TLS connection before yamux
 // exists. the callback must validate the one-use connector credential against
 // the ingress-observed source and current lease.
-func AcceptPrivateTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig, authenticate func(io.Reader) error) (Session, error) {
+func AcceptConnectorTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig, authenticate func(io.Reader) error) (Session, error) {
 	if authenticate == nil {
 		return nil, errors.New("muxsession: private session authentication is required")
 	}
-	return acceptTLSYamux(ctx, network, tlsConfig, config, PrivateALPN, authenticate)
+	return acceptTLSYamux(ctx, network, tlsConfig, config, ConnectorALPN, authenticate)
 }
 
 func acceptTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig, alpn string, authenticate func(io.Reader) error) (Session, error) {

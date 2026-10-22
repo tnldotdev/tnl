@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type statusOutputMode string
@@ -286,7 +286,7 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	auth, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: token})
+	auth, err := auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token})
 	if err != nil {
 		result.AppliedReason = "control API or signed-in session unavailable"
 		return
@@ -352,7 +352,7 @@ func readStatusServer(ctx context.Context, state *clientstate.Database, server, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	auth, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: token})
+	auth, err := auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token})
 	if err != nil {
 		result.Reason = "control API or signed-in session unavailable"
 		return result
@@ -400,7 +400,7 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	worktree, err := clientproject.ResolveWorktree(ctx, cwd)
 	if err != nil {
 		return "", err
 	}

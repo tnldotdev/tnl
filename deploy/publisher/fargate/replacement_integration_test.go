@@ -16,13 +16,13 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // exercise the template's replacement boundary with real control HTTP,
@@ -47,8 +47,8 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	team, actor := session.Identity.PersonalTeamID, session.Identity.Identity.ID
 	const project, group, instance = "shop", "production", "replica-1"
 	_, err = database.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{TeamID: team, ActorID: actor, ProjectKey: project, SourceFingerprint: strings.Repeat("a", 64), Now: now, Configuration: controlstate.ProjectConfiguration{
-		Publishers: map[string]controlstate.ProjectPublisherGroup{group: {}},
-		Services:   map[string]controlstate.ProjectServiceConfiguration{"api": {Publisher: group, Target: "api.internal:3000"}},
+		PublisherGroups: map[string]controlstate.ProjectPublisherGroup{group: {}},
+		Services:        map[string]controlstate.ProjectServiceConfiguration{"api": {PublisherGroup: group, Target: "api.internal:3000"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	handler, err := controlapi.NewHandler(controlapi.Config{ControlURL: server.URL}, database, database, nil)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL}, database, database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		}
 		handler.ServeHTTP(w, r)
 	}))
-	client, err := grouppublisher.NewClient(server.URL, server.Client())
+	client, err := publishergroup.NewClient(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

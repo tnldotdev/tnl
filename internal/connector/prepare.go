@@ -10,30 +10,30 @@ import (
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // preparation is incremental and failure is local to the requested service.
 // the exchanged service-ID snapshot is independent of this listener map.
-func (b *nativeConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.PrivateService, client *workloadclient.Client) (*preparedConnection, error) {
+func (b *nativeConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.Service, client *workload.Client) (*preparedConnection, error) {
 	if !slices.Contains(b.scope.Services, name) {
-		return nil, connectionruntime.ErrUnavailable
+		return nil, connectorruntime.ErrUnavailable
 	}
 	if err := ValidateService(service); err != nil {
 		return nil, err
 	}
 	if string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-		return nil, connectionruntime.ErrInvalid
+		return nil, connectorruntime.ErrInvalid
 	}
-	endpoint := service.ManagedTls
+	endpoint := service.Endpoint
 	b.mu.Lock()
 	deadline := b.deadline
 	b.mu.Unlock()
-	connection := connectionruntime.Connection{Schema: 1, Protocol: string(service.Protocol), Host: "127.0.0.1", Port: endpoint.Port, ExpiresAt: deadline}
+	connection := connectorruntime.Connection{Schema: 1, Protocol: string(service.Protocol), Host: "127.0.0.1", Port: endpoint.Port, ExpiresAt: deadline}
 	transportID, err := opaqueid.New("ctg_")
 	if err != nil {
 		return nil, err
@@ -46,30 +46,30 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 		p.kubeSource = previous.kubeSource
 	}
 	verification := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.Hostname}
-	var control tcpconnect.Control
+	var control connectorstream.Control
 	// each new adapter receives a fresh transport ID even when its listener stays.
 	identity := ""
 	if client != nil {
-		control, err = tcpconnect.NewWorkloadControl(client)
+		control, err = connectorstream.NewWorkloadControl(client)
 	} else {
 		identity = b.human.identity.Identity.Id
-		control, err = tcpconnect.NewControl(b.human.authenticated.Control, b.human.store, identity)
+		control, err = connectorstream.NewControl(b.human.authenticated.Control, b.human.store, identity)
 	}
 	if err != nil {
 		return nil, err
 	}
-	run, err := control.ResolvePrivateService(ctx, service.Id)
+	run, err := control.ResolveService(ctx, service.Id)
 	if err != nil {
 		if closer, ok := control.(io.Closer); ok {
 			_ = closer.Close()
 		}
 		return nil, err
 	}
-	if run.Protocol != string(service.Protocol) || run.ManagedTLS == nil || *run.ManagedTLS != *endpoint {
+	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || *run.Endpoint != *endpoint {
 		if closer, ok := control.(io.Closer); ok {
 			_ = closer.Close()
 		}
-		return nil, connectionruntime.ErrUnavailable
+		return nil, connectorruntime.ErrUnavailable
 	}
 	if p.listener == nil {
 		port := endpoint.Port
@@ -85,7 +85,7 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 			}
 			return nil, err
 		}
-		p.listener = connectionruntime.NewListenerSwitch(base)
+		p.listener = connectorruntime.NewListenerSwitch(base)
 	}
 	b.mu.Lock()
 	if b.closed || b.workload != client {
@@ -96,7 +96,7 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 		if closer, ok := control.(io.Closer); ok {
 			_ = closer.Close()
 		}
-		return nil, connectionruntime.ErrUnprepared
+		return nil, connectorruntime.ErrUnprepared
 	}
 	if previous != nil && previous.cancel != nil {
 		previous.cancel()
@@ -116,14 +116,14 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 	ready := make(chan struct{})
 	done := make(chan error, 1)
 	connection.Port = listener.Addr().(*net.TCPAddr).Port
-	configuration := tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, ManagedTLS: endpoint, ServiceTLS: verification, CleanupContext: b.cleanup, Ready: func() error { close(ready); return nil }}
+	configuration := connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, Endpoint: endpoint, ServiceTLS: verification, CleanupContext: b.cleanup, Ready: func() error { close(ready); return nil }}
 	b.workers.Go(func() {
 		defer listener.Close()
-		err := tcpconnect.Serve(lifetime, listener, configuration)
+		err := connectorstream.Serve(lifetime, listener, configuration)
 		b.mu.Lock()
 		if b.prepared[name] == p {
 			if b.lifetime.Err() == nil {
-				p.err = errors.Join(connectionruntime.ErrUnavailable, err)
+				p.err = errors.Join(connectorruntime.ErrUnavailable, err)
 			} else if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				b.cleanupErr = errors.Join(b.cleanupErr, err)
 			}
@@ -135,7 +135,7 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 	select {
 	case <-ready:
 	case err := <-done:
-		return nil, errors.Join(connectionruntime.ErrUnavailable, err)
+		return nil, errors.Join(connectorruntime.ErrUnavailable, err)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -160,7 +160,7 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.workload != client || p.err != nil {
-		return nil, errors.Join(connectionruntime.ErrUnprepared, p.err)
+		return nil, errors.Join(connectorruntime.ErrUnprepared, p.err)
 	}
 	p.ready = true
 	b.publishLocked()

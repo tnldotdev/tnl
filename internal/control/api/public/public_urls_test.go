@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestListRoutesUsesCurrentRouteReadAuthorization(t *testing.T) {
@@ -43,7 +43,7 @@ func TestListRoutesUsesCurrentRouteReadAuthorization(t *testing.T) {
 }
 
 func TestGetRouteDoesNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_other"}}
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_other"}}
 	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
 	request := httptest.NewRequest(http.MethodGet, "/v1/public-urls/public_url_1", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
@@ -55,7 +55,7 @@ func TestGetRouteDoesNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 }
 
 func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember,
 		PolicyRevision: 3, LifecycleState: controlstate.PublicURLLifecycleEnabled,
@@ -83,24 +83,24 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		t.Fatalf("authorization calls = %#v; route lookups = %v", authorizer, store.authorizationPublicURLIDs)
 	}
 	authorized := authorizer.requests[0]
-	if authorized.AccessToken != "access-token" || authorized.Operation != authorization.OperationPublicURLUpdate || authorized.PublicURLID != store.route.ID ||
-		authorized.TeamID != store.route.TeamID || authorized.DomainID != store.route.DomainID ||
-		authorized.PublicURLMembershipID != store.route.MembershipID || authorized.CanonicalHostname != store.route.CanonicalHostname ||
-		authorized.PublicURLScope != authorization.PublicURLScope(store.route.PublicURLScope) || !authorized.Ephemeral ||
-		authorized.PublicURLMutationRevision != store.route.MutationRevision ||
+	if authorized.AccessToken != "access-token" || authorized.Operation != authorization.OperationPublicURLUpdate || authorized.PublicURLID != store.publicURL.ID ||
+		authorized.TeamID != store.publicURL.TeamID || authorized.DomainID != store.publicURL.DomainID ||
+		authorized.PublicURLMembershipID != store.publicURL.MembershipID || authorized.CanonicalHostname != store.publicURL.CanonicalHostname ||
+		authorized.PublicURLScope != authorization.PublicURLScope(store.publicURL.PublicURLScope) || !authorized.Ephemeral ||
+		authorized.PublicURLMutationRevision != store.publicURL.MutationRevision ||
 		authorized.Target != "http://127.0.0.1:4000" || !slices.Equal(authorized.AllowedIPPrefixes, wantPrefixes) {
 		t.Fatalf("authorization request = %#v", authorized)
 	}
-	if store.update.PublicURLID != store.route.ID || store.update.TeamID != store.route.TeamID ||
+	if store.update.PublicURLID != store.publicURL.ID || store.update.TeamID != store.publicURL.TeamID ||
 		store.update.ActingIdentityID != "identity_1" || store.update.PolicyRevision != 7 ||
-		store.update.ExpectedMutationRevision != store.route.MutationRevision ||
+		store.update.ExpectedMutationRevision != store.publicURL.MutationRevision ||
 		store.update.Target != authorized.Target || !slices.Equal(store.update.AllowedIPPrefixes, wantPrefixes) {
 		t.Fatalf("stored update = %#v", store.update)
 	}
 }
 
 func TestUpdateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
@@ -188,7 +188,7 @@ func TestRouteMutationsAuthenticateBeforeLookup(t *testing.T) {
 }
 
 func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "public_url_1", TeamID: "team_other", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 1,
@@ -233,7 +233,7 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 	expiresAt := time.Date(2026, 9, 5, 12, 2, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	store := &publicURLMutationStoreStub{
-		route: controlstate.PublicURL{
+		publicURL: controlstate.PublicURL{
 			ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 			CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 			PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
@@ -262,8 +262,8 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		},
 	}}
 	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
-	store.route.PolicyRevision = 9
-	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", KeyID: "key_1", GrantID: "grant_1", CreatorID: "identity_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_url", PublicURLID: "public_url_1"}}
+	store.publicURL.PolicyRevision = 9
+	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", KeyID: "key_1", GrantID: "grant_1", CreatorID: "identity_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_public_url", PublicURLID: "public_url_1"}}
 	store.publisherPlan = authorizer.decision.CertificatePlan
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
@@ -293,8 +293,8 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 }
 
 func TestCreatePublishRunRejectsUnconfiguredDNSPlan(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1"}}
-	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_url", PublicURLID: "public_url_1"}}
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1"}}
+	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_public_url", PublicURLID: "public_url_1"}}
 	store.publisherPlan = &authorization.CertificatePlan{ChallengeMethod: "dns-01"}
 	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
@@ -312,7 +312,7 @@ func testPublicURLReadPrincipal() publicURLReadPrincipal {
 
 type publicURLMutationStoreStub struct {
 	Store
-	route                      controlstate.PublicURL
+	publicURL                  controlstate.PublicURL
 	postSessionPublicURL       *controlstate.PublicURL
 	sessionSetup               controlstate.PublishRunSetup
 	update                     controlstate.AuthorizedPublicURLUpdateRequest
@@ -337,7 +337,7 @@ func (s *publicURLMutationStoreStub) AuthenticatePublisherAccess(_ context.Conte
 	return *s.publisher, nil
 }
 func (s *publicURLMutationStoreStub) PublisherMayStartRun(_ context.Context, p controlstate.PublisherIdentity, id string) (bool, error) {
-	return p.Scope.PublicURLID == id && p.Scope.TeamID == s.route.TeamID, nil
+	return p.Scope.PublicURLID == id && p.Scope.TeamID == s.publicURL.TeamID, nil
 }
 func (s *publicURLMutationStoreStub) PublisherRunPlan(context.Context, controlstate.PublisherIdentity, controlstate.PublicURL, bool) (authorization.CertificatePlan, error) {
 	if s.publisherPlan == nil {
@@ -364,13 +364,13 @@ func (s *publicURLMutationStoreStub) GetPublicURLForAuthorization(_ context.Cont
 	if s.postSessionPublicURL != nil {
 		return *s.postSessionPublicURL, nil
 	}
-	return s.route, nil
+	return s.publicURL, nil
 }
 
 func (s *publicURLMutationStoreStub) GetPublicURLForPublishRunAuthorization(_ context.Context, publicURLID, key string) (controlstate.PublicURL, error) {
 	s.authorizationReads++
 	s.sessionLookup = [2]string{publicURLID, key}
-	return s.route, nil
+	return s.publicURL, nil
 }
 
 func (s *publicURLMutationStoreStub) CreatePublishRun(
@@ -392,14 +392,14 @@ func (s *publicURLMutationStoreStub) UpdateAuthorizedPublicURL(
 ) (controlstate.PublicURL, error) {
 	s.update = request
 	s.updates++
-	s.route.Target = request.Target
-	s.route.PolicyRevision = int64(request.PolicyRevision)
-	s.route.AllowedIPPrefixes = make([]netip.Prefix, len(request.AllowedIPPrefixes))
+	s.publicURL.Target = request.Target
+	s.publicURL.PolicyRevision = int64(request.PolicyRevision)
+	s.publicURL.AllowedIPPrefixes = make([]netip.Prefix, len(request.AllowedIPPrefixes))
 	for index, value := range request.AllowedIPPrefixes {
-		s.route.AllowedIPPrefixes[index] = netip.MustParsePrefix(value)
+		s.publicURL.AllowedIPPrefixes[index] = netip.MustParsePrefix(value)
 	}
-	s.route.UpdatedAt = now
-	return s.route, nil
+	s.publicURL.UpdatedAt = now
+	return s.publicURL, nil
 }
 
 func (s *publicURLMutationStoreStub) DeleteAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLDeleteRequest, time.Time) error {
@@ -440,7 +440,7 @@ func publicURLMutationCalls() []publicURLMutationCall {
 func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
 	for _, test := range publicURLMutationCalls() {
 		t.Run(test.name, func(t *testing.T) {
-			store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", MutationRevision: 7}}
+			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", MutationRevision: 7}}
 			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), mutationErr: authorization.ErrForbidden}
 			h := &handler{store: store, authorizer: authorizer}
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
@@ -540,7 +540,7 @@ func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 	}
 }
 
-func TestCreateDatabasePublicURLRequiresPrivateService(t *testing.T) {
+func TestCreateDatabasePublicURLRequiresService(t *testing.T) {
 	store := &publicURLCreationStore{}
 	h := &handler{store: store}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"orders.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"postgres"}`))
@@ -579,7 +579,7 @@ func TestTargetlessSavedPublicURLPolicyUpdateValidatesPurposeAndLifecycle(t *tes
 		{"unknown purpose", "unknown", "", false, http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 				ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 				CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
 				Purpose: test.purpose, Target: test.target, Ephemeral: test.ephemeral, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 4,

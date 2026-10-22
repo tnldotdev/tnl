@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 // RefreshPortPoolMetrics reads committed inventory on a worker, never a scrape.
-// held includes private services; a quarantined port stays unavailable until
+// held includes services; a quarantined port stays unavailable until
 // control releases it, regardless of an observer's clock.
 func (d *Database) RefreshPortPoolMetrics(ctx context.Context, metrics *observability.Metrics) (retErr error) {
 	ctx, finish := observability.ControlOperation(observability.WithMetrics(ctx, metrics), "RefreshPortPoolMetrics")

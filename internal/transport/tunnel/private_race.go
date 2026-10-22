@@ -10,14 +10,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, delay time.Duration, hello tunnelv1.PrivateConnectorSessionHello) (session *PrivateConnectorSession, transport Transport, retErr error) {
+func RaceConnector(ctx context.Context, primary, fallback Candidate, delay time.Duration, hello tunnelv1.ConnectorSessionHello) (session *ConnectorSession, transport Transport, retErr error) {
 	ctx, finish := observability.Start(ctx, "tunnel.private_transport_race")
 	defer func() { finish(retErr) }()
 	if primary.Connector == nil || fallback.Connector == nil || delay < 0 {
 		return nil, "", errors.New("tunnel: two private transport candidates are required")
 	}
 	type result struct {
-		session   *PrivateConnectorSession
+		session   *ConnectorSession
 		transport Transport
 		err       error
 	}
@@ -35,7 +35,7 @@ func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, dela
 				results <- result{err: err}
 				return
 			}
-			session, err := DialPrivateConnector(attempt, transport, hello)
+			session, err := DialConnector(attempt, transport, hello)
 			finishAttempt(err)
 			results <- result{session: session, transport: candidate.Transport, err: err}
 		}()

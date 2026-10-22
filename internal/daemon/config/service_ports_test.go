@@ -1,4 +1,4 @@
-package tnldconfig
+package config
 
 import (
 	"errors"

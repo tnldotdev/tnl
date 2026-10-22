@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -18,10 +18,10 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
@@ -137,7 +137,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 }
 
 type certificateObservingControlClient struct {
-	*nativeauth.Native
+	*publisheridentity.Native
 	bootstrap *integrationScopedRunControl
 	observe   func(controlv1.CertificateIssuance)
 }

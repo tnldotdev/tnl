@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationStandaloneLifecycle(t *testing.T) {
@@ -24,9 +24,9 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	publicAddress := unusedTCPAddress(t)
 	publicControlAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
-	cfg := tnldconfig.Config{
+	cfg := daemonconfig.Config{
 		ServicePortRanges: integrationServicePorts(t),
-		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
+		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: "127.0.0.1:1",
@@ -141,7 +141,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlAddress := unusedTCPAddress(t)
 	privateControlAddress := unusedTCPAddress(t)
 	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
-	controlConfig := splitTestConfig(tnldconfig.RoleControl, unusedTCPAddress(t))
+	controlConfig := splitTestConfig(daemonconfig.RoleControl, unusedTCPAddress(t))
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlAddress
 	controlConfig.PrivateControlListen = privateControlAddress
@@ -164,7 +164,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	control := startIntegrationProcess(t, controlConfig, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, control)
 
-	ingressConfig := splitTestConfig(tnldconfig.RoleIngress, unusedTCPAddress(t))
+	ingressConfig := splitTestConfig(daemonconfig.RoleIngress, unusedTCPAddress(t))
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
@@ -177,7 +177,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		t, controlHostname, "relay-b", "relay-b-1",
 		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile,
 	)
-	for _, cfg := range []tnldconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
+	for _, cfg := range []daemonconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}

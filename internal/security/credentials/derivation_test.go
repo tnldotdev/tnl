@@ -26,7 +26,7 @@ func TestCredentialDerivation(t *testing.T) {
 	}{
 		{
 			name:  "publish run",
-			token: "tnl_session_uaClN6xl_O2qMKEpmKit_g.rB9NORvCrc7DyCVRBTTaj50IG0WazY5BYcJLtMidxgg",
+			token: "tnl_publish_run_uaClN6xl_O2qMKEpmKit_g.rB9NORvCrc7DyCVRBTTaj50IG0WazY5BYcJLtMidxgg",
 			hash:  "2ce1947b098f8692bc0cbcd5e989d781a62e359976ec3baab9a47c1373f96b04",
 			derive: func(key []byte, context string) (string, SecretHash, error) {
 				token, _, hash, err := DerivePublishRunToken(key, context)
@@ -54,7 +54,7 @@ func TestCredentialDerivation(t *testing.T) {
 			token: "tnl_connection_6AKcUBa6UAEygj39eQnfmw.iMFSeiBcJTC0Khu3Kou81BCT9LYvxFRr9OlKYEZYrM8",
 			hash:  "0b4f0f9b31208ee3489dafe837b271657e1f784fa9aad3b1081888d7966648c5",
 			derive: func(key []byte, context string) (string, SecretHash, error) {
-				session := PublishRunToken("tnl_session_AAECAwQFBgcICQoLDA0ODw." + base64.RawURLEncoding.EncodeToString(key))
+				session := PublishRunToken("tnl_publish_run_AAECAwQFBgcICQoLDA0ODw." + base64.RawURLEncoding.EncodeToString(key))
 				token, hash, err := DerivePublisherConnectionCredential(session, context)
 				return token.String(), hash, err
 			},

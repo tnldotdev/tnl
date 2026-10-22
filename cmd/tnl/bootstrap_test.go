@@ -10,7 +10,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/aws/smithy-go"
 	"github.com/tnldotdev/tnl/internal/failure"
-	awsbootstrap "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
+	publisheraws "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
 )
 
 func TestBootstrapCommandIsPositionalAndPrepareOnly(t *testing.T) {
@@ -30,18 +30,18 @@ func TestBootstrapCommandIsPositionalAndPrepareOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsed, err := parser.Parse([]string{"bootstrap", "production", "--profile", "company", "--region", "us-east-1", "--deployment-file", "deploy/aws.json", "--deployment", "east", "--output=json"})
-	if err != nil || parsed.Command() != "bootstrap <publisher>" || flags.Bootstrap.Publisher != "production" || !projectSensitiveCommand(parsed.Command()) {
+	if err != nil || parsed.Command() != "bootstrap <publisher-group>" || flags.Bootstrap.PublisherGroup != "production" || !projectSensitiveCommand(parsed.Command()) {
 		t.Fatal("bootstrap positional contract", err)
 	}
 }
 
 func TestBootstrapInvalidSourceDoesNotLoadAWS(t *testing.T) {
 	loaded := false
-	load := func(context.Context, string, string) (awsbootstrap.Secrets, awsbootstrap.Caller, error) {
+	load := func(context.Context, string, string) (publisheraws.Secrets, publisheraws.Caller, error) {
 		loaded = true
 		return nil, nil, errors.New("unexpected provider access")
 	}
-	err := runBootstrapUsing(t.Context(), bootstrapCommand{Publisher: "production"}, projectConfiguration{}, io.Discard, io.Discard, load)
+	err := runBootstrapUsing(t.Context(), bootstrapCommand{PublisherGroup: "production"}, projectConfiguration{}, io.Discard, io.Discard, load)
 	if err == nil || loaded {
 		t.Fatal("invalid project reached AWS")
 	}

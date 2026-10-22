@@ -1,4 +1,4 @@
-package projectmeta
+package meta
 
 import (
 	"encoding/json"
@@ -74,11 +74,11 @@ func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 		t.Fatal("old public URL protocol was accepted")
 	}
 	if service, err := NewService("member.example", "web.member.example", "http", &port); err != nil || service.URL != "https://web.member.example:15432" {
-		t.Fatal("managed HTTP lost its allocated port", err)
+		t.Fatal("service HTTP lost its allocated port", err)
 	}
 }
 
-func TestPublicPathMountDoesNotNeedPrivateTargetMetadata(t *testing.T) {
+func TestPublicPathMountDoesNotNeedServiceTargetMetadata(t *testing.T) {
 	service, err := NewService("member.example", "web.member.example", "http", nil)
 	if err != nil {
 		t.Fatal(err)

@@ -21,21 +21,21 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
-	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
+	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var publisherInstallContainer = flag.Bool("tnl-publisher-install-container", false, "allow supervisor fixtures only inside disposable Ubuntu")
@@ -172,8 +172,8 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if !strings.Contains(output, "https://opencode.") || !strings.Contains(output, "ready") || probes.Load() == 0 {
 		t.Fatal("setup returned before verified public readiness", output)
 	}
-	root := publisherjob.DefaultRoot("linux")
-	registry, err := publisherjob.Open(t.Context(), publisherjob.OpenOptions{Root: root})
+	root := supervisor.DefaultRoot("linux")
+	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if job.Status.PublicURL != "https://"+hostname {
 		t.Fatal("installation printed a different public URL")
 	}
-	firstRun, publisherID, urlID := job.Status.PublishRunNumber, job.PublisherID, job.PublicURLID
+	firstRun, publisherIdentityID, urlID := job.Status.RunNumber, job.PublisherIdentityID, job.PublicURLID
 	checkSeparation := func() {
 		t.Helper()
 		profile, err := registry.Profile(t.Context(), f.url)
@@ -208,11 +208,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// interrupt after the desired job/key commit, before supervisor installation.
-	err = publisherprovision.Register(t.Context(), publisherjob.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, publisherprovision.Installation{Job: job, Credential: credential},
-		publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
+	err = setup.Register(t.Context(), supervisor.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, setup.Installation{Job: job, Credential: credential},
+		supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
 			t.Fatal("interrupted installer reached systemd")
 			return nil
-		}), func([]publisherjob.Job, string) error { return nil })
+		}), func([]supervisor.Job, string) error { return nil })
 	if err == nil {
 		t.Fatal("interrupted installation unexpectedly succeeded")
 	}
@@ -227,7 +227,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "runuser", append([]string{"-u", "installer", "--", binary}, args...)...)
 	installFixtureCommand(t, "chown", "-R", "0:0", filepath.Dir(person))
 	job, err = registry.ResolveJob(t.Context(), "opencode")
-	if err != nil || job.PublisherID != publisherID || job.PublicURLID != urlID || job.Status.PublishRunNumber <= firstRun {
+	if err != nil || job.PublisherIdentityID != publisherIdentityID || job.PublicURLID != urlID || job.Status.RunNumber <= firstRun {
 		t.Fatal("setup retry replaced the identity or URL", err)
 	}
 	// enter through the real parser as the unprivileged operator. the configured
@@ -235,28 +235,28 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "chown", "-R", "1001:1001", filepath.Dir(person))
 	job = installConfiguredHealthTarget(t, registry, job, binDir, binary, person)
 	installFixtureCommand(t, "chown", "-R", "0:0", filepath.Dir(person))
-	firstRun = job.Status.PublishRunNumber
+	firstRun = job.Status.RunNumber
 	installFixtureCommand(t, binary, "auth", "logout", "--server", f.url, "--state-dir", person)
-	installFixtureCommand(t, "systemctl", "is-enabled", publisherjob.SystemdUnit)
+	installFixtureCommand(t, "systemctl", "is-enabled", supervisor.SystemdUnit)
 	installFixtureCommand(t, "systemctl", "daemon-reexec")
-	installFixtureCommand(t, "systemctl", "restart", publisherjob.SystemdUnit)
+	installFixtureCommand(t, "systemctl", "restart", supervisor.SystemdUnit)
 	workflowWait(t, 30*time.Second, func() bool {
 		job, err = registry.ResolveJob(t.Context(), "opencode")
-		return err == nil && job.Status.State == "ready" && job.Status.PublishRunNumber > firstRun
+		return err == nil && job.Status.State == "ready" && job.Status.RunNumber > firstRun
 	})
-	if job.PublicURLID != urlID || job.PublisherID != publisherID {
+	if job.PublicURLID != urlID || job.PublisherIdentityID != publisherIdentityID {
 		t.Fatal("logout/restart changed publication ownership")
 	}
 	checkSeparation()
-	installFixtureCommand(t, "systemctl", "stop", publisherjob.SystemdUnit)
-	t.Cleanup(func() { _ = exec.Command("systemctl", "stop", publisherjob.SystemdUnit).Run() })
+	installFixtureCommand(t, "systemctl", "stop", supervisor.SystemdUnit)
+	t.Cleanup(func() { _ = exec.Command("systemctl", "stop", supervisor.SystemdUnit).Run() })
 	// keep control/ingress/relay alive in this runner while a separate installed
 	// machine reboots through its real init. only the exact credential crosses.
 	machine := "tnl-installed-" + fmt.Sprint(time.Now().UnixNano())
 	installFixtureCommand(t, "docker", "run", "--detach", "--name", machine, "--privileged", "--cgroupns=private", "--network=container:"+*publisherInstallNetwork, "--tmpfs", "/run", "--tmpfs", "/run/lock", *publisherInstallImage)
 	t.Cleanup(func() {
 		if t.Failed() {
-			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", publisherjob.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "service", "status", "opencode", "--system"}} {
+			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", supervisor.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "service", "status", "opencode", "--system"}} {
 				output, _ := exec.Command("docker", args...).CombinedOutput()
 				t.Log(string(output))
 			}
@@ -269,7 +269,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "docker", "cp", binDir+"/.", machine+":"+binDir)
 	installFixtureCommand(t, "docker", "cp", "/usr/local/share/ca-certificates/tnl-install-fixture.crt", machine+":/usr/local/share/ca-certificates/tnl-install-fixture.crt")
 	installFixtureCommand(t, "docker", "exec", machine, "update-ca-certificates")
-	payload, err := json.Marshal(publisherprovision.Installation{Job: job, Credential: credential})
+	payload, err := json.Marshal(setup.Installation{Job: job, Credential: credential})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("logged-out human session still has control access")
 	}
 	// the publisher can still read its exact URL without that human session.
-	control, authority, err := publisherjob.Clients(job)
+	control, authority, err := supervisor.Clients(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,11 +293,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := nativeauth.NewNative(control, authority, identity, signing)
+	scoped, err := publisheridentity.NewNative(control, authority, identity, signing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeBoot, err = scoped.SavedURL(t.Context())
+	beforeBoot, err = scoped.SavedPublicURL(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		if err != nil || !strings.Contains(string(output), "ready") {
 			return false
 		}
-		afterBoot, err := scoped.SavedURL(t.Context())
+		afterBoot, err := scoped.SavedPublicURL(t.Context())
 		return err == nil && afterBoot.Id == urlID && afterBoot.NextPublishRunNumber > beforeBoot.NextPublishRunNumber
 	})
 	status := installFixtureCommand(t, "docker", "exec", machine, binary, "auth", "status", "--server", f.url, "--state-dir", root, "--output=json")
@@ -327,7 +327,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if json.Unmarshal([]byte(status), &auth) != nil || auth.Status != "unauthenticated" || auth.Source != "none" {
 		t.Fatal("rebooted publisher contains human credentials")
 	}
-	installFixtureCommand(t, "docker", "exec", machine, "systemctl", "stop", publisherjob.SystemdUnit)
+	installFixtureCommand(t, "docker", "exec", machine, "systemctl", "stop", supervisor.SystemdUnit)
 	staleOwner, err := scoped.RemoteRuntime(f.url)
 	if err != nil {
 		t.Fatal(err)
@@ -362,8 +362,8 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer current.Close()
-	route, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil || route.AccessMode != controlv1.Restricted || route.Target != "" {
+	publicURL, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
+	if err != nil || publicURL.AccessMode != controlv1.Restricted || publicURL.Target != "" {
 		t.Fatal("setup relaxed access or stored the private target", err)
 	}
 	// fresh Compose identity is issued by the operator. it receives exactly one
@@ -459,7 +459,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, identity := range identities.Identities {
-		if identity.Id != publisherID {
+		if identity.Id != publisherIdentityID {
 			if err := current.Authenticated().Control.RevokePublisherIdentity(t.Context(), team.Id, identity.Id); err != nil {
 				t.Fatal(err)
 			}
@@ -469,7 +469,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	compose(false, "up", "--detach")
 	ready()
 	recovered, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
-	if err != nil || recovered.Id != route.Id || recovered.CanonicalHostname != route.CanonicalHostname || recovered.AccessMode != controlv1.Restricted || recovered.NextPublishRunNumber <= after.NextPublishRunNumber {
+	if err != nil || recovered.Id != publicURL.Id || recovered.CanonicalHostname != publicURL.CanonicalHostname || recovered.AccessMode != controlv1.Restricted || recovered.NextPublishRunNumber <= after.NextPublishRunNumber {
 		t.Fatal("fresh enrollment failed to recover the saved publication", err)
 	}
 	t.Log("real Ubuntu sudo setup/interrupted retry, operator logout, complete init reboot, retained Compose restart, missing-state/consumed-key failures, and fresh scoped enrollment preserved the restricted URL without human management access")
@@ -488,7 +488,7 @@ func waitInstallFixtureBoot(t *testing.T, machine string) {
 	})
 }
 
-func installConfiguredHealthTarget(t *testing.T, registry *publisherjob.Registry, old publisherjob.Job, binDir, binary, person string) publisherjob.Job {
+func installConfiguredHealthTarget(t *testing.T, registry *supervisor.Registry, old supervisor.Job, binDir, binary, person string) supervisor.Job {
 	t.Helper()
 	var probes atomic.Int64
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -530,14 +530,14 @@ func installConfiguredHealthTarget(t *testing.T, registry *publisherjob.Registry
 		t.Fatal("configured CLI installation failed or exposed credentials", output)
 	}
 	job, err := registry.ResolveJob(t.Context(), old.ID)
-	if err != nil || job.ReadinessPath != "/health" || job.Revision <= old.Revision || job.GrantID != old.GrantID || job.PublisherID != old.PublisherID || job.Target != target.URL || job.TargetTLSName != "example.com" || !bytes.Equal(job.TargetCAPEM, ca) {
+	if err != nil || job.ReadinessPath != "/health" || job.Revision <= old.Revision || job.GrantID != old.GrantID || job.PublisherIdentityID != old.PublisherIdentityID || job.Target != target.URL || job.TargetTLSName != "example.com" || !bytes.Equal(job.TargetCAPEM, ca) {
 		t.Fatal("configured CLI installation lost target settings or exact grant", err)
 	}
 	// retry the real setup command after its first committed reply. it must reuse
 	// the identity and exact URL while retaining the evaluated target snapshot.
 	installFixtureCommand(t, "runuser", args...)
 	retried, err := registry.ResolveJob(t.Context(), old.ID)
-	if err != nil || retried.PublisherID != job.PublisherID || retried.GrantID != job.GrantID || retried.PublicURLID != job.PublicURLID || retried.Status.PublishRunNumber <= job.Status.PublishRunNumber {
+	if err != nil || retried.PublisherIdentityID != job.PublisherIdentityID || retried.GrantID != job.GrantID || retried.PublicURLID != job.PublicURLID || retried.Status.RunNumber <= job.Status.RunNumber {
 		t.Fatal("configured CLI retry changed identity or failed to restart", err)
 	}
 	// supervisor restarts and the reboot machine have no project or CA file.
@@ -548,7 +548,7 @@ func installConfiguredHealthTarget(t *testing.T, registry *publisherjob.Registry
 	if job.Status.State != "ready" || probes.Load() == 0 {
 		t.Fatal("installed /health target did not become ready", err)
 	}
-	logs := installFixtureCommand(t, "journalctl", "--unit", publisherjob.SystemdUnit, "--no-pager")
+	logs := installFixtureCommand(t, "journalctl", "--unit", supervisor.SystemdUnit, "--no-pager")
 	if strings.Contains(logs, "PRIVATE KEY") {
 		t.Fatal("supervisor logged private credentials")
 	}
@@ -584,23 +584,23 @@ func TestIntegrationPublisherInstallIdentity(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal("Compose did not retain its exact identity", err)
 	}
-	control, err := controlclient.New(*publisherInstallServer, nil, "")
+	control, err := clientcontrol.New(*publisherInstallServer, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(*publisherInstallServer, nil, "")
+	authority, err := clientauthority.New(*publisherInstallServer, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := nativeauth.LoadNative(t.Context(), profile, control, authority, selected.ID)
-	if err != nil || identity.Kind != authorityv1.SavedUrl || identity.PublicUrlId == nil || *identity.PublicUrlId != *publisherInstallURL || identity.TeamId != *publisherInstallTeam {
+	native, identity, err := publisheridentity.LoadNative(t.Context(), profile, control, authority, selected.ID)
+	if err != nil || identity.Kind != authorityv1.SavedPublicUrl || identity.PublicUrlId == nil || *identity.PublicUrlId != *publisherInstallURL || identity.TeamId != *publisherInstallTeam {
 		t.Fatal("Compose identity is not scoped to the exact URL", err)
 	}
 	access, err := native.Access(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	management, err := controlclient.New(*publisherInstallServer, nil, credentials.AccessToken(access))
+	management, err := clientcontrol.New(*publisherInstallServer, nil, credentials.AccessToken(access))
 	if err != nil {
 		t.Fatal(err)
 	}

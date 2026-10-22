@@ -1,5 +1,5 @@
 // Package projectmeta validates and writes browser-safe project metadata.
-package projectmeta
+package meta
 
 import (
 	json "encoding/json/v2"
@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
@@ -47,7 +47,7 @@ func Parse(data []byte) (Metadata, error) {
 }
 
 type Worktree struct {
-	Label projectconfig.WorktreeLabel `json:"label"`
+	Label clientproject.WorktreeLabel `json:"label"`
 }
 
 type Service struct {
@@ -143,7 +143,7 @@ func validateServiceAddress(service Service) error {
 	if u.Port() != "" {
 		port, err := strconv.Atoi(u.Port())
 		if err != nil || port != service.Port || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
-			return errors.New("managed HTTP port is invalid")
+			return errors.New("service HTTP port is invalid")
 		}
 	} else if service.URL != "https://"+service.Hostname || service.Port != 443 {
 		return errors.New("HTTP service needs its exact HTTPS URL")

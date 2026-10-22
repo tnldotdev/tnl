@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func publishRunTrafficSelection(w http.ResponseWriter, r *http.Request) (*trafficlimits.Selection, bool) {

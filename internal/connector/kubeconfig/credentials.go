@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/filelock"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"

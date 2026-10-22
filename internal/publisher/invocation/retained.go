@@ -7,11 +7,11 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type RetainedOptions struct{ StateDir, Server, Target, EnrollmentKey string }
-type RetainedSelection struct{ Target, EnrollmentKey, PublisherID string }
+type RetainedSelection struct{ Target, EnrollmentKey, PublisherIdentityID string }
 
 func SelectRetained(ctx context.Context, options RetainedOptions) (RetainedSelection, error) {
 	selection := RetainedSelection{EnrollmentKey: options.EnrollmentKey}
@@ -47,7 +47,7 @@ func SelectRetained(ctx context.Context, options RetainedOptions) (RetainedSelec
 		return selection, err
 	}
 	if found {
-		selection.EnrollmentKey, selection.PublisherID = "", saved.ID
+		selection.EnrollmentKey, selection.PublisherIdentityID = "", saved.ID
 	} else if options.EnrollmentKey == "" {
 		return selection, failure.Wrap("load enrolled publication", failure.PublisherEnrollmentRequired, errors.New("publisher state is missing"))
 	}

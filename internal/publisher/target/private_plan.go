@@ -5,28 +5,28 @@ import (
 	"path/filepath"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
-// PrivateTargetPlan contains captured target configuration only. foreground,
+// TargetPlan contains captured target configuration only. foreground,
 // app and group publishers do not manufacture partially installed jobs.
-type PrivateTargetPlan struct {
+type TargetPlan struct {
 	Protocol       config.ProtocolName
 	Target         string
-	Trust          *privatetrust.Snapshot
-	Project        *projectconfig.Project
+	Trust          *targettrust.Snapshot
+	Project        *clientproject.Project
 	ProjectService string
 }
 
 // ErrScope is shared with installed jobs so callers retain the same failure
 // identity when target validation moves below the supervisor.
-var ErrScope = failure.Wrap("select installed job", failure.InvalidTunnelFlags, errors.New("installed publishers require an explicit server and an exact public URL or private-service grant; connectors require a saved user identity"))
+var ErrScope = failure.Wrap("select installed job", failure.InvalidTunnelFlags, errors.New("installed publishers require an explicit server and an exact public URL or service grant; connectors require a saved user identity"))
 
-func (p *PrivateTargetPlan) Normalize() error {
+func (p *TargetPlan) Normalize() error {
 	if !p.Protocol.Valid() {
 		return ErrScope
 	}

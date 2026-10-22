@@ -1,5 +1,5 @@
 // package grouppublisher reconciles one signed publisher-group replica.
-package grouppublisher
+package group
 
 import (
 	"context"
@@ -8,18 +8,18 @@ import (
 	"strings"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type Client struct {
-	control *controlclient.Client
+	control *clientcontrol.Client
 	server  string
 }
 
 func NewClient(server string, transport *http.Client) (*Client, error) {
-	control, err := controlclient.New(server, transport, "")
+	control, err := clientcontrol.New(server, transport, "")
 	return &Client{control: control, server: strings.TrimSuffix(server, "/")}, err
 }
 
@@ -34,7 +34,7 @@ func (c *Client) PublisherRuntime(ctx context.Context, request controlv1.Publish
 }
 
 func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupLease, error) {
-	assertion, err := publisheridentity.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/lease", private, time.Now())
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/lease", private, time.Now())
 	if err != nil {
 		return controlv1.PublisherGroupLease{}, err
 	}
@@ -42,7 +42,7 @@ func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMembe
 }
 
 func (c *Client) Verify(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupVerification, error) {
-	assertion, err := publisheridentity.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/verify", private, time.Now())
+	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/verify", private, time.Now())
 	if err != nil {
 		return controlv1.PublisherGroupVerification{}, err
 	}

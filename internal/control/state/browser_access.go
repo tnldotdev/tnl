@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -21,7 +21,7 @@ const browserSessionLifetime = 24 * time.Hour
 
 type BrowserLoginAttempt struct {
 	Subject       httpsubject.Subject
-	ManagedRunIDs []string
+	ServiceRunIDs []string
 	CompanyIntent *CompanyIntentBinding
 	PublishRunID  string
 	PreviewID     string
@@ -142,7 +142,7 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 		StateDigest: digest, BindingDigest: bindingDigest[:], Now: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return d.consumeManagedBrowserLogin(ctx, digest, bindingDigest[:], now)
+		return d.consumeServiceBrowserLogin(ctx, digest, bindingDigest[:], now)
 	}
 	if err != nil {
 		return BrowserLoginAttempt{}, fmt.Errorf("controlstate: consume browser login: %w", err)
@@ -161,8 +161,8 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 }
 
 func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
-	if attempt.Subject.Kind == httpsubject.ManagedService {
-		return d.issueManagedBrowserHandoff(ctx, attempt, session, now)
+	if attempt.Subject.Kind == httpsubject.Service {
+		return d.issueServiceBrowserHandoff(ctx, attempt, session, now)
 	}
 	if attempt.Subject.Kind != "" && (attempt.Subject.Kind != httpsubject.PublicURL || attempt.Subject.ID != attempt.PublicURLID) {
 		return BrowserHandoff{}, ErrPreviewAccess

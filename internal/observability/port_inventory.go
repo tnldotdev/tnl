@@ -30,7 +30,7 @@ func (m *Metrics) ReplacePortPoolCapacity(pools []PortPoolCapacity, refreshed ti
 
 func (m *Metrics) registerPortInventory() {
 	const name = "tnl_control_tcp_port_pool_ports"
-	keys := []MetricKey{ingressPool, State}
+	keys := []MetricKey{ingresspool, State}
 	describe(m.meter, name, "Fresh committed port inventory; absent after 90 seconds without refresh. Use maximum across control replicas.", KindGauge, nil, keys...)
 	_, err := m.meter.Float64ObservableGauge(name, metric.WithFloat64Callback(func(_ context.Context, observer metric.Float64Observer) error {
 		snapshot := m.portInventory.Load()
@@ -40,7 +40,7 @@ func (m *Metrics) registerPortInventory() {
 		for _, pool := range snapshot.pools {
 			for state, count := range map[string]int64{"configured": pool.Configured, "claimed": pool.Claimed, "quarantined": pool.Quarantined, "available": pool.Available} {
 				parsed, _ := ParseState(state)
-				observer.Observe(float64(count), metric.WithAttributeSet(metricDimensions(keys, ingressPool.Dimension(pool.Pool), State.Dimension(parsed))))
+				observer.Observe(float64(count), metric.WithAttributeSet(metricDimensions(keys, ingresspool.Dimension(pool.Pool), State.Dimension(parsed))))
 			}
 		}
 		return nil

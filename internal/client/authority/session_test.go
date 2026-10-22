@@ -1,4 +1,4 @@
-package authorityclient
+package authority
 
 import (
 	"reflect"
@@ -8,7 +8,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestValidateIssuedControlSession(t *testing.T) {

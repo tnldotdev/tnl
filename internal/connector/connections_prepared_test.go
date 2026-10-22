@@ -15,18 +15,18 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	now := time.Now()
 	id, team := "wls_"+strings.Repeat("s", 22), "tm_"+strings.Repeat("t", 22)
-	ids := []string{"psvc_" + strings.Repeat("a", 22), "psvc_" + strings.Repeat("b", 22), "psvc_" + strings.Repeat("c", 22), "psvc_" + strings.Repeat("d", 22)}
+	ids := []string{"svc_" + strings.Repeat("a", 22), "svc_" + strings.Repeat("b", 22), "svc_" + strings.Repeat("c", 22), "svc_" + strings.Repeat("d", 22)}
 	names := []string{"db", "sibling", "invalid", "mismatch"}
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	var mu sync.Mutex
@@ -56,7 +56,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 				if name == "mismatch" {
 					protocol = "http"
 				}
-				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocol, "managed_tls": map[string]any{"hostname": hostname, "port": 15443 + i, "public": false}})
+				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocol, "endpoint": map[string]any{"hostname": hostname, "port": 15443 + i, "public": false}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": services})
 		case "/v1/workload/services/" + ids[0] + "/authorization":
@@ -93,7 +93,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	}
 	type processKey struct{}
 	setup, cancel := context.WithCancel(context.WithValue(t.Context(), processKey{}, "process-observation"))
-	b := &nativeConnectionBackend{scope: connectionruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: names}, assertion: "first", httpClient: server.Client(), parentPID: os.Getpid(), project: projectConfiguration{Project: projectconfig.Project{Config: configuration}}}
+	b := &nativeConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: names}, assertion: "first", httpClient: server.Client(), parentPID: os.Getpid(), project: projectConfiguration{Project: clientproject.Project{Config: configuration}}}
 	defer b.Close(t.Context())
 	if _, _, err := b.Start(setup); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 			t.Error("invalid inventory was accepted", name)
 		}
 	}
-	b.prepared["db"] = &preparedConnection{service: b.services["db"], ready: true, sessionID: id, connection: connectionruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}
+	b.prepared["db"] = &preparedConnection{service: b.services["db"], ready: true, sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}
 	if _, err := b.Connect(t.Context(), "db"); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 		if _, err := b.Connect(t.Context(), "db"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.Prepared("sibling"); !errors.Is(err, connectionruntime.ErrUnprepared) {
+		if _, err := b.Prepared("sibling"); !errors.Is(err, connectorruntime.ErrUnprepared) {
 			t.Fatal("sync sibling read performed preparation", err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	}
 	b.prepared["db"].sessionID = "wls_" + strings.Repeat("o", 22)
 	b.publishLocked()
-	if _, err := b.Prepared("db"); !errors.Is(err, connectionruntime.ErrUnprepared) {
+	if _, err := b.Prepared("db"); !errors.Is(err, connectorruntime.ErrUnprepared) {
 		t.Fatal("old-session adapter inherited a replacement session deadline", err)
 	}
 	b.prepared["db"].sessionID = id

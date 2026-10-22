@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 var policyTestKey = [32]byte{1}

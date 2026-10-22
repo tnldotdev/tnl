@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -54,9 +54,9 @@ func serveTLS(server *http.Server, listener net.Listener) error {
 	return err
 }
 
-func newPrivateServiceHTTPClient(base *http.Client, clusterSecret, dialAddress string) (*http.Client, error) {
+func newServiceHTTPClient(base *http.Client, clusterSecret, dialAddress string) (*http.Client, error) {
 	if base == nil || clusterSecret == "" {
-		return nil, errors.New("private service HTTP client and cluster secret are required")
+		return nil, errors.New("service HTTP client and cluster secret are required")
 	}
 	baseTransport := base.Transport
 	if baseTransport == nil {
@@ -65,7 +65,7 @@ func newPrivateServiceHTTPClient(base *http.Client, clusterSecret, dialAddress s
 	if dialAddress != "" {
 		configured, ok := baseTransport.(*http.Transport)
 		if !ok {
-			return nil, errors.New("private service dial override requires an HTTP transport")
+			return nil, errors.New("service dial override requires an HTTP transport")
 		}
 		transport := configured.Clone()
 		dialer := new(net.Dialer)

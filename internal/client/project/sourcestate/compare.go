@@ -1,6 +1,6 @@
 package sourcestate
 
-import "github.com/tnldotdev/tnl/pkg/api/controlv1"
+import controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 
 type Comparison string
 

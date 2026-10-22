@@ -290,7 +290,11 @@ test("native publisher selection errors are authored without copying private det
       "sdk.publisher_setup_required",
       "tnl publisher setup --namespace",
     ],
-    ["runtime.publisher_file_invalid", "sdk.publisher_file_invalid", "publisher file"],
+    [
+      "runtime.publisher_credential_file_invalid",
+      "sdk.publisher_credential_file_invalid",
+      "publisher file",
+    ],
   ] as const) {
     const bootstrap = await startTestBootstrap({
       status: 400,

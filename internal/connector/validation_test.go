@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestNativeHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing.T) {
-	service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Protocol: controlv1.PrivateHttp, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "orders.example.test", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 25443, Public: true}}
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile, err := serviceConnectionProfile(service, listen)
 		if err != nil {
@@ -29,7 +29,7 @@ func TestNativeHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing
 		if !strings.Contains(instructions, "local hosts file") || !strings.Contains(instructions, "exact managed hostname") {
 			t.Fatal("browser instructions rely on public DNS", instructions)
 		}
-		if profile.Port != profile.ManagedPort {
+		if profile.Port != profile.ServicePort {
 			if strings.Contains(instructions, profile.URL) || !strings.Contains(instructions, "--listen=") || !strings.Contains(instructions, "allocated port") {
 				t.Fatal("overridden listener advertised a directly usable browser URL", instructions)
 			}
@@ -62,7 +62,7 @@ func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	// even a configured HTTPS proxy must not divert this local connector command.
 	t.Setenv("https_proxy", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-	service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Protocol: controlv1.PrivateHttp, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "example.com", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "example.com", Port: 25443, Public: true}}
 	invoke := func() ([]byte, error) {
 		t.Helper()
 		profile, err := serviceConnectionProfile(service, target.Listener.Addr().String())
@@ -75,7 +75,7 @@ func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	if output, err := invoke(); err != nil || string(output) != "local connector reached" || requests.Load() != 1 {
 		t.Fatalf("printed curl command missed the local listener: %v %s", err, output)
 	}
-	service.ManagedTls.Hostname = "wrong.example.test"
+	service.Endpoint.Hostname = "wrong.example.test"
 	if _, err := invoke(); err == nil || requests.Load() != 1 {
 		t.Fatal("printed curl command bypassed managed hostname verification")
 	}
@@ -83,11 +83,11 @@ func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 
 func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 	for _, public := range []bool{false, true} {
-		for _, protocol := range []controlv1.PrivateServiceProtocol{controlv1.PrivateHttp, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
-			service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "orders.production.example.test", Port: 25443, Public: public}}
-			approved := *service.ManagedTls
+		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
+			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.production.example.test", Port: 25443, Public: public}}
+			approved := *service.Endpoint
 			profile, err := serviceConnectionProfile(service, "127.0.0.1:15432")
-			if err != nil || !profile.ConnectorRequired || profile.Authentication != connectionConnector || profile.Host != "127.0.0.1" || profile.Port != 15432 || profile.Hostname != approved.Hostname || *service.ManagedTls != approved || profile.Public != public {
+			if err != nil || !profile.ConnectorRequired || profile.Authentication != connectionConnector || profile.Host != "127.0.0.1" || profile.Port != 15432 || profile.Hostname != approved.Hostname || *service.Endpoint != approved || profile.Public != public {
 				t.Fatal("profile changed approved metadata or lost the local endpoint", err)
 			}
 			switch protocol {
@@ -100,7 +100,7 @@ func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 				if connection.Host != approved.Hostname+":15432" || query.Get("hostaddr") != "127.0.0.1" || query.Get("sslmode") != "verify-full" || query.Get("sslrootcert") != "system" || query.Get("channel_binding") != "disable" || query.Get("gssencmode") != "disable" || query.Has("sslcert") || query.Has("sslkey") {
 					t.Fatal("psql lost independent dial address or verified hostname", profile.Command)
 				}
-			case controlv1.PrivateHttp:
+			case controlv1.ServiceProtocolHTTP:
 				if profile.URL != "https://"+approved.Hostname+":25443/" || strings.Join(profile.Command, " ") != "curl --noproxy "+approved.Hostname+" --connect-to "+approved.Hostname+":25443:127.0.0.1:15432 "+profile.URL {
 					t.Fatal("curl would dial public DNS or verify loopback", profile.Command)
 				}
@@ -120,8 +120,8 @@ func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 
 func TestConnectModeMatrix(t *testing.T) {
 	for _, public := range []bool{false, true} {
-		for _, protocol := range []controlv1.PrivateServiceProtocol{controlv1.PrivateHttp, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
-			service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "service.example.test", Port: 25443, Public: public}}
+		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
+			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443, Public: public}}
 			for _, flags := range []StartOptions{{}, {Install: true}, {Detach: true}, {Foreground: true}, {Listen: "127.0.0.1:15432"}, {Detach: true, Listen: "127.0.0.1:15432", Output: "json"}, {Stdio: true}, {Output: "json"}, {Protocol: "tcp"}} {
 				valid := (!flags.Stdio || protocol == controlv1.Tcp) && (flags.Protocol == "" || flags.Protocol == string(protocol))
 				if err := ValidateServiceMode(flags, service); (err == nil) != valid {
@@ -146,7 +146,7 @@ func TestNativeMySQLRequiresExplicitServerRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SSL_CERT_FILE", selected)
-	service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.Mysql, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "database.example.test", Port: 25443, Public: true}}
+	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.Mysql, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: true}}
 	profile, err := serviceConnectionProfile(service, "127.0.0.1:15432")
 	if err != nil || profile.ServerCAFile != selected || !strings.Contains(strings.Join(profile.Command, " "), "--ssl-ca="+selected) {
 		t.Fatal("mysql omitted explicit roots", err)

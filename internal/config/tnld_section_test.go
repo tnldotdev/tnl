@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func loadTNLDYAML(t *testing.T, contents string) (Document, error) {
@@ -41,7 +41,7 @@ func TestTNLDYAMLPresenceDefaultsAndPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value := tnldconfig.Config{MetricsListen: "default", CustomDomainsEnabled: true, RelayStreamCapacity: 99, InitialAdministrators: []string{"subject"}, InitialTeamOwners: map[string]string{"team": "subject"}, ServicePortRanges: []string{"20000-20015"}, DrainTimeout: time.Minute}
+	value := daemonconfig.Config{MetricsListen: "default", CustomDomainsEnabled: true, RelayStreamCapacity: 99, InitialAdministrators: []string{"subject"}, InitialTeamOwners: map[string]string{"team": "subject"}, ServicePortRanges: []string{"20000-20015"}, DrainTimeout: time.Minute}
 	document.TNLD.Apply(&value)
 	if value.MetricsListen != "" || value.CustomDomainsEnabled || value.RelayStreamCapacity != 0 || len(value.InitialAdministrators) != 0 || len(value.InitialTeamOwners) != 0 || value.ServicePortRanges == nil || value.QUICIdleTimeout != -1500*time.Millisecond || value.DrainTimeout != time.Minute {
 		t.Fatal("presence was lost", value)
@@ -53,13 +53,13 @@ func TestTNLDYAMLPresenceDefaultsAndPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var defaults tnldconfig.Config
+	var defaults daemonconfig.Config
 	omitted.TNLD.Apply(&defaults)
 	if inventory, err := defaults.ServicePortInventory(); err != nil || !inventory.Contains(20000) || !inventory.Contains(20015) || inventory.Contains(20016) {
 		t.Fatal("omitted inventory default", inventory, err)
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "")
-	base := tnldconfig.Config{MetricsListen: "environment", RelayStreamCapacity: 99}
+	base := daemonconfig.Config{MetricsListen: "environment", RelayStreamCapacity: 99}
 	applied := document.TNLD.ApplyLowerPrecedence(&base, map[string]bool{"relay_stream_capacity": true})
 	if base.MetricsListen != "environment" || base.RelayStreamCapacity != 99 || applied["metrics_listen"] || applied["relay_stream_capacity"] {
 		t.Fatal("higher precedence was overwritten", base, applied)

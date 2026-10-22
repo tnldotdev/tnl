@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -35,14 +35,14 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	defer rollback(ctx, tx, "rename publisher DNS namespace", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, r.TeamID); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
 		return result, err
 	}
 	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	request, _ := json.Marshal(struct {
 		Group, Label string
@@ -55,7 +55,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	err = tx.QueryRow(ctx, `SELECT request_digest,response_ciphertext,storage_key_id FROM control.publisher_namespace_renames WHERE team_id=$1 AND project_key=$2 AND idempotency_key=$3`, r.TeamID, r.ProjectKey, r.IdempotencyKey).Scan(&savedDigest, &ciphertext, &storageKey)
 	if err == nil {
 		if !bytes.Equal(savedDigest, digest[:]) {
-			return result, ErrPrivateServiceConflict
+			return result, ErrServiceConflict
 		}
 		data, _, err := d.storageKey.Open(storageKey, context, ciphertext)
 		if err != nil {
@@ -87,13 +87,13 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
 		return result, err
 	}
-	if err = retireManagedNamespace(ctx, tx, id, r.Now); err != nil {
+	if err = retireServiceNamespace(ctx, tx, id, r.Now); err != nil {
 		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET namespace='' WHERE id=$1`, id); err != nil {
 		return result, err
 	}
-	if err = d.ensureManagedGroupNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, c.Publishers[name], r.NamespaceLabel); err != nil {
+	if err = d.ensureGroupNamespace(ctx, tx, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Now: r.Now}, id, name, c.PublisherGroups[name], r.NamespaceLabel); err != nil {
 		return result, err
 	}
 	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
@@ -101,13 +101,13 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 		return result, err
 	}
 	for _, service := range services {
-		if service.GroupID.String != id || !service.PrivateServiceID.Valid {
+		if service.GroupID.String != id || !service.ServiceID.Valid {
 			continue
 		}
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, service, r.Now); err != nil {
 			return result, err
 		}
-		if err = d.ensureManagedServiceEndpoint(ctx, tx, service.PrivateServiceID.String, id, r.DNSAutomation, r.Now); err != nil {
+		if err = d.ensureServiceEndpoint(ctx, tx, service.ServiceID.String, id, r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
 		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, service, r.ActorID, r.Now); err != nil {

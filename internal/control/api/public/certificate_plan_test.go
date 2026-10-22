@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestLocalPublishRunCertificatePlan(t *testing.T) {
@@ -69,7 +69,7 @@ func TestLocalPublishRunCertificatePlan(t *testing.T) {
 			}
 			store := &certificatePlanStoreStub{
 				publicURLMutationStoreStub: publicURLMutationStoreStub{
-					route: controlstate.PublicURL{
+					publicURL: controlstate.PublicURL{
 						ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: membershipID,
 						CanonicalHostname: hostname, Target: "http://127.0.0.1:3000",
 						PublicURLScope: controlstate.PublicURLScope(test.scope), MutationRevision: 1, AuthorizationPublishRunNumber: 1,
@@ -138,7 +138,7 @@ func TestControlDiscoverySeparatesRouteAndRelayDNSAutomation(t *testing.T) {
 		{"both", "ZMANAGED", "ZSERVER", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "infra.example.test",
+			cfg := daemonconfig.Config{Role: daemonconfig.RoleControl, ServerDomain: "infra.example.test",
 				ManagedDomain: "routes.other.test", Route53ManagedZoneID: test.managedZone, Route53ServerZoneID: test.serverZone}
 			h := testHandler(t, Config{ManagedDomain: cfg.ManagedDomain,
 				ControlURL: "https://" + cfg.ServerHostname(), DNSAutomation: cfg.DNSAutomationEnabled()}, nil, nil, nil)

@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bufio"
@@ -11,32 +11,32 @@ import (
 	"testing"
 	"time"
 
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // only socket discovery is redirected for standalone's ephemeral test ports.
 // device enrollment, pair allocation, selection and trust use NewControl.
 type separatedVisitorControl struct {
-	tcpconnect.Control
+	connectorstream.Control
 	dialAddress string
 }
 
-func (c *separatedVisitorControl) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (tcpconnect.Assignment, error) {
-	a, err := c.Control.PrivateConnectorAssignment(ctx, service, subject, slot)
+func (c *separatedVisitorControl) ConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (connectorstream.Assignment, error) {
+	a, err := c.Control.ConnectorAssignment(ctx, service, subject, slot)
 	if err != nil {
-		return tcpconnect.Assignment{}, err
+		return connectorstream.Assignment{}, err
 	}
 	if c.dialAddress != "" {
 		a.Endpoint.Address = c.dialAddress
@@ -44,10 +44,10 @@ func (c *separatedVisitorControl) PrivateConnectorAssignment(ctx context.Context
 	return a, nil
 }
 
-func (c *separatedVisitorControl) ReleasePrivateConnectorAssignment(ctx context.Context, id string) error {
+func (c *separatedVisitorControl) ReleaseConnectorAssignment(ctx context.Context, id string) error {
 	return c.Control.(interface {
-		ReleasePrivateConnectorAssignment(context.Context, string) error
-	}).ReleasePrivateConnectorAssignment(ctx, id)
+		ReleaseConnectorAssignment(context.Context, string) error
+	}).ReleaseConnectorAssignment(ctx, id)
 }
 
 func (c *separatedVisitorControl) Close() error {
@@ -56,7 +56,7 @@ func (c *separatedVisitorControl) Close() error {
 
 type privateObservation struct {
 	ingress string
-	header  tunnelv1.PrivateForwardingHeader
+	header  tunnelv1.ServiceForwardingHeader
 }
 
 // readiness is one admitted TLS-only visitor. consume its observation before
@@ -79,22 +79,22 @@ func connectorReadinessObservation(t *testing.T, opened <-chan privateObservatio
 // authorization, denial and hard validity deadline still comes from control.
 type acceleratedPrivateRecheck struct{ ingress.PrivateControl }
 
-func (c acceleratedPrivateRecheck) RecheckPrivateServiceVisitor(ctx context.Context, id string, body ingressv1.PrivateServiceVisitorRecheck) (ingressv1.PrivateServiceVisitorRecheckResult, error) {
-	result, err := c.PrivateControl.RecheckPrivateServiceVisitor(ctx, id, body)
+func (c acceleratedPrivateRecheck) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
+	result, err := c.PrivateControl.RecheckServiceVisitor(ctx, id, body)
 	if err == nil {
 		result.RecheckAt = minTime(result.RecheckAt, time.Now().Add(100*time.Millisecond))
 	}
 	return result, err
 }
 
-type observingPrivateForwarder struct {
-	ingress.PrivateForwarder
+type observingServiceForwarder struct {
+	ingress.ServiceForwarder
 	id     string
 	opened chan<- privateObservation
 }
 
-func (f observingPrivateForwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServiceRelay, header tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
-	stream, err := f.PrivateForwarder.OpenPrivate(ctx, relay, header)
+func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+	stream, err := f.ServiceForwarder.OpenPrivate(ctx, relay, header)
 	if err == nil && f.opened != nil {
 		select {
 		case f.opened <- privateObservation{f.id, header}:
@@ -114,12 +114,12 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		ctx = observability.WithMetrics(ctx, observability.FromContext(f.processContext("ingress")))
 		metrics = observability.FromContext(ctx)
 	}
-	secrets, err := serviceapi.NewBearerSecrets(privateRuntimeClusterSecret, "")
+	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &daemon{serviceHTTP: f.serviceHTTP, relayClientTLS: f.roots, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
-	client, err := newIngressControlClient(f.controlConfig.PrivateControlEndpoint(), privateRuntimeClusterSecret, f.serviceHTTP, f.controlConfig.PrivateControlListen)
+	d := &daemon{serviceHTTP: f.serviceHTTP, relayClientTLS: f.roots, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	client, err := newIngressControlClient(f.controlConfig.PrivateControlEndpoint(), serviceRuntimeClusterSecret, f.serviceHTTP, f.controlConfig.PrivateControlListen)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +130,9 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 	id := fmt.Sprintf("private-ingress-%d", index)
 	hostname := id + ".split.integration.test"
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
-		client: client, ingressID: id, listener: listener, clusterSecret: privateRuntimeClusterSecret,
-		privateHostname: hostname, privateAddress: listener.Addr().String(), disablePrivateQUIC: transport == "tls-tcp",
-		configurePrivate: func(config *ingress.PrivateConnectorConfig) {
+		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
+		privateHostname: hostname, privateAddress: listener.Addr().String(), disableConnectorQUIC: transport == "tls-tcp",
+		configurePrivate: func(config *ingress.ConnectorConfig) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 				config.Control = acceleratedPrivateRecheck{config.Control}
@@ -140,7 +140,7 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 			if f.configurePrivate != nil {
 				f.configurePrivate(config)
 			}
-			config.Forwarder = observingPrivateForwarder{PrivateForwarder: config.Forwarder, id: id, opened: opened}
+			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		},
 	}); err != nil {
 		cancel()
@@ -210,19 +210,19 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 }
 
 func TestIntegrationSeparatedPrivateTwoIngressTwoRelayLifecycle(t *testing.T) {
-	privateRuntimeLifecycle(t, false)
+	serviceRuntimeLifecycle(t, false)
 }
 
 func TestIntegrationStandalonePrivateTwoIngressTwoRelayLifecycle(t *testing.T) {
-	privateRuntimeLifecycle(t, true)
+	serviceRuntimeLifecycle(t, true)
 }
 
-func privateRuntimeLifecycle(t *testing.T, standalone bool) {
+func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
 			opened := make(chan privateObservation, 64)
-			f := newPrivateRuntimeFixture(t, standalone, opened)
+			f := newServiceRuntimeFixture(t, standalone, opened)
 			ingressIDs := [2]string{"private-ingress-0", "private-ingress-1"}
 			var stopIngress func()
 			if standalone {
@@ -240,15 +240,15 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			}
 			target := startPrivateEchoTarget(t)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreatePrivateService(t.Context(), f.identity.teamID, "private", key)
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private", key)
 			if err != nil {
 				t.Fatal(err)
 			}
-			enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-runtime"})
+			enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "service-runtime"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := nativeauth.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,13 +262,13 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			ready, publisherDone := make(chan struct{}), make(chan error, 1)
 			gate := make(chan struct{})
 			var slotsMu sync.Mutex
-			var slots [2]*privatepublisher.Claimed
+			var slots [2]*publisherservice.Claimed
 			var attempts [2]int
 			go func() {
-				publisherDone <- privatepublisher.Publish(publisherCtx, privatepublisher.RunConfig{
-					Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target.address,
-					Metadata: controlv1.PrivateServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond,
-					Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{
+					Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond,
+					Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
 						slotsMu.Lock()
 						attempts[slot]++
 						n := attempts[slot]
@@ -313,11 +313,11 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			production, err := tcpconnect.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			production, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			device, err := production.PrivateConnectorSigner(t.Context(), person.Identity.Id)
+			device, err := production.ConnectorSigner(t.Context(), person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -328,7 +328,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 					control.dialAddress = f.sharedQUIC
 				}
 			}
-			selected, err := control.ResolvePrivateService(t.Context(), service.Id)
+			selected, err := control.ResolveService(t.Context(), service.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -339,7 +339,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			visitorCtx, stopVisitor := context.WithCancel(t.Context())
 			visitorReady, visitorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitorDone <- tcpconnect.Serve(visitorCtx, visitor, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
+				visitorDone <- connectorstream.Serve(visitorCtx, visitor, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopVisitor()
@@ -351,7 +351,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 					finish, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 					defer cancel()
 					var reservations int
-					if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.private_connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.Subject.DeviceID).Scan(&reservations); err != nil || reservations != 0 {
+					if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.Subject.DeviceID).Scan(&reservations); err != nil || reservations != 0 {
 						t.Errorf("connector shutdown retained assignments: count=%d err=%v", reservations, err)
 					}
 				case <-time.After(5 * time.Second):
@@ -365,10 +365,10 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			}
 			connectorReadinessObservation(t, opened)
 			var boundSessions, distinctIngresses, readyRelays, distinctRelays int
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT ingress_id) FROM control.private_connector_sessions WHERE device_id=$1 AND bound_at IS NOT NULL`, device.Subject.DeviceID).Scan(&boundSessions, &distinctIngresses); err != nil || boundSessions != 2 || distinctIngresses != 2 {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT ingress_id) FROM control.connector_sessions WHERE device_id=$1 AND bound_at IS NOT NULL`, device.Subject.DeviceID).Scan(&boundSessions, &distinctIngresses); err != nil || boundSessions != 2 || distinctIngresses != 2 {
 				t.Fatalf("visitor did not bind two ingress identities: %d/%d %v", boundSessions, distinctIngresses, err)
 			}
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT relay_service_id) FROM control.private_service_connection_slots WHERE private_run_id=$1 AND state='ready' AND session_open`, selected.PrivateRunID).Scan(&readyRelays, &distinctRelays); err != nil || readyRelays != 2 || distinctRelays != 2 {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT relay_service_id) FROM control.service_connection_slots WHERE service_run_id=$1 AND state='ready' AND session_open`, selected.ServiceRunID).Scan(&readyRelays, &distinctRelays); err != nil || readyRelays != 2 || distinctRelays != 2 {
 				t.Fatalf("publisher did not claim both relays: %d %v", readyRelays, err)
 			}
 			type held struct {
@@ -430,7 +430,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 				// while the already admitted visitor keeps its original path.
 				var previous time.Time
 				for _, runtime := range f.composed.ingresses {
-					certificate, err := runtime.privateCertificate.TLSConfig().GetCertificate(nil)
+					certificate, err := runtime.serviceCertificate.TLSConfig().GetCertificate(nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -440,7 +440,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 				}
 				privateWait(t, 8*time.Second, func(context.Context) (bool, error) { return time.Now().After(previous.Add(50 * time.Millisecond)), nil })
 				for slot := range uint8(2) {
-					assignment, err := control.PrivateConnectorAssignment(t.Context(), service.Id, device.Subject, slot)
+					assignment, err := control.ConnectorAssignment(t.Context(), service.Id, device.Subject, slot)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -448,16 +448,16 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.Id, SessionID: assignment.SessionID,
+					hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: service.Id, SessionID: assignment.SessionID,
 						Credential: assignment.Credential, Subject: device.Subject, Nonce: nonce}
 					digest, err := hello.Claim().Digest()
 					if err != nil {
 						t.Fatal(err)
 					}
 					hello.Signature = device.Sign(digest)
-					var connector muxsession.Connector = muxsession.PrivateQUICConnector{TLSConfig: assignment.TransportTLS}
+					var connector muxsession.Connector = muxsession.ConnectorQUIC{TLSConfig: assignment.TransportTLS}
 					if transport == "tls-tcp" {
-						connector = muxsession.PrivateMuxTLSConnector{TLSConfig: assignment.TransportTLS}
+						connector = muxsession.ConnectorMuxTLS{TLSConfig: assignment.TransportTLS}
 					}
 					setup, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 					peer, err := connector.Connect(setup, assignment.Endpoint)
@@ -465,7 +465,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 						cancel()
 						t.Fatalf("renewed infrastructure TLS: %v", err)
 					}
-					session, err := tunnel.DialPrivateConnector(setup, peer, hello)
+					session, err := tunnel.DialConnector(setup, peer, hello)
 					cancel()
 					if err != nil {
 						t.Fatalf("renewed lease-bound mux authentication: %v", err)
@@ -506,7 +506,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			assertClosed(relayLost.conn)
 			privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 				var n int
-				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.private_service_connection_slots WHERE private_run_id=$1 AND state='ready' AND session_open`, selected.PrivateRunID).Scan(&n)
+				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_run_id=$1 AND state='ready' AND session_open`, selected.ServiceRunID).Scan(&n)
 				return n == 1, err
 			})
 			fresh = open(101)
@@ -521,18 +521,18 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			close(gate)
 			privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 				var n int
-				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.private_service_connection_slots WHERE private_run_id=$1 AND state='ready' AND session_open`, selected.PrivateRunID).Scan(&n)
+				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_run_id=$1 AND state='ready' AND session_open`, selected.ServiceRunID).Scan(&n)
 				return n == 2, err
 			})
-			after, err := control.ResolvePrivateService(t.Context(), service.Id)
-			if err != nil || after.PrivateRunID != selected.PrivateRunID || after.ManagedTLS == nil || selected.ManagedTLS == nil || *after.ManagedTLS != *selected.ManagedTLS {
+			after, err := control.ResolveService(t.Context(), service.Id)
+			if err != nil || after.ServiceRunID != selected.ServiceRunID || after.Endpoint == nil || selected.Endpoint == nil || *after.Endpoint != *selected.Endpoint {
 				t.Fatalf("slot replacement restarted the run or rotated its pin: %v", err)
 			}
 			if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
 			assertClosed(survivor.conn)
-			if _, err := control.ResolvePrivateService(t.Context(), service.Id); err == nil {
+			if _, err := control.ResolveService(t.Context(), service.Id); err == nil {
 				t.Fatal("revoked device selected another run")
 			}
 			var publicURLs int

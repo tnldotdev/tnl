@@ -1,4 +1,4 @@
-package problemtype
+package problem
 
 import (
 	"encoding/json"

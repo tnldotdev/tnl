@@ -1,4 +1,4 @@
-package relayapi
+package relay
 
 import "time"
 

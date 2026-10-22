@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // ProjectTargetDiscovery is handed unchanged to the assigned publisher. no
@@ -66,14 +66,14 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 	}
 	s, ok := c.Services[row.Service]
 	if !ok {
-		return nil, ErrPrivateServiceAccess
+		return nil, ErrServiceAccess
 	}
 	target := s.TargetDiscovery
 	if s.Protocol != "kubernetes" || target == nil || target.Type != "eks" {
 		return nil, nil
 	}
 	if target.Validate(s.Protocol) != nil || target.Cluster == nil {
-		return nil, ErrPrivateServiceAccess
+		return nil, ErrServiceAccess
 	}
 	return &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: *target.Cluster, Region: target.Region}, nil
 }

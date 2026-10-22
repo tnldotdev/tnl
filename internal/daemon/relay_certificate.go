@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"crypto/tls"
@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 type relayCertificateSource struct {

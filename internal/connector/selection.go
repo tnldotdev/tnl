@@ -4,62 +4,62 @@ import (
 	"context"
 	"errors"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type connectInventoryReader interface {
-	ListAvailablePrivateServices(context.Context) ([]controlv1.PrivateService, error)
+	ListAvailableServices(context.Context) ([]controlv1.Service, error)
 }
 
 type ServiceReader interface {
 	connectInventoryReader
 	GetLocalProjectService(context.Context, string, string, controlv1.GetLocalProjectServiceParams) (controlv1.LocalProjectService, error)
-	GetProjectPrivateService(context.Context, string, string, controlv1.GetProjectPrivateServiceParams) (controlv1.PrivateService, error)
+	GetProjectService(context.Context, string, string, controlv1.GetProjectServiceParams) (controlv1.Service, error)
 }
 
 // Select resolves the visitor's exact local/applied binding before inventory.
-func Select(ctx context.Context, control ServiceReader, project projectconfig.Project, name, team string) (controlv1.PrivateService, error) {
+func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team string) (controlv1.Service, error) {
 	key, err := ConfiguredService(project, name)
 	if err != nil {
-		return controlv1.PrivateService{}, err
+		return controlv1.Service{}, err
 	}
 	localID := ""
 	if key != "" {
 		definition := project.Config.Services[key]
-		if config.PublisherName(definition) == "local" {
+		if config.PublisherGroupName(definition) == "local" {
 			source := project.LocalPublicationIdentity()
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
-			if errors.Is(err, controlclient.ErrNotFound) {
-				return controlv1.PrivateService{}, failure.Wrap("find local private service", failure.LocalPrivateServiceUnavailable, err)
+			if errors.Is(err, clientcontrol.ErrNotFound) {
+				return controlv1.Service{}, failure.Wrap("find local service", failure.LocalServiceUnavailable, err)
 			}
 			if err != nil {
-				return controlv1.PrivateService{}, err
+				return controlv1.Service{}, err
 			}
-			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceKind != controlv1.LocalProjectServiceServiceKindPrivateService || bound.ServiceId == "" || bound.PrivateService == nil {
-				return controlv1.PrivateService{}, failure.Wrap("find local private service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
+			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceKind != controlv1.LocalProjectServiceServiceKindService || bound.ServiceId == "" || bound.Metadata == nil {
+				return controlv1.Service{}, failure.Wrap("find local service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
 			}
 			localID = bound.ServiceId
 		} else {
 			source, err := project.SourceIdentity(ctx)
 			if err != nil {
-				return controlv1.PrivateService{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
+				return controlv1.Service{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
 			}
-			return control.GetProjectPrivateService(ctx, source.Key, key, controlv1.GetProjectPrivateServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint})
+			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint})
 		}
 	}
-	services, err := control.ListAvailablePrivateServices(ctx)
+	services, err := control.ListAvailableServices(ctx)
 	if err != nil {
-		return controlv1.PrivateService{}, err
+		return controlv1.Service{}, err
 	}
 	if localID != "" {
-		service, err := privateServiceIDSelection(services, localID, team)
+		service, err := serviceIDSelection(services, localID, team)
 		if err != nil {
-			return service, failure.Wrap("select local private service", failure.LocalPrivateServiceUnavailable, err)
+			return service, failure.Wrap("select local service", failure.LocalServiceUnavailable, err)
 		}
 		return service, nil
 	}
@@ -68,7 +68,7 @@ func Select(ctx context.Context, control ServiceReader, project projectconfig.Pr
 
 // ConfiguredService resolves a configured key or unique saved-name override.
 // reject overlapping aliases rather than choosing a map iteration's first match.
-func ConfiguredService(project projectconfig.Project, name string) (string, error) {
+func ConfiguredService(project clientproject.Project, name string) (string, error) {
 	selected := ""
 	publicMatch := false
 	for key, service := range project.Config.Services {
@@ -80,48 +80,48 @@ func ConfiguredService(project projectconfig.Project, name string) (string, erro
 			continue
 		}
 		if selected != "" {
-			return "", publisherCLIError("configured private service name is ambiguous; use an unambiguous service key or --no-config with the service ID")
+			return "", publisherCLIError("configured service name is ambiguous; use an unambiguous service key or --no-config with the service ID")
 		}
 		selected = key
 	}
 	if publicMatch {
-		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact private service ID")
+		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact service ID")
 	}
 	return selected, nil
 }
 
 // SelectService selects an exact ID before considering unambiguous names.
-func SelectService(services []controlv1.PrivateService, name, team string) (controlv1.PrivateService, error) {
+func SelectService(services []controlv1.Service, name, team string) (controlv1.Service, error) {
 	for _, service := range services {
 		if service.Id == name && (team == "" || team == service.TeamId) {
 			return service, nil
 		}
 	}
-	var selected controlv1.PrivateService
+	var selected controlv1.Service
 	for _, service := range services {
 		if (service.Id == name || service.Name == name) && (team == "" || team == service.TeamId) {
 			if selected.Id != "" && selected.Id != service.Id {
-				return selected, publisherCLIError("private service name is ambiguous; pass its ID or select --team")
+				return selected, publisherCLIError("service name is ambiguous; pass its ID or select --team")
 			}
 			selected = service
 		}
 	}
 	if selected.Id == "" {
-		return selected, failure.Wrap("select private service", failure.ServerResourceNotFound, errors.New("private service is not available to this identity; run tnl connect available"))
+		return selected, failure.Wrap("select service", failure.ServerResourceNotFound, errors.New("service is not available to this identity; run tnl connect available"))
 	}
 	return selected, nil
 }
 
-func privateServiceIDSelection(services []controlv1.PrivateService, id, team string) (controlv1.PrivateService, error) {
+func serviceIDSelection(services []controlv1.Service, id, team string) (controlv1.Service, error) {
 	for _, service := range services {
 		if service.Id == id && (team == "" || service.TeamId == team) {
 			return service, nil
 		}
 	}
-	return controlv1.PrivateService{}, failure.Wrap("select private service ID", failure.ServerResourceNotFound, errors.New("private service ID is absent from visitor inventory"))
+	return controlv1.Service{}, failure.Wrap("select service ID", failure.ServerResourceNotFound, errors.New("service ID is absent from visitor inventory"))
 }
 
-// named publishers' public_url blocks are managed HTTP policy, not public URLs.
+// named publishers' public_url blocks are service HTTP policy, not public URLs.
 func isConnectPublicURL(service config.Service) bool {
-	return config.PublisherName(service) == "local" && config.IsPublicService(service)
+	return config.PublisherGroupName(service) == "local" && config.IsPublicService(service)
 }

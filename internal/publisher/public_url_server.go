@@ -12,9 +12,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
@@ -32,11 +32,11 @@ type PublicURLServerConfig struct {
 	Purpose               controlv1.PublicURLPurpose
 	AccessMode            controlv1.VisitorAccessMode
 	TargetTLSName         string
-	TargetOptions         localproxy.TargetOptions
+	TargetOptions         publisherproxy.TargetOptions
 	Handler               http.Handler
 	AdmitRequest          func(*http.Request) error
 	ObserveResponse       func(*http.Response) error
-	Mounts                []localproxy.Mount
+	Mounts                []publisherproxy.Mount
 	ShareAccess           *shareAccess
 	BrowserAccess         *browserAccess
 	BrowserLoginAvailable bool

@@ -1,9 +1,9 @@
-package relayapi
+package relay
 
 import (
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 type generatedServer struct {
@@ -12,16 +12,16 @@ type generatedServer struct {
 
 var _ relayv1.ServerInterface = generatedServer{}
 
-func (s generatedServer) ClaimPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
-	s.handler.claimPrivatePublisherConnection(w, r, id)
+func (s generatedServer) ClaimServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.claimServicePublisherConnection(w, r, id)
 }
 
-func (s generatedServer) ReadyPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
-	s.handler.readyPrivatePublisherConnection(w, r, id)
+func (s generatedServer) ReadyServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.readyServicePublisherConnection(w, r, id)
 }
 
-func (s generatedServer) DisconnectPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
-	s.handler.disconnectPrivatePublisherConnection(w, r, id)
+func (s generatedServer) DisconnectServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.disconnectServicePublisherConnection(w, r, id)
 }
 
 func (s generatedServer) ClaimPublisherConnection(

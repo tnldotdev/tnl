@@ -12,16 +12,16 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publicationHTTPTransport func(*http.Request) (*http.Response, error)
@@ -48,10 +48,10 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 		return id
 	}
 	prefixes := []string{}
-	route := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), DomainId: newID(opaqueid.DomainPrefix), CanonicalHostname: "app.example", ServiceProtocol: controlv1.Http, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, LifecycleState: controlv1.Enabled, PolicyRevision: 1, NextPublishRunNumber: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(), AllowedIpPrefixes: &prefixes}
+	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), DomainId: newID(opaqueid.DomainPrefix), CanonicalHostname: "app.example", ServiceProtocol: controlv1.Http, PublicUrlScope: controlv1.Shared, Purpose: controlv1.App, LifecycleState: controlv1.Enabled, PolicyRevision: 1, NextPublishRunNumber: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(), AllowedIpPrefixes: &prefixes}
 	enrollmentID := newID(opaqueid.PublisherEnrollmentPrefix)
 	enrollmentKey := enrollmentID + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	identity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: route.TeamId, PublicUrlId: &route.Id, Kind: authorityv1.SavedUrl}
+	identity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
 	sessionToken, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -63,21 +63,21 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 		status := http.StatusOK
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/public-urls":
-			if r.URL.Query().Get("team_id") != route.TeamId || r.URL.Query().Get("canonical_hostname") != route.CanonicalHostname {
+			if r.URL.Query().Get("team_id") != publicURL.TeamId || r.URL.Query().Get("canonical_hostname") != publicURL.CanonicalHostname {
 				t.Errorf("publication selected an unfiltered URL lookup: %s", r.URL)
 			}
-			value = controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{route}}
+			value = controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{publicURL}}
 		case "POST /v1/publisher-enrollments":
 			enrollments++
 			var body controlv1.CreatePublisherEnrollmentRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				return nil, err
 			}
-			if body.PublicUrlId == nil || *body.PublicUrlId != route.Id || body.DomainId != nil || body.TeamId != route.TeamId || r.Header.Get("Authorization") != "Bearer "+sessionToken.String() {
+			if body.PublicUrlId == nil || *body.PublicUrlId != publicURL.Id || body.DomainId != nil || body.TeamId != publicURL.TeamId || r.Header.Get("Authorization") != "Bearer "+sessionToken.String() {
 				t.Errorf("foreground owner did not request its exact saved URL: %+v", body)
 			}
 			status = http.StatusCreated
-			value = controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, ExpiresAt: time.Now().Add(time.Minute), PublicUrlId: &route.Id, TeamId: route.TeamId, Kind: "saved_url"}
+			value = controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, ExpiresAt: time.Now().Add(time.Minute), PublicUrlId: &publicURL.Id, TeamId: publicURL.TeamId, Kind: "saved_public_url"}
 		case "POST /v1/publisher-enrollments/redeem":
 			redemptions++
 			var body authorityv1.RedeemPublisherEnrollmentRequest
@@ -97,16 +97,16 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				return nil, err
 			}
-			if _, err := publisheridentity.Verify(body.ClientAssertion, identity.ClientId, identity.KeyId, identity.GrantId, server+"/v1/publisher-token", public, time.Now()); err != nil {
+			if _, err := publisherproof.Verify(body.ClientAssertion, identity.ClientId, identity.KeyId, identity.GrantId, server+"/v1/publisher-token", public, time.Now()); err != nil {
 				return nil, err
 			}
 			value = authorityv1.PublisherTokenResponse{AccessToken: "publisher-access", TokenType: "Bearer", ExpiresIn: 60, GrantId: identity.GrantId}
-		case "POST /v1/public-urls/" + route.Id + "/publish-runs":
+		case "POST /v1/public-urls/" + publicURL.Id + "/publish-runs":
 			runs++
 			if r.Header.Get("Authorization") != "Bearer publisher-access" {
 				t.Error("publish run used the team session")
 			}
-			if _, err := publisheridentity.VerifyRun(public, r.Header.Get("Publisher-Run-Proof"), route.Id, r.Header.Get("Idempotency-Key")); err != nil {
+			if _, err := publisherproof.VerifyRun(public, r.Header.Get("Publisher-Run-Proof"), publicURL.Id, r.Header.Get("Idempotency-Key")); err != nil {
 				return nil, err
 			}
 			status = http.StatusServiceUnavailable
@@ -120,15 +120,15 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 		}
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(data)), Request: r}, nil
 	})}
-	control, err := controlclient.New(server, httpClient, sessionToken)
+	control, err := clientcontrol.New(server, httpClient, sessionToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(server, httpClient, sessionToken)
+	authority, err := clientauthority.New(server, httpClient, sessionToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := publisherServices{state: store, hostname: route.CanonicalHostname, teamID: route.TeamId, domainID: route.DomainId, publicURLScope: controlv1.Shared, routes: control, authenticated: &clientauth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
+	services := publisherServices{state: store, hostname: publicURL.CanonicalHostname, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
 	for range 2 {
 		cfg := services.config("http://127.0.0.1:3000", prefixes, publisher.ApplicationLimits{})
 		cfg.ServiceProtocol = controlv1.Http
@@ -136,10 +136,10 @@ func TestForegroundPublicationReusesItsIdentityAndNeverCreatesRunsWithTheSession
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !cfg.PreserveSavedURLTarget || cfg.Target != "http://127.0.0.1:3000" {
+		if !cfg.PreserveSavedPublicURLTarget || cfg.Target != "http://127.0.0.1:3000" {
 			t.Fatalf("private foreground target = %+v", cfg)
 		}
-		if _, err := cfg.Control.CreatePublishRun(t.Context(), route.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, controlclient.ErrUnavailable) {
+		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("signed run request = %v", err)
 		}
 		if err := cleanup(); err != nil {

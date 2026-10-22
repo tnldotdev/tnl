@@ -1,4 +1,4 @@
-package projectinit
+package init
 
 import (
 	"context"

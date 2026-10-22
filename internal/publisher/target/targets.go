@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -16,11 +16,11 @@ type TargetSnapshot struct {
 }
 
 type identityResolver interface {
-	ResolveTargetIdentity(context.Context, projectconfig.Project, string) (string, string, error)
+	ResolveTargetIdentity(context.Context, clientproject.Project, string) (string, string, error)
 }
 
 // ResolveTargetSnapshot preserves identity when a replacement reuses an address.
-func ResolveTargetSnapshot(ctx context.Context, project projectconfig.Project, name string, resolver TargetResolver) (TargetSnapshot, error) {
+func ResolveTargetSnapshot(ctx context.Context, project clientproject.Project, name string, resolver TargetResolver) (TargetSnapshot, error) {
 	service, found := project.Config.Services[name]
 	if !found || config.TargetType(service) == "app" {
 		return TargetSnapshot{}, errors.New("select a configured non-app target")

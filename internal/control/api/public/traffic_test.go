@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPublishRunTrafficInputBoundary(t *testing.T) {
@@ -40,12 +40,12 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 }
 
 func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "url", TeamID: "team", DomainID: "domain", MembershipID: "member", PolicyRevision: 1,
 		CanonicalHostname: "app.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
 		Target: "http://127.0.0.1:3000", MutationRevision: 1, AuthorizationPublishRunNumber: 1,
 	}}
-	store.publisher = &controlstate.PublisherIdentity{ID: "publisher", GrantID: "grant", KeyID: "key", CreatorID: "identity", Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_url", PublicURLID: "url"}}
+	store.publisher = &controlstate.PublisherIdentity{ID: "publisher", GrantID: "grant", KeyID: "key", CreatorID: "identity", Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "url"}}
 	store.publisherPlan = &authorization.CertificatePlan{CacheKey: "app.example.test", Scope: "app.example.test", Identifiers: []string{"app.example.test"}, ChallengeMethod: certificateidentity.ChallengeDNS01}
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576}}`))
 	r.Header.Set("Authorization", "Bearer publisher-access")

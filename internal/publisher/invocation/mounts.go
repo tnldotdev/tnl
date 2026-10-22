@@ -6,17 +6,17 @@ import (
 	"slices"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	targetbinding "github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
 // one resolver owns mount trust and target selection for app, named and scoped
 // publishers. only app targets use registrations; static addresses stay static.
-func ProjectMounts(project projectconfig.Project, service string, appTarget func(string) string, resolver targetbinding.TargetResolver) ([]localproxy.Mount, error) {
+func ProjectMounts(project clientproject.Project, service string, appTarget func(string) string, resolver targetbinding.TargetResolver) ([]publisherproxy.Mount, error) {
 	if service == "" {
 		return nil, nil
 	}
@@ -27,7 +27,7 @@ func ProjectMounts(project projectconfig.Project, service string, appTarget func
 		prefixes = append(prefixes, prefix)
 	}
 	slices.Sort(prefixes)
-	mounts := make([]localproxy.Mount, 0, len(prefixes))
+	mounts := make([]publisherproxy.Mount, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		mount := paths[prefix]
 		definition := project.Config.Services[mount.Service]
@@ -77,14 +77,14 @@ func ProjectMounts(project projectconfig.Project, service string, appTarget func
 		if local.TargetCAFile != nil {
 			caFile = *local.TargetCAFile
 		}
-		options, err := localproxy.TargetOptionsForCA(caFile, project.Root)
+		options, err := publisherproxy.TargetOptionsForCA(caFile, project.Root)
 		if err != nil {
 			return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
 		}
 		if local.TargetTLSName != nil {
 			options.ServerName = *local.TargetTLSName
 		}
-		mounts = append(mounts, localproxy.Mount{Prefix: prefix, Target: normalized, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: resolve})
+		mounts = append(mounts, publisherproxy.Mount{Prefix: prefix, Target: normalized, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: resolve})
 	}
 	return mounts, nil
 }

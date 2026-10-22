@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing.T) {
@@ -24,7 +24,7 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		enrollment := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: base.TeamID, ActingIdentityID: base.ActingIdentityID}, PublisherScope{TeamID: base.TeamID, Kind: "saved_url", PublicURLID: base.PublicURLID}, now)
+		enrollment := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: base.TeamID, ActingIdentityID: base.ActingIdentityID}, PublisherScope{TeamID: base.TeamID, Kind: "saved_public_url", PublicURLID: base.PublicURLID}, now)
 		public, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +43,7 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 		request.ExpectedMutationRevision = url.MutationRevision
 		request.CertificateCacheKey, request.CertificateScope, request.CertificateIdentifiers, request.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
 		request.PublisherIdentityID, request.PublisherGrantID, request.PublisherKeyID = publisher.ID, publisher.GrantID, publisher.KeyID
-		request.PublisherRunProof, err = publisheridentity.SignRun(key, url.ID, request.IdempotencyKey)
+		request.PublisherRunProof, err = publisherproof.SignRun(key, url.ID, request.IdempotencyKey)
 		if err != nil {
 			t.Fatal(err)
 		}

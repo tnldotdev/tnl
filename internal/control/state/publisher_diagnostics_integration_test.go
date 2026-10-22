@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
@@ -21,7 +21,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	d.Instrument(m)
 	ctx = observability.WithMetrics(ctx, m)
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "remote", Target: "localhost:3000"}}}
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "localhost:3000"}}}
 	project, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	const audience = "https://control.example/v1/publisher-runtime"
 	const run = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	observe := func(action string, epoch int64) error {
-		proof, err := publisheridentity.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisheridentity.RuntimeScope(replica.member.GroupID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
+		proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, action, run, epoch, publisherprovenance.Digest(nil)), audience, replica.private, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 	}
 	restartedAt := now.Add(time.Second)
 	const replacement = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	proof, err := publisheridentity.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisheridentity.RuntimeScope(replica.member.GroupID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
+	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(replica.member.GroupID, "start", replacement, 1, publisherprovenance.Digest(nil)), audience, replica.private, restartedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 		t.Fatal("replacement runtime inherited its predecessor's healthy acknowledgement", status)
 	}
 	r.ExpectedRevision = project.Revision
-	r.Configuration.Publishers["remote"] = ProjectPublisherGroup{Description: "changed"}
+	r.Configuration.PublisherGroups["remote"] = ProjectPublisherGroup{Description: "changed"}
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

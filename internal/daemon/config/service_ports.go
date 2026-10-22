@@ -1,4 +1,4 @@
-package tnldconfig
+package config
 
 import "github.com/tnldotdev/tnl/internal/naming/tcpport"
 

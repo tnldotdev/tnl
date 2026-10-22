@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	json "encoding/json/v2"

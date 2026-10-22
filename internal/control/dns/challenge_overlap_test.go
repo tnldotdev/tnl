@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -63,7 +63,9 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
-	workers.Go(func() { firstDone <- manager.Present(ctx, "public_url_new", "authorization_new") })
+	workers.Go(func() {
+		firstDone <- manager.PresentSubject(ctx, publicDNSSubject("public_url_new"), "authorization_new")
+	})
 	select {
 	case <-firstStarted:
 	case <-ctx.Done():
@@ -75,7 +77,9 @@ func TestChallengeManagerOverlappingReconciliations(t *testing.T) {
 	mu.Unlock()
 	lockRequested := make(chan struct{})
 	store.lockRequested = func() { close(lockRequested) }
-	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "public_url_old", "authorization_old") })
+	workers.Go(func() {
+		secondDone <- otherManager.CleanupSubject(ctx, publicDNSSubject("public_url_old"), "authorization_old")
+	})
 	select {
 	case <-lockRequested:
 	case <-ctx.Done():

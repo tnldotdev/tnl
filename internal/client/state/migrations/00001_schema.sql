@@ -1,4 +1,10 @@
 -- +goose Up
+CREATE TABLE baseline_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-services')
+) STRICT;
+INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-services');
+
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
 CREATE TABLE publisher_provision_journal (
@@ -14,7 +20,7 @@ CREATE TABLE publisher_provision_journal (
 CREATE TABLE service_client_certificates (
     server_origin TEXT NOT NULL,
     identity_id TEXT NOT NULL,
-    private_service_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
     device_id TEXT NOT NULL,
     private_key_ciphertext BLOB NOT NULL,
     csr_der BLOB,
@@ -23,7 +29,7 @@ CREATE TABLE service_client_certificates (
     csr_created_at INTEGER NOT NULL DEFAULT 0,
     certificate_pem BLOB,
     issuer_pem BLOB,
-    PRIMARY KEY(server_origin,identity_id,private_service_id,device_id)
+    PRIMARY KEY(server_origin,identity_id,service_id,device_id)
 );
 CREATE TABLE server_profiles (
     id INTEGER PRIMARY KEY,
@@ -36,7 +42,7 @@ CREATE TABLE server_profiles (
 -- one remembered localhost port per signed-in identity and saved private
 -- service. a unique port also prevents two server profiles from silently
 -- assigning the same GUI endpoint.
-CREATE TABLE private_service_ports (
+CREATE TABLE service_ports (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     identity_id TEXT NOT NULL,
     service_id TEXT NOT NULL,
@@ -58,7 +64,7 @@ CREATE TABLE visitor_devices (
 
 -- connector status is local lifecycle state, never a source of authority or a
 -- place for session tokens, provider addresses, TLS keys, or credentials.
-CREATE TABLE private_connectors (
+CREATE TABLE connectors (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     identity_id TEXT NOT NULL,
     service_id TEXT NOT NULL,

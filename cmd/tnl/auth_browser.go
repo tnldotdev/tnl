@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/url"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -37,7 +37,7 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 	if !found {
 		return failure.Wrap("select saved CLI session", failure.Authentication, errors.New("sign in with tnl auth login before creating a browser handoff"))
 	}
-	authority, err := authorityclient.New(s.Authenticated().ServerEndpoint, nil, credentials.AccessToken(saved.AccessToken))
+	authority, err := clientauthority.New(s.Authenticated().ServerEndpoint, nil, credentials.AccessToken(saved.AccessToken))
 	if err != nil {
 		return err
 	}

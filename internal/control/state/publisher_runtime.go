@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrPublisherRuntimeStale = errors.New("publisher runtime has been replaced or stopped")
@@ -130,7 +130,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			return result, err
 		}
 	}
-	kid, err := publisheridentity.KeyID(r.Assertion)
+	kid, err := publisherproof.KeyID(r.Assertion)
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
@@ -141,7 +141,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if k.RetiredAt.Valid || group != "" && groupKey != kid {
 		return result, ErrPublisherIdentity
 	}
-	a, err := publisheridentity.Verify(r.Assertion, i.ID, kid, publisheridentity.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, r.Now)
+	a, err := publisherproof.Verify(r.Assertion, i.ID, kid, publisherproof.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, r.Now)
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}

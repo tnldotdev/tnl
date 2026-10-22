@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bufio"
@@ -21,17 +21,17 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -60,7 +60,7 @@ func (f *auditCompositionTarget) Open(context.Context, string) (net.Conn, error)
 	return f.open(true), nil
 }
 
-func (f *auditCompositionTarget) OpenPrivate(context.Context, ingressv1.PrivateServiceRelay, tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
+func (f *auditCompositionTarget) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
 	return f.open(false), nil
 }
 
@@ -106,7 +106,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
-	service, err := d.CreatePrivateService(ctx, team, actor, "audit-composition", "audit-composition", now)
+	service, err := d.CreateServiceAt(ctx, team, actor, "audit-composition", "audit-composition", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err = inspect.QueryRow(ctx, `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&policy); err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{Scope: controlstate.PublisherScope{TeamID: team, Kind: "private_service", PrivateServiceID: service.ID},
+	enrollment, err := d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{Scope: controlstate.PublisherScope{TeamID: team, Kind: "service", ServiceID: service.ID},
 		Name: "audit-composition", Kind: "installed", EditorID: actor, EditorMembershipID: member, PolicyRevision: uint64(policy), Now: now})
 	if err != nil {
 		t.Fatal(err)
@@ -137,25 +137,25 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		}
 		relays[name] = r
 	}
-	prepared, err := d.PreparePrivateServiceRun(ctx, service.ID, publisher, "audit-composition", now)
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "audit-composition", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.StartManagedServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	run, err := d.StartServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	managedcert.Install(t, d, prepared, run, now)
 	for _, slot := range run.Connections {
 		r := relays[slot.RelayServiceID]
-		if _, err = d.ClaimPrivatePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, r.RelayLeaseIdentity, now); err != nil {
+		if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, r.RelayLeaseIdentity, now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = d.ReadyPrivatePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, r.RelayLeaseIdentity, now); err != nil {
+		if _, err = d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, r.RelayLeaseIdentity, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 20}); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 20}); err != nil {
 		t.Fatal(err)
 	}
 	public, deviceKey, _ := ed25519.GenerateKey(rand.Reader)
@@ -164,14 +164,14 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal(err)
 	}
 	if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-second", IngressRunID: "audit-second-process", ProtocolVersion: 1, ConnectionCapacity: 10,
-		PrivateConnectorAddress: "127.0.0.1:9442", PrivateConnectorTLSServerName: "private.example.test"}, now, time.Hour); err != nil {
+		ConnectorAddress: "127.0.0.1:9442", ConnectorTLSServerName: "private.example.test"}, now, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	assignments, err := d.CreateVisitorIngressAssignments(ctx, actor, device.ID, service.ID, "startup", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var assignment controlstate.PrivateConnectorSession
+	var assignment controlstate.ConnectorSession
 	for _, a := range assignments {
 		if a.IngressID == lease.IngressID {
 			assignment = a
@@ -199,20 +199,20 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	}
 	t.Cleanup(func() { _ = queue.Close(context.Background()) })
 	sink := auditCompositionSink{queue: queue, events: make(chan serviceaudit.Observation, 16)}
-	badRun, _ := opaqueid.New(opaqueid.PrivateRunPrefix)
-	bad := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "private_service", RunID: badRun, RunNumber: 1,
+	badRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
+	bad := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: badRun, RunNumber: 1,
 		ConnectorSessionID: assignment.ID, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "127.0.0.1", EventType: "connection.open", OccurredAt: now, Outcome: "denied", Reason: "authorization"}
 	if !queue.Observe(bad) {
 		t.Fatal("regression event must pass syntax to exercise control scope rejection")
 	}
 	serverTLS, clientTLS := auditCompositionTLS(t, "private.example.test", publicHostname)
 	target := &auditCompositionTarget{tls: serverTLS}
-	direct, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{Store: d, LeaseDuration: time.Minute})
+	direct, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: d, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector, err := ingress.NewPrivateConnector(ingress.PrivateConnectorConfig{Hostname: "private.example.test", TLSConfig: serverTLS, Control: direct, Forwarder: target,
-		Routing: &ingress.PrivateRoutingTable{}, AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
+	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "private.example.test", TLSConfig: serverTLS, Control: direct, Forwarder: target,
+		Routing: &ingress.ServiceRoutingTable{}, AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
 			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
 		}})
 	if err != nil {
@@ -222,12 +222,12 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, PrivateHostname: "private.example.test", PrivateConnector: connector, AuditSink: sink,
+	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, PrivateHostname: "private.example.test", Connector: connector, AuditSink: sink,
 		Lookup: func(host string) (ingress.PublicURL, ingress.LookupReason) {
 			if host != publicHostname {
 				return ingress.PublicURL{}, ingress.LookupNotFound
 			}
-			return ingress.PublicURL{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []routebackend.Backend{target}}, ingress.LookupCurrent
+			return ingress.PublicURL{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target}}, ingress.LookupCurrent
 		}})
 	if err != nil {
 		_ = listener.Close()
@@ -247,46 +247,46 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		}
 		target.workers.Wait()
 	})
-	transport, err := (muxsession.PrivateMuxTLSConnector{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "private.example.test"})
+	transport, err := (muxsession.ConnectorMuxTLS{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "private.example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: assignment.ID,
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: service.ID, SessionID: assignment.ID,
 		Credential: assignment.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: actor, DeviceID: device.ID}, Nonce: bytes.Repeat([]byte{3}, 32)}
 	proof, err := hello.Claim().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	hello.Signature = ed25519.Sign(deviceKey, proof)
-	session, err := tunnel.DialPrivateConnector(ctx, transport, hello)
+	session, err := tunnel.DialConnector(ctx, transport, hello)
 	if err != nil {
 		_ = transport.Close()
 		t.Fatal(err)
 	}
 	defer session.Close()
-	entry := tunnelv1.PrivateVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateVisitorStream, PrivateServiceID: service.ID, PrivateRunID: badRun, RunNumber: 1}
+	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service.ID, ServiceRunID: badRun, RunNumber: 1}
 	denied, err := session.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = denied.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = tunnelv1.WritePrivateVisitorEntry(denied, entry); err != nil {
+	if err = tunnelv1.WriteConnectorVisitorEntry(denied, entry); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tunnelv1.ReadPrivateVisitorAccepted(denied); err == nil {
+	if _, err = tunnelv1.ReadConnectorVisitorAccepted(denied); err == nil {
 		t.Fatal("nonexistent run was admitted")
 	}
 	_ = denied.Close()
-	entry.PrivateRunID, entry.RunNumber = run.RunID, uint64(run.RunNumber)
+	entry.ServiceRunID, entry.RunNumber = run.RunID, uint64(run.RunNumber)
 	valid, err := session.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = valid.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = tunnelv1.WritePrivateVisitorEntry(valid, entry); err != nil {
+	if err = tunnelv1.WriteConnectorVisitorEntry(valid, entry); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tunnelv1.ReadPrivateVisitorAccepted(valid); err != nil {
+	if _, err = tunnelv1.ReadConnectorVisitorAccepted(valid); err != nil {
 		t.Fatal("valid private stream denied", err)
 	}
 	const secretPayload = "private-query-target-and-command-never-audit"

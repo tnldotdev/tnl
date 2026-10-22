@@ -9,20 +9,20 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 // copyLivePrivateVisitor keeps the original stream and visitor ID. a denied
 // recheck closes both ends; an unavailable control can never extend admission
 // past two minutes since the last successful decision. the copy worker joins
 // before the caller releases its ordinary stream capacity.
-func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor muxsession.Stream, backend net.Conn,
-	lease ingressv1.IngressLease, bound ingressv1.PrivateConnectorSessionResult,
-	claimed ingressv1.PrivateServiceStreamResult, source netip.AddrPort, claimedAt time.Time) (retErr error) {
-	ctx, finishForward := observability.Start(ctx, "ingress.forward_private_visitor")
+func (p *Connector) copyLivePrivateVisitor(ctx context.Context, visitor muxsession.Stream, backend net.Conn,
+	lease ingressv1.IngressLease, bound ingressv1.ConnectorSessionResult,
+	claimed ingressv1.ServiceStreamResult, source netip.AddrPort, claimedAt time.Time) (retErr error) {
+	ctx, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")
 	defer func() { finishForward(retErr) }()
 	if !claimed.ValidUntil.After(time.Now()) {
-		return ErrPrivateAdmission
+		return ErrServiceAdmission
 	}
 	copyCtx, cancel := context.WithCancel(ctx)
 	copyDone := make(chan error, 1)
@@ -53,22 +53,22 @@ func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor m
 		case <-copyCtx.Done():
 			return copyCtx.Err()
 		case <-hard.C:
-			return ErrPrivateAdmission
+			return ErrServiceAdmission
 		case <-period.C:
 			now := time.Now()
 			if !now.Before(hardDeadline) {
-				return ErrPrivateAdmission
+				return ErrServiceAdmission
 			}
 			current, err := p.liveLease(now)
 			if err != nil || !samePrivateLease(current, lease) {
-				return ErrPrivateAdmission
+				return ErrServiceAdmission
 			}
 			timeout := min(p.config.RecheckTimeout, time.Until(hardDeadline))
 			checkCtx, finish := context.WithTimeout(copyCtx, timeout)
-			result, err := p.config.Control.RecheckPrivateServiceVisitor(checkCtx, lease.IngressId,
-				ingressv1.PrivateServiceVisitorRecheck{
+			result, err := p.config.Control.RecheckServiceVisitor(checkCtx, lease.IngressId,
+				ingressv1.ServiceVisitorRecheck{
 					IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
-					PrivateServiceId: claimed.PrivateServiceId, PrivateRunId: claimed.PrivateRunId,
+					ServiceId: claimed.ServiceId, ServiceRunId: claimed.ServiceRunId,
 					RunNumber: claimed.RunNumber, ConnectorSessionId: bound.ConnectorSessionId,
 					Subject: claimed.Subject, VisitorConnectionId: claimed.VisitorConnectionId,
 					ObservedSourceIp: source.Addr().Unmap().String(),
@@ -76,15 +76,15 @@ func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor m
 			finish()
 			checkedAt := time.Now()
 			if !checkedAt.Before(hardDeadline) {
-				return ErrPrivateAdmission
+				return ErrServiceAdmission
 			}
 			if err == nil {
 				if !result.Allowed {
-					return ErrPrivateAdmission
+					return ErrServiceAdmission
 				}
 				if !result.ValidUntil.After(checkedAt) ||
 					!result.RecheckAt.After(checkedAt.Add(-time.Second)) || result.RecheckAt.After(checkedAt.Add(interval+time.Second)) {
-					err = ErrPrivateAdmission
+					err = ErrServiceAdmission
 				} else {
 					hardDeadline = privateMinTime(result.ValidUntil, checkedAt.Add(p.config.HardAuthorizationTTL))
 					if !hard.Stop() {
@@ -97,7 +97,7 @@ func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor m
 				}
 			}
 			if err != nil && !time.Now().Before(hardDeadline) {
-				return ErrPrivateAdmission
+				return ErrServiceAdmission
 			}
 			next := interval
 			if err == nil {

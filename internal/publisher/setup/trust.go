@@ -1,4 +1,4 @@
-package publisherprovision
+package setup
 
 import (
 	"io"

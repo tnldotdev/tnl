@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type nativeAuditFixture struct {
@@ -24,8 +24,8 @@ func (c *nativeAuditFixture) ReportPublisherServiceObservations(_ context.Contex
 }
 func TestNativeAuditForwardingRetainsSelectedServiceAndRunCredential(t *testing.T) {
 	c := &nativeAuditFixture{}
-	n := &Native{NativeControl: c, route: controlv1.PublicURL{Id: "url_0123456789ABCDEFGHIJKL"}}
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: n.route.Id, ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, EventType: "http.decision", VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", OccurredAt: time.Now(), Outcome: "allowed"}
+	n := &Native{NativeControl: c, publicURL: controlv1.PublicURL{Id: "url_0123456789ABCDEFGHIJKL"}}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: n.publicURL.Id, ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, EventType: "http.decision", VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", OccurredAt: time.Now(), Outcome: "allowed"}
 	if err := n.ReportPublisherServiceObservations(t.Context(), o.RunID, 1, "run-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil || c.calls != 1 || c.token != "run-token" {
 		t.Fatal("native lost audit capability or credential", err)
 	}

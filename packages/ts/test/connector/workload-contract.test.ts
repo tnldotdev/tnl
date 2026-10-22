@@ -14,7 +14,7 @@ function session(provider: string): Record<string, unknown> {
     lease_expires_at: "2026-10-21T00:01:30Z",
     expires_at: "2026-10-21T01:00:00Z",
     renew_after: "2026-10-21T00:00:30Z",
-    service_ids: [`psvc_${"p".repeat(22)}`],
+    service_ids: [`svc_${"p".repeat(22)}`],
     binding: "b".repeat(64),
     ...(provider === "github"
       ? {

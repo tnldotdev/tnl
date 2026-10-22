@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
@@ -21,7 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -33,9 +33,9 @@ type ingressRuntime struct {
 	forwarder          *ingress.Forwarder
 	usage              *ingress.UsageReporter
 	recovery           *ingress.RecoveryReporter
-	private            *ingress.PrivateConnector
+	private            *ingress.Connector
 	privateQUIC        *muxsession.QUICListener
-	privateCertificate *ingressCertificateSource
+	serviceCertificate *ingressCertificateSource
 	privateOnly        bool
 	audit              *ingressServiceAudit
 }
@@ -66,7 +66,7 @@ type ingressProcessSettings struct {
 	privateUDPListen string
 }
 
-func ingressProcessSettingsFrom(cfg tnldconfig.Config) ingressProcessSettings {
+func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings {
 	domain := strings.TrimPrefix(cfg.ControlHostname, "control.")
 	hostname := ""
 	if cfg.IngressID != "" && domain != "" {
@@ -107,17 +107,17 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 }
 
 type ingressRuntimeConfig struct {
-	client             ingress.ControlClient
-	ingressID          string
-	listener           net.Listener
-	clusterSecret      string
-	configure          func(*ingress.Config)
-	privateHostname    string
-	privateAddress     string
-	privateUDPListen   string
-	disablePrivateQUIC bool
-	configurePrivate   func(*ingress.PrivateConnectorConfig)
-	privateOnly        bool
+	client               ingress.ControlClient
+	ingressID            string
+	listener             net.Listener
+	clusterSecret        string
+	configure            func(*ingress.Config)
+	privateHostname      string
+	privateAddress       string
+	privateUDPListen     string
+	disableConnectorQUIC bool
+	configurePrivate     func(*ingress.ConnectorConfig)
+	privateOnly          bool
 }
 
 type ingressSettings struct {
@@ -136,7 +136,7 @@ type ingressSettings struct {
 	servicePortRanges                tcpport.Inventory
 }
 
-func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
+func ingressSettingsFrom(cfg daemonconfig.Config) ingressSettings {
 	ports, _ := cfg.ServicePortInventory() // validated before runtime construction.
 	pool := cfg.IngressPoolID
 	if pool == "" {
@@ -172,7 +172,7 @@ func (d *daemon) startIngressRuntime(
 		return errors.New("ingress service observation reporting is required")
 	}
 	runtime.audit = &ingressServiceAudit{ctx: ctx, client: auditClient, metrics: metrics}
-	if runtimeConfig.privateOnly && (runtimeConfig.privateHostname == "" || !runtimeConfig.disablePrivateQUIC) {
+	if runtimeConfig.privateOnly && (runtimeConfig.privateHostname == "" || !runtimeConfig.disableConnectorQUIC) {
 		return errors.New("logical private ingress requires a hostname and shared listener")
 	}
 	owned := false
@@ -202,8 +202,8 @@ func (d *daemon) startIngressRuntime(
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	if runtimeConfig.privateHostname != "" {
-		registration.PrivateConnectorAddress = &runtimeConfig.privateAddress
-		registration.PrivateConnectorTlsServerName = &runtimeConfig.privateHostname
+		registration.ConnectorAddress = &runtimeConfig.privateAddress
+		registration.ConnectorTlsServerName = &runtimeConfig.privateHostname
 	}
 	controller, err := ingress.NewController(ingress.ControllerConfig{
 		Report: func(err error) {
@@ -332,31 +332,31 @@ func (d *daemon) startIngressRuntime(
 			return errors.New("private ingress certificate retrieval is required")
 		}
 		source := &ingressCertificateSource{id: runtimeConfig.ingressID, hostname: runtimeConfig.privateHostname}
-		runtime.privateCertificate = source
+		runtime.serviceCertificate = source
 		transportTLS := source.TLSConfig()
 		d.start("manage ingress transport certificate", func() error {
 			return runIngressCertificate(ctx, certificates, controller, source, settings.controlRetryInterval)
 		})
-		privateConfig := ingress.PrivateConnectorConfig{Hostname: runtimeConfig.privateHostname, TLSConfig: transportTLS, IngressPoolID: string(settings.ingressPoolID),
-			Control: privateControl, Forwarder: forwarder, Routing: new(ingress.PrivateRoutingTable), CurrentLease: controller.Lease, AuditSink: runtime.audit}
+		privateConfig := ingress.ConnectorConfig{Hostname: runtimeConfig.privateHostname, TLSConfig: transportTLS, IngressPoolID: string(settings.ingressPoolID),
+			Control: privateControl, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: controller.Lease, AuditSink: runtime.audit}
 		privateConfig.DirectControl, _ = runtimeConfig.client.(ingress.DirectControl)
 		if runtimeConfig.configurePrivate != nil {
 			runtimeConfig.configurePrivate(&privateConfig)
 		}
 		privateConfig.AuditSink = runtime.audit
-		private, err := ingress.NewPrivateConnector(privateConfig)
+		private, err := ingress.NewConnector(privateConfig)
 		if err != nil {
 			return err
 		}
 		runtime.private = private
 		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges.Ranges()
-		ingressConfig.PrivateHostname, ingressConfig.PrivateConnector = runtimeConfig.privateHostname, private
-		if !runtimeConfig.disablePrivateQUIC {
+		ingressConfig.PrivateHostname, ingressConfig.Connector = runtimeConfig.privateHostname, private
+		if !runtimeConfig.disableConnectorQUIC {
 			address := runtimeConfig.privateUDPListen
 			if address == "" {
 				address = runtimeConfig.listener.Addr().String()
 			}
-			listener, err := muxsession.ListenPrivateQUIC(address, private.TransportTLSConfig(), muxsession.QUICConfig{})
+			listener, err := muxsession.ListenConnectorQUIC(address, private.TransportTLSConfig(), muxsession.QUICConfig{})
 			if err != nil {
 				_ = private.Close()
 				return err
@@ -371,7 +371,7 @@ func (d *daemon) startIngressRuntime(
 		d.start("report private ingress idle coverage", func() error { return usage.Run(ctx) })
 		return nil
 	}
-	ingressConfig.Traffic, ingressConfig.Pending, err = tnldconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
+	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
 	if err != nil {
 		_ = forwarder.Close()
 		return err
@@ -410,7 +410,7 @@ func (d *daemon) startIngressRuntime(
 }
 
 func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (ingress.ControlClient, error) {
-	client, err := newPrivateServiceHTTPClient(base, clusterSecret, dialAddress)
+	client, err := newServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err
 	}

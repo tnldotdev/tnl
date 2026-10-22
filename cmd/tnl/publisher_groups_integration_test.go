@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // this invokes the real CLI once for both identities in one process, against
@@ -84,8 +84,8 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, caName), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: target.Certificate().Raw}), 0600); err != nil {
 			t.Fatal(err)
 		}
-		writeJSON(configuration, map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publishers": map[string]any{"production": map[string]any{}}, "services": map[string]any{
-			"api": map[string]any{"publisher": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": caName}}, "access": map[string]any{"team": true}},
+		writeJSON(configuration, map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publisher_groups": map[string]any{"production": map[string]any{}}, "services": map[string]any{
+			"api": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": caName}}, "access": map[string]any{"team": true}},
 		}}})
 		var result controlv1.AppliedProjectConfiguration
 		if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person, "--output", "json"}), &result); err != nil {
@@ -101,7 +101,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		identities = append(identities, identity)
 		identityPaths = append(identityPaths, path)
 		bindingPath := filepath.Join(t.TempDir(), "binding.json")
-		writeJSON(bindingPath, publisherjob.GroupBinding{Version: 1, Scope: publisherjob.ScopeForGroup(identity)})
+		writeJSON(bindingPath, supervisor.GroupBinding{Version: 1, Scope: supervisor.ScopeForGroup(identity)})
 		bindingPaths = append(bindingPaths, bindingPath)
 	}
 	if identities[0].Member.ProjectKey != identities[1].Member.ProjectKey || identities[0].Member.GroupName != identities[1].Member.GroupName || identities[0].Instance != identities[1].Instance || identities[0].PrivateKey == identities[1].PrivateKey || identities[0].Member.GroupId == identities[1].Member.GroupId {
@@ -134,7 +134,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		})
 		return cancel, done
 	}
-	registry, err := publisherjob.Open(t.Context(), publisherjob.OpenOptions{Root: state, StandaloneGroups: true})
+	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: state, StandaloneGroups: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	current := func(index int) runState {
 		t.Helper()
 		var state runState
-		if err := inspect.QueryRow(t.Context(), `SELECT id,certificate_issuance_id FROM control.private_service_runs WHERE publisher_identity_id=$1 AND private_service_id=$2 AND closed_at IS NULL`, identities[index].Member.PublisherIdentityId, *applied[index].Services[0].ServiceId).Scan(&state.id, &state.issuance); err != nil {
+		if err := inspect.QueryRow(t.Context(), `SELECT id,certificate_issuance_id FROM control.service_runs WHERE publisher_identity_id=$1 AND service_id=$2 AND closed_at IS NULL`, identities[index].Member.PublisherIdentityId, *applied[index].Services[0].ServiceId).Scan(&state.id, &state.issuance); err != nil {
 			t.Fatal(err)
 		}
 		return state
@@ -167,7 +167,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	var visitorAddresses []string
 	var visitorKeys [][]byte
 	for i, team := range teams {
-		service, err := session.Authenticated().Control.GetPrivateService(t.Context(), *applied[i].Services[0].ServiceId)
+		service, err := session.Authenticated().Control.GetService(t.Context(), *applied[i].Services[0].ServiceId)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		case <-time.After(25 * time.Second):
 			t.Fatal("connector was not ready")
 		}
-		client := workflowNativeHTTPClient(t, f, service.ManagedTls.Hostname)
+		client := workflowNativeHTTPClient(t, f, service.Endpoint.Hostname)
 		visitorClients = append(visitorClients, client)
 		visitorAddresses = append(visitorAddresses, address)
 		var visitorKey []byte
@@ -215,7 +215,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 			return response.StatusCode == 200 && string(body) == want && response.TLS != nil && len(response.TLS.PeerCertificates) > 0 && bytes.Equal(response.TLS.PeerCertificates[0].RawSubjectPublicKeyInfo, visitorKeys[index])
 		})
 	}
-	jobA := publisherjob.JobKey(f.url, "group", identities[0].Member.GroupId+":default")
+	jobA := supervisor.JobKey(f.url, "group", identities[0].Member.GroupId+":default")
 	if err := registry.Stop(t.Context(), jobA); err != nil {
 		t.Fatal(err)
 	}

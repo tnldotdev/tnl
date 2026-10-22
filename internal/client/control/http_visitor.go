@@ -1,11 +1,11 @@
-package controlclient
+package control
 
 import (
 	"context"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (c *Client) AuthorizeHTTPVisitor(ctx context.Context, runID string, input controlv1.HTTPVisitorRequest, token credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {

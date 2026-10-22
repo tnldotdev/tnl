@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"encoding/json"
@@ -7,11 +7,11 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
@@ -52,7 +52,7 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) string {
-	return problemtype.Write(response, status, string(code), title, title)
+	return failureproblem.Write(response, status, string(code), title, title)
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

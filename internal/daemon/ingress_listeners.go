@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"errors"
@@ -29,7 +29,7 @@ func listenIngress(address string, ports []tcpport.Range, proxied bool) (net.Lis
 	for _, interval := range ports {
 		for port := interval.First; port <= interval.Last; port++ {
 			if strconv.Itoa(port) == primaryPort {
-				err = errors.New("managed service port overlaps the infrastructure listener")
+				err = errors.New("service port overlaps the infrastructure listener")
 			} else {
 				var listener net.Listener
 				listener, err = net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
@@ -41,7 +41,7 @@ func listenIngress(address string, ports []tcpport.Range, proxied bool) (net.Lis
 				for _, listener := range listeners {
 					_ = listener.Close()
 				}
-				return nil, fmt.Errorf("bind managed service port %d: %w", port, err)
+				return nil, fmt.Errorf("bind service port %d: %w", port, err)
 			}
 		}
 	}

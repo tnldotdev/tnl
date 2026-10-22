@@ -24,7 +24,7 @@ func VocabularyAttributes() []AttributeDefinition {
 		out = append(out, AttributeDefinition{Key: k.key(), Values: slices.Clone(values), Semantics: semantics, DimensionPolicy: policy})
 	}
 	add(ServiceNamespace, PolicyResource, "fixed product namespace", "tnl")
-	add(ServiceName, PolicyResource, "process service, not a tenant or managed service", "tnld", "tnl", "tnl-accounts", "otel-collector")
+	add(ServiceName, PolicyResource, "process service, not a tenant or service", "tnld", "tnl", "tnl-accounts", "otel-collector")
 	add(ServiceVersion, PolicyResource, "binary or deployed application version")
 	add(ServiceInstanceID, PolicyResource, "unique runtime instance; random when unset, never a durable publisher identity")
 	add(Environment, PolicyResource, "operator-declared deployment environment; omitted when unknown")
@@ -35,7 +35,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID} {
 		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive")
 	}
-	add(ServiceKindKey, PolicyScoped, "managed service or public URL; private_service wire value normalizes to managed_service", ManagedService.String(), PublicURL.String())
+	add(ServiceKindKey, PolicyScoped, "service or public URL; service wire value normalizes to service", Service.String(), PublicURL.String())
 	add(Component, PolicyBounded, "component performing this work; independent of process role", "control", "authority", "private_ingress", "private_relay", "ingress", "relay", "publisher", "client", "accounts", "collector")
 	add(ServiceProtocol, PolicyBounded, "service application protocol", "http", "postgres", "mysql", "tcp", "kubernetes")
 	add(targetProvider, PolicyBounded, "publisher target discovery provider", "aws")
@@ -61,8 +61,8 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(ErrorType, PolicyTraceLog, "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, PolicyBounded, "closed per-instrument readiness or state-machine value")
 	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)
-	add(CertificateKind, PolicyBounded, "certificate worker domain", "public_url", "relay", "managed_service", "control", "service_queue")
-	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge")
+	add(CertificateKind, PolicyBounded, "certificate worker domain", "public_url", "relay", "service", "control", "service_queue")
+	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "public_url", "service", "public_url_challenge", "service_challenge", "relay_challenge")
 	add(CleanupKind, PolicyBounded, "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")
 	add(CapacityResource, PolicyBounded, "admission capacity domain", admissionResources...)
 	add(HTTPMethod, PolicyBounded, "standard HTTP method; unknown methods normalize to _OTHER", "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "_OTHER")
@@ -74,7 +74,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash, WorkloadSessionID, WorkloadRunID, WorkloadRunAttempt, WorkloadCheckRunID} {
 		add(k, PolicyTraceLog, "high-churn correlation only; prohibited as a metric dimension")
 	}
-	for _, k := range []attributeKey{connectionClass, providerKey, publicURLPurpose, domainKind, certificatePlan, ingressPool, databasePurpose, signalKey} {
+	for _, k := range []attributeKey{connectionClass, providerKey, publicURLPurpose, domainKind, certificatePlan, ingresspool, databasePurpose, signalKey} {
 		add(k, PolicyBounded, "closed domain value supplied by the owning semantic observer")
 	}
 	slices.SortFunc(out, func(a, b AttributeDefinition) int { return strings.Compare(string(a.Key), string(b.Key)) })

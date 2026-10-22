@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request) {

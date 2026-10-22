@@ -9,18 +9,18 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // ApplicationLimits bounds application requests after visitor access is resolved.
 // zero requests means no lifetime cap; zero rate and concurrency select defaults.
 type ApplicationLimits = applicationlimits.Limits
 
-// ManagedHTTPRequestLimits shares one run's application budget across all
+// ServiceHTTPRequestLimits shares one run's application budget across all
 // visitor connections. private and public HTTP use the same admission counter.
-type ManagedHTTPRequestLimits struct{ admission *applicationAdmission }
+type ServiceHTTPRequestLimits struct{ admission *applicationAdmission }
 
-func NewManagedHTTPRequestLimits(input *controlv1.ProjectHTTPApplicationLimits) (*ManagedHTTPRequestLimits, error) {
+func NewServiceHTTPRequestLimits(input *controlv1.ProjectHTTPApplicationLimits) (*ServiceHTTPRequestLimits, error) {
 	var limits ApplicationLimits
 	if input != nil {
 		if input.Total != nil {
@@ -44,10 +44,10 @@ func NewManagedHTTPRequestLimits(input *controlv1.ProjectHTTPApplicationLimits) 
 	if err != nil {
 		return nil, err
 	}
-	return &ManagedHTTPRequestLimits{admission: admission}, nil
+	return &ServiceHTTPRequestLimits{admission: admission}, nil
 }
 
-func (l *ManagedHTTPRequestLimits) admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
+func (l *ServiceHTTPRequestLimits) admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
 	if l == nil {
 		return func() {}, true
 	}

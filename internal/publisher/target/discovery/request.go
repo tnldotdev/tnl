@@ -1,6 +1,6 @@
 // package targetdiscovery resolves cloud targets in the publisher's credential
 // and network boundary. discovery never retrieves application credentials.
-package targetdiscovery
+package discovery
 
 import (
 	"crypto/sha256"

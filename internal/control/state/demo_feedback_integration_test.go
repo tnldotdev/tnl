@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"encoding/json"
@@ -65,11 +65,11 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 			if _, err := d.GetFeedback(ctx, projectThread.ID); err != nil {
 				t.Fatalf("real feedback removed: %v", err)
 			}
-			route, err := d.GetPublicURLForFeedbackAuthorization(ctx, f.setup.PublicURLID)
-			if err != nil || route.TeamID != f.request.TeamID || route.LifecycleState != PublicURLLifecycleDeleted {
-				t.Fatalf("lost feedback ownership after URL expiry: %+v, %v", route, err)
+			publicURL, err := d.GetPublicURLForFeedbackAuthorization(ctx, f.setup.PublicURLID)
+			if err != nil || publicURL.TeamID != f.request.TeamID || publicURL.LifecycleState != PublicURLLifecycleDeleted {
+				t.Fatalf("lost feedback ownership after URL expiry: %+v, %v", publicURL, err)
 			}
-			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "after-stop", Actor: FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: route.MutationRevision}}, now.Add(10*time.Minute)); err != nil {
+			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "after-stop", Actor: FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: publicURL.MutationRevision}}, now.Add(10*time.Minute)); err != nil {
 				t.Fatalf("retained feedback could not be resolved: %v", err)
 			}
 		})

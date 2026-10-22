@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
@@ -51,10 +51,10 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	}
 	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)
-	if _, err = authorityapi.Register(handler, authorityapi.Config{ControlURL: server.URL}, d); err != nil {
+	if _, err = controlauthority.Register(handler, controlauthority.Config{ControlURL: server.URL}, d); err != nil {
 		t.Fatal(err)
 	}
-	owner, err := controlclient.New(server.URL, server.Client(), session.AccessToken)
+	owner, err := clientcontrol.New(server.URL, server.Client(), session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if anonymous, err := api.CreatePublicURLWithResponse(ctx, &controlv1.CreatePublicURLParams{IdempotencyKey: "anonymous"}, body); err != nil || anonymous.StatusCode() != 401 {
 		t.Fatalf("anonymous pool configuration accepted: %+v %v", anonymous, err)
 	}
-	private, err := owner.CreatePrivateService(ctx, m.TeamID, "database", "database")
+	private, err := owner.CreateService(ctx, m.TeamID, "database", "database")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,11 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateHandler, err := ingressapi.NewHandler(ingressapi.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	connectionHandler, err := controlingress.NewHandler(controlingress.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateServer := httptest.NewTLSServer(privateHandler)
+	privateServer := httptest.NewTLSServer(connectionHandler)
 	t.Cleanup(privateServer.Close)
 	nodeAPI, err := ingressv1.NewClientWithResponses(privateServer.URL, ingressv1.WithHTTPClient(privateServer.Client()))
 	if err != nil {
@@ -120,7 +120,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 			address = "127.0.0.1:9442"
 		}
 		name := "private-ingress.example.test"
-		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8, PrivateConnectorAddress: &address, PrivateConnectorTlsServerName: &name}, nodeAuth)
+		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8, ConnectorAddress: &address, ConnectorTlsServerName: &name}, nodeAuth)
 		if err != nil || registration.JSON200 == nil {
 			t.Fatalf("register private endpoint: %+v %v", registration, err)
 		}
@@ -154,7 +154,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 		if err != nil || strings.Contains(string(encoded), "PRIVATE KEY") || strings.Contains(string(encoded), "private_key") {
 			t.Fatal("visitor endpoint leaked infrastructure private material", err)
 		}
-		if _, err = controlclient.IngressTransportTLSConfig(trust); err != nil {
+		if _, err = clientcontrol.IngressTransportTLSConfig(trust); err != nil {
 			t.Fatal("returned trust cannot verify the exact process", err)
 		}
 	}

@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // VisitorDevice is the protected per-server, per-identity Ed25519 device key.

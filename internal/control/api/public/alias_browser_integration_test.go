@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"crypto/sha256"
@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
@@ -49,7 +49,7 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.mux.Handle("/", api)
-	client, err := controlclient.New(f.server.URL, f.server.Client(), "")
+	client, err := clientcontrol.New(f.server.URL, f.server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +70,8 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.AuthorizeHTTPVisitor(ctx, run.PublishRunID, input, run.PublishRunToken)
-	var problem *controlclient.ProblemError
-	if !errors.As(err, &problem) || problem.Status != 403 || errors.Is(err, controlclient.ErrUnavailable) {
+	var problem *clientcontrol.ProblemError
+	if !errors.As(err, &problem) || problem.Status != 403 || errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatalf("logout must return terminal permission failure: %v", err)
 	}
 }

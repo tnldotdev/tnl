@@ -1,6 +1,6 @@
 // Package devoidc is a local development OIDC provider. it has one explicitly
 // named account and must only listen on a development machine or private stack.
-package devoidc
+package oidc
 
 import (
 	"crypto/rand"

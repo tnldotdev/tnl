@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 var ErrPublisherGroup = errors.New("publisher group lease or enrollment is unavailable")
@@ -83,9 +83,9 @@ func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, proj
 	defer rollback(ctx, tx, "issue publisher group enrollment", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return result, err
 	}
 	if err = SetServiceAuditActor(ctx, tx, actor); err != nil {
@@ -219,9 +219,9 @@ func (d *Database) RevokePublisherGroupMember(ctx context.Context, team, project
 	defer rollback(ctx, tx, "revoke publisher group member", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return publisherLookupError(err, ErrPrivateServiceAccess)
+		return publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return err
 	}
 	if err = SetServiceAuditActor(ctx, tx, actor); err != nil {
@@ -237,8 +237,8 @@ func (d *Database) RevokePublisherGroupMember(ctx context.Context, team, project
 		return err
 	}
 	for _, s := range services {
-		if s.GroupID.String == gid && s.PrivateServiceID.Valid {
-			if err = closeRevokedPrivatePublication(ctx, tx, q, s.PrivateServiceID.String, publisher, "", now); err != nil {
+		if s.GroupID.String == gid && s.ServiceID.Valid {
+			if err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, publisher, "", now); err != nil {
 				return err
 			}
 		}
@@ -284,7 +284,7 @@ func (d *Database) VerifyPublisherGroupIdentity(ctx context.Context, id, group, 
 }
 
 func authorizePublisherGroupAssertion(ctx context.Context, tx pgx.Tx, id, group, assertion, audience string, now time.Time) (result PublisherGroupMember, err error) {
-	kid, err := publisheridentity.KeyID(assertion)
+	kid, err := publisherproof.KeyID(assertion)
 	if err != nil {
 		return result, ErrPublisherGroup
 	}
@@ -300,7 +300,7 @@ func authorizePublisherGroupAssertion(ctx context.Context, tx pgx.Tx, id, group,
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
-	a, err := publisheridentity.Verify(assertion, id, kid, group, audience, public, now)
+	a, err := publisherproof.Verify(assertion, id, kid, group, audience, public, now)
 	if err != nil {
 		return result, ErrPublisherGroup
 	}
@@ -356,7 +356,7 @@ func lockPublisherGroupLease(ctx context.Context, tx pgx.Tx, token string, now t
 	if !strings.HasPrefix(token, "pgl_") {
 		return result, ErrPublisherGroup
 	}
-	digest, err := privateSecretDigest(strings.TrimPrefix(token, "pgl_"))
+	digest, err := serviceSecretDigest(strings.TrimPrefix(token, "pgl_"))
 	if err != nil {
 		return result, ErrPublisherGroup
 	}
@@ -422,9 +422,9 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
 		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
-		if s.PrivateServiceID.Valid {
-			a.ServiceID, a.Kind = s.PrivateServiceID.String, "private_service"
-			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.private_services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
+		if s.ServiceID.Valid {
+			a.ServiceID, a.Kind = s.ServiceID.String, "service"
+			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
 				return result, err
 			}
 		} else {
@@ -489,7 +489,7 @@ func listPublisherGroupMemberStatus(ctx context.Context, tx pgx.Tx, team, projec
 }
 
 func (d *Database) removePublisherGroup(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, group string, now time.Time) error {
-	if err := retireManagedNamespace(ctx, tx, group, now); err != nil {
+	if err := retireServiceNamespace(ctx, tx, group, now); err != nil {
 		return err
 	}
 	// all its service assignments were reconciled first. revoking identities also

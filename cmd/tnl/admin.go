@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type adminCommand struct {
@@ -63,7 +63,7 @@ type adminMaintenanceSetCommand struct {
 }
 
 func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin server status", stderr, func(client *controlclient.Client, server string) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin server status", stderr, func(client *clientcontrol.Client, server string) error {
 		value, err := client.AdminServerStatus(ctx)
 		if err != nil {
 			return err
@@ -86,7 +86,7 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 }
 
 func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays list", stderr, func(client *controlclient.Client, server string) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays list", stderr, func(client *clientcontrol.Client, server string) error {
 		page, err := client.AdminListRelays(ctx)
 		if err != nil {
 			return err
@@ -120,7 +120,7 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 	if command.RelayLeaseRevision < 1 || command.Deadline <= 0 {
 		return failure.Wrap("validate relay drain", failure.InvalidCommand, errors.New("relay lease revision and deadline must be positive"))
 	}
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays drain", stderr, func(client *controlclient.Client, server string) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin relays drain", stderr, func(client *clientcontrol.Client, server string) error {
 		lease, err := client.AdminDrainRelay(ctx, command.RelayID, controlv1.AdminDrainRelayRequest{
 			RelayRunId: command.RelayRunID, RelayLeaseRevision: command.RelayLeaseRevision,
 			Deadline: time.Now().Add(command.Deadline).UTC(),
@@ -141,7 +141,7 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 }
 
 func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCommand, stdout, stderr io.Writer) error {
-	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin maintenance list", stderr, func(client *controlclient.Client, server string) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, "tnl admin maintenance list", stderr, func(client *clientcontrol.Client, server string) error {
 		values, err := client.AdminListMaintenanceControls(ctx)
 		if err != nil {
 			return err
@@ -165,7 +165,7 @@ func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetComm
 		action = "allow"
 	}
 	commandName := "tnl admin maintenance " + action
-	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *controlclient.Client, server string) error {
+	return withRemoteAdminClient(ctx, command.remoteFlags, commandName, stderr, func(client *clientcontrol.Client, server string) error {
 		value, err := client.AdminSetMaintenanceControl(ctx, command.Name, allowed)
 		if err != nil {
 			return err
@@ -176,16 +176,16 @@ func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetComm
 	})
 }
 
-func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command string, diagnostics io.Writer, run func(*controlclient.Client, string) error) error {
+func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command string, diagnostics io.Writer, run func(*clientcontrol.Client, string) error) error {
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
-	if err := clientauth.RequireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+	if err := auth.RequireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
 		return err
 	}
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+	authenticated, err := auth.Authenticate(ctx, auth.Config{
 		ServerEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
 		Diagnostics:          diagnostics,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),

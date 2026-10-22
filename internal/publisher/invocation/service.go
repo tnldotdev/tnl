@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // realize only the selected local service. remote targets and trust sources are
 // never evaluated or applied as a side effect of starting a development app.
 type LocalService struct {
-	Project        projectconfig.Project
+	Project        clientproject.Project
 	Team           TeamSelection
 	Name           string
 	PublicURLID    string
@@ -23,7 +23,7 @@ type LocalService struct {
 	TargetResolver target.TargetResolver
 }
 
-func RealizeLocalService(ctx context.Context, control *controlclient.Client, selected LocalService) (controlv1.LocalProjectService, error) {
+func RealizeLocalService(ctx context.Context, control *clientcontrol.Client, selected LocalService) (controlv1.LocalProjectService, error) {
 	project := projectConfiguration{Project: selected.Project, targetResolver: selected.TargetResolver}
 	current, name, publicURLID := selected.Team, selected.Name, selected.PublicURLID
 	source := project.LocalPublicationIdentity()
@@ -60,7 +60,7 @@ func RealizeLocalService(ctx context.Context, control *controlclient.Client, sel
 	if err != nil {
 		return controlv1.LocalProjectService{}, err
 	}
-	kind := "private_service"
+	kind := "service"
 	if publicURLID != "" {
 		kind = "public_url"
 	}

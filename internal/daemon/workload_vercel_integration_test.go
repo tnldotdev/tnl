@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bufio"
@@ -25,15 +25,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -49,7 +49,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	}
 	issuer := githubtest.NewProvider(t, "https://oidc.vercel.com/acme")
 	opened := make(chan privateObservation, 256)
-	f := newPrivateRuntimeFixtureTiming(t, false, opened, false, func(_ *tnldconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
+	f := newServiceRuntimeFixtureTiming(t, false, opened, false, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
 		base := tr.Clone()
 		t.Cleanup(base.CloseIdleConnections)
 		tr.RegisterProtocol("https", splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -77,7 +77,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, httpProtocol, pgProtocol := "private", controlv1.PrivateHttp, controlv1.Postgres
+	group, httpProtocol, pgProtocol := "private", controlv1.ServiceProtocolHTTP, controlv1.Postgres
 	pgTarget := countedVercelPostgresTarget(t, net.JoinHostPort(pg.Host, strconv.Itoa(int(pg.Port))), &targets)
 	policies := map[string]controlv1.ProjectWorkload{"function": {
 		Provider: controlv1.WorkloadVercel,
@@ -86,9 +86,9 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
 		TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),
-		Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
-			"api":      {Publisher: &group, Protocol: &httpProtocol, Target: target.URL},
-			"database": {Publisher: &group, Protocol: &pgProtocol, Target: pgTarget},
+		Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
+			"api":      {PublisherGroup: &group, Protocol: &httpProtocol, Target: target.URL},
+			"database": {PublisherGroup: &group, Protocol: &pgProtocol, Target: pgTarget},
 		}, Webhooks: map[string]controlv1.ProjectWebhook{}},
 	})
 	if err != nil {
@@ -138,7 +138,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 		return nil
 	}
 	front := httptest.NewUnstartedServer(proxy)
-	front.TLS = privateRuntimeTLS(t, f.certificateAuthority, "localhost")
+	front.TLS = serviceRuntimeTLS(t, f.certificateAuthority, "localhost")
 	front.StartTLS()
 	t.Cleanup(front.Close)
 	server := strings.Replace(front.URL, "127.0.0.1", "localhost", 1)
@@ -158,7 +158,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	buildDir := t.TempDir()
 	manifest, err := workloadmanifest.Generate(config.TNL{Server: &server, Team: &f.identity.teamID, Services: config.Services{
 		"api": {Protocol: new("http")}, "database": {Protocol: new("postgres")},
-	}, Workloads: map[string]config.Workload{"function": {Provider: "vercel", Services: []string{"api", "database"}, MaxDuration: new(config.Duration(180 * time.Second))}}}, projectconfig.SourceIdentity{Key: "workload", Fingerprint: strings.Repeat("a", 64), Label: "artifact"})
+	}, Workloads: map[string]config.Workload{"function": {Provider: "vercel", Services: []string{"api", "database"}, MaxDuration: new(config.Duration(180 * time.Second))}}}, clientproject.SourceIdentity{Key: "workload", Fingerprint: strings.Repeat("a", 64), Label: "artifact"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 			slices.Sort(names)
 			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": len(sessions), "prepared": names, "targets": targets.Load(), "calls": calls})
 		case "/revoke":
-			client, err := authorityclient.New(f.controlConfig.ControlOrigin(), f.publicHTTP, "")
+			client, err := clientauthority.New(f.controlConfig.ControlOrigin(), f.publicHTTP, "")
 			if err == nil {
 				for _, session := range sessions {
 					if err = client.RevokeWorkloadSession(r.Context(), session.Id, session.Credential); err != nil {
@@ -255,7 +255,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 		if o.header.Connector == nil || o.header.Connector.Subject.Kind != tunnelv1.VisitorWorkloadSession {
 			t.Fatal("artifact bytes bypassed workload connector admission")
 		}
-		seen[services[o.header.PrivateServiceID]] = true
+		seen[services[o.header.ServiceID]] = true
 	}
 	if !seen["api"] || !seen["database"] {
 		t.Fatal("missing real ingress/relay/publisher evidence", seen)

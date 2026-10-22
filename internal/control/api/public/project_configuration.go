@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type ProjectConfigurationStore interface {
@@ -27,11 +27,11 @@ func projectConfigurationProblem(w http.ResponseWriter, operation string, err er
 		writeProblem(w, 409, controlv1.Conflict, "project configuration changed; read the current revision and apply again")
 	case errors.Is(err, controlstate.ErrProjectSourceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "project label belongs to another source; select a different project label")
-	case errors.Is(err, controlstate.ErrManagedPortsExhausted):
+	case errors.Is(err, controlstate.ErrServicePortsExhausted):
 		writeProblem(w, 503, controlv1.PlacementUnavailable, "ingress pool has no available service port; ask the operator to extend its service port inventory")
-	case errors.Is(err, controlstate.ErrPrivateServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
+	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
 		writeProblem(w, 409, controlv1.Conflict, "a declared service name or public hostname is already in use")
-	case errors.Is(err, controlstate.ErrPrivateServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess):
+	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "project configuration requires current team manager access")
 	case errors.Is(err, controlstate.ErrPublisherGroup):
 		writeBearerProblem(w)

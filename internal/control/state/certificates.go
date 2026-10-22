@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -55,9 +55,9 @@ type CertificateIssuance struct {
 	PublishRunID        string
 	PublicURLID         string
 	PublishRunNumber    uint64
-	PrivateRunID        string
-	PrivateServiceID    string
-	PrivateRunNumber    uint64
+	ServiceRunID        string
+	ServiceID           string
+	ServiceRunNumber    uint64
 	PublisherIdentityID string
 	CertificatePlan     CertificatePlan
 	State               ACMEOrderState
@@ -377,7 +377,7 @@ func loadCertificateIssuance(
 	}
 	result := CertificateIssuance{
 		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
-		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
+		ServiceRunID: order.ServiceRunID, ServiceID: order.ServiceID, ServiceRunNumber: uint64(order.ServiceRunNumber),
 		PublishRunNumber: uint64(order.PublishRunNumber), CertificatePlan: CertificatePlan{
 			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
 			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: method,

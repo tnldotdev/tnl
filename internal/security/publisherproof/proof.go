@@ -1,6 +1,6 @@
 // package publisheridentity owns publisher-held Ed25519 proofs. control owns
 // the live grants, short-lived access tokens, and replay exclusion.
-package publisheridentity
+package publisherproof
 
 import (
 	"crypto/ed25519"

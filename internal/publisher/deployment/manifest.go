@@ -1,6 +1,6 @@
 // package publisherdeployment owns offline publisher deployment artifacts and
 // the nonsecret parameter contract consumed by identity bootstrap tooling.
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"maps"
 	"slices"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -45,7 +45,7 @@ type Manifest struct {
 	SourceFingerprint   string      `json:"source_fingerprint"`
 	DocumentationPath   string      `json:"documentation_path"`
 	DocumentationSHA256 string      `json:"documentation_sha256"`
-	Publishers          []Publisher `json:"publishers"`
+	PublisherGroups     []Publisher `json:"publisher_groups"`
 	DeclarationsSHA256  string      `json:"declarations_sha256,omitempty"`
 	WorkloadsSHA256     string      `json:"workloads_sha256,omitempty"`
 }
@@ -110,8 +110,8 @@ func encode(value any) ([]byte, error) {
 
 // Generate uses declared capacity, cloud resource selectors, and stable source
 // identity. discovered addresses, sessions, and checkout paths are not serialized.
-func Generate(configuration config.TNL, source projectconfig.SourceIdentity, declarations ...[]byte) (Bundle, error) {
-	result := Bundle{Manifest: Manifest{SchemaVersion: SchemaVersion, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Publishers: []Publisher{}}, Files: map[string][]byte{}}
+func Generate(configuration config.TNL, source clientproject.SourceIdentity, declarations ...[]byte) (Bundle, error) {
+	result := Bundle{Manifest: Manifest{SchemaVersion: SchemaVersion, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, PublisherGroups: []Publisher{}}, Files: map[string][]byte{}}
 	result.Manifest.DocumentationPath, result.Manifest.DocumentationSHA256 = DocumentationPath, digest(instructions)
 	result.Files[DocumentationPath] = bytes.Clone(instructions)
 	if err := config.ValidateTNL(configuration); err != nil {
@@ -125,15 +125,15 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity, dec
 		result.Files[workloadmanifest.Filename] = data
 		result.Manifest.WorkloadsSHA256 = digest(data)
 	}
-	for _, name := range slices.Sorted(maps.Keys(configuration.Publishers)) {
-		aws := configuration.Publishers[name].AWS
+	for _, name := range slices.Sorted(maps.Keys(configuration.PublisherGroups)) {
+		aws := configuration.PublisherGroups[name].AWS
 		if aws == nil {
 			continue
 		}
 		p := Publisher{Name: name, Provider: "aws", TemplatePath: "aws/" + name + ".yaml", ParametersExamplePath: "aws/" + name + ".parameters.example.json"}
 		targets := map[string]*config.ServiceTarget{}
 		for serviceName, service := range configuration.Services {
-			if config.PublisherName(service) == name && (config.TargetType(service) == "eks" || config.TargetType(service) == "rds") {
+			if config.PublisherGroupName(service) == name && (config.TargetType(service) == "eks" || config.TargetType(service) == "rds") {
 				targets[serviceName] = service.Target
 			}
 		}
@@ -157,7 +157,7 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity, dec
 		result.Files[p.TemplatePath], result.Files[p.ParametersExamplePath] = template, example
 		p.StoragePolicyPath, p.StoragePolicySHA256 = "aws/"+name+".storage-policy.json", digest(StoragePolicy())
 		result.Files[p.StoragePolicyPath] = StoragePolicy()
-		result.Manifest.Publishers = append(result.Manifest.Publishers, p)
+		result.Manifest.PublisherGroups = append(result.Manifest.PublisherGroups, p)
 	}
 	if len(declarations) != 0 {
 		result.Files["project.d.ts"] = bytes.Clone(declarations[0])
@@ -182,11 +182,11 @@ func (m Manifest) Validate() error {
 	if m.WorkloadsSHA256 != "" && !validHash(m.WorkloadsSHA256) {
 		return errors.New("invalid workload manifest digest")
 	}
-	if m.SchemaVersion != SchemaVersion || (len(m.Publishers) != 0 || m.ProjectKey != "" || m.SourceFingerprint != "") && (!naming.ValidProjectKey(m.ProjectKey) || !validHash(m.SourceFingerprint)) || m.DocumentationPath != DocumentationPath || !validHash(m.DocumentationSHA256) || m.Publishers == nil || len(m.Publishers) > 32 || m.DeclarationsSHA256 != "" && !validHash(m.DeclarationsSHA256) {
+	if m.SchemaVersion != SchemaVersion || (len(m.PublisherGroups) != 0 || m.ProjectKey != "" || m.SourceFingerprint != "") && (!naming.ValidProjectKey(m.ProjectKey) || !validHash(m.SourceFingerprint)) || m.DocumentationPath != DocumentationPath || !validHash(m.DocumentationSHA256) || m.PublisherGroups == nil || len(m.PublisherGroups) > 32 || m.DeclarationsSHA256 != "" && !validHash(m.DeclarationsSHA256) {
 		return errors.New("invalid publisher manifest version or source identity")
 	}
 	last := ""
-	for _, p := range m.Publishers {
+	for _, p := range m.PublisherGroups {
 		if p.StoragePolicyPath != "aws/"+p.Name+".storage-policy.json" || !validHash(p.StoragePolicySHA256) {
 			return errors.New("invalid publisher storage policy artifact")
 		}
@@ -207,7 +207,7 @@ func (m Manifest) FindPublisher(name string) (Publisher, error) {
 	if err := m.Validate(); err != nil {
 		return Publisher{}, err
 	}
-	for _, p := range m.Publishers {
+	for _, p := range m.PublisherGroups {
 		if p.Name == name {
 			return p, nil
 		}
@@ -217,7 +217,7 @@ func (m Manifest) FindPublisher(name string) (Publisher, error) {
 
 // Validate checks both saved artifact hashes and current evaluated configuration.
 // bootstrap must call this before using any manifest identity references.
-func Validate(outputDir string, configuration config.TNL, source projectconfig.SourceIdentity) (Manifest, error) {
+func Validate(outputDir string, configuration config.TNL, source clientproject.SourceIdentity) (Manifest, error) {
 	m, err := Read(outputDir)
 	if err != nil {
 		return m, err

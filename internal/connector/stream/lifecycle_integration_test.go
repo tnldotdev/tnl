@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"bytes"
@@ -23,28 +23,28 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type lifecycleDatabaseFixture struct {
 	database       *controlstate.Database
 	inspect        *sql.DB
-	client         *controlclient.Client
-	authority      *authorityclient.Client
+	client         *clientcontrol.Client
+	authority      *clientauthority.Client
 	profile        *clientstate.Store
 	identity, team string
-	service        controlv1.PrivateService
+	service        controlv1.Service
 }
 
 func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWriter, *http.Request, http.Handler)) *lifecycleDatabaseFixture {
@@ -69,7 +69,7 @@ func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWrite
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := controlapi.NewHandler(controlapi.Config{}, database, database, nil)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{}, database, database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,14 +81,14 @@ func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWrite
 		}
 	}))
 	t.Cleanup(server.Close)
-	if _, err := authorityapi.Register(handler, authorityapi.Config{ControlURL: server.URL}, database); err != nil {
+	if _, err := controlauthority.Register(handler, controlauthority.Config{ControlURL: server.URL}, database); err != nil {
 		t.Fatal(err)
 	}
-	client, err := controlclient.New(server.URL, server.Client(), session.AccessToken)
+	client, err := clientcontrol.New(server.URL, server.Client(), session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(server.URL, server.Client(), session.AccessToken)
+	authority, err := clientauthority.New(server.URL, server.Client(), session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWrite
 		t.Fatal(err)
 	}
 	team := session.Identity.Memberships[0].TeamID
-	service, err := client.CreatePrivateService(ctx, team, "database", "database")
+	service, err := client.CreateService(ctx, team, "database", "database")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +112,13 @@ func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWrite
 func (f *lifecycleDatabaseFixture) reservations(t *testing.T) int {
 	t.Helper()
 	var count int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.private_connector_sessions WHERE revoked_at IS NULL AND expires_at>now()`).Scan(&count); err != nil {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_sessions WHERE revoked_at IS NULL AND expires_at>now()`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
 }
 
-func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T) {
+func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	var failTrust atomic.Bool
 	var trustCalls atomic.Int64
 	var pairCalls atomic.Int64
@@ -139,7 +139,7 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	leases := make(map[string]controlstate.IngressLeaseIdentity)
 	for i, id := range []string{"ingress-a", "ingress-b"} {
 		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
-			ConnectionCapacity: 1, PrivateConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+i), PrivateConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
+			ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+i), ConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,14 +151,14 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	}
 	adapter := control.(*controlAdapter)
 	t.Cleanup(func() { _ = adapter.Close() })
-	device, err := adapter.PrivateConnectorSigner(t.Context(), f.identity)
+	device, err := adapter.ConnectorSigner(t.Context(), f.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// a pending sibling occupies its ingress's entire capacity. repeated
 	// failure must reserve only the requested slot on the other ingress.
 	for range 8 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, controlclient.ErrUnavailable) {
+		if _, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("trust failure: %v", err)
 		}
 		if count := f.reservations(t); count != 1 {
@@ -170,20 +170,20 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	pending := adapter.pairs[assignmentKey{f.service.Id, device.Subject.DeviceID}].pending[1]
 	pending.ExpiresAt = time.Now().Add(-time.Second)
 	adapter.mu.Unlock()
-	if _, err := f.inspect.ExecContext(t.Context(), `UPDATE control.private_connector_sessions SET created_at=now()-interval '2 minutes',expires_at=now()-interval '1 second' WHERE id=$1`, pending.ConnectorSessionId); err != nil {
+	if _, err := f.inspect.ExecContext(t.Context(), `UPDATE control.connector_sessions SET created_at=now()-interval '2 minutes',expires_at=now()-interval '1 second' WHERE id=$1`, pending.ConnectorSessionId); err != nil {
 		t.Fatal(err)
 	}
 	failTrust.Store(false)
-	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
+	healthy, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var revoked bool
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.private_connector_sessions WHERE id=$1`, pending.ConnectorSessionId).Scan(&revoked); err != nil || !revoked {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, pending.ConnectorSessionId).Scan(&revoked); err != nil || !revoked {
 		t.Fatalf("expired pending assignment not released: %v", err)
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: f.service.Id, SessionID: healthy.SessionID,
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: f.service.Id, SessionID: healthy.SessionID,
 		Credential: healthy.Credential, Subject: device.Subject, Nonce: nonce}
 	digest, _ := hello.Claim().Digest()
 	hello.Signature = device.Sign(digest)
@@ -197,13 +197,13 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 		t.Fatalf("expected ingress-a to be full: %s", healthy.IngressID)
 	}
 	var createdOnHealthy int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.private_connector_sessions WHERE assigned_ingress_id=$1`, healthy.IngressID).Scan(&createdOnHealthy); err != nil {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_sessions WHERE assigned_ingress_id=$1`, healthy.IngressID).Scan(&createdOnHealthy); err != nil {
 		t.Fatal(err)
 	}
 	failTrust.Store(true)
 	for range 8 {
 		before := trustCalls.Load()
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, controlclient.ErrUnavailable) {
+		if _, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("renewal failed before trust lookup: %v", err)
 		}
 		if trustCalls.Load() != before+1 {
@@ -212,11 +212,11 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 		if count := f.reservations(t); count != 1 {
 			t.Fatalf("failed renewal leaked reservations: %d", count)
 		}
-		if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.private_connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&revoked); err != nil || revoked {
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&revoked); err != nil || revoked {
 			t.Fatalf("healthy sibling revoked during recovery: %v", err)
 		}
 		var count int
-		if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.private_connector_sessions WHERE assigned_ingress_id=$1`, healthy.IngressID).Scan(&count); err != nil || count != createdOnHealthy {
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_sessions WHERE assigned_ingress_id=$1`, healthy.IngressID).Scan(&count); err != nil || count != createdOnHealthy {
 			t.Fatalf("refresh allocated an unused healthy-ingress reservation: before=%d after=%d err=%v", createdOnHealthy, count, err)
 		}
 	}
@@ -224,7 +224,7 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 		t.Fatalf("refresh allocated %d startup pairs", pairCalls.Load())
 	}
 	failTrust.Store(false)
-	recovered, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
+	recovered, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,16 +238,16 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[recovered.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[recovered.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[recovered.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("recovered credential was not single-use: %v", err)
 	}
-	if err := adapter.ReleasePrivateConnectorAssignment(t.Context(), recovered.SessionID); err != nil {
+	if err := adapter.ReleaseConnectorAssignment(t.Context(), recovered.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	if f.reservations(t) != 1 {
 		t.Fatal("closing recovered slot revoked the healthy sibling")
 	}
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.private_connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&revoked); err != nil || revoked {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&revoked); err != nil || revoked {
 		t.Fatalf("closing recovered slot revoked its healthy sibling: %v", err)
 	}
 	if err := adapter.Close(); err != nil {
@@ -274,7 +274,7 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	done := make(chan error, 1)
 	before := trustCalls.Load()
 	go func() {
-		done <- Serve(ctx, listener, Config{Control: runner, PrivateServiceID: f.service.Id, IdentityID: f.identity, Protocol: "tcp", TrustRevision: 1, ManagedTLS: f.service.ManagedTls, ServiceTLS: &tls.Config{MinVersion: tls.VersionTLS12}})
+		done <- Serve(ctx, listener, Config{Control: runner, ServiceID: f.service.Id, IdentityID: f.identity, Protocol: "tcp", TrustRevision: 1, Endpoint: f.service.Endpoint, ServiceTLS: &tls.Config{MinVersion: tls.VersionTLS12}})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for trustCalls.Load() < before+4 && time.Now().Before(deadline) {
@@ -349,7 +349,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 		}
 		leases[id] = lease.RelayLeaseIdentity
 	}
-	enrollment, err := f.client.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: f.team, PrivateServiceId: &f.service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "publisher"})
+	enrollment, err := f.client.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: f.team, ServiceId: &f.service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "publisher"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,9 +368,9 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var prep controlv1.PrivateServiceRunPreparation
+	var prep controlv1.ServiceRunPreparation
 	for attempt := range 4 {
-		prep, err = f.client.PreparePrivateServiceRun(t.Context(), f.service.Id, "stable-preparation", token)
+		prep, err = f.client.PrepareServiceRun(t.Context(), f.service.Id, "stable-preparation", token, controlv1.ServiceRunDeclaration{Protocol: controlv1.Tcp, TrustRevision: 1})
 		if err == nil {
 			break
 		}
@@ -378,9 +378,9 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	var setup controlv1.PrivateServiceRunSetup
+	var setup controlv1.ServiceRunSetup
 	for attempt := range 4 {
-		setup, err = f.client.StartManagedServiceRun(t.Context(), f.service.Id, prep.PrivateRunId, token, prep.RunNumber)
+		setup, err = f.client.StartServiceRun(t.Context(), f.service.Id, prep.ServiceRunId, token, prep.RunNumber)
 		if err == nil {
 			break
 		}
@@ -388,11 +388,11 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != f.service.ManagedTls.Hostname || prep.ServicePort != f.service.ManagedTls.Port {
+	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != f.service.Endpoint.Hostname || prep.ServicePort != f.service.Endpoint.Port {
 		t.Fatal("recovery changed endpoint or assignments")
 	}
 	var runs, number int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),max(run_number) FROM control.private_service_runs WHERE private_service_id=$1`, f.service.Id).Scan(&runs, &number); err != nil || runs != 1 || number != 1 {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),max(run_number) FROM control.service_runs WHERE service_id=$1`, f.service.Id).Scan(&runs, &number); err != nil || runs != 1 || number != 1 {
 		t.Fatalf("recovery created another run: runs=%d number=%d err=%v", runs, number, err)
 	}
 	mu.Lock()
@@ -412,7 +412,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 			t.Fatal("start retry replaced its prepared run")
 		}
 	}
-	var bound controlv1.StartManagedServiceRunJSONRequestBody
+	var bound controlv1.StartServiceRunJSONRequestBody
 	if err := json.Unmarshal(bodies[0], &bound); err != nil || bound.RunNumber != prep.RunNumber {
 		t.Fatal("PostgreSQL did not retain the recovered run", err)
 	}
@@ -420,10 +420,10 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	// permanent result, rather than treating every conflict as response loss.
 	conflict, stopConflict := context.WithTimeout(t.Context(), time.Second)
 	defer stopConflict()
-	if _, err := f.client.PreparePrivateServiceRun(conflict, f.service.Id, "different-invocation", token); !errors.Is(err, controlclient.ErrStatusConflict) {
+	if _, err := f.client.PrepareServiceRun(conflict, f.service.Id, "different-invocation", token, controlv1.ServiceRunDeclaration{Protocol: controlv1.Tcp, TrustRevision: 1}); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatalf("a distinct preparation did not return its permanent conflict: %v", err)
 	}
-	if err := f.client.ClosePrivateServiceRun(t.Context(), f.service.Id, setup.PrivateRunId, credentials.ManagedRunToken(setup.RunToken)); err != nil {
+	if err := f.client.CloseServiceRun(t.Context(), f.service.Id, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken)); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,11 +1,11 @@
-package controlclient
+package control
 
 import (
 	"context"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // CreatePublisherRunWithTraffic preserves the publisher proof boundary while

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -171,13 +171,13 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_policy_rotation")
 	request := oidcRouteRequest(t, database, now)
 	request.AllowedIPPrefixes = []string{"192.0.2.0/24"}
-	route, err := database.CreatePublicURL(t.Context(), request, now)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var oldPolicyCipher, oldHashes []byte
 	if err := database.pool.QueryRow(t.Context(), `SELECT allowed_ip_policy_ciphertext, allowed_ip_hashes
-		FROM control.public_urls WHERE id=$1`, route.ID).Scan(&oldPolicyCipher, &oldHashes); err != nil {
+		FROM control.public_urls WHERE id=$1`, publicURL.ID).Scan(&oldPolicyCipher, &oldHashes); err != nil {
 		t.Fatal(err)
 	}
 	var entries []ippolicy.Entry
@@ -186,8 +186,8 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 	}
 	oldKeyID := database.storageKey.CurrentID()
 	projection := IngressRoutingTableProjection{
-		PublicURLID: route.ID, PublishRunID: "pr_rotation", PublishRunNumber: 1,
-		CanonicalHostname: route.CanonicalHostname, PolicyRevision: 1, IPPolicy: IPPolicyHashedAllowlist,
+		PublicURLID: publicURL.ID, PublishRunID: "pr_rotation", PublishRunNumber: 1,
+		CanonicalHostname: publicURL.CanonicalHostname, PolicyRevision: 1, IPPolicy: IPPolicyHashedAllowlist,
 		AllowedIPHashes: entries, IPPolicyKeyID: oldKeyID, PublicUrlExpiresAt: now.Add(time.Hour),
 	}
 	payload, err := json.Marshal(projection)
@@ -198,7 +198,7 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 		(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision,
 		projection, policy_ciphertext, policy_storage_key_id, public_url_expires_at, created_at)
 		VALUES ('public_url_upsert', $1, 1, $2, 1, $3, $4, $5, $6, $7)`,
-		route.ID, route.CanonicalHostname, payload, oldPolicyCipher, oldKeyID, now.Add(time.Hour), now); err != nil {
+		publicURL.ID, publicURL.CanonicalHostname, payload, oldPolicyCipher, oldKeyID, now.Add(time.Hour), now); err != nil {
 		t.Fatal(err)
 	}
 	database.Close()
@@ -216,21 +216,21 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(reopened.Close)
-	loaded, err := reopened.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID)
+	loaded, err := reopened.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID)
 	if err != nil || len(loaded.AllowedIPPrefixes) != 1 || loaded.AllowedIPPrefixes[0].String() != "192.0.2.0/24" {
 		t.Fatalf("rotated route policy = %+v, %v", loaded, err)
 	}
 	var rotatedCiphertext []byte
 	var rotatedKeyID string
 	if err := reopened.pool.QueryRow(t.Context(), `SELECT policy_ciphertext, policy_storage_key_id
-		FROM control.ingress_routing_table_events WHERE public_url_id=$1`, route.ID).Scan(&rotatedCiphertext, &rotatedKeyID); err != nil {
+		FROM control.ingress_routing_table_events WHERE public_url_id=$1`, publicURL.ID).Scan(&rotatedCiphertext, &rotatedKeyID); err != nil {
 		t.Fatal(err)
 	}
 	if rotatedKeyID != reopened.storageKey.CurrentID() || bytes.Equal(rotatedCiphertext, oldPolicyCipher) {
 		t.Fatal("routing event kept old encrypted policy material")
 	}
-	event, err := reopened.ingressRoutingTableEvent(1, "public_url_upsert", route.ID, 1,
-		route.CanonicalHostname, 1, payload, rotatedCiphertext, pgtype.Text{String: rotatedKeyID, Valid: true},
+	event, err := reopened.ingressRoutingTableEvent(1, "public_url_upsert", publicURL.ID, 1,
+		publicURL.CanonicalHostname, 1, payload, rotatedCiphertext, pgtype.Text{String: rotatedKeyID, Valid: true},
 		pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}, pgtype.Timestamptz{Time: now, Valid: true})
 	if err != nil {
 		t.Fatal(err)

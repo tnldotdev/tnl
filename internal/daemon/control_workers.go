@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -10,21 +10,21 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/tnldotdev/tnl/internal/control/certificates"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
-	emaildelivery "github.com/tnldotdev/tnl/internal/control/email"
+	"github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/email"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	publicurlusageworker "github.com/tnldotdev/tnl/internal/control/usage"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/control/usage"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type dnsBackend interface {
-	dnscontroller.Provider
-	dnscontroller.ChallengeProvider
-	dnscontroller.DNSVerifier
-	dnscontroller.ChallengeVerifier
+	dns.Provider
+	dns.ChallengeProvider
+	dns.DNSVerifier
+	dns.ChallengeVerifier
 }
 
 // startControlWorkers opens control's durable state and starts its background
@@ -32,7 +32,7 @@ type dnsBackend interface {
 // later initialization step fails.
 func (d *daemon) startControlWorkers(
 	ctx, lifetime context.Context,
-	cfg tnldconfig.Config,
+	cfg daemonconfig.Config,
 	acmeHTTPClient *http.Client,
 	metrics *observability.Metrics,
 ) error {
@@ -72,16 +72,16 @@ func (d *daemon) startControlWorkers(
 		log.Printf("stored secrets re-encrypted with the current storage key")
 	}
 	var dnsProvider interface {
-		dnscontroller.Provider
-		dnscontroller.ChallengeProvider
+		dns.Provider
+		dns.ChallengeProvider
 	}
 	var dnsVerifier interface {
-		dnscontroller.DNSVerifier
-		dnscontroller.ChallengeVerifier
+		dns.DNSVerifier
+		dns.ChallengeVerifier
 	}
 	var routeDNSChallenges certificates.PublicURLDNSChallenges
 	var relayDNSChallenges certificates.RelayDNSChallenges
-	dnsConfig := dnscontroller.Config{
+	dnsConfig := dns.Config{
 		ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID,
 		IngressIPv4Addresses: cfg.IngressIPv4Addresses, IngressIPv6Addresses: cfg.IngressIPv6Addresses,
 		Observer: metrics,
@@ -95,23 +95,23 @@ func (d *daemon) startControlWorkers(
 				return fmt.Errorf("load Route 53 configuration: %w", err)
 			}
 			d.route53Credentials = awsConfig.Credentials
-			dnsProvider, err = dnscontroller.NewRoute53Provider(route53.NewFromConfig(awsConfig))
+			dnsProvider, err = dns.NewRoute53Provider(route53.NewFromConfig(awsConfig))
 			if err != nil {
 				return err
 			}
-			dnsVerifier, err = dnscontroller.NewAuthoritativeVerifier(cfg.DNSServer)
+			dnsVerifier, err = dns.NewAuthoritativeVerifier(cfg.DNSServer)
 			if err != nil {
 				return err
 			}
 		}
 		if cfg.DNSAutomationEnabled() {
-			routeDNSChallenges, err = dnscontroller.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
+			routeDNSChallenges, err = dns.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
 			if err != nil {
 				return err
 			}
 		}
 		if cfg.RelayCertificateAutomationEnabled() {
-			manager, err := dnscontroller.NewRelayChallengeManager(
+			manager, err := dns.NewRelayChallengeManager(
 				database, dnsProvider, dnsVerifier, cfg.ServerDomain, cfg.Route53ServerZoneID,
 			)
 			if err != nil {
@@ -163,7 +163,7 @@ func (d *daemon) startControlWorkers(
 			d.start("run relay certificate worker", func() error { return relayWorker.Run(lifetime) })
 		}
 	}
-	if cfg.Role == tnldconfig.RoleControl {
+	if cfg.Role == daemonconfig.RoleControl {
 		d.controlTLS, err = staticServerTLS(cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile)
 		if err != nil {
 			return err
@@ -174,7 +174,7 @@ func (d *daemon) startControlWorkers(
 		if err != nil {
 			return fmt.Errorf("create public URL usage worker identity: %w", err)
 		}
-		worker, err := publicurlusageworker.New(database, publicurlusageworker.Config{
+		worker, err := usage.New(database, usage.Config{
 			WorkerID: workerID, Endpoint: cfg.PublicURLUsageURL, Token: cfg.PublicURLUsageToken,
 			Observer: metrics,
 		})
@@ -184,7 +184,7 @@ func (d *daemon) startControlWorkers(
 		d.start("run public URL usage worker", func() error { return worker.Run(lifetime) })
 	}
 	if cfg.EmailURL != "" {
-		worker, err := emaildelivery.New(database, cfg.EmailURL, cfg.WebhookSecret, nil)
+		worker, err := email.New(database, cfg.EmailURL, cfg.WebhookSecret, nil)
 		if err != nil {
 			return err
 		}
@@ -196,7 +196,7 @@ func (d *daemon) startControlWorkers(
 			return fmt.Errorf("create DNS worker identity: %w", err)
 		}
 		dnsConfig.WorkerID = workerID
-		worker, err := dnscontroller.New(database, dnsProvider, dnsVerifier, dnsConfig)
+		worker, err := dns.New(database, dnsProvider, dnsVerifier, dnsConfig)
 		if err != nil {
 			return err
 		}

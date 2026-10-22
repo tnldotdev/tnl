@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -15,15 +15,15 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func redirectIntegrationConnector(address string, connector muxsession.Connector) muxsession.Connector {
@@ -132,8 +132,8 @@ type integrationPublishingIdentity struct {
 	controlOrigin, hostname, teamID, domainID, membershipID string
 	policyRevision                                          uint64
 	state                                                   *clientstate.Store
-	routes                                                  *controlclient.Client
-	authority                                               *authorityclient.Client
+	routes                                                  *clientcontrol.Client
+	authority                                               *clientauthority.Client
 	certificatePlan                                         controlv1.CertificatePlan
 	publicURLScope                                          controlv1.PublicURLScope
 }
@@ -156,7 +156,7 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	}
 	owner.cleanupResource(t, func() { _ = stateDatabase.Close() })
 	saveRuntimeOIDCSession(t, stateDatabase, controlOrigin, owner.databaseURL, owner.managedDomain)
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+	authenticated, err := auth.Authenticate(ctx, auth.Config{
 		ServerEndpoint: controlOrigin, State: stateDatabase, HTTPClient: controlHTTP, Diagnostics: io.Discard,
 	})
 	if err != nil {
@@ -209,9 +209,9 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 // the fixture retains a control session only until the selected saved URL and
 // its native publisher are prepared, before the runtime acquires identity locks.
 type integrationScopedRunControl struct {
-	*controlclient.Client
+	*clientcontrol.Client
 	state     *clientstate.Store
-	authority *authorityclient.Client
+	authority *clientauthority.Client
 }
 
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
@@ -243,14 +243,14 @@ func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (
 	if bootstrap != nil {
 		prepare, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		route, err := bootstrap.GetPublicURLByHostname(prepare, config.TeamID, config.Hostname)
-		if errors.Is(err, controlclient.ErrNotFound) {
+		publicURL, err := bootstrap.GetPublicURLByHostname(prepare, config.TeamID, config.Hostname)
+		if errors.Is(err, clientcontrol.ErrNotFound) {
 			mode := config.AccessMode
 			if mode == "" {
 				mode = controlv1.Anonymous
 			}
 			target := config.Target
-			if config.PreserveSavedURLTarget {
+			if config.PreserveSavedPublicURLTarget {
 				target = ""
 			}
 			body := controlv1.CreatePublicURLRequest{TeamId: config.TeamID, DomainId: config.DomainID,
@@ -260,16 +260,16 @@ func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (
 			if config.PublicURLScope == controlv1.Member {
 				body.MembershipId = &config.MembershipID
 			}
-			route, err = bootstrap.CreatePublicURL(prepare, body, "fixture-"+config.Hostname)
+			publicURL, err = bootstrap.CreatePublicURL(prepare, body, "fixture-"+config.Hostname)
 		}
 		if err != nil {
 			return config, fmt.Errorf("prepare saved public URL: %w", err)
 		}
-		native, identity, err := nativeauth.EnsureOwner(prepare, bootstrap.state, bootstrap.Client, bootstrap.authority, route)
+		native, identity, err := publisheridentity.EnsureOwner(prepare, bootstrap.state, bootstrap.Client, bootstrap.authority, publicURL)
 		if err != nil {
 			return config, fmt.Errorf("prepare enrolled public publisher: %w", err)
 		}
-		config.Control, config.PublisherID = native, identity.ClientId
+		config.Control, config.PublisherIdentityID = native, identity.ClientId
 		if observed != nil {
 			observed.Native = native
 			config.Control = observed

@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
@@ -44,10 +44,10 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 		t.Fatal("fixture must exercise a valid nearly-32-KiB CA bundle", len(bundle))
 	}
 	digest := sha256.Sum256([]byte("database.internal\x00pem\x00" + bundle))
-	metadata := controlstate.PrivateServiceMetadata{Protocol: "postgres", TLS: &controlstate.PrivateServiceTLS{Hostname: "database.internal", PEM: bundle, Digest: hex.EncodeToString(digest[:])}}
+	metadata := controlstate.ServiceMetadata{Protocol: "postgres", TLS: &controlstate.ServiceTargetTLS{Hostname: "database.internal", PEM: bundle, Digest: hex.EncodeToString(digest[:])}}
 	var exact string
 	for i := range 101 {
-		s, err := f.d.CreatePrivateService(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), f.now, metadata)
+		s, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), controlstate.ServicePlacement{}, f.now, metadata)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,12 +59,12 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 	}
 	server := httptest.NewTLSServer(h)
 	t.Cleanup(server.Close)
-	client, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken(owner.AccessToken))
+	client, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(owner.AccessToken))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Run("management real bounded client", func(t *testing.T) {
-		services, err := client.ListPrivateServices(t.Context(), team.ID)
+		services, err := client.ListServices(t.Context(), team.ID)
 		if err != nil || len(services) != 102 {
 			t.Fatalf("management inventory with 101 valid CA bundles: count=%d err=%v", len(services), err)
 		}
@@ -75,7 +75,7 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 		}
 	})
 	t.Run("visitor real bounded client", func(t *testing.T) {
-		services, err := client.ListAvailablePrivateServices(t.Context())
+		services, err := client.ListAvailableServices(t.Context())
 		if err != nil || len(services) != 102 {
 			t.Fatalf("visitor inventory: count=%d err=%v", len(services), err)
 		}
@@ -86,14 +86,14 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 		}
 	})
 	t.Run("signed authority inventory", func(t *testing.T) {
-		path := "/v1/service/teams/" + team.ID + "/private-services"
+		path := "/v1/service/teams/" + team.ID + "/services"
 		w := f.serviceCall("GET", path, serviceOwnerSub, nil, nil)
 		serviceResult(t, w, 200, nil)
 		if w.Body.Len() >= 1<<20 || strings.Contains(w.Body.String(), `"target_tls"`) {
 			t.Fatalf("authority inventory carries full publisher trust: %d bytes", w.Body.Len())
 		}
 	})
-	full, err := client.GetPrivateService(t.Context(), exact)
+	full, err := client.GetService(t.Context(), exact)
 	if err != nil || full.TargetTls == nil || full.TargetTls.Pem == nil || *full.TargetTls.Pem != bundle {
 		t.Fatal("exact service lookup lost publisher trust", err)
 	}
@@ -167,17 +167,17 @@ func TestIntegrationCompanyAdmissionPagination(t *testing.T) {
 
 func TestIntegrationAuthorityProjectManaged(t *testing.T) {
 	f, owner, _, team, service := serviceFixture(t)
-	if _, err := f.sql.Exec(t.Context(), `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,private_service_id,created_by_identity_id) VALUES($1,'project',$2,'api','checkout',$3,$4)`, team.ID, strings.Repeat("a", 64), service.ID, owner.Identity.Identity.Id); err != nil {
+	if _, err := f.sql.Exec(t.Context(), `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,created_by_identity_id) VALUES($1,'project',$2,'api','checkout',$3,$4)`, team.ID, strings.Repeat("a", 64), service.ID, owner.Identity.Identity.Id); err != nil {
 		t.Fatal(err)
 	}
-	grants, _, err := f.d.ListPrivateServiceGrants(t.Context(), service.ID, owner.Identity.Identity.Id, "")
+	grants, _, err := f.d.ListServiceGrants(t.Context(), service.ID, owner.Identity.Identity.Id, "")
 	if err != nil || len(grants) != 1 {
 		t.Fatal(grants, err)
 	}
-	if _, err := f.sql.Exec(t.Context(), `UPDATE control.local_project_services SET visitor_grant_id=$1 WHERE private_service_id=$2`, grants[0].ID, service.ID); err != nil {
+	if _, err := f.sql.Exec(t.Context(), `UPDATE control.local_project_services SET visitor_grant_id=$1 WHERE service_id=$2`, grants[0].ID, service.ID); err != nil {
 		t.Fatal(err)
 	}
-	w := f.serviceCall("DELETE", "/v1/service/private-services/"+service.ID+"/grants/"+grants[0].ID, serviceOwnerSub, nil, nil)
+	w := f.serviceCall("DELETE", "/v1/service/services/"+service.ID+"/grants/"+grants[0].ID, serviceOwnerSub, nil, nil)
 	var problem authorityv1.Problem
 	serviceResult(t, w, 409, &problem)
 	if string(problem.Code) != "project_managed" || problem.RequestId == "" || problem.Detail != "resource is managed by project configuration; change the declaration and run tnl apply" {

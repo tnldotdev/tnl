@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -20,8 +20,8 @@ type connectorDecisionStore struct {
 	err      error
 }
 
-func (s connectorDecisionStore) AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.PrivateVisitorValidity, error) {
-	return controlstate.PrivateVisitorValidity{Allowed: s.allowed, Admitted: s.admitted, ValidUntil: time.Now().Add(time.Minute)}, s.err
+func (s connectorDecisionStore) AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.ServiceVisitorValidity, error) {
+	return controlstate.ServiceVisitorValidity{Allowed: s.allowed, Admitted: s.admitted, ValidUntil: time.Now().Add(time.Minute)}, s.err
 }
 
 func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *testing.T) {
@@ -44,7 +44,7 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 			mux.HandleFunc("POST /service/{service}/run/{run}", func(w http.ResponseWriter, r *http.Request) {
 				h.AuthorizeServiceConnector(w, r, r.PathValue("service"), r.PathValue("run"))
 			})
-			r := httptest.NewRequest("POST", "/service/private-service/run/private-run", strings.NewReader(`{"run_number":1,"grant_revision":1,"source_ip":"192.0.2.7","connector_session_id":"private-session","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"visitor_connection_id":"private-visitor"}`))
+			r := httptest.NewRequest("POST", "/service/service/run/service-run", strings.NewReader(`{"run_number":1,"grant_revision":1,"source_ip":"192.0.2.7","connector_session_id":"private-session","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"visitor_connection_id":"private-visitor"}`))
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Authorization", "Bearer private-token")
 			response := httptest.NewRecorder()

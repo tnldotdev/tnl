@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"encoding/json"

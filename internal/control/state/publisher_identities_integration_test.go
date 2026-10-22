@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 const publisherTestAudience = "https://control.example/v1/publisher-token"
@@ -22,7 +22,7 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_resolved_scope")
 	r := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, r, now)
-	service, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", now)
+	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,12 +31,12 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, submitted := range []PublisherScope{
-		{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: u.ID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
+		{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: u.ID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
 		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
-		{TeamID: r.TeamID, Kind: "private_service", PrivateServiceID: service.ID},
+		{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID},
 	} {
 		e := publisherEnrollment(t, d, r, submitted, now)
-		if e.Scope.Kind == "saved_url" && (e.Scope.MembershipID != "" || e.Scope.PublicURLScope != "") {
+		if e.Scope.Kind == "saved_public_url" && (e.Scope.MembershipID != "" || e.Scope.PublicURLScope != "") {
 			t.Fatal("saved URL grant retained submitted namespace ownership", e.Scope)
 		}
 		if e.Scope.Kind == "namespace" && (e.Scope.MembershipID != m.ID || e.Scope.PublicURLScope != PublicURLScopeMember || e.Scope.Namespace == "") {
@@ -56,9 +56,9 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 		}
 	}
 	for _, submitted := range []PublisherScope{
-		{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: u.ID, PrivateServiceID: service.ID},
+		{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: u.ID, ServiceID: service.ID},
 		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, PublicURLID: u.ID},
-		{TeamID: r.TeamID, Kind: "private_service", PrivateServiceID: service.ID, Namespace: "forged.example"},
+		{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID, Namespace: "forged.example"},
 	} {
 		if _, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: submitted, Name: "test", Kind: "installed", EditorID: r.ActingIdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now}); !errors.Is(err, ErrPublisherIdentity) {
 			t.Fatal("mixed submitted scope was authorized", submitted, err)
@@ -68,13 +68,13 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
-	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "private_service_tickets"} {
+	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "private_visitor_streams"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_visitor_streams"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
@@ -89,7 +89,7 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
 		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
 	}
-	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != "tnl-control-fresh-v1-services-native-owner" {
+	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != "tnl-control-fresh-v1-services" {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
@@ -117,7 +117,7 @@ func publisherEnrollment(t *testing.T, d *Database, r CreatePublicURLRequest, sc
 
 func publisherAccess(t *testing.T, d *Database, p PublisherIdentity, private ed25519.PrivateKey, source string, now time.Time) PublisherAccess {
 	t.Helper()
-	assertion, err := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	assertion, err := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_enrollment")
 	request := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, request, now)
-	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
+	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
 	keys := make([]ed25519.PublicKey, 2)
 	for i := range keys {
 		keys[i], _, _ = ed25519.GenerateKey(rand.Reader)
@@ -183,13 +183,13 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay")
 	request := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, request, now)
-	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
+	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertion, _ := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	assertion, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
@@ -220,15 +220,15 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	}
 	newPublic, newPrivate, _ := ed25519.GenerateKey(rand.Reader)
 	replacement, _ := opaqueid.New(opaqueid.PublisherIdentityKeyPrefix)
-	proof, _ := publisheridentity.Sign(p.ID, replacement, p.GrantID, "https://control.example/v1/publisher-keys/rotate", newPrivate, now)
+	proof, _ := publisherproof.Sign(p.ID, replacement, p.GrantID, "https://control.example/v1/publisher-keys/rotate", newPrivate, now)
 	if err := d.RotatePublisherKey(ctx, access.Token, "", replacement, "https://control.example/v1/publisher-keys/rotate", newPublic, proof, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("bearer-only key rotation = %v", err)
 	}
-	currentProof, _ := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisheridentity.RotationAudience("https://control.example/v1/publisher-keys/rotate", replacement, newPublic), private, now)
+	currentProof, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherproof.RotationAudience("https://control.example/v1/publisher-keys/rotate", replacement, newPublic), private, now)
 	if err := d.RotatePublisherKey(ctx, access.Token, "", replacement, "https://control.example/v1/publisher-keys/rotate", newPublic, proof, currentProof, now); err != nil {
 		t.Fatal(err)
 	}
-	oldProof, _ := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	oldProof, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
 	if _, err := d.ExchangePublisherAssertion(ctx, p.ID, p.GrantID, publisherTestAudience, oldProof, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("retired key exchange = %v", err)
 	}
@@ -241,7 +241,7 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	secondRequest.CanonicalHostname = "second." + u.CanonicalHostname
 	secondRequest.IdempotencyKey = "second"
 	second := createTestPublicURL(t, d, secondRequest, now)
-	grant, err := d.CreatePublisherGrant(ctx, CreatePublisherGrantRequest{PublisherIdentityID: p.ID, Scope: PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: second.ID}, EditorID: request.ActingIdentityID, EditorMembershipID: request.MembershipID, PolicyRevision: 1, Now: now})
+	grant, err := d.CreatePublisherGrant(ctx, CreatePublisherGrantRequest{PublisherIdentityID: p.ID, Scope: PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: second.ID}, EditorID: request.ActingIdentityID, EditorMembershipID: request.MembershipID, PolicyRevision: 1, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, r.MembershipID, now); err != nil {
 		t.Fatal(err)
 	}
-	assertion, err := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	assertion, err := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}
-	e := publisherEnrollment(t, d, base, PublisherScope{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: r.PublicURLID}, now)
+	e := publisherEnrollment(t, d, base, PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: r.PublicURLID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
@@ -341,7 +341,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	}
 	r.CertificateCacheKey, r.CertificateScope, r.CertificateIdentifiers, r.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
 	r.PublisherIdentityID, r.PublisherGrantID, r.PublisherKeyID = p.ID, p.GrantID, p.KeyID
-	r.PublisherRunProof, _ = publisheridentity.SignRun(private, r.PublicURLID, r.IdempotencyKey)
+	r.PublisherRunProof, _ = publisherproof.SignRun(private, r.PublicURLID, r.IdempotencyKey)
 	r.RetrySecret = nil
 	setup, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
 	if err != nil {
@@ -364,7 +364,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	}
 	bad = r
 	bad.PublisherIdentityID, bad.PublisherGrantID, bad.PublisherKeyID = p2.ID, p2.GrantID, p2.KeyID
-	bad.PublisherRunProof, _ = publisheridentity.SignRun(sk2, r.PublicURLID, r.IdempotencyKey)
+	bad.PublisherRunProof, _ = publisherproof.SignRun(sk2, r.PublicURLID, r.IdempotencyKey)
 	if _, err := d.CreatePublishRun(t.Context(), bad, now, time.Minute, time.Minute); !errors.Is(err, ErrPublishRunIdempotency) {
 		t.Fatalf("foreign identity recovered run = %v", err)
 	}
@@ -388,7 +388,7 @@ func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay_bound")
 	r := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, r, now)
-	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
+	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
@@ -398,7 +398,7 @@ func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.publisher_assertions(publisher_identity_id, assertion_id, expires_at) SELECT $1, lpad(i::text, 24, '0'), $2 FROM generate_series(1,255) i`, p.ID, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	assertion, _ := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	assertion, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
 	if _, err := d.ExchangePublisherAssertion(t.Context(), p.ID, p.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("full replay budget = %v", err)
 	}

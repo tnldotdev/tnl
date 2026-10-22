@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // publishRunCleanup joins the workers started after the public URL server and
@@ -28,7 +28,7 @@ type publishRunCleanup struct {
 func (s *publishRunCleanup) finish(result error) error {
 	s.cancelSession(nil)
 	if s.heartbeatStarted && parentCanceledSession(s.parentCtx, s.sessionCtx) &&
-		!errors.Is(result, controlclient.ErrStatusConflict) && !errors.Is(result, controlclient.ErrUnauthenticated) &&
+		!errors.Is(result, clientcontrol.ErrStatusConflict) && !errors.Is(result, clientcontrol.ErrUnauthenticated) &&
 		!errors.Is(result, errCertificateExpired) {
 		result = s.drain(result)
 	}

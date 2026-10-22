@@ -1,24 +1,24 @@
 schemas:
-  PrivateServiceID:
+  ServiceID:
     type: string
-    pattern: "^psvc_[A-Za-z0-9]{22}$"
-  PrivateRunID:
+    pattern: "^svc_[A-Za-z0-9]{22}$"
+  ServiceRunID:
     type: string
-    pattern: "^psrun_[A-Za-z0-9]{22}$"
-  PrivateConnectorSessionID:
+    pattern: "^srun_[A-Za-z0-9]{22}$"
+  ConnectorSessionID:
     type: string
-    pattern: "^pcs_[A-Za-z0-9]{22}$"
+    pattern: "^cns_[A-Za-z0-9]{22}$"
   VisitorConnectionID:
     type: string
     pattern: "^vc_[A-Za-z0-9]{22}$"
-  PrivateConnectorSessionClaim:
+  ConnectorSessionClaim:
     type: object
     additionalProperties: false
     required:
       [
         ingress_run_id,
         ingress_lease_revision,
-        private_service_id,
+        service_id,
         connector_session_id,
         session_credential,
         observed_source_ip,
@@ -29,9 +29,8 @@ schemas:
     properties:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
       session_credential: { type: string, minLength: 32, maxLength: 512 }
       subject: { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
       nonce: { type: string, pattern: "^[0-9a-f]{64}$" }
@@ -43,14 +42,13 @@ schemas:
           maxLength: 45,
           description: Trusted original source observed by ingress on this mux socket. The connector never supplies this value.,
         }
-  PrivateConnectorSessionResult:
+  ConnectorSessionResult:
     type: object
     additionalProperties: false
-    required: [connector_session_id, private_service_id, subject, observed_source_ip, expires_at]
+    required: [connector_session_id, service_id, subject, observed_source_ip, expires_at]
     properties:
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       subject: { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
       observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
       expires_at: { type: string, format: date-time }
@@ -85,17 +83,10 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [
-        private_service_id,
-        private_run_id,
-        run_number,
-        visitor_connection_id,
-        expires_at,
-        connected_relays,
-      ]
+      [service_id, service_run_id, run_number, visitor_connection_id, expires_at, connected_relays]
     properties:
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       expires_at: { type: string, format: date-time }
@@ -103,7 +94,7 @@ schemas:
         type: array
         minItems: 1
         maxItems: 2
-        items: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRelay" }
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceRelay" }
   DirectServiceVisitorStatus:
     type: object
     additionalProperties: false
@@ -122,15 +113,15 @@ schemas:
             ],
         }
       valid_until: { type: string, format: date-time }
-  PrivateServiceProjection:
+  ServiceProjection:
     type: object
     additionalProperties: false
-    required: [revision, private_service_id, kind, expires_at]
+    required: [revision, service_id, kind, expires_at]
     properties:
       revision: { type: integer, format: int64, minimum: 1 }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       kind: { type: string, enum: [upsert, tombstone] }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
       expires_at: { type: string, format: date-time }
       connected_relays:
@@ -138,9 +129,9 @@ schemas:
           type: array,
           minItems: 1,
           maxItems: 2,
-          items: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRelay" },
+          items: { $ref: "../openapi.yaml#/components/schemas/ServiceRelay" },
         }
-  PrivateServiceRelay:
+  ServiceRelay:
     type: object
     additionalProperties: false
     required:
@@ -167,26 +158,23 @@ schemas:
       relay_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       relay_lease_revision: { type: integer, format: int64, minimum: 1 }
       lease_expires_at: { type: string, format: date-time }
-  PrivateServiceSnapshot:
+  ServiceSnapshot:
     type: object
     additionalProperties: false
     required: [revision, entries]
     properties:
       revision: { type: integer, format: int64, minimum: 0 }
       entries:
-        {
-          type: array,
-          items: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceProjection" },
-        }
-  PrivateServiceStreamClaim:
+        { type: array, items: { $ref: "../openapi.yaml#/components/schemas/ServiceProjection" } }
+  ServiceStreamClaim:
     type: object
     additionalProperties: false
     required:
       [
         ingress_run_id,
         ingress_lease_revision,
-        private_service_id,
-        private_run_id,
+        service_id,
+        service_run_id,
         run_number,
         connector_session_id,
         observed_source_ip,
@@ -195,11 +183,10 @@ schemas:
     properties:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
       observed_source_ip:
         {
           type: string,
@@ -209,13 +196,13 @@ schemas:
           not parsed from the visitor stream.,
         }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
-  PrivateServiceStreamResult:
+  ServiceStreamResult:
     type: object
     additionalProperties: false
     required:
       [
-        private_service_id,
-        private_run_id,
+        service_id,
+        service_run_id,
         run_number,
         connector_session_id,
         subject,
@@ -226,11 +213,10 @@ schemas:
         grant_revision,
       ]
     properties:
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
       subject: { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
       observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
@@ -240,15 +226,15 @@ schemas:
         format: date-time
         description: Hard deadline bounded by the current grant, connector session, publisher run, ingress and live relay leases, and at most two minutes from this decision.
       grant_revision: { type: integer, format: int64, minimum: 1 }
-  PrivateServiceVisitorRecheck:
+  ServiceVisitorRecheck:
     type: object
     additionalProperties: false
     required:
       [
         ingress_run_id,
         ingress_lease_revision,
-        private_service_id,
-        private_run_id,
+        service_id,
+        service_run_id,
         run_number,
         connector_session_id,
         subject,
@@ -258,11 +244,10 @@ schemas:
     properties:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
       subject: { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
       observed_source_ip:
         {
@@ -272,7 +257,7 @@ schemas:
           description: Copied from the original ingress-observed mux source; never supplied by a visitor.,
         }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
-  PrivateServiceVisitorRecheckResult:
+  ServiceVisitorRecheckResult:
     type: object
     additionalProperties: false
     required: [allowed, recheck_at, valid_until]

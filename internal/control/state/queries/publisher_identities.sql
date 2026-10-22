@@ -16,8 +16,8 @@ SELECT * FROM control.publisher_identity_keys WHERE id = sqlc.arg(id) AND publis
 UPDATE control.publisher_identity_keys SET retired_at = sqlc.arg(now) WHERE id = sqlc.arg(id) AND retired_at IS NULL;
 
 -- name: InsertPublisherGrant :one
-INSERT INTO control.publisher_grants(id, publisher_identity_id, created_by_identity_id, kind, public_url_id, private_service_id, domain_id, namespace, membership_id, public_url_scope, created_at, expires_at)
-VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.arg(created_by_identity_id), sqlc.arg(kind), sqlc.narg(public_url_id), sqlc.narg(private_service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_at), sqlc.narg(expires_at)) RETURNING *;
+INSERT INTO control.publisher_grants(id, publisher_identity_id, created_by_identity_id, kind, public_url_id, service_id, domain_id, namespace, membership_id, public_url_scope, created_at, expires_at)
+VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.arg(created_by_identity_id), sqlc.arg(kind), sqlc.narg(public_url_id), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_at), sqlc.narg(expires_at)) RETURNING *;
 
 -- name: GetPublisherGrant :one
 SELECT * FROM control.publisher_grants WHERE id = sqlc.arg(id) AND publisher_identity_id = sqlc.arg(publisher_identity_id) FOR SHARE;
@@ -29,8 +29,8 @@ UPDATE control.publisher_grants SET revoked_at = COALESCE(revoked_at, sqlc.arg(n
 UPDATE control.publisher_identities SET revoked_at = COALESCE(revoked_at, sqlc.arg(now)) WHERE id = sqlc.arg(id) AND team_id = sqlc.arg(team_id);
 
 -- name: InsertPublisherEnrollment :one
-INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, private_service_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
-VALUES (sqlc.arg(id), sqlc.arg(enrollment_key_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(public_url_id), sqlc.narg(private_service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
+INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, service_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, ownership, owner_membership_id)
+VALUES (sqlc.arg(id), sqlc.arg(enrollment_key_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(public_url_id), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
 
 -- name: LockPublisherEnrollment :one
 SELECT * FROM control.publisher_enrollments WHERE id = sqlc.arg(id) FOR UPDATE;
@@ -84,23 +84,23 @@ SELECT * FROM control.publisher_identities WHERE team_id = sqlc.arg(team_id) AND
 SELECT * FROM control.publisher_grants WHERE publisher_identity_id = sqlc.arg(publisher_identity_id) ORDER BY id;
 
 -- name: PublisherScopeAvailable :one
--- this read does not lock resources after identities. URL and private-service
+-- this read does not lock resources after identities. URL and service
 -- run transactions lock their own saved resource first and recheck the grant.
 SELECT EXISTS (
     SELECT 1 FROM control.publisher_grants g
     JOIN control.publisher_identities p ON p.id = g.publisher_identity_id
     LEFT JOIN control.public_urls u ON u.id = g.public_url_id
-    LEFT JOIN control.private_services s ON s.id = g.private_service_id
+    LEFT JOIN control.services s ON s.id = g.service_id
     LEFT JOIN control.domains d ON d.id = COALESCE(g.domain_id, u.domain_id, s.domain_id)
     WHERE p.id = sqlc.arg(publisher_identity_id) AND g.id = sqlc.arg(grant_id)
       AND (p.ownership <> 'member' OR control.active_membership(p.owner_membership_id, CURRENT_TIMESTAMP))
       AND (p.kind = 'guest' OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id = p.team_id AND t.deleted_at IS NULL))
-      AND ((g.kind = 'private_service' AND p.kind <> 'guest' AND s.team_id = p.team_id
+      AND ((g.kind = 'service' AND p.kind <> 'guest' AND s.team_id = p.team_id
              AND s.enabled AND s.deleted_at IS NULL
              AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id))) OR
           (d.state = 'ready' AND d.released_at IS NULL AND (d.kind = 'managed' OR d.team_id = p.team_id)
            AND ((g.kind = 'namespace' AND p.kind <> 'guest') OR
-          (g.kind = 'saved_url' AND u.team_id = p.team_id AND u.lifecycle_state = 'enabled'
+          (g.kind = 'saved_public_url' AND u.team_id = p.team_id AND u.lifecycle_state = 'enabled'
            AND ((p.kind <> 'guest' AND NOT u.ephemeral AND u.purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks')) OR
                 (p.kind = 'guest' AND u.purpose = 'demo' AND EXISTS (
                     SELECT 1 FROM control.guest_public_urls gu WHERE gu.guest_id = p.guest_id AND gu.public_url_id = u.id)))))))

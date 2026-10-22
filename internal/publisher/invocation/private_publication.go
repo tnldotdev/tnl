@@ -8,21 +8,21 @@ import (
 	"path/filepath"
 	"strings"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
-	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string) (authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, error) {
@@ -32,40 +32,40 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 	}
 	var identity authorityv1.PublisherEnrollmentResult
 	if !found || json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != id || saved.ID != id || len(saved.SigningKey) != ed25519.PrivateKeySize {
-		return identity, nil, nativeauth.ErrScope
+		return identity, nil, publisheridentity.ErrScope
 	}
 	return identity, ed25519.PrivateKey(saved.SigningKey), nil
 }
 
 // private publication never reserves a hostname or asks for a visitor certificate.
 // only the person's session creates saved state; runs use the exact signed grant.
-func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePresentation) error {
+func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) error {
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
 		return err
 	}
-	if protocol == controlv1.PrivateHttp && !flags.ConfiguredPrivate || flags.Demo {
+	if protocol == controlv1.ServiceProtocolHTTP && !flags.ConfiguredPrivate || flags.Demo {
 		return publisherCLIError("private HTTP requires a configured service without publicURL; select tcp, mysql, or postgres for an opaque target")
 	}
 	if flags.System && !flags.Install || flags.ServiceName != "" && !flags.Install || flags.SystemStateDir != "" && !flags.Install || flags.ServerCAFile != "" && !flags.Install {
 		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 	}
-	var options publisherjob.ServiceOptions
+	var options supervisor.ServiceOptions
 	if flags.Install {
 		options = flags.Installation
 	}
-	serverCAPEM, err := publisherprovision.ReadTrust(flags.ServerCAFile)
+	serverCAPEM, err := setup.ReadTrust(flags.ServerCAFile)
 	if err != nil {
 		return err
 	}
-	if err := publisherjob.ValidateTrust(serverCAPEM); err != nil {
+	if err := supervisor.ValidateTrust(serverCAPEM); err != nil {
 		return err
 	}
 	if flags.Service != "" {
 		definition := project.Config.Services[flags.Service]
 		if config.Protocol(definition) != string(protocol) {
-			return publisherCLIError("--protocol differs from the configured private service")
+			return publisherCLIError("--protocol differs from the configured service")
 		}
 		if config.TargetType(definition) == "app" {
 			return publisherCLIError("private publication requires an address, Docker, or Compose target")
@@ -83,31 +83,31 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 	if err != nil {
 		return err
 	}
-	trust, err := CapturePrivateTargetTrust(ctx, flags, protocol, target)
+	trust, err := CaptureServiceTargetTrust(ctx, flags, protocol, target)
 	if err != nil {
 		return err
 	}
 	selected := 0
-	for _, value := range []string{flags.EnrollmentKey, flags.PublisherID, flags.PublisherFile} {
+	for _, value := range []string{flags.EnrollmentKey, flags.PublisherIdentityID, flags.PublisherCredentialFile} {
 		if value != "" {
 			selected++
 		}
 	}
 	if selected > 1 || selected != 0 && (flags.AccessToken != "" || flags.Team != "" || flags.Name != "") {
-		return publisherCLIError("select one scoped publisher identity, or sign in and name a private service")
+		return publisherCLIError("select one scoped publisher identity, or sign in and name a service")
 	}
 	if selected != 0 && flags.Domain != "" {
 		return publisherCLIError("scoped publishers use the saved service domain")
 	}
-	if flags.PublisherFile != "" {
-		file, err := credentialfile.Read(flags.PublisherFile)
+	if flags.PublisherCredentialFile != "" {
+		file, err := credentialfile.Read(flags.PublisherCredentialFile)
 		if err != nil {
 			return err
 		}
 		if flags.ServerURL != "" {
 			server, err := naming.CanonicalControlURL(flags.ServerURL)
 			if err != nil || server != file.ControlURL {
-				return nativeauth.ErrScope
+				return publisheridentity.ErrScope
 			}
 		}
 		flags.ServerURL = file.ControlURL
@@ -116,13 +116,13 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 		return publisherCLIError("system publications require an explicit server, target, and scoped publisher")
 	}
 	if selected == 0 || flags.Service != "" || flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
-		if err := targetplan.PreflightPrivate(ctx, targetplan.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
+		if err := targetplan.PreflightPrivate(ctx, targetplan.TargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
 			return err
 		}
 	}
-	var registry *publisherjob.Registry
+	var registry *supervisor.Registry
 	if flags.Install {
-		registry, err = publisherjob.Open(ctx, publisherjob.OpenOptions{Root: options.Root, User: options.User})
+		registry, err = supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: options.User})
 		if err != nil {
 			return err
 		}
@@ -151,11 +151,11 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 			return err
 		}
 	}
-	control, authority, err := publisherjob.Clients(publisherjob.Job{Server: server, ServerCAPEM: serverCAPEM})
+	control, authority, err := supervisor.Clients(supervisor.Job{Server: server, ServerCAPEM: serverCAPEM})
 	if err != nil {
 		return err
 	}
-	var native *nativeauth.Native
+	var native *publisheridentity.Native
 	var identity authorityv1.PublisherEnrollmentResult
 	var signing ed25519.PrivateKey
 	name := flags.Name
@@ -164,9 +164,9 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 	}
 	if selected == 0 {
 		if !naming.ValidServiceName(name) {
-			return publisherCLIError("select a configured private service or pass --name NAME")
+			return publisherCLIError("select a configured service or pass --name NAME")
 		}
-		if err := clientauth.RequireSignInOutsideDemo(ctx, database, server, flags.AccessToken); err != nil {
+		if err := auth.RequireSignInOutsideDemo(ctx, database, server, flags.AccessToken); err != nil {
 			return err
 		}
 		authenticated, err := flags.Authenticate(ctx, database, server, flags.AccessToken)
@@ -187,17 +187,17 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 			return err
 		}
 		current := FromTeamContext(selectedContext)
-		services, err := authenticated.Control.ListPrivateServices(ctx, current.team.Id)
+		services, err := authenticated.Control.ListServices(ctx, current.team.Id)
 		if err != nil {
 			return err
 		}
-		var service controlv1.PrivateService
+		var service controlv1.Service
 		if flags.Service != "" {
 			realized, err := RealizeLocalService(ctx, authenticated.Control, LocalService{Project: project.Project, Team: current, Name: flags.Service, Domain: flags.Domain, TargetResolver: flags.Resolver})
 			if err != nil {
 				return err
 			}
-			service, err = authenticated.Control.GetPrivateService(ctx, realized.ServiceId)
+			service, err = authenticated.Control.GetService(ctx, realized.ServiceId)
 			if err != nil {
 				return err
 			}
@@ -209,7 +209,7 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 				return err
 			}
 			for _, item := range services {
-				if item.Name != name || item.Placement == nil || item.Placement.WorktreeKey == nil || *item.Placement.WorktreeKey != worktree || item.ManagedTls == nil || item.DomainId == nil {
+				if item.Name != name || item.Placement == nil || item.Placement.WorktreeKey == nil || *item.Placement.WorktreeKey != worktree || item.Endpoint == nil || item.DomainId == nil {
 					continue
 				}
 				for _, savedDomain := range current.domains {
@@ -217,11 +217,11 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 						continue
 					}
 					owner := naming.MemberNamespace(savedDomain.CanonicalDomain, savedDomain.Kind == "managed", current.membership.ManagedLabel, current.membership.MemberSlug)
-					if strings.HasSuffix(item.ManagedTls.Hostname, "."+owner) {
+					if strings.HasSuffix(item.Endpoint.Hostname, "."+owner) {
 						if flags.Domain != "" && domain.Id != savedDomain.Id {
-							return nativeauth.ErrScope
+							return publisheridentity.ErrScope
 						}
-						service, err = authenticated.Control.GetPrivateService(ctx, item.Id)
+						service, err = authenticated.Control.GetService(ctx, item.Id)
 						if err != nil {
 							return err
 						}
@@ -233,24 +233,24 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 				if err != nil {
 					return err
 				}
-				placement := &controlv1.PrivateServicePlacement{DomainId: &domain.Id, WorktreeKey: &worktree}
+				placement := &controlv1.ServicePlacement{DomainId: &domain.Id, WorktreeKey: &worktree}
 				if label != "" {
 					placement.WorktreeLabel = &label
 				}
-				service, err = authenticated.Control.CreatePrivateServiceAt(ctx, current.team.Id, name, key, placement,
-					controlv1.PrivateServiceMetadata{Protocol: protocol, TargetTls: nativeauth.PrivateServiceTLS(trust), TrustRevision: 1})
+				service, err = authenticated.Control.CreateServiceAt(ctx, current.team.Id, name, key, placement,
+					controlv1.ServiceMetadata{Protocol: protocol, TargetTls: publisheridentity.ServiceTargetTLS(trust), TrustRevision: 1})
 				if err != nil {
 					return err
 				}
 			}
 		}
 		if !service.Enabled || flags.Service == "" && service.Name != name || service.TeamId != current.team.Id {
-			return nativeauth.ErrScope
+			return publisheridentity.ErrScope
 		}
-		if err := nativeauth.MatchPrivateServiceDeclaration(service, string(protocol), trust); err != nil {
-			return failure.Wrap("match private service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved private service protocol or TLS trust differs from the configured service")))
+		if err := publisheridentity.MatchServiceDeclaration(service, string(protocol), trust); err != nil {
+			return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the configured service")))
 		}
-		native, identity, err = nativeauth.EnsurePrivateServiceOwner(ctx, profile, session.Authenticated().Control, session.Authenticated().Authority, service)
+		native, identity, err = publisheridentity.EnsureServiceOwner(ctx, profile, session.Authenticated().Control, session.Authenticated().Authority, service)
 		if err != nil {
 			return err
 		}
@@ -259,17 +259,17 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 		if err != nil {
 			return err
 		}
-		native, identity, err = nativeauth.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control, authority, secret)
 		if err != nil {
 			return err
 		}
-	} else if flags.PublisherID != "" {
-		native, identity, err = nativeauth.LoadNative(ctx, profile, control, authority, flags.PublisherID)
+	} else if flags.PublisherIdentityID != "" {
+		native, identity, err = publisheridentity.LoadNative(ctx, profile, control, authority, flags.PublisherIdentityID)
 		if err != nil {
 			return err
 		}
 	} else {
-		file, err := credentialfile.Read(flags.PublisherFile)
+		file, err := credentialfile.Read(flags.PublisherCredentialFile)
 		if err != nil {
 			return err
 		}
@@ -277,7 +277,7 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 		if err != nil {
 			return err
 		}
-		native, err = nativeauth.NewNative(control, authority, identity, signing)
+		native, err = publisheridentity.NewNative(control, authority, identity, signing)
 		if err != nil {
 			return err
 		}
@@ -288,15 +288,15 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 			return err
 		}
 	}
-	if identity.Kind != authorityv1.PrivateService || identity.PrivateServiceId == nil {
-		return publisherCLIError("private publication requires an exact private-service publisher grant")
+	if identity.Kind != authorityv1.Service || identity.ServiceId == nil {
+		return publisherCLIError("private publication requires an exact service publisher grant")
 	}
-	approved, err := native.SavedPrivateService(ctx)
+	approved, err := native.SavedService(ctx)
 	if err != nil {
 		return err
 	}
 	if err := validateProfileService(approved); err != nil {
-		return failure.Wrap("read managed service endpoint", failure.ServerResponseInvalid, err)
+		return failure.Wrap("read service endpoint", failure.ServerResponseInvalid, err)
 	}
 	if flags.Service != "" {
 		source := project.LocalPublicationIdentity()
@@ -307,22 +307,22 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 	// a scoped, ad-hoc publisher uses its saved target trust unless the caller
 	// made an explicit local declaration. explicit plaintext is a constraint too.
 	if selected != 0 && flags.Service == "" && flags.TargetTLS == nil && flags.TargetTLSName == "" && flags.TargetCAFile == "" {
-		trust, err = nativeauth.PrivateServiceTrust(approved)
+		trust, err = publisheridentity.ServiceTrust(approved)
 		if err != nil {
 			return err
 		}
-		if protocol == controlv1.PrivateHttp && trust != nil && !strings.Contains(flags.Target, "://") {
+		if protocol == controlv1.ServiceProtocolHTTP && trust != nil && !strings.Contains(flags.Target, "://") {
 			target = "https://" + strings.TrimPrefix(target, "http://")
 		}
-		if err := targetplan.PreflightPrivate(ctx, targetplan.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
+		if err := targetplan.PreflightPrivate(ctx, targetplan.TargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
 			return err
 		}
 	}
-	if err := nativeauth.MatchPrivateServiceDeclaration(approved, string(protocol), trust); err != nil {
-		return failure.Wrap("match private service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved private service protocol or TLS trust differs from the local declaration")))
+	if err := publisheridentity.MatchServiceDeclaration(approved, string(protocol), trust); err != nil {
+		return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the local declaration")))
 	}
-	job := publisherjob.Job{Kind: publisherjob.KindPrivateService, ID: publisherjob.PrivateServiceJobKey(server, *identity.PrivateServiceId), Name: name, Server: server,
-		PrivateServiceID: *identity.PrivateServiceId, PublisherID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
+	job := supervisor.Job{Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
+		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
 	job.Limits = flags.Limits
 	if flags.Service != "" {
@@ -345,7 +345,7 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 		output.Starting()
 	}
 	emit := func(state string) error {
-		return output.Event(PrivateEvent{State: state, PrivateServiceID: job.PrivateServiceID, Name: name, Target: target, Hostname: approved.ManagedTls.Hostname, Port: approved.ManagedTls.Port})
+		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port})
 	}
 	if err := emit("starting"); err != nil {
 		return err
@@ -357,7 +357,7 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 		}
 		defer stopRuntime()
 	}
-	err = targetplan.PublishPrivate(ctx, job.PrivateTargetPlan(), privatepublisher.RunConfig{Control: native.ManagedRunControl(), State: profile, Access: native.Access, Identity: identity, PrivateServiceID: job.PrivateServiceID, Target: target, Metadata: nativeauth.PrivateServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
+	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		Ready: func() error {
 			if output.Ready != nil {
 				output.Ready()
@@ -365,12 +365,12 @@ func PublishPrivate(ctx context.Context, flags PrivateOptions, output *PrivatePr
 			return emit("ready")
 		}})
 	if err != nil && !errors.Is(err, context.Canceled) {
-		return failure.Wrap("publish private service", failure.TunnelUnavailable, err)
+		return failure.Wrap("publish service", failure.TunnelUnavailable, err)
 	}
 	return emit("stopped")
 }
 
-func CapturePrivateTargetTrust(ctx context.Context, flags PrivateOptions, protocol controlv1.PrivateServiceProtocol, target string) (*privatetrust.Snapshot, error) {
+func CaptureServiceTargetTrust(ctx context.Context, flags ServiceOptions, protocol controlv1.ServiceProtocol, target string) (*targettrust.Snapshot, error) {
 	if flags.Service != "" {
 		return flags.Project.CaptureServiceTrust(ctx, nil, flags.Service, target)
 	}
@@ -388,11 +388,11 @@ func CapturePrivateTargetTrust(ctx context.Context, flags PrivateOptions, protoc
 			root, setting.CA = filepath.Dir(setting.CA), filepath.Base(setting.CA)
 		}
 	}
-	address, close, err := targetplan.PrivateTarget(ctx, targetplan.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target})
+	address, close, err := targetplan.ServiceTarget(ctx, targetplan.TargetPlan{Protocol: config.ProtocolName(protocol), Target: target})
 	if err != nil {
 		return nil, err
 	}
 	close()
-	trust, err := privatetrust.NewCache(nil).Capture(ctx, root, address, setting)
+	trust, err := targettrust.NewCache(nil).Capture(ctx, root, address, setting)
 	return &trust, err
 }

@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -58,11 +58,11 @@ func TestSessionDrainDeadlineClosesActiveVisitor(t *testing.T) {
 }
 
 func TestSessionStaleHeartbeatClosesActiveVisitor(t *testing.T) {
-	assertHeartbeatFailureClosesVisitor(t, controlclient.ErrStatusConflict)
+	assertHeartbeatFailureClosesVisitor(t, clientcontrol.ErrStatusConflict)
 }
 
 func TestSessionUnauthenticatedHeartbeatClosesActiveVisitor(t *testing.T) {
-	assertHeartbeatFailureClosesVisitor(t, controlclient.ErrUnauthenticated)
+	assertHeartbeatFailureClosesVisitor(t, clientcontrol.ErrUnauthenticated)
 }
 
 func assertHeartbeatFailureClosesVisitor(t *testing.T, failure error) {
@@ -115,7 +115,7 @@ func expireDrainCertificate(control *certificateTestControl, _ *Config) {
 	issued := false
 	control.create = func(csr []byte, _ string) (controlv1.CertificateIssuance, error) {
 		if issued {
-			return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
+			return controlv1.CertificateIssuance{}, clientcontrol.ErrUnavailable
 		}
 		issued = true
 		return control.issue(csr)

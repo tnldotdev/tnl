@@ -1,13 +1,13 @@
-package tnldruntime
+package daemon
 
 import (
 	"testing"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func TestSplitIngressPrivateTransportSettings(t *testing.T) {
-	settings := ingressProcessSettingsFrom(tnldconfig.Config{
+	settings := ingressProcessSettingsFrom(daemonconfig.Config{
 		ControlHostname: "control.example.com", IngressID: "ingress-b",
 		IngressListen: "0.0.0.0:8443", IngressUDPListen: "fly-global-services:443", RequireProxyHeader: true,
 	})

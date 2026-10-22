@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http.Request, id controlv1.PrivateConnectorSessionID) {
+func (h *handler) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http.Request, id controlv1.ConnectorSessionID) {
 	principal, ok := h.authorizeRouteReads(w, r)
 	if !ok {
 		return

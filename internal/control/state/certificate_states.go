@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 // ACMEOrderState is the persisted stage of one public URL certificate issuance.
 // certificate availability and publisher installation are separate transitions.

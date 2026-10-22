@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"
@@ -242,7 +242,7 @@ func discoveryStatements(configuration config.TNL, publisher string) []any {
 	seen := map[string]bool{}
 	for _, name := range slices.Sorted(maps.Keys(configuration.Services)) {
 		service := configuration.Services[name]
-		if config.PublisherName(service) != publisher || service.Target == nil {
+		if config.PublisherGroupName(service) != publisher || service.Target == nil {
 			continue
 		}
 		target := service.Target

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
@@ -21,7 +21,7 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}, PublisherScope{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: r.PublicURLID}, now)
+			e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}, PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: r.PublicURLID}, now)
 			public, private, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)
@@ -36,7 +36,7 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			}
 			r.CertificateCacheKey, r.CertificateScope, r.CertificateIdentifiers, r.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
 			r.PublisherIdentityID, r.PublisherGrantID, r.PublisherKeyID = p.ID, p.GrantID, p.KeyID
-			r.PublisherRunProof, err = publisheridentity.SignRun(private, r.PublicURLID, r.IdempotencyKey)
+			r.PublisherRunProof, err = publisherproof.SignRun(private, r.PublicURLID, r.IdempotencyKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +100,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "service_actor_order")
 			r := appliedProjectRequest(t, d, now)
-			s, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActorID, "database", "database", now)
+			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,13 +130,13 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 				var err error
 				switch operation {
 				case "list-grants":
-					_, _, err = d.ListPrivateServiceGrants(signed, s.ID, r.ActorID, "")
+					_, _, err = d.ListServiceGrants(signed, s.ID, r.ActorID, "")
 				case "create-grant":
-					_, err = d.CreatePrivateServiceGrant(signed, s.ID, r.ActorID, "team", "team", "", nil, now)
+					_, err = d.CreateServiceGrant(signed, s.ID, r.ActorID, "team", "team", "", nil, now)
 				case "create-service":
-					_, err = d.CreatePrivateService(signed, r.TeamID, r.ActorID, "second", "second", now)
+					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 				case "delete-service":
-					err = d.DeletePrivateService(signed, s.ID, r.ActorID, now)
+					err = d.DeleteService(signed, s.ID, r.ActorID, now)
 				}
 				done <- err
 			})
@@ -206,16 +206,16 @@ func TestIntegrationStateLockOrderCompanyDecision(t *testing.T) {
 func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "apply_expiration_order")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration.Publishers = map[string]ProjectPublisherGroup{"production": {}}
+	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
 	r.Configuration.Services = map[string]ProjectServiceConfiguration{
-		"a": {Publisher: "production", Protocol: "tcp", Target: "localhost:5001"},
-		"b": {Publisher: "production", Protocol: "tcp", Target: "localhost:5002"},
+		"a": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5001"},
+		"b": {PublisherGroup: "production", Protocol: "tcp", Target: "localhost:5002"},
 	}
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", now)
+	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	}
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[1], now)
-	prepared, err := d.PreparePrivateServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, PrivateServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,12 +238,12 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err = controlstatedb.New(gate).LockPrivateServiceRun(ctx, controlstatedb.LockPrivateServiceRunParams{ID: prepared.RunID, PrivateServiceID: service}); err != nil {
+	if _, err = controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: prepared.RunID, ServiceID: service}); err != nil {
 		t.Fatal(err)
 	}
 	expired := make(chan error, 1)
 	workers.Go(func() {
-		_, err := d.ExpirePrivateServiceRuns(ctx, prepared.ExpiresAt)
+		_, err := d.ExpireServiceRuns(ctx, prepared.ExpiresAt)
 		expired <- err
 	})
 	pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), expired)
@@ -252,7 +252,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	updated := make(chan error, 1)
 	workers.Go(func() { _, err := d.ApplyProjectConfiguration(ctx, r); updated <- err })
 	waitForPostgresBlock(t, ctx, d, pid, updated)
-	if _, err = gate.Exec(ctx, `SELECT id FROM control.private_services WHERE id=$1 FOR UPDATE NOWAIT`, unrelated.ID); err != nil {
+	if _, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE NOWAIT`, unrelated.ID); err != nil {
 		t.Fatalf("apply locked a service outside its project: %v", err)
 	}
 	if err = gate.Commit(ctx); err != nil {
@@ -263,7 +263,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 		t.Fatalf("expiration = %v; apply = %v", expireErr, applyErr)
 	}
 	var open int
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.private_service_runs WHERE closed_at IS NULL`).Scan(&open); err != nil || open != 0 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL`).Scan(&open); err != nil || open != 0 {
 		t.Fatalf("open runs after removal = %d, %v", open, err)
 	}
 }

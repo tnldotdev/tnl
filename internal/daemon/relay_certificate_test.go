@@ -1,10 +1,10 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {

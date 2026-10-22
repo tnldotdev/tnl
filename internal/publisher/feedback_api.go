@@ -10,11 +10,11 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/browserfonts"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
 )
 
 func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (controlv1.FeedbackReviewerAccess, bool) {
@@ -225,15 +225,15 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 		// only a stable diagnostic is shown to the visitor. credentials and
 		// submitted evidence never appear in an HTTP error body.
 		message, status := "feedback request failed; retry", http.StatusServiceUnavailable
-		var problem *controlclient.ProblemError
+		var problem *clientcontrol.ProblemError
 		switch {
-		case errors.Is(err, controlclient.ErrUnauthenticated):
+		case errors.Is(err, clientcontrol.ErrUnauthenticated):
 			message, status = "feedback requires sign-in; sign in and retry", http.StatusUnauthorized
-		case errors.Is(err, controlclient.ErrNotFound):
+		case errors.Is(err, clientcontrol.ErrNotFound):
 			message, status = "feedback thread not found", http.StatusNotFound
-		case errors.Is(err, controlclient.ErrStatusConflict):
+		case errors.Is(err, clientcontrol.ErrStatusConflict):
 			message, status = "feedback changed; reload and retry", http.StatusConflict
-		case errors.Is(err, controlclient.ErrRateLimited):
+		case errors.Is(err, clientcontrol.ErrRateLimited):
 			message, status = "too many feedback requests; retry shortly", http.StatusTooManyRequests
 		case errors.As(err, &problem) && problem.Status == http.StatusForbidden:
 			message, status = "feedback requires a current share", http.StatusForbidden

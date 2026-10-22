@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"sync"
 
-	feedbacktoolbar "github.com/tnldotdev/tnl/internal/publisher/toolbar"
+	"github.com/tnldotdev/tnl/internal/publisher/toolbar"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const (
@@ -51,7 +51,7 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 	if !ok || config.PreviewID == "" || config.Service == "" || !config.Demo && config.ProjectRoot == "" {
 		return nil, errors.New("publisher: feedback requires a configured preview, project service, and control client")
 	}
-	asset, assetPath := feedbacktoolbar.Script()
+	asset, assetPath := toolbar.Script()
 	return &feedbackRuntime{
 		demo:   config.Demo,
 		client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
@@ -62,5 +62,5 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 }
 
 func (f *feedbackRuntime) modifyResponse(response *http.Response) error {
-	return feedbacktoolbar.Inject(response)
+	return toolbar.Inject(response)
 }

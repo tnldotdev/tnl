@@ -25,8 +25,8 @@ export type { PrepareOptions, PreparedService } from "./internal/publisher/app.j
 export type {
   AdHocTunnel,
   OpenOptions,
-  PublisherFile,
-  PublisherID,
+  PublisherCredentialFile,
+  PublisherIdentityID,
 } from "./internal/publisher/open.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
@@ -47,7 +47,7 @@ type RegisteredTnlProject = keyof TnlProjectConfig extends never
 
 export type TnlRuntime = Readonly<
   Partial<Omit<ProjectMetadata, "services">> &
-    Partial<Omit<RegisteredTnlProject, "publishers" | "workloads" | "services">> & {
+    Partial<Omit<RegisteredTnlProject, "publisherGroups" | "workloads" | "services">> & {
       services: RegisteredTnlProject["services"];
       readonly port: number;
       readonly dev: boolean;

@@ -1,11 +1,11 @@
-package clientstate
+package state
 
 import (
 	"path/filepath"
 	"testing"
 	"time"
 
-	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
+	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 )
 
 func TestWebhookPolicyCacheSurvivesRestartAndRejectsUnboundedData(t *testing.T) {
@@ -16,7 +16,7 @@ func TestWebhookPolicyCacheSurvivesRestartAndRejectsUnboundedData(t *testing.T) 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	entry := webhookips.CacheEntry{JSON: []byte(`{"source":{"kind":"ip_ranges","ranges":["192.0.2.0/24"]}}`),
+	entry := webhooksource.CacheEntry{JSON: []byte(`{"source":{"kind":"ip_ranges","ranges":["192.0.2.0/24"]}}`),
 		ETag: `"one"`, CheckedAt: now, ExpiresAt: now.Add(time.Minute)}
 	if err := state.SaveWebhookPolicy(t.Context(), serverA, "stripe", entry); err != nil {
 		t.Fatal(err)

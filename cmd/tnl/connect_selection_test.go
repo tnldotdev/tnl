@@ -3,15 +3,15 @@ package main
 import (
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestConnectKeyAndOverrideUseEffectiveServerAndTeam(t *testing.T) {
 	rootServer, rootTeam := "https://root.example.test", "root-team"
 	alias := "database"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &rootServer, Team: &rootTeam, Services: config.Services{"orders": {Name: &alias}}}}}
-	for _, name := range []string{"orders", alias, "psvc_arbitrary"} {
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Server: &rootServer, Team: &rootTeam, Services: config.Services{"orders": {Name: &alias}}}}}
+	for _, name := range []string{"orders", alias, "svc_arbitrary"} {
 		flags := connectStartCommand{Name: name}
 		if err := project.applyConnect(&flags); err != nil {
 			t.Fatal(err)

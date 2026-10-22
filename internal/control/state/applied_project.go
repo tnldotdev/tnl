@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -70,7 +70,7 @@ type ProjectServiceAccess struct {
 }
 type ProjectServiceConfiguration struct {
 	TargetDiscovery *ProjectTargetDiscovery  `json:"target_discovery,omitempty"`
-	Publisher       string                   `json:"publisher,omitempty"`
+	PublisherGroup  string                   `json:"publisher_group,omitempty"`
 	Name            string                   `json:"name,omitempty"`
 	Protocol        string                   `json:"protocol,omitempty"`
 	Target          string                   `json:"target"`
@@ -80,11 +80,11 @@ type ProjectServiceConfiguration struct {
 	HTTP            *config.HTTPService      `json:"http,omitempty"`
 }
 type ProjectConfiguration struct {
-	Workloads  map[string]ProjectWorkload             `json:"workloads,omitempty"`
-	Publishers map[string]ProjectPublisherGroup       `json:"publishers"`
-	Services   map[string]ProjectServiceConfiguration `json:"services"`
-	OAuth      bool                                   `json:"oauth"`
-	Webhooks   map[string]ProjectWebhook              `json:"webhooks"`
+	Workloads       map[string]ProjectWorkload             `json:"workloads,omitempty"`
+	PublisherGroups map[string]ProjectPublisherGroup       `json:"publisher_groups"`
+	Services        map[string]ProjectServiceConfiguration `json:"services"`
+	OAuth           bool                                   `json:"oauth"`
+	Webhooks        map[string]ProjectWebhook              `json:"webhooks"`
 }
 type ProjectWebhook struct {
 	Service   string   `json:"service"`
@@ -105,7 +105,7 @@ type ApplyProjectConfigurationRequest struct {
 }
 type AppliedProjectService struct {
 	Service         string `json:"service"`
-	Publisher       string `json:"publisher"`
+	PublisherGroup  string `json:"publisher_group"`
 	Kind            string `json:"service_kind"`
 	ServiceID       string `json:"service_id,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
@@ -154,42 +154,42 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	if err = json.Unmarshal(data, &c); err != nil {
 		return c, "", err
 	}
-	if len(c.Publishers) > 32 || len(c.Services) > 128 {
+	if len(c.PublisherGroups) > 32 || len(c.Services) > 128 {
 		return c, "", ErrProjectConfigurationInvalid
 	}
-	if c.Publishers == nil {
-		c.Publishers = map[string]ProjectPublisherGroup{}
+	if c.PublisherGroups == nil {
+		c.PublisherGroups = map[string]ProjectPublisherGroup{}
 	}
 	if c.Services == nil {
 		c.Services = map[string]ProjectServiceConfiguration{}
 	}
-	for name, g := range c.Publishers {
-		if name == "local" || !privateServiceName.MatchString(name) || len(g.Description) > 1024 || strings.ContainsAny(g.Description, "\x00\r") {
+	for name, g := range c.PublisherGroups {
+		if name == "local" || !serviceName.MatchString(name) || len(g.Description) > 1024 || strings.ContainsAny(g.Description, "\x00\r") {
 			return c, "", ErrProjectConfigurationInvalid
 		}
 	}
 	for key, s := range c.Services {
-		if !privateServiceName.MatchString(key) {
+		if !serviceName.MatchString(key) {
 			return c, "", ErrProjectConfigurationInvalid
 		}
-		if s.Publisher == "" {
-			s.Publisher = "local"
+		if s.PublisherGroup == "" {
+			s.PublisherGroup = "local"
 		}
-		if s.Publisher != "local" {
-			if _, ok := c.Publishers[s.Publisher]; !ok {
+		if s.PublisherGroup != "local" {
+			if _, ok := c.PublisherGroups[s.PublisherGroup]; !ok {
 				return c, "", ErrProjectConfigurationInvalid
 			}
 		}
 		if s.Name == "" {
 			s.Name = key
 		}
-		if !privateServiceName.MatchString(s.Name) {
+		if !serviceName.MatchString(s.Name) {
 			return c, "", ErrProjectConfigurationInvalid
 		}
 		if s.Protocol == "" {
 			s.Protocol = "http"
 		}
-		if (PrivateServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
+		if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
 			return c, "", ErrProjectConfigurationInvalid
 		}
 		if err := normalizeAppliedProjectService(&s); err != nil {
@@ -243,9 +243,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	defer rollback(ctx, tx, "apply project configuration", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, r.TeamID); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
 		return result, err
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
@@ -334,26 +334,26 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	for _, g := range groups {
 		groupIDs[g.Name] = g.ID
 	}
-	for _, name := range sortedProjectKeys(c.Publishers) {
+	for _, name := range sortedProjectKeys(c.PublisherGroups) {
 		id := groupIDs[name]
 		if id == "" {
 			id, err = opaqueid.New("pgrp_")
 			if err != nil {
 				return result, err
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,description) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, name, c.Publishers[name].Description)
+			_, err = tx.Exec(ctx, `INSERT INTO control.project_publisher_groups(id,team_id,project_key,name,description) VALUES($1,$2,$3,$4,$5)`, id, r.TeamID, r.ProjectKey, name, c.PublisherGroups[name].Description)
 		} else {
-			_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET description=$2 WHERE id=$1`, id, c.Publishers[name].Description)
+			_, err = tx.Exec(ctx, `UPDATE control.project_publisher_groups SET description=$2 WHERE id=$1`, id, c.PublisherGroups[name].Description)
 		}
 		if err != nil {
 			return result, err
 		}
 		groupIDs[name] = id
-		if err = d.ensureManagedGroupNamespace(ctx, tx, r, id, name, c.Publishers[name]); err != nil {
+		if err = d.ensureGroupNamespace(ctx, tx, r, id, name, c.PublisherGroups[name]); err != nil {
 			return result, err
 		}
-		oldGroup, found := old.Publishers[name]
-		if !found || oldGroup != c.Publishers[name] {
+		oldGroup, found := old.PublisherGroups[name]
+		if !found || oldGroup != c.PublisherGroups[name] {
 			changedGroups[id] = true
 		}
 	}
@@ -385,25 +385,25 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		changed := !found || !reflect.DeepEqual(old.Services[key], s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
-			if s.Publisher != "local" {
-				entry.GroupID = text(groupIDs[s.Publisher])
+			if s.PublisherGroup != "local" {
+				entry.GroupID = text(groupIDs[s.PublisherGroup])
 			}
 			// local resources are created by the normal per-worktree runtime.
-			if s.Publisher != "local" {
-				id, e := d.createAppliedPrivateService(ctx, tx, q, r, key, entry.GroupID.String, s)
+			if s.PublisherGroup != "local" {
+				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s)
 				if e != nil {
 					return result, e
 				}
-				entry.PrivateServiceID = text(id)
+				entry.ServiceID = text(id)
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,private_service_id,public_url_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.TeamID, r.ProjectKey, key, entry.GroupID, entry.PrivateServiceID, entry.PublicURLID, next)
+			_, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,group_id,service_id,public_url_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.TeamID, r.ProjectKey, key, entry.GroupID, entry.ServiceID, entry.PublicURLID, next)
 			if err != nil {
 				return result, err
 			}
 		} else {
-			entry.GroupID = nullableText(groupIDs[s.Publisher])
-			if entry.PrivateServiceID.Valid && changed {
-				if err = d.updateAppliedPrivateService(ctx, tx, q, entry.PrivateServiceID.String, entry.GroupID.String, s, r.Now); err != nil {
+			entry.GroupID = nullableText(groupIDs[s.PublisherGroup])
+			if entry.ServiceID.Valid && changed {
+				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.GroupID.String, s, r.Now); err != nil {
 					return result, err
 				}
 			}
@@ -415,8 +415,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if err = d.reconcileAppliedVisitorGrant(ctx, tx, entry, r.ActorID, s.Access != nil && s.Access.Team, r.Now); err != nil {
 			return result, err
 		}
-		if entry.PrivateServiceID.Valid && entry.GroupID.Valid {
-			if err = d.ensureManagedServiceEndpoint(ctx, tx, entry.PrivateServiceID.String, entry.GroupID.String, r.DNSAutomation, r.Now); err != nil {
+		if entry.ServiceID.Valid && entry.GroupID.Valid {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.GroupID.String, r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}
@@ -430,10 +430,10 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 		}
-		if entry.PrivateServiceID.Valid || entry.PublicURLID.Valid {
+		if entry.ServiceID.Valid || entry.PublicURLID.Valid {
 			id, kind := entry.PublicURLID.String, "public_url"
-			if entry.PrivateServiceID.Valid {
-				id, kind = entry.PrivateServiceID.String, "private_service"
+			if entry.ServiceID.Valid {
+				id, kind = entry.ServiceID.String, "service"
 			}
 			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: id, ServiceKind: kind, EventType: "apply", OccurredAt: r.Now, ActorIdentityID: r.ActorID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
 				return result, err
@@ -441,7 +441,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		}
 	}
 	for _, g := range groups {
-		if _, ok := c.Publishers[g.Name]; !ok {
+		if _, ok := c.PublisherGroups[g.Name]; !ok {
 			changedGroups[g.ID] = true
 			if err = d.removePublisherGroup(ctx, tx, q, g.ID, r.Now); err != nil {
 				return result, err
@@ -489,10 +489,10 @@ func sortedProjectKeys[V any](m map[string]V) []string {
 
 func sameAppliedResource(a, b ProjectServiceConfiguration) bool {
 	// local resources belong to individual worktrees; named groups share one ID.
-	if a.Publisher != "local" && b.Publisher != "local" {
+	if a.PublisherGroup != "local" && b.PublisherGroup != "local" {
 		return true
 	}
-	if (a.Publisher == "local") != (b.Publisher == "local") || (a.PublicURL == nil) != (b.PublicURL == nil) {
+	if (a.PublisherGroup == "local") != (b.PublisherGroup == "local") || (a.PublicURL == nil) != (b.PublicURL == nil) {
 		return false
 	}
 	if a.PublicURL == nil {
@@ -504,7 +504,7 @@ func sameAppliedResource(a, b ProjectServiceConfiguration) bool {
 func projectConstraintError(err error) error {
 	var p *pgconn.PgError
 	if errors.As(err, &p) && p.Code == "23505" {
-		return ErrPrivateServiceConflict
+		return ErrServiceConflict
 	}
 	return err
 }
@@ -517,9 +517,9 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 	defer rollback(ctx, tx, "get project configuration", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return result, err
 	}
 	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: key})
@@ -544,10 +544,10 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		return result, err
 	}
 	for _, s := range rows {
-		v := AppliedProjectService{Service: s.Service, Publisher: c.Services[s.Service].Publisher, Kind: "local", DesiredRevision: s.DesiredRevision}
-		if s.PrivateServiceID.Valid {
-			v.Kind, v.ServiceID = "private_service", s.PrivateServiceID.String
-			if err = tx.QueryRow(ctx, `SELECT trust_revision,certificate_hostname,COALESCE(service_port,0),public FROM control.private_services WHERE id=$1`, v.ServiceID).Scan(&v.TrustRevision, &v.Hostname, &v.Port, &v.Public); err != nil {
+		v := AppliedProjectService{Service: s.Service, PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
+		if s.ServiceID.Valid {
+			v.Kind, v.ServiceID = "service", s.ServiceID.String
+			if err = tx.QueryRow(ctx, `SELECT trust_revision,certificate_hostname,COALESCE(service_port,0),public FROM control.services WHERE id=$1`, v.ServiceID).Scan(&v.TrustRevision, &v.Hostname, &v.Port, &v.Public); err != nil {
 				return result, err
 			}
 		} else if s.PublicURLID.Valid {

@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type scopedAuthority struct {
@@ -33,8 +33,8 @@ func (a *scopedAuthority) ExchangePublisherAssertion(context.Context, string, st
 }
 
 func TestResolveAdHocRequiresExplicitSetupAndFailsClosedOnInvalidFile(t *testing.T) {
-	t.Setenv("TNL_PUBLISHER_FILE", "")
-	if err := os.Unsetenv("TNL_PUBLISHER_FILE"); err != nil {
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
+	if err := os.Unsetenv("TNL_PUBLISHER_CREDENTIAL_FILE"); err != nil {
 		t.Fatal(err)
 	}
 	d, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
@@ -55,7 +55,7 @@ func TestResolveAdHocRequiresExplicitSetupAndFailsClosedOnInvalidFile(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &scopedAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: keyID, GrantId: grant, TeamId: "team", Kind: "saved_url", PublicUrlId: &url}}
+	a := &scopedAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: keyID, GrantId: grant, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
 	control := &unusedControl{}
 	if _, err := ResolveAdHoc(t.Context(), state, control, a, server, "team", "domain", "member.example", "", "", "", nil); !errors.Is(err, ErrSetupRequired) {
 		t.Fatalf("setup was not required: %v", err)
@@ -74,7 +74,7 @@ func TestResolveAdHocRequiresExplicitSetupAndFailsClosedOnInvalidFile(t *testing
 	if _, err := ResolveAdHoc(t.Context(), state, control, a, server, "team", "domain", "member.example", path+".missing", "", "", nil); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("invalid file fell back to local state: %v", err)
 	}
-	t.Setenv("TNL_PUBLISHER_FILE", path+".missing")
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", path+".missing")
 	if _, err := ResolveAdHoc(t.Context(), state, control, a, server, "team", "domain", "member.example", "", "", "", nil); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("invalid environment file fell back to local state: %v", err)
 	}
@@ -109,14 +109,14 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	if _, err := LoadLocalNamespace(t.Context(), state, c, a, team, domain, namespace); err != nil {
 		t.Fatal(err)
 	}
-	if selected, err := LoadDefaultNamespace(t.Context(), state, c, a); err != nil || selected.PublisherID() != id {
+	if selected, err := LoadDefaultNamespace(t.Context(), state, c, a); err != nil || selected.PublisherIdentityID() != id {
 		t.Fatalf("explicit setup did not select a usable default namespace: %v", err)
 	}
 	if _, err := LoadLocalNamespace(t.Context(), state, c, a, team, domain, "other.example"); !errors.Is(err, ErrScope) {
 		t.Fatalf("scope widened: %v", err)
 	}
-	t.Setenv("TNL_PUBLISHER_FILE", "")
-	if err := os.Unsetenv("TNL_PUBLISHER_FILE"); err != nil {
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
+	if err := os.Unsetenv("TNL_PUBLISHER_CREDENTIAL_FILE"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, "", "", "", nil); err != nil {
@@ -143,15 +143,15 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, path+".missing", "", "", nil); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("invalid explicit file fell back to local setup: %v", err)
 	}
-	t.Setenv("TNL_PUBLISHER_FILE", path+".missing")
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", path+".missing")
 	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, "", "", id, nil); errors.Is(err, ErrSelection) || errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("explicit publisher ID was overridden by environment file: %v", err)
 	}
 }
 
 func TestPortableNamespaceFileAuthorizesWithoutLocalSetup(t *testing.T) {
-	t.Setenv("TNL_PUBLISHER_FILE", "")
-	if err := os.Unsetenv("TNL_PUBLISHER_FILE"); err != nil {
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
+	if err := os.Unsetenv("TNL_PUBLISHER_CREDENTIAL_FILE"); err != nil {
 		t.Fatal(err)
 	}
 	const server = "https://control.example"
@@ -175,7 +175,7 @@ func TestPortableNamespaceFileAuthorizesWithoutLocalSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := ResolveAdHoc(t.Context(), nil, &unusedControl{}, a, server, "", "", "", path, "", "", nil)
-	if err != nil || n.PublisherID() != id || a.accesses != 1 {
+	if err != nil || n.PublisherIdentityID() != id || a.accesses != 1 {
 		t.Fatalf("portable namespace file: %v", err)
 	}
 	if _, err := ResolveAdHoc(t.Context(), nil, &unusedControl{}, a, "https://other.example", "", "", "", path, "", "", nil); !errors.Is(err, ErrScope) {

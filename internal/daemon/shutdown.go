@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -78,8 +78,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 				result = errors.Join(result, fmt.Errorf("drain relay publisher connections: %w", err))
 			}
 		}
-		if runtime.privateRegistry != nil {
-			result = errors.Join(result, shutdownStep("private_relay_connections", func() error { return runtime.privateRegistry.Drain(drainCtx) }))
+		if runtime.serviceRegistry != nil {
+			result = errors.Join(result, shutdownStep("private_relay_connections", func() error { return runtime.serviceRegistry.Drain(drainCtx) }))
 		}
 	}
 	// only cancel component contexts after the bounded drain has finished.
@@ -98,8 +98,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		}
 	}
 	for _, runtime := range d.relays {
-		if runtime.privateRegistry != nil {
-			result = errors.Join(result, runtime.privateRegistry.Close())
+		if runtime.serviceRegistry != nil {
+			result = errors.Join(result, runtime.serviceRegistry.Close())
 		}
 		if runtime.registry != nil {
 			if err := runtime.registry.Close(); err != nil {

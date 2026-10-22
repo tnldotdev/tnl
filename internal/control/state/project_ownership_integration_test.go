@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -24,7 +24,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := addAuthorityMember(t, d, now, base.ActingIdentityID, base.TeamID, "local-reader", TeamRoleMember)
-	unrelated, err := d.CreatePrivateService(ctx, base.TeamID, base.ActingIdentityID, "db", "manual-db", now)
+	unrelated, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "db", "manual-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ServiceID == unrelated.ID || first.PrivateService == nil {
+	if first.ServiceID == unrelated.ID || first.Metadata == nil {
 		t.Fatal("local runtime adopted an unrelated name")
 	}
 	retry, err := d.RealizeLocalProjectService(ctx, local)
@@ -48,7 +48,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	local.WorktreeKey = "checkout-b"
 	second, err := d.RealizeLocalProjectService(ctx, local)
 	if err != nil || second.ServiceID == first.ServiceID {
-		t.Fatal("worktrees share a private service", err)
+		t.Fatal("worktrees share a service", err)
 	}
 	public := createTestPublicURL(t, d, base, now)
 	local.Service, local.WorktreeKey, local.PublicURLID, local.Configuration = "web", "checkout-a", public.ID, configuration.Services["web"]
@@ -68,30 +68,30 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		}
 	}
 	var count int
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.private_services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 3 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 3 {
 		t.Fatal("apply duplicated local service", count, err)
 	}
-	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("member read manager configuration", err)
 	}
-	if _, err = d.ConfigurePrivateService(ctx, first.ServiceID, r.ActorID, *first.PrivateService, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("direct managed definition changed", err)
 	}
-	if err = d.DeletePrivateService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct managed service deleted", err)
+	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+		t.Fatal("direct service deleted", err)
 	}
 	var configuredGrant string
-	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE private_service_id=$1`, first.ServiceID).Scan(&configuredGrant); err != nil {
+	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE service_id=$1`, first.ServiceID).Scan(&configuredGrant); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.RevokePrivateServiceGrant(ctx, first.ServiceID, r.ActorID, configuredGrant, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.RevokeServiceGrant(ctx, first.ServiceID, r.ActorID, configuredGrant, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("configured team grant revoked directly", err)
 	}
-	extra, err := d.CreatePrivateServiceGrant(ctx, first.ServiceID, r.ActorID, "extra-visitor", "identity", member.IdentityID, nil, now)
+	extra, err := d.CreateServiceGrant(ctx, first.ServiceID, r.ActorID, "extra-visitor", "identity", member.IdentityID, nil, now)
 	if err != nil {
 		t.Fatal("extra visitor grant was blanket denied", err)
 	}
-	if err = d.RevokePrivateServiceGrant(ctx, first.ServiceID, r.ActorID, extra.ID, now); err != nil {
+	if err = d.RevokeServiceGrant(ctx, first.ServiceID, r.ActorID, extra.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	var publicGrant string
@@ -112,7 +112,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	}
 	for _, grant := range []string{configuredGrant, extra.ID} {
 		var revoked bool
-		if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.private_service_grants WHERE id=$1`, grant).Scan(&revoked); err != nil || !revoked {
+		if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.service_grants WHERE id=$1`, grant).Scan(&revoked); err != nil || !revoked {
 			t.Fatal("apply restored revoked or removed access", err)
 		}
 	}
@@ -174,9 +174,9 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	d, now := newControlStateIntegrationDatabase(t, "managed_projection")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"public": {Publisher: "production", Target: "http://secret.internal:3000", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}},
-		"db":     {Publisher: "production", Protocol: "postgres", Target: "db.internal:5432"},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
+		"public": {PublisherGroup: "production", Target: "http://secret.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+		"db":     {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"},
 	}}
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -188,11 +188,11 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 			publicID = s.ServiceID
 		}
 	}
-	if err = d.DeletePrivateService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct managed service deletion succeeded", err)
+	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+		t.Fatal("direct service deletion succeeded", err)
 	}
 	if _, err = d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
-		t.Fatal("managed service became a public URL")
+		t.Fatal("service became a public URL")
 	}
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 			t.Fatal("projection leaked manager data", value)
 		}
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("visitor read full configuration", err)
 	}
 	outsider := finalVisitorIdentity(t, d, now, "projection-outsider@example.test")
@@ -234,7 +234,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 	}
 	r.ExpectedRevision = status.Revision
 	r.Configuration = status.Configuration
-	r.Configuration.Publishers["production"] = ProjectPublisherGroup{Description: "updated description"}
+	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated description"}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "release_assignment")
 	r := oidcRouteRequest(t, d, now)
-	service, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActingIdentityID, "db", "db", now)
+	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "db", "db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 	}
 	leases := map[string]IngressLease{}
 	for index := range 2 {
-		lease, e := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("release-%d", index), IngressRunID: fmt.Sprintf("run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, PrivateConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 7400+index), PrivateConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+		lease, e := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("release-%d", index), IngressRunID: fmt.Sprintf("run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 7400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -282,7 +282,7 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := finalVisitorIdentity(t, d, now, "other@example.test")
-	if err = d.ReleaseVisitorIngressAssignment(t.Context(), other, sessions[0].ID, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if err = d.ReleaseVisitorIngressAssignment(t.Context(), other, sessions[0].ID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("other identity released assignment", err)
 	}
 	for range 2 {
@@ -291,11 +291,11 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 		}
 	}
 	var pending int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.private_connector_sessions WHERE assigned_ingress_id=$1 AND bound_at IS NULL AND revoked_at IS NULL`, sessions[0].IngressID).Scan(&pending); err != nil || pending != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions WHERE assigned_ingress_id=$1 AND bound_at IS NULL AND revoked_at IS NULL`, sessions[0].IngressID).Scan(&pending); err != nil || pending != 0 {
 		t.Fatal("release did not free reservation", pending, err)
 	}
 	sibling := sessions[1]
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", SessionID: sibling.ID, PrivateServiceID: service.ID, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: r.ActingIdentityID, DeviceID: device.ID}, Credential: sibling.Credential, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", SessionID: sibling.ID, ServiceID: service.ID, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: r.ActingIdentityID, DeviceID: device.ID}, Credential: sibling.Credential, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
 	digest, err := hello.Claim().Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 		t.Fatal("bound shutdown release failed", err)
 	}
 	var revoked bool
-	if err = d.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL AND bound_at IS NOT NULL FROM control.private_connector_sessions WHERE id=$1`, sibling.ID).Scan(&revoked); err != nil || !revoked {
+	if err = d.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL AND bound_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, sibling.ID).Scan(&revoked); err != nil || !revoked {
 		t.Fatal("bound release not visible to active recheck", err)
 	}
 }

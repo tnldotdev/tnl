@@ -21,7 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // use the real CLI as OpenSSH's ProxyCommand, with control, ingress, relay and
@@ -62,10 +62,10 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	address, clientKey, hostPublic, username := connectWorkflowSSHD(t, root)
 	configuration := filepath.Join(root, "tnl.json")
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId,
-		"publishers": map[string]any{"internal": map[string]any{}, "production": map[string]any{"public": true}},
+		"publisher_groups": map[string]any{"internal": map[string]any{}, "production": map[string]any{"public": true}},
 		"services": map[string]any{
-			"internal": map[string]any{"publisher": "internal", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
-			"shell":    map[string]any{"publisher": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
+			"internal": map[string]any{"publisher_group": "internal", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
+			"shell":    map[string]any{"publisher_group": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
 		}}})
 	if err != nil {
 		t.Fatal(err)
@@ -97,16 +97,16 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	}
 	for _, name := range []string{"internal", "shell"} {
 		t.Run(name, func(t *testing.T) {
-			var service controlv1.PrivateService
+			var service controlv1.Service
 			workflowWait(t, 30*time.Second, func() bool {
 				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
 				if err != nil {
 					return false
 				}
-				_, err = session.Authenticated().Control.SelectPrivateServiceRun(t.Context(), service.Id, device.ID)
+				_, err = session.Authenticated().Control.SelectServiceRun(t.Context(), service.Id, device.ID)
 				return err == nil
 			})
-			endpoint := service.ManagedTls
+			endpoint := service.Endpoint
 			if endpoint.Public {
 				f.connectDirectListener(t, endpoint)
 			}
@@ -129,7 +129,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			}
 			args := []string{"-F", "/dev/null", "-T", "-i", clientKey, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + known, "-o", "GlobalKnownHostsFile=/dev/null", "-o", "CheckHostIP=no", "-o", "ProxyCommand=" + strings.Join(proxyArgs, " "), username + "@" + endpoint.Hostname}
 			var before int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.private_connector_sessions`).Scan(&before); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions`).Scan(&before); err != nil {
 				t.Fatal(err)
 			}
 			for _, remote := range []string{"cat", "printf 'remote-exit'; exit 7"} {
@@ -153,7 +153,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 				}
 			}
 			var after int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.private_connector_sessions`).Scan(&after); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions`).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
 			if after <= before {
@@ -199,7 +199,7 @@ func writeConnectWorkflowHosts(t *testing.T, data []byte) {
 	}
 }
 
-func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.ManagedServiceTLS) {
+func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.ServiceEndpoint) {
 	t.Helper()
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(endpoint.Port)))
 	if err != nil {

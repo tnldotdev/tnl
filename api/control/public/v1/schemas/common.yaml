@@ -11,25 +11,25 @@ securitySchemes:
     type: http
     scheme: bearer
     bearerFormat: tnl publish-run token
-  privateRunAuth:
+  serviceRunAuth:
     type: http
     scheme: bearer
-    bearerFormat: tnl private-service run token
+    bearerFormat: tnl service run token
   publisherAuth:
     type: http
     scheme: bearer
     bearerFormat: tnl grant-scoped publisher access token
 parameters:
-  PrivateServiceID:
-    name: private_service_id
+  ServiceID:
+    name: service_id
     in: path
     required: true
-    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-  PrivateServiceCursor:
+    schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+  ServiceCursor:
     name: cursor
     in: query
     required: false
-    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+    schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
   PublisherIdentityID:
     name: publisher_identity_id
     in: path
@@ -152,7 +152,7 @@ schemas:
       device_id: { type: string }
       workload_session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
     description: Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-  ManagedServiceTLS:
+  ServiceEndpoint:
     type: object
     additionalProperties: false
     required: [hostname, port, public]

@@ -1,15 +1,15 @@
 paths:
   /v1/browser/managed-login:
     get:
-      operationId: beginManagedBrowserLogin
+      operationId: beginServiceBrowserLogin
       security: []
-      description: Start sign-in for one managed HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+      description: Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
       parameters:
         - {
-            name: private_service_id,
+            name: service_id,
             in: query,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
           }
         - {
             name: return_path,
@@ -21,12 +21,12 @@ paths:
       responses:
         "302": { description: Redirect to the configured identity provider }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/http-grants:
+  /v1/services/{service_id}/http-grants:
     get:
-      operationId: listManagedHTTPGrants
+      operationId: listServiceHTTPGrants
       security: [{ bearerAuth: [] }]
-      description: Secretless credential inventory for one managed HTTP service. Requires current service management permission; includes expired and revoked records.
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      description: Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       responses:
         "200":
           description: Exact managed subject credential summaries, without secrets or share URLs
@@ -34,52 +34,52 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: "../openapi.yaml#/components/schemas/ManagedHTTPGrantSummary" }
+                items: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPGrantSummary" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
-      operationId: createManagedHTTPGrant
+      operationId: createServiceHTTPGrant
       security: [{ bearerAuth: [] }]
       description: Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/CreateManagedHTTPGrantRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceHTTPGrantRequest" }
       responses:
         "201":
           description: Exact managed subject and one-time secret
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ManagedHTTPGrant" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPGrant" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/http-grants/{grant_id}:
+  /v1/services/{service_id}/http-grants/{grant_id}:
     delete:
-      operationId: revokeManagedHTTPGrant
+      operationId: revokeServiceHTTPGrant
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - { name: grant_id, in: path, required: true, schema: { type: string } }
       responses:
         "204": { description: Grant revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/handoff:
+  /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
     post:
-      operationId: redeemManagedBrowserHandoff
+      operationId: redeemServiceBrowserHandoff
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ManagedBrowserRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceBrowserRequest" }
       responses:
         "200":
           description: Host-bound browser credential for the exact managed subject
@@ -87,23 +87,23 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/BrowserHandoffResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/session:
+  /v1/services/{service_id}/runs/{service_run_id}/browser/session:
     post:
-      operationId: checkManagedBrowserSession
+      operationId: checkServiceBrowserSession
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ManagedBrowserRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceBrowserRequest" }
       responses:
         "200":
           description: Current browser identity and visit permission, not management permission
@@ -112,21 +112,21 @@ paths:
               schema: { $ref: "../openapi.yaml#/components/schemas/BrowserAccessResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
-      operationId: revokeManagedBrowserSession
+      operationId: revokeServiceBrowserSession
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ManagedBrowserRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceBrowserRequest" }
       responses:
         "204": { description: Host-bound browser session revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

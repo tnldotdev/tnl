@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/sha256"
@@ -14,24 +14,24 @@ import (
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "shares")
 	routeRequest := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, routeRequest, now)
-	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "preview", now)
+	publicURL := createTestPublicURL(t, database, routeRequest, now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "preview", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview, err = database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID, IdentityID: routeRequest.ActingIdentityID,
-		PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, IdentityID: routeRequest.ActingIdentityID,
+		PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now)
-	if err != nil || !slices.Equal(preview.PublicURLIDs, []string{route.ID}) {
+	if err != nil || !slices.Equal(preview.PublicURLIDs, []string{publicURL.ID}) {
 		t.Fatalf("preview = %+v, %v", preview, err)
 	}
 	secret := sha256.Sum256([]byte("secret supplied by client"))
 	request := CreateShareRequest{
 		PreviewID: preview.ID, TeamID: preview.TeamID, ActingIdentityID: routeRequest.ActingIdentityID,
 		IdempotencyKey: "first-share", SecretFingerprint: secret, ExpiresAt: now.Add(24 * time.Hour),
-		PolicyRevision: uint64(route.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{
-			PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
+		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{
+			PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision,
 		}},
 	}
 	for _, expiresAt := range []time.Time{now, now.Add(31 * 24 * time.Hour)} {
@@ -42,7 +42,7 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 		}
 	}
 	share, err := database.CreateShare(t.Context(), request, now)
-	if err != nil || share.ID == "" || share.PreviewID != preview.ID || !slices.Equal(share.PublicURLIDs, []string{route.ID}) || share.RevokedAt != nil {
+	if err != nil || share.ID == "" || share.PreviewID != preview.ID || !slices.Equal(share.PublicURLIDs, []string{publicURL.ID}) || share.RevokedAt != nil {
 		t.Fatalf("created share = %+v, %v", share, err)
 	}
 	retry, err := database.CreateShare(t.Context(), request, now)
@@ -57,17 +57,17 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	newRouteRequest := routeRequest
 	newRouteRequest.IdempotencyKey = "new-service"
 	newRouteRequest.RequestDigest = sha256.Sum256([]byte("new-service"))
-	newRouteRequest.CanonicalHostname = "new-" + route.CanonicalHostname
+	newRouteRequest.CanonicalHostname = "new-" + publicURL.CanonicalHostname
 	newRoute := createTestPublicURL(t, database, newRouteRequest, now)
 	_, err = database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: newRoute.ID, TeamID: route.TeamID, IdentityID: routeRequest.ActingIdentityID,
+		PreviewID: preview.ID, PublicURLID: newRoute.ID, TeamID: publicURL.TeamID, IdentityID: routeRequest.ActingIdentityID,
 		PolicyRevision: uint64(newRoute.PolicyRevision), ExpectedMutationRevision: newRoute.MutationRevision,
 	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	saved, err := database.GetShare(t.Context(), share.ID)
-	if err != nil || !slices.Equal(saved.PublicURLIDs, []string{route.ID}) {
+	if err != nil || !slices.Equal(saved.PublicURLIDs, []string{publicURL.ID}) {
 		t.Fatalf("share gained a new hostname after creation: %+v, %v", saved, err)
 	}
 	page, err := database.ListShares(t.Context(), preview.ID, "")
@@ -101,22 +101,22 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 func TestIntegrationShareRejectsStaleOrUnrelatedURLs(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "share_guards")
 	routeRequest := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, routeRequest, now)
-	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "preview", now)
+	publicURL := createTestPublicURL(t, database, routeRequest, now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "preview", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := CreateShareRequest{
-		PreviewID: preview.ID, TeamID: route.TeamID, ActingIdentityID: routeRequest.ActingIdentityID,
+		PreviewID: preview.ID, TeamID: publicURL.TeamID, ActingIdentityID: routeRequest.ActingIdentityID,
 		IdempotencyKey: "share", SecretFingerprint: sha256.Sum256([]byte("new secret")), ExpiresAt: now.Add(time.Hour),
-		PolicyRevision: uint64(route.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision}},
+		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision}},
 	}
 	if _, err := database.CreateShare(t.Context(), request, now); !errors.Is(err, ErrShareStale) {
 		t.Fatalf("public URL outside preview was shared: %v", err)
 	}
 	_, err = database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID, IdentityID: routeRequest.ActingIdentityID,
-		PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, IdentityID: routeRequest.ActingIdentityID,
+		PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -144,10 +144,10 @@ func TestIntegrationExactAndPreviewShareSnapshotsHaveDifferentScopes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, route := range []PublicURL{first, second} {
+	for _, publicURL := range []PublicURL{first, second} {
 		if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-			PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID, IdentityID: request.ActingIdentityID,
-			PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+			PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, IdentityID: request.ActingIdentityID,
+			PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 		}, now); err != nil {
 			t.Fatal(err)
 		}

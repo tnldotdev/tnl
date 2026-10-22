@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -25,14 +25,14 @@ type assignmentConflictControl struct {
 	once     sync.Once
 }
 
-func (c *assignmentConflictControl) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
+func (c *assignmentConflictControl) ConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
 	if slot == 0 && c.conflict.Load() {
 		if c.attempts.Add(1) >= 2 {
 			c.once.Do(func() { close(c.retried) })
 		}
-		return Assignment{}, controlclient.ErrStatusConflict
+		return Assignment{}, clientcontrol.ErrStatusConflict
 	}
-	return c.connectorFixture.PrivateConnectorAssignment(ctx, service, subject, slot)
+	return c.connectorFixture.ConnectorAssignment(ctx, service, subject, slot)
 }
 
 func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
@@ -84,11 +84,11 @@ func TestAssignmentCleanupSharesCallerCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	client, err := controlclient.New(server.URL, server.Client(), "test-access")
+	client, err := clientcontrol.New(server.URL, server.Client(), "test-access")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &controlAdapter{client: client, owned: map[string]bool{"pcs_aaaaaaaaaaaaaaaaaaaaaa": true, "pcs_bbbbbbbbbbbbbbbbbbbbbb": true}}
+	c := &controlAdapter{client: client, owned: map[string]bool{"cns_aaaaaaaaaaaaaaaaaaaaaa": true, "cns_bbbbbbbbbbbbbbbbbbbbbb": true}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -112,7 +112,7 @@ func TestAssignmentCleanupSharesCallerCancellation(t *testing.T) {
 }
 
 func TestMetadataReloadClassificationAndSafeFormatting(t *testing.T) {
-	reload := &MetadataReloadError{PrivateServiceID: "private-context-must-not-be-rendered", ApprovedRevision: 1, SelectedRevision: 2}
+	reload := &MetadataReloadError{ServiceID: "private-context-must-not-be-rendered", ApprovedRevision: 1, SelectedRevision: 2}
 	wrapped := errors.Join(fmt.Errorf("connector stopped: %w", reload), io.ErrClosedPipe)
 	if !IsMetadataReload(wrapped) || IsMetadataReload(io.ErrClosedPipe) || IsMetadataReload(nil) {
 		t.Fatal("reload classification lost the lifecycle boundary")

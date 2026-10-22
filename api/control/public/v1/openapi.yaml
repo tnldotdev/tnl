@@ -25,32 +25,32 @@ paths:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1client-certificate"
   /v1/browser/managed-login:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1managed-login"
-  /v1/private-services/{private_service_id}/http-grants:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1private-services~1{private_service_id}~1http-grants"
-  /v1/private-services/{private_service_id}/http-grants/{grant_id}:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1private-services~1{private_service_id}~1http-grants~1{grant_id}"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/http-authorize:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1http-authorize"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/handoff:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1browser~1handoff"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/session:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1browser~1session"
-  /v1/projects/{project_key}/private-services/{service}:
-    $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1private-services~1{service}"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/start:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1start"
-  /v1/private-services/{private_service_id}/client-certificates:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1private-services~1{private_service_id}~1client-certificates"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-connector:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1authorize-connector"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-client-certificate:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1authorize-client-certificate"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1certificate-issuances"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances/{issuance_id}:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1certificate-issuances~1{issuance_id}"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-installed:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}~1certificate-installed"
+  /v1/services/{service_id}/http-grants:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants"
+  /v1/services/{service_id}/http-grants/{grant_id}:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants~1{grant_id}"
+  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1http-authorize"
+  /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1handoff"
+  /v1/services/{service_id}/runs/{service_run_id}/browser/session:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1session"
+  /v1/projects/{project_key}/services/{service}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1services~1{service}"
+  /v1/services/{service_id}/runs/{service_run_id}/start:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
+  /v1/services/{service_id}/client-certificates:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1client-certificates"
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-connector"
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-client-certificate"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances~1{issuance_id}"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-installed"
   /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
     $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1namespace~1rename"
   /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
@@ -85,38 +85,38 @@ paths:
     $ref: "./paths/observations.yaml#/paths/~1v1~1publish-runs~1{run_id}~1service-observations"
   /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-ingress-assignments~1{connector_session_id}~1transport-trust"
-  /v1/publisher/private-service:
-    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1private-service"
+  /v1/publisher/service:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1service"
   /v1/visitor-devices:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-devices"
   /v1/visitor-devices/{device_id}:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-devices~1{device_id}"
-  /v1/private-services:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services"
-  /v1/private-services/{private_service_id}:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services~1{private_service_id}"
-  /v1/private-services/{private_service_id}/grants:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services~1{private_service_id}~1grants"
-  /v1/private-services/{private_service_id}/grants/{grant_id}:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services~1{private_service_id}~1grants~1{grant_id}"
-  /v1/private-services/{private_service_id}/invitations:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services~1{private_service_id}~1invitations"
-  /v1/private-services/{private_service_id}/invitations/{invitation_id}:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-services~1{private_service_id}~1invitations~1{invitation_id}"
-  /v1/private-service-invitations/accept:
-    $ref: "./paths/services.yaml#/paths/~1v1~1private-service-invitations~1accept"
-  /v1/visitor/private-services:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor~1private-services"
-  /v1/private-services/{private_service_id}/ingress-assignment:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1private-services~1{private_service_id}~1ingress-assignment"
-  /v1/private-services/{private_service_id}/ingress-assignments:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1private-services~1{private_service_id}~1ingress-assignments"
-  /v1/private-services/{private_service_id}/select-run:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1private-services~1{private_service_id}~1select-run"
-  /v1/private-services/{private_service_id}/runs:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs"
-  /v1/private-services/{private_service_id}/runs/{private_run_id}:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1private-services~1{private_service_id}~1runs~1{private_run_id}"
+  /v1/services:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services"
+  /v1/services/{service_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}"
+  /v1/services/{service_id}/grants:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants"
+  /v1/services/{service_id}/grants/{grant_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants~1{grant_id}"
+  /v1/services/{service_id}/invitations:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1invitations"
+  /v1/services/{service_id}/invitations/{invitation_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1invitations~1{invitation_id}"
+  /v1/service-invitations/accept:
+    $ref: "./paths/services.yaml#/paths/~1v1~1service-invitations~1accept"
+  /v1/visitor/services:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor~1services"
+  /v1/services/{service_id}/ingress-assignment:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignment"
+  /v1/services/{service_id}/ingress-assignments:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignments"
+  /v1/services/{service_id}/select-run:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1select-run"
+  /v1/services/{service_id}/runs:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
+  /v1/services/{service_id}/runs/{service_run_id}:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}"
   /v1/publish-runs/{publish_run_id}/visitor-access:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1visitor-access"
   /v1/visitor/public-urls:
@@ -255,15 +255,15 @@ components:
       $ref: "./schemas/common.yaml#/securitySchemes/bearerAuth"
     publishRunAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/publishRunAuth"
-    privateRunAuth:
-      $ref: "./schemas/common.yaml#/securitySchemes/privateRunAuth"
+    serviceRunAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/serviceRunAuth"
     publisherAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/publisherAuth"
   parameters:
-    PrivateServiceID:
-      $ref: "./schemas/common.yaml#/parameters/PrivateServiceID"
-    PrivateServiceCursor:
-      $ref: "./schemas/common.yaml#/parameters/PrivateServiceCursor"
+    ServiceID:
+      $ref: "./schemas/common.yaml#/parameters/ServiceID"
+    ServiceCursor:
+      $ref: "./schemas/common.yaml#/parameters/ServiceCursor"
     PublisherIdentityID:
       $ref: "./schemas/common.yaml#/parameters/PublisherIdentityID"
     IdempotencyKey:
@@ -310,20 +310,20 @@ components:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadIngressAssignments"
     HTTPAuthorizationSubject:
       $ref: "./schemas/browser-access.yaml#/schemas/HTTPAuthorizationSubject"
-    CreateManagedHTTPGrantRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/CreateManagedHTTPGrantRequest"
-    ManagedHTTPGrant:
-      $ref: "./schemas/browser-access.yaml#/schemas/ManagedHTTPGrant"
-    ManagedHTTPGrantSummary:
-      $ref: "./schemas/browser-access.yaml#/schemas/ManagedHTTPGrantSummary"
-    PrivateServiceInvitationCredential:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceInvitationCredential"
-    ManagedHTTPCredential:
-      $ref: "./schemas/browser-access.yaml#/schemas/ManagedHTTPCredential"
-    ManagedHTTPVisitorRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/ManagedHTTPVisitorRequest"
-    ManagedBrowserRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/ManagedBrowserRequest"
+    CreateServiceHTTPGrantRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
+    ServiceHTTPGrant:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrant"
+    ServiceHTTPGrantSummary:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrantSummary"
+    ServiceInvitationCredential:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationCredential"
+    ServiceHTTPCredential:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPCredential"
+    ServiceHTTPVisitorRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPVisitorRequest"
+    ServiceBrowserRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceBrowserRequest"
     ProjectPublicMetadata:
       $ref: "./schemas/projects.yaml#/schemas/ProjectPublicMetadata"
     RealizeLocalProjectServiceRequest:
@@ -422,36 +422,36 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/IngressTransportTrust"
     VisitorDevice:
       $ref: "./schemas/connectors.yaml#/schemas/VisitorDevice"
-    PrivateServiceSelection:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceSelection"
-    PrivateServiceID:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceID"
+    ServiceSelection:
+      $ref: "./schemas/services.yaml#/schemas/ServiceSelection"
+    ServiceID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:
       $ref: "./schemas/service-runs.yaml#/schemas/VisitorConnectionID"
-    PrivateRunID:
-      $ref: "./schemas/service-runs.yaml#/schemas/PrivateRunID"
-    PrivateConnectorSessionID:
-      $ref: "./schemas/connectors.yaml#/schemas/PrivateConnectorSessionID"
-    PrivateServiceInvitationID:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceInvitationID"
-    PrivateServiceGrantID:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceGrantID"
-    PrivateServiceName:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceName"
-    CreatePrivateServiceRequest:
-      $ref: "./schemas/services.yaml#/schemas/CreatePrivateServiceRequest"
-    PrivateServicePlacement:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServicePlacement"
+    ServiceRunID:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceRunID"
+    ConnectorSessionID:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionID"
+    ServiceInvitationID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationID"
+    ServiceGrantID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrantID"
+    ServiceName:
+      $ref: "./schemas/services.yaml#/schemas/ServiceName"
+    CreateServiceRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceRequest"
+    ServicePlacement:
+      $ref: "./schemas/services.yaml#/schemas/ServicePlacement"
     LocalServiceSource:
       $ref: "./schemas/projects.yaml#/schemas/LocalServiceSource"
-    PrivateServiceProtocol:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceProtocol"
-    PrivateServiceTLS:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceTLS"
-    PrivateServiceMetadata:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceMetadata"
-    ManagedServiceTLS:
-      $ref: "./schemas/common.yaml#/schemas/ManagedServiceTLS"
+    ServiceProtocol:
+      $ref: "./schemas/services.yaml#/schemas/ServiceProtocol"
+    ServiceTargetTLS:
+      $ref: "./schemas/services.yaml#/schemas/ServiceTargetTLS"
+    ServiceMetadata:
+      $ref: "./schemas/services.yaml#/schemas/ServiceMetadata"
+    ServiceEndpoint:
+      $ref: "./schemas/common.yaml#/schemas/ServiceEndpoint"
     IssueServiceClientCertificateRequest:
       $ref: "./schemas/connectors.yaml#/schemas/IssueServiceClientCertificateRequest"
     ServiceClientCertificate:
@@ -462,42 +462,42 @@ components:
       $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceClientCertificateRequest"
     ServiceClientCertificateDecision:
       $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificateDecision"
-    PrivateServiceRunDeclaration:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceRunDeclaration"
-    PrivateService:
-      $ref: "./schemas/services.yaml#/schemas/PrivateService"
-    PrivateServicePage:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServicePage"
-    CreatePrivateServiceGrantRequest:
-      $ref: "./schemas/services.yaml#/schemas/CreatePrivateServiceGrantRequest"
-    PrivateServiceGrant:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceGrant"
-    PrivateServiceGrantPage:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceGrantPage"
-    CreatePrivateServiceInvitationRequest:
-      $ref: "./schemas/services.yaml#/schemas/CreatePrivateServiceInvitationRequest"
-    PrivateServiceInvitation:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceInvitation"
-    PrivateServiceInvitationPage:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceInvitationPage"
-    PrivateConnectorSessionSetup:
-      $ref: "./schemas/connectors.yaml#/schemas/PrivateConnectorSessionSetup"
-    PrivateServiceRunPreparation:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceRunPreparation"
-    CreatePrivateCertificateIssuanceRequest:
-      $ref: "./schemas/service-runs.yaml#/schemas/CreatePrivateCertificateIssuanceRequest"
-    PrivateCertificateInstalledRequest:
-      $ref: "./schemas/service-runs.yaml#/schemas/PrivateCertificateInstalledRequest"
-    PrivateCertificateIssuance:
-      $ref: "./schemas/service-runs.yaml#/schemas/PrivateCertificateIssuance"
-    PrivateServiceRunSetup:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceRunSetup"
-    PrivateServiceRunState:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceRunState"
+    ServiceRunDeclaration:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunDeclaration"
+    Service:
+      $ref: "./schemas/services.yaml#/schemas/Service"
+    ServicePage:
+      $ref: "./schemas/services.yaml#/schemas/ServicePage"
+    CreateServiceGrantRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceGrantRequest"
+    ServiceGrant:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrant"
+    ServiceGrantPage:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrantPage"
+    CreateServiceInvitationRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceInvitationRequest"
+    ServiceInvitation:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitation"
+    ServiceInvitationPage:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationPage"
+    ConnectorSessionSetup:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionSetup"
+    ServiceRunPreparation:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunPreparation"
+    CreateServiceCertificateIssuanceRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/CreateServiceCertificateIssuanceRequest"
+    ServiceCertificateInstalledRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceCertificateInstalledRequest"
+    ServiceCertificateIssuance:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceCertificateIssuance"
+    ServiceRunSetup:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunSetup"
+    ServiceRunState:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunState"
     HTTPVisitorRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/HTTPVisitorRequest"
-    PrivateServiceRunHeartbeat:
-      $ref: "./schemas/services.yaml#/schemas/PrivateServiceRunHeartbeat"
+    ServiceRunHeartbeat:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunHeartbeat"
     ReplaceVisitorAccessRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/ReplaceVisitorAccessRequest"
     HTTPVisitorResponse:

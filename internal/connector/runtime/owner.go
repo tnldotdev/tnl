@@ -1,4 +1,4 @@
-package connectionruntime
+package runtime
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/observability"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
@@ -89,7 +89,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		result = errors.Join(result, os.WriteFile(filepath.Join(directory, "stopped.json"), terminal, 0o600))
 		_ = os.Remove(path)
 	}()
-	state := Status{Schema: Schema, State: "ready", PID: os.Getpid(), ExpiresAt: expires, PublicRuntime: metadata, PrivateHandle: path, Executable: executable}
+	state := Status{Schema: Schema, State: "ready", PID: os.Getpid(), ExpiresAt: expires, ProjectRuntime: metadata, ConnectionHandle: path, Executable: executable}
 	if provider, ok := backend.(interface{ Kubeconfig() string }); ok {
 		state.Kubeconfig = provider.Kubeconfig()
 	}
@@ -147,9 +147,9 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "attached"})
 		case "status":
 			if provider, ok := backend.(interface {
-				PublicRuntime() projectmeta.PublicMetadata
+				ProjectRuntime() meta.PublicMetadata
 			}); ok {
-				current.PublicRuntime = provider.PublicRuntime()
+				current.ProjectRuntime = provider.ProjectRuntime()
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case "connect", "prepare", "prepared":
@@ -201,11 +201,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 					return
 				}
 				if provider, ok := backend.(interface {
-					PublicRuntime() projectmeta.PublicMetadata
+					ProjectRuntime() meta.PublicMetadata
 				}); ok {
-					current.PublicRuntime = provider.PublicRuntime()
+					current.ProjectRuntime = provider.ProjectRuntime()
 				}
-				result := Prepared{Schema: Schema, PublicRuntime: current.PublicRuntime, Connection: connection}
+				result := Prepared{Schema: Schema, ProjectRuntime: current.ProjectRuntime, Connection: connection}
 				if provider, ok := backend.(interface{ Verification() *AssertionVerification }); ok {
 					result.Verification = provider.Verification()
 				}

@@ -1,4 +1,4 @@
-package native_test
+package identity_test
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
@@ -28,7 +28,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(f.URL, f.HTTP, "")
+	authority, err := clientauthority.New(f.URL, f.HTTP, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,15 +44,15 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 	defer local.Close()
 	for _, purpose := range []controlv1.PublicURLPurpose{controlv1.Oauth, controlv1.Webhooks, controlv1.Alias} {
-		route, err := f.SavedURL(t.Context(), purpose, local.URL)
+		publicURL, err := f.SavedPublicURL(t.Context(), purpose, local.URL)
 		if err != nil {
 			t.Fatal(err)
 		}
-		native, identity, err := nativeauth.EnsureOwner(t.Context(), profile, control, authority, route)
+		native, identity, err := publisheridentity.EnsureOwner(t.Context(), profile, control, authority, publicURL)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reused, again, err := nativeauth.EnsureOwner(t.Context(), profile, control, authority, route)
+		reused, again, err := publisheridentity.EnsureOwner(t.Context(), profile, control, authority, publicURL)
 		if err != nil || again.ClientId != identity.ClientId || again.GrantId != identity.GrantId {
 			t.Fatalf("%s owner identity was not reused: %v", purpose, err)
 		}
@@ -61,7 +61,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 		ready := make(chan publisher.Event, 1)
 		done := make(chan error, 1)
 		go func() {
-			done <- publisher.Run(ctx, publisher.Config{Control: reused, ControlURL: f.URL, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: *route.MembershipId, PublicURLScope: route.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(route.PolicyRevision), Hostname: route.CanonicalHostname, Target: route.Target, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
+			done <- publisher.Run(ctx, publisher.Config{Control: reused, ControlURL: f.URL, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: *publicURL.MembershipId, PublicURLScope: publicURL.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, Target: publicURL.Target, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
 				if event.Type == publisher.EventReady {
 					ready <- event
 				}
@@ -70,7 +70,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 		}()
 		select {
 		case event := <-ready:
-			if event.PublicURLID != route.Id || event.PublicURL != "https://"+route.CanonicalHostname {
+			if event.PublicURLID != publicURL.Id || event.PublicURL != "https://"+publicURL.CanonicalHostname {
 				cancel()
 				t.Fatalf("%s published a different enrolled URL", purpose)
 			}

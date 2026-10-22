@@ -25,6 +25,23 @@ type AliasPublishRun struct {
 	TargetPublishRunNumber int64
 }
 
+type BaselineIdentity struct {
+	ID       int64
+	Identity string
+}
+
+type Connector struct {
+	ServerOrigin   string
+	IdentityID     string
+	ServiceID      string
+	Protocol       string
+	ProcessID      int64
+	ListenPort     int64
+	State          string
+	UpdatedAt      int64
+	LeaseExpiresAt int64
+}
+
 type ControlSession struct {
 	ID                     int64
 	ServerOrigin           string
@@ -189,25 +206,6 @@ type PendingPublisherEnrollment struct {
 	UpdatedAt                  int64
 }
 
-type PrivateConnector struct {
-	ServerOrigin   string
-	IdentityID     string
-	ServiceID      string
-	Protocol       string
-	ProcessID      int64
-	ListenPort     int64
-	State          string
-	UpdatedAt      int64
-	LeaseExpiresAt int64
-}
-
-type PrivateServicePort struct {
-	ServerOrigin string
-	IdentityID   string
-	ServiceID    string
-	Port         int64
-}
-
 type ProjectAlias struct {
 	ID                  string
 	ServerOrigin        string
@@ -308,7 +306,7 @@ type ServerProfile struct {
 type ServiceClientCertificate struct {
 	ServerOrigin         string
 	IdentityID           string
-	PrivateServiceID     string
+	ServiceID            string
 	DeviceID             string
 	PrivateKeyCiphertext []byte
 	CsrDer               []byte
@@ -316,6 +314,13 @@ type ServiceClientCertificate struct {
 	CsrCreatedAt         int64
 	CertificatePem       []byte
 	IssuerPem            []byte
+}
+
+type ServicePort struct {
+	ServerOrigin string
+	IdentityID   string
+	ServiceID    string
+	Port         int64
 }
 
 type StateProtection struct {

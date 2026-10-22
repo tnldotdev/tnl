@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -19,23 +19,23 @@ func TestRelayWorkerRetiresAuthorizationWithIncompleteDNSChallenge(t *testing.T)
 	now := time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
 	const hostname = "relay-a.example.test"
 	api := &acmeStub{
-		order: acmeclient.Order{
+		order: acme.Order{
 			URL: "https://acme.example.test/order/1", Status: "pending",
-			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+			Identifiers:    []acme.Identifier{{Type: "dns", Value: hostname}},
 			Authorizations: []string{"https://acme.example.test/authz/1"},
 			Finalize:       "https://acme.example.test/finalize/1",
 		},
-		authorization: acmeclient.Authorization{
+		authorization: acme.Authorization{
 			URL: "https://acme.example.test/authz/1", Status: "pending",
-			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
-			Challenges: []acmeclient.Challenge{{Type: "dns-01", URL: "https://acme.example.test/challenge/1"}},
+			Identifier: acme.Identifier{Type: "dns", Value: hostname},
+			Challenges: []acme.Challenge{{Type: "dns-01", URL: "https://acme.example.test/challenge/1"}},
 		},
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := acmeclient.New(http.DefaultClient, "https://acme.example.test/directory", key, "https://acme.example.test/account/1")
+	client, err := acme.New(http.DefaultClient, "https://acme.example.test/directory", key, "https://acme.example.test/account/1")
 	if err != nil {
 		t.Fatal(err)
 	}

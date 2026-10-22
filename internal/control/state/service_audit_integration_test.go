@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -15,18 +15,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	creation := oidcRouteRequest(t, d, now)
-	service, err := d.CreatePrivateService(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", now)
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.CreatePrivateService(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", now)
+	retry, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-db", "audit-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil || retry.ID != service.ID {
 		t.Fatal("unstable retry", err)
 	}
@@ -41,12 +41,12 @@ func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
 	if _, err = d.pool.Exec(t.Context(), `ALTER TABLE control.service_audit_events ADD CONSTRAINT reject_audit_grant CHECK(event_type<>'grant.create') NOT VALID`); err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.CreatePrivateServiceGrant(t.Context(), service.ID, creation.ActingIdentityID, "rollback", "team", "", nil, now)
+	_, err = d.CreateServiceGrant(t.Context(), service.ID, creation.ActingIdentityID, "rollback", "team", "", nil, now)
 	if err == nil {
 		t.Fatal("mutation committed without audit")
 	}
 	var count int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.private_service_grants WHERE private_service_id=$1 AND kind='team'`, service.ID).Scan(&count); err != nil || count != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_grants WHERE service_id=$1 AND kind='team'`, service.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("grant escaped rollback: %d %v", count, err)
 	}
 	if _, err = d.pool.Exec(t.Context(), `ALTER TABLE control.service_audit_events DROP CONSTRAINT reject_audit_grant`); err != nil {
@@ -59,7 +59,7 @@ func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	e := serviceaudit.Event{TeamID: creation.TeamID, ServiceID: service.ID, ServiceKind: "private_service", EventType: "apply", OccurredAt: now, ActorIdentityID: "wrong-team:secret"}
+	e := serviceaudit.Event{TeamID: creation.TeamID, ServiceID: service.ID, ServiceKind: "service", EventType: "apply", OccurredAt: now, ActorIdentityID: "wrong-team:secret"}
 	if err = RecordServiceAudit(t.Context(), tx, e, "apply-request"); !errors.Is(err, serviceaudit.ErrInvalid) {
 		t.Fatalf("malformed actor: %v", err)
 	}
@@ -167,17 +167,17 @@ func TestIntegrationServiceAuditAuthenticatedBatches(t *testing.T) {
 func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	runs, _, _, creation := poolReviewFixtures(t)
 	d, now := runs[0].database, runs[0].now
-	service, err := d.CreatePrivateService(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-private", "audit-private", now)
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-private", "audit-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: creation.TeamID, Kind: "private_service", PrivateServiceID: service.ID}, now)
+	enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: creation.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, _, _ := ed25519.GenerateKey(rand.Reader)
 	publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.PreparePrivateServiceRun(t.Context(), service.ID, publisher, "audit-private", now)
+	run, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "audit-private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,21 +187,21 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease := registerTestIngress(t, d, now)
-	session, _ := opaqueid.New(opaqueid.PrivateConnectorSessionPrefix)
+	session, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	// seed the already-authenticated admission facts; the transport suite owns
 	// device proof and stream handshake. audit must independently check this scope.
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.private_connector_sessions(id,credential_digest,private_service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
+	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_sessions(id,credential_digest,service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,'192.0.2.9',$6,$7,$8)`, session, make([]byte, 32), service.ID, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.private_visitor_streams(visitor_connection_id,private_service_id,private_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at)
+	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_visitor_streams(visitor_connection_id,service_id,service_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,'192.0.2.9',1,$8,$9)`, visitor, service.ID, run.RunID, run.RunNumber, session, creation.ActingIdentityID, device.ID, now.Add(time.Minute), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "private_service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now, ConnectorSessionID: session}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now, ConnectorSessionID: session}
 	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{o}}
 	if result, err := d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, batch, now); err != nil || result.Accepted != 1 {
 		t.Fatalf("valid private scope: %+v %v", result, err)
@@ -253,8 +253,8 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	o.RunID, o.RunNumber = "", 0
 	for _, change := range []func(*serviceaudit.Observation){
 		func(o *serviceaudit.Observation) { o.SourceIP = "192.0.2.10" },
-		func(o *serviceaudit.Observation) { o.ServiceID = "psvc_0123456789ABCDEFGHIJKL" },
-		func(o *serviceaudit.Observation) { o.ConnectorSessionID = "pcs_0123456789ABCDEFGHIJKL" },
+		func(o *serviceaudit.Observation) { o.ServiceID = "svc_0123456789ABCDEFGHIJKL" },
+		func(o *serviceaudit.Observation) { o.ConnectorSessionID = "cns_0123456789ABCDEFGHIJKL" },
 		func(o *serviceaudit.Observation) { o.VisitorConnectionID = visitor },
 	} {
 		bad := o
@@ -268,7 +268,7 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	creation := oidcRouteRequest(t, d, now)
-	service, err := d.CreatePrivateService(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-order", "audit-order", now)
+	service, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "audit-order", "audit-order", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, second)
-	e := serviceaudit.Event{TeamID: creation.TeamID, ServiceID: service.ID, ServiceKind: "private_service", ActorIdentityID: creation.ActingIdentityID, EventType: "apply", OccurredAt: now}
+	e := serviceaudit.Event{TeamID: creation.TeamID, ServiceID: service.ID, ServiceKind: "service", ActorIdentityID: creation.ActingIdentityID, EventType: "apply", OccurredAt: now}
 	if err = RecordServiceAudit(ctx, first, e, "first"); err != nil {
 		t.Fatal(err)
 	}
@@ -383,9 +383,9 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		}
 		leases = append(leases, lease)
 	}
-	var services []PrivateServiceRecord
+	var services []ServiceRecord
 	for _, team := range teams {
-		s, err := d.CreatePrivateService(t.Context(), team, creation.ActingIdentityID, "audit-clock", "audit-clock-"+team, now)
+		s, err := d.CreateServiceAt(t.Context(), team, creation.ActingIdentityID, "audit-clock", "audit-clock-"+team, ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -395,15 +395,15 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 	for index, lease := range leases {
 		var batch serviceaudit.Batch
 		for _, s := range services {
-			session, _ := opaqueid.New(opaqueid.PrivateConnectorSessionPrefix)
+			session, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
 			visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 			digest := sha256.Sum256([]byte(session))
-			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.private_connector_sessions(id,credential_digest,private_service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
+			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_sessions(id,credential_digest,service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,'192.0.2.9',$6,$7,$8)`, session, digest[:], s.ID, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now, now.Add(time.Minute))
 			if err != nil {
 				t.Fatal(err)
 			}
-			o, err := serviceaudit.NewPrivateSessionDenial(ingressv1.PrivateConnectorSessionResult{PrivateServiceId: s.ID, ConnectorSessionId: session,
+			o, err := serviceaudit.NewPrivateSessionDenial(ingressv1.ConnectorSessionResult{ServiceId: s.ID, ConnectorSessionId: session,
 				Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: creation.ActingIdentityID, DeviceID: device.ID}), ObservedSourceIp: "192.0.2.9", ExpiresAt: now.Add(time.Minute)}, visitor)
 			if err != nil {
 				t.Fatal(err)

@@ -1,4 +1,4 @@
-package awsbootstrap
+package aws
 
 import (
 	"context"

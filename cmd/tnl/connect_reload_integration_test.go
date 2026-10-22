@@ -19,11 +19,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
@@ -72,27 +72,27 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			hostname := "localhost"
-			trust, err := privatetrust.NewCache(nil).Capture(t.Context(), root, target.Addr().String(), config.TrustSource{Hostname: &hostname, CA: "ca.pem"})
+			trust, err := targettrust.NewCache(nil).Capture(t.Context(), root, target.Addr().String(), config.TrustSource{Hostname: &hostname, CA: "ca.pem"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			key, _ := randomIdempotencyKey()
-			service, err := session.Authenticated().Control.CreatePrivateService(t.Context(), session.Identity().PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
-				controlv1.PrivateServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: nativeauth.PrivateServiceTLS(&trust)})
+			service, err := session.Authenticated().Control.CreateService(t.Context(), session.Identity().PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
+				controlv1.ServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(&trust)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := nativeauth.EnsurePrivateServiceOwner(t.Context(), session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
+			native, identity, err := publisheridentity.EnsureServiceOwner(t.Context(), session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
 			if err != nil {
 				t.Fatal(err)
 			}
-			startPublisher := func(service controlv1.PrivateService) func() {
+			startPublisher := func(service controlv1.Service) func() {
 				t.Helper()
 				ctx, cancel := context.WithCancel(t.Context())
 				ready, done := make(chan struct{}), make(chan error, 1)
 				go func() {
-					done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: session.Authenticated().Control, Access: native.Access, Identity: identity,
-						State: session.Store(), PrivateServiceID: service.Id, Target: target.Addr().String(), Metadata: nativeauth.PrivateServiceMetadata(service),
+					done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: session.Authenticated().Control, Access: native.Access, Identity: identity,
+						State: session.Store(), ServiceID: service.Id, Target: target.Addr().String(), Metadata: publisheridentity.ServiceMetadata(service),
 						HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }})
 				}()
 				stop := sync.OnceFunc(func() {
@@ -177,12 +177,12 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			old := open()
 			defer func() { _ = old.Close() }()
 			for _, enabled := range []bool{false, true} {
-				metadata := nativeauth.PrivateServiceMetadata(service)
+				metadata := publisheridentity.ServiceMetadata(service)
 				metadata.TargetTls = nil
 				if enabled {
-					metadata.TargetTls = nativeauth.PrivateServiceTLS(&trust)
+					metadata.TargetTls = publisheridentity.ServiceTargetTLS(&trust)
 				}
-				service, err = session.Authenticated().Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
+				service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -220,9 +220,9 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			defer f.beforeVisitorInventory.Store(nil)
 			unblock := sync.OnceFunc(func() { close(release) })
 			defer unblock()
-			metadata := nativeauth.PrivateServiceMetadata(service)
+			metadata := publisheridentity.ServiceMetadata(service)
 			metadata.TargetTls = nil
-			service, err = session.Authenticated().Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
+			service, err = session.Authenticated().Control.ConfigureService(t.Context(), service.Id, metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,12 +252,12 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			grants, _, err := database.ListPrivateServiceGrants(t.Context(), service.Id, session.Identity().Identity.Id, "")
+			grants, _, err := database.ListServiceGrants(t.Context(), service.Id, session.Identity().Identity.Id, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, grant := range grants {
-				if err := database.RevokePrivateServiceGrant(t.Context(), service.Id, session.Identity().Identity.Id, grant.ID, time.Now()); err != nil {
+				if err := database.RevokeServiceGrant(t.Context(), service.Id, session.Identity().Identity.Id, grant.ID, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}

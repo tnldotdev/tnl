@@ -16,24 +16,24 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader, output io.Writer) error {
 	if options.ParentPID < 0 {
-		return connectionruntime.ErrInvalid
+		return connectorruntime.ErrInvalid
 	}
 	project, scope, err := connectionProject(ctx, options.ContextOptions)
 	if err != nil {
 		return err
 	}
-	request := connectionruntime.StartRequest{Schema: 1, Context: scope}
+	request := connectorruntime.StartRequest{Schema: 1, Context: scope}
 	if options.Workload != "" {
-		if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
-			return connectionruntime.ErrInvalid
+		if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
+			return connectorruntime.ErrInvalid
 		}
 		if request.Assertion == "" {
 			var hints workloadmanifest.Acquisition
@@ -55,13 +55,13 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 					hints.Method = "token-file"
 					hints.TokenFile = p.TokenFile
 				default:
-					return connectionruntime.ErrInvalid
+					return connectorruntime.ErrInvalid
 				}
 			}
 			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 			}
-			request.Assertion, err = workloadclient.Acquire(ctx, hints, nil)
+			request.Assertion, err = workload.Acquire(ctx, hints, nil)
 			if err != nil {
 				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
 			}
@@ -71,7 +71,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 	if parent == "" {
 		parent = os.TempDir()
 	}
-	directory, err := connectionruntime.NewDirectory(parent)
+	directory, err := connectorruntime.NewDirectory(parent)
 	if err != nil {
 		return err
 	}
@@ -140,27 +140,27 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 	done := make(chan error, 1)
 	go func() { done <- child.Wait() }()
 	ready := make(chan struct {
-		status connectionruntime.Status
+		status connectorruntime.Status
 		err    error
 	}, 1)
 	go func() {
-		var state connectionruntime.Status
-		err := connectionruntime.ReadJSON(pipe, &state)
+		var state connectorruntime.Status
+		err := connectorruntime.ReadJSON(pipe, &state)
 		ready <- struct {
-			status connectionruntime.Status
+			status connectorruntime.Status
 			err    error
 		}{state, err}
 	}()
 	timer := time.NewTimer(40 * time.Second)
 	defer timer.Stop()
-	startupError := error(connectionruntime.ErrUnavailable)
+	startupError := error(connectorruntime.ErrUnavailable)
 	select {
 	case result := <-ready:
 		if result.err == nil && result.status.Schema == 1 && result.status.State == "ready" && result.status.PID == child.Process.Pid {
 			if err := json.NewEncoder(output).Encode(result.status); err != nil {
 				cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
-				stopErr := connectionruntime.Call(cleanup, result.status.PrivateHandle, "stop", connectionruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, nil)
+				stopErr := connectorruntime.Call(cleanup, result.status.ConnectionHandle, "stop", connectorruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, nil)
 				select {
 				case <-done:
 				case <-cleanup.Done():
@@ -173,7 +173,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			return nil
 		}
 		if result.err == nil && result.status.State == "failed" && result.status.Reason != "" {
-			startupError = failure.Wrap("prepare native connections", failure.Reason(result.status.Reason), connectionruntime.ErrUnavailable)
+			startupError = failure.Wrap("prepare native connections", failure.Reason(result.status.Reason), connectorruntime.ErrUnavailable)
 		}
 	case <-ctx.Done():
 		startupError = context.Cause(ctx)

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 )
@@ -21,7 +21,7 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := projectmeta.Generate(ctx, project, flags.Generate.OutputDir, flags.Generate.Check)
+	manifest, err := meta.Generate(ctx, project, flags.Generate.OutputDir, flags.Generate.Check)
 	if err != nil {
 		return err
 	}
@@ -29,5 +29,5 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	if flags.Generate.Check {
 		state = "current"
 	}
-	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "publishers", Value: strconv.Itoa(len(manifest.Publishers))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
+	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "publisher_groups", Value: strconv.Itoa(len(manifest.PublisherGroups))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // Identity contains authenticated stable scope, not request-supplied identifiers.
-// the public URL and managed service slots are mutually exclusive. a conflicting
+// the public URL and service slots are mutually exclusive. a conflicting
 // or invalid identity is cleared rather than attributed to the previous tenant.
 type Identity struct {
 	TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey string
@@ -29,7 +29,7 @@ func ReplaceIdentity(ctx context.Context, id Identity) context.Context {
 		id = Identity{}
 	}
 	if id.ServiceID != "" {
-		id.ServiceKind = ManagedService
+		id.ServiceKind = Service
 	}
 	if id.PublicURLID != "" {
 		id.ServiceKind = PublicURL
@@ -67,10 +67,10 @@ func validIdentity(id Identity) bool {
 	if id.ServiceID != "" && id.PublicURLID != "" {
 		return false
 	}
-	if id.ServiceKind != 0 && id.ServiceKind != ManagedService && id.ServiceKind != PublicURL {
+	if id.ServiceKind != 0 && id.ServiceKind != Service && id.ServiceKind != PublicURL {
 		return false
 	}
-	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == ManagedService {
+	if id.ServiceID != "" && id.ServiceKind == PublicURL || id.PublicURLID != "" && id.ServiceKind == Service {
 		return false
 	}
 	for _, v := range []string{id.TeamID, id.PublisherGroupID, id.PublisherIdentityID, id.DeploymentID, id.ReplicaKey, id.ServiceID, id.PublicURLID} {

@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"bytes"
@@ -78,7 +78,7 @@ func TestIntegrationExistingOpenSSHOverPrivateTCP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			alias := "tnl-private-" + fixture.run.PrivateServiceID
+			alias := "tnl-private-" + fixture.run.ServiceID
 			known := filepath.Join(directory, "known_hosts")
 			if err := os.WriteFile(known, []byte(alias+" "+strings.TrimSpace(string(hostPublic))+"\n"), 0600); err != nil {
 				t.Fatal(err)

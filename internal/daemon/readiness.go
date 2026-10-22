@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
-func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time) error {
+func (d *daemon) ready(ctx context.Context, role daemonconfig.Role, now time.Time) error {
 	if d.draining.Load() {
 		return errors.New("process is draining")
 	}
@@ -40,14 +40,14 @@ func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time)
 	return nil
 }
 
-func (d *daemon) readyControl(role tnldconfig.Role, now time.Time) error {
+func (d *daemon) readyControl(role daemonconfig.Role, now time.Time) error {
 	if d.draining.Load() {
 		return errors.New("control is draining")
 	}
 	if d.controlServer == nil || d.controlListener == nil {
 		return errors.New("control listener is not ready")
 	}
-	if role == tnldconfig.RoleControl && (d.privateControlServer == nil || d.privateControlListener == nil) {
+	if role == daemonconfig.RoleControl && (d.privateControlServer == nil || d.privateControlListener == nil) {
 		return errors.New("private control listener is not ready")
 	}
 	return nil
@@ -62,7 +62,7 @@ func (d *daemon) readyIngress(now time.Time) error {
 		if runtime.controller == nil || !runtime.controller.Ready(now) || !runtime.privateOnly && (runtime.server == nil || !runtime.server.Ready()) {
 			return errors.New("ingress lease, routing table, certificate, or listener is not ready")
 		}
-		if runtime.privateCertificate != nil && !runtime.privateCertificate.ready(now) {
+		if runtime.serviceCertificate != nil && !runtime.serviceCertificate.ready(now) {
 			return errors.New("private ingress transport certificate is not ready")
 		}
 		if !runtime.privateOnly {
@@ -75,9 +75,9 @@ func (d *daemon) readyIngress(now time.Time) error {
 	return nil
 }
 
-func (d *daemon) readyRelays(role tnldconfig.Role, now time.Time) error {
+func (d *daemon) readyRelays(role daemonconfig.Role, now time.Time) error {
 	expected := 1
-	if role == tnldconfig.RoleStandalone {
+	if role == daemonconfig.RoleStandalone {
 		expected = len(standaloneRelays)
 	}
 	if len(d.relays) != expected {

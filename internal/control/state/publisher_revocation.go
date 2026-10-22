@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -15,10 +15,10 @@ import (
 // URL/run when they recheck it. closures may then take audit and routing clocks
 // without waiting for another service parent. unrelated services stay unlocked.
 func lockPublisherPublications(ctx context.Context, tx pgx.Tx, team, publisher, grant string) error {
-	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.private_services service
+	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
 		WHERE service.team_id=$1 AND service.id IN (
-			SELECT private_service_id FROM control.publisher_grants
-			WHERE publisher_identity_id=$2 AND ($3='' OR id=$3) AND kind='private_service')
+			SELECT service_id FROM control.publisher_grants
+			WHERE publisher_identity_id=$2 AND ($3='' OR id=$3) AND kind='service')
 		ORDER BY service.id FOR UPDATE OF service`, team, publisher, grant); err != nil {
 		return err
 	}
@@ -31,11 +31,11 @@ func lockPublisherPublications(ctx context.Context, tx pgx.Tx, team, publisher, 
 	return err
 }
 
-func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, publisherID, grantID string, now time.Time) error {
-	if !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) {
+func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, publisherIdentityID, grantID string, now time.Time) error {
+	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return ErrPublisherIdentity
 	}
-	service, err := q.LockPrivateService(ctx, serviceID)
+	service, err := q.LockService(ctx, serviceID)
 	if err != nil {
 		return err
 	}
@@ -44,26 +44,26 @@ func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlst
 	}
 	var runID string
 	var number int64
-	err = tx.QueryRow(ctx, `SELECT id, run_number FROM control.private_service_runs
-		WHERE private_service_id=$1 AND publisher_identity_id=$2 AND ($3='' OR publisher_grant_id=$3)
-		AND closed_at IS NULL FOR UPDATE`, serviceID, publisherID, grantID).Scan(&runID, &number)
+	err = tx.QueryRow(ctx, `SELECT id, run_number FROM control.service_runs
+		WHERE service_id=$1 AND publisher_identity_id=$2 AND ($3='' OR publisher_grant_id=$3)
+		AND closed_at IS NULL FOR UPDATE`, serviceID, publisherIdentityID, grantID).Scan(&runID, &number)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if _, err = q.ClosePrivateServiceRun(ctx, controlstatedb.ClosePrivateServiceRunParams{
-		ID: runID, PrivateServiceID: serviceID, RunNumber: number, Now: timestamptz(now),
+	if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
+		ID: runID, ServiceID: serviceID, RunNumber: number, Now: timestamptz(now),
 	}); err != nil {
 		return err
 	}
-	return privateRunRoutingTombstone(ctx, q, serviceID, runID, number, now)
+	return serviceRunRoutingTombstone(ctx, q, serviceID, runID, number, now)
 }
 
-func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisherID, grantID string, now time.Time) error {
+func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisherIdentityID, grantID string, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT run.public_url_id FROM control.publish_runs run JOIN control.publish_run_publisher_grants publisher ON publisher.publish_run_id=run.id
-	    WHERE publisher.publisher_identity_id=$1 AND ($2='' OR publisher.publisher_grant_id=$2) AND run.closed_at IS NULL ORDER BY run.public_url_id`, publisherID, grantID)
+	    WHERE publisher.publisher_identity_id=$1 AND ($2='' OR publisher.publisher_grant_id=$2) AND run.closed_at IS NULL ORDER BY run.public_url_id`, publisherIdentityID, grantID)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlst
 			if err != nil {
 				return err
 			}
-			if binding.PublisherIdentityID != publisherID || grantID != "" && binding.PublisherGrantID != grantID {
+			if binding.PublisherIdentityID != publisherIdentityID || grantID != "" && binding.PublisherGrantID != grantID {
 				continue
 			}
 			if err = closePublishRun(ctx, q, &pending, service, run, PublishRunClosed, now, "publisher_revoked"); err != nil {

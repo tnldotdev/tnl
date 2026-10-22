@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
+func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {Publisher: "production", Protocol: "tcp", Target: "orders.internal:5432"},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
+		"orders": {PublisherGroup: "production", Protocol: "tcp", Target: "orders.internal:5432"},
 		"local":  {Protocol: "tcp", Target: "local.internal:5432"},
 	}}
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
@@ -36,11 +36,11 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, enrollment, now)
 	assignment := replica.assignments.Services[0]
 	access := groupAssignmentAccess(t, d, replica, assignment, now)
-	service, err := d.GetPrivateService(ctx, assignment.ServiceID, r.ActorID)
+	service, err := d.GetService(ctx, assignment.ServiceID, r.ActorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedPrivateRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectLookup := GetProjectPrivateServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: r.ActorID, Now: now}
+	projectLookup := GetProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: "orders", IdentityID: r.ActorID, Now: now}
 	next := r
 	next.ExpectedRevision, next.Now = applied.Revision, now.Add(time.Second)
 	next.Configuration = applied.Configuration
@@ -68,13 +68,13 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.project_publisher_groups g),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY team_id,project_key,service) FROM control.applied_project_services s),
 		    (SELECT jsonb_agg(to_jsonb(l) ORDER BY team_id,project_key,service,worktree_key) FROM control.local_project_services l),
-		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.private_services s),
-		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.private_service_grants g),
-		    (SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM control.private_service_runs r),
-		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY publisher_connection_id) FROM control.private_service_connection_slots s),
+		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.services s),
+		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.service_grants g),
+		    (SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM control.service_runs r),
+		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY publisher_connection_id) FROM control.service_connection_slots s),
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.publisher_grants g),
-		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY revision) FROM control.private_service_routing_events e),
-		    (SELECT jsonb_agg(to_jsonb(c)) FROM control.private_service_routing_clock c),
+		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY revision) FROM control.service_routing_events e),
+		    (SELECT jsonb_agg(to_jsonb(c)) FROM control.service_routing_clock c),
 		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY cursor) FROM control.service_audit_events e))::text`).Scan(&data); err != nil {
 			t.Fatal(err)
 		}
@@ -95,11 +95,11 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 				if tc.encoded != "" {
 					encoded = tc.encoded
 				}
-				if _, err := d.pool.Exec(ctx, `UPDATE control.private_services SET tls_metadata=$2::jsonb WHERE id=$1`, scope.id, encoded); err != nil {
+				if _, err := d.pool.Exec(ctx, `UPDATE control.services SET tls_metadata=$2::jsonb WHERE id=$1`, scope.id, encoded); err != nil {
 					t.Fatal(err)
 				}
 				defer func() {
-					if _, err := d.pool.Exec(ctx, `UPDATE control.private_services SET tls_metadata=NULL WHERE id=$1`, scope.id); err != nil {
+					if _, err := d.pool.Exec(ctx, `UPDATE control.services SET tls_metadata=NULL WHERE id=$1`, scope.id); err != nil {
 						t.Error(err)
 					}
 				}()
@@ -110,11 +110,11 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 						if err != nil {
 							t.Fatalf("%s rejected valid stored trust: %v", name, err)
 						}
-					} else if !errors.Is(err, ErrPrivateServiceMetadata) || strings.Contains(err.Error(), "sensitive trust") {
+					} else if !errors.Is(err, ErrServiceMetadata) || strings.Contains(err.Error(), "sensitive trust") {
 						t.Fatalf("%s did not return a safe metadata corruption error: %v", name, err)
 					}
 				}
-				record, err := d.GetPrivateService(ctx, scope.id, r.ActorID)
+				record, err := d.GetService(ctx, scope.id, r.ActorID)
 				check("saved service read", err)
 				if tc.valid && (record.ID != scope.id || record.Protocol != "tcp" || (record.TLS != nil) != tc.tls) {
 					t.Fatal("saved service read changed valid metadata")
@@ -122,7 +122,7 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 				if scope.name == "local" {
 					got, err := d.GetLocalProjectService(ctx, localLookup)
 					check("local visitor lookup", err)
-					if tc.valid && (got.ServiceID != scope.id || got.PrivateService == nil || got.PrivateService.TLS != nil) {
+					if tc.valid && (got.ServiceID != scope.id || got.Metadata == nil || got.Metadata.TLS != nil) {
 						t.Fatal("local visitor lookup changed its trust-free output")
 					}
 					if !tc.valid {
@@ -130,14 +130,14 @@ func TestIntegrationPrivateMetadataCorruptionRollsBackCallers(t *testing.T) {
 						check("local reconciliation", err)
 					}
 				} else {
-					got, err := d.GetProjectPrivateService(ctx, projectLookup)
+					got, err := d.GetProjectService(ctx, projectLookup)
 					check("applied visitor lookup", err)
 					if tc.valid && (got.ID != scope.id || (got.TLS != nil) != tc.tls) {
 						t.Fatal("applied visitor lookup changed valid metadata")
 					}
-					selected, err := d.SelectPrivateServiceRun(ctx, scope.id, r.ActorID, device.ID, now)
+					selected, err := d.SelectServiceRun(ctx, scope.id, r.ActorID, device.ID, now)
 					check("visitor run selection", err)
-					if tc.valid && (selected.PrivateRunID != run.RunID || selected.RunNumber != run.RunNumber || (selected.TLS != nil) != tc.tls) {
+					if tc.valid && (selected.ServiceRunID != run.RunID || selected.RunNumber != run.RunNumber || (selected.TLS != nil) != tc.tls) {
 						t.Fatal("visitor selection changed the saved run or trust")
 					}
 				}

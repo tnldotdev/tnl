@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 		if s.Kind == "namespace" && s.PublicURLScope != PublicURLScopeShared {
 			return "", ErrPublisherIdentity
 		}
-		if s.Kind == "saved_url" {
+		if s.Kind == "saved_public_url" {
 			u, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
 			if err != nil {
 				return "", err
@@ -84,27 +84,27 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT DISTINCT private_service_id FROM control.publisher_grants
-		WHERE publisher_identity_id=$1 AND kind='private_service' AND private_service_id IS NOT NULL
-		ORDER BY private_service_id`, id)
+	rows, err := tx.Query(ctx, `SELECT DISTINCT service_id FROM control.publisher_grants
+		WHERE publisher_identity_id=$1 AND kind='service' AND service_id IS NOT NULL
+		ORDER BY service_id`, id)
 	if err != nil {
 		return err
 	}
-	var privateServices []string
+	var services []string
 	for rows.Next() {
 		var serviceID string
 		if err = rows.Scan(&serviceID); err != nil {
 			rows.Close()
 			return err
 		}
-		privateServices = append(privateServices, serviceID)
+		services = append(services, serviceID)
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, serviceID := range privateServices {
+	for _, serviceID := range services {
 		if err = closeRevokedPrivatePublication(ctx, tx, q, serviceID, id, "", now); err != nil {
 			return err
 		}
@@ -153,12 +153,12 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	if err = rejectProjectManagedGrant(ctx, tx, grant); err != nil {
 		return err
 	}
-	if selected.Kind == "private_service" {
-		if err = closeRevokedPrivatePublication(ctx, tx, q, selected.PrivateServiceID.String, id, grant, now); err != nil {
+	if selected.Kind == "service" {
+		if err = closeRevokedPrivatePublication(ctx, tx, q, selected.ServiceID.String, id, grant, now); err != nil {
 			return err
 		}
 	}
-	if selected.Kind != "private_service" {
+	if selected.Kind != "service" {
 		if err = closeRevokedPublicPublications(ctx, tx, q, id, grant, now); err != nil {
 			return err
 		}

@@ -3,7 +3,7 @@ package serviceaudit
 import (
 	"errors"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // APIObservations copies only allowlisted facts into the generated wire model.

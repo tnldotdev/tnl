@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	"net/url"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type loginCheckpoint struct {
@@ -302,12 +302,12 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 		return err
 	}
 	if p.Session == nil && p.PollingCredential != "" {
-		authority, err := authorityclient.New(op.Server, config.HTTPClient, "")
+		authority, err := clientauthority.New(op.Server, config.HTTPClient, "")
 		if err != nil {
 			return err
 		}
 		err = authority.CancelDeviceLogin(ctx, p.PollingCredential)
-		if err != nil && !errors.Is(err, authorityclient.ErrUnauthenticated) {
+		if err != nil && !errors.Is(err, clientauthority.ErrUnauthenticated) {
 			return err
 		}
 		op.Private = nil
@@ -317,7 +317,7 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 		op.Private = nil
 		return store.UpdateAuthOperation(ctx, op)
 	}
-	authority, err := authorityclient.New(op.Server, config.HTTPClient, "")
+	authority, err := clientauthority.New(op.Server, config.HTTPClient, "")
 	if err != nil {
 		return err
 	}
@@ -325,7 +325,7 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 	defer cancel()
 	resolved := control{rawAuthority: authority}
 	err = authority.LogoutWithAccessToken(cleanupCtx, credentials.AccessToken(p.Session.AccessToken))
-	if errors.Is(err, authorityclient.ErrUnauthenticated) && refreshUsable(*p.Session, time.Now()) {
+	if errors.Is(err, clientauthority.ErrUnauthenticated) && refreshUsable(*p.Session, time.Now()) {
 		if p.Session.RefreshPending {
 			return failure.Wrap("recover cancelled session refresh", failure.AuthRecoveryRequired, err)
 		}
@@ -352,7 +352,7 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 			err = authority.LogoutWithAccessToken(cleanupCtx, credentials.AccessToken(refreshed.AccessToken))
 		}
 	}
-	if err != nil && !errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if err != nil && !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		return err
 	}
 	op.Private = nil
@@ -452,7 +452,7 @@ func WaitLogin(ctx context.Context, config Config, id string, timeout time.Durat
 			}
 			result, err := resolved.rawAuthority.PollDeviceLogin(waitCtx, p.PollingCredential)
 			if err != nil {
-				if errors.Is(err, authorityclient.ErrUnauthenticated) {
+				if errors.Is(err, clientauthority.ErrUnauthenticated) {
 					return op, finishOperation(waitCtx, store, &op, clientstate.AuthDenied, err)
 				}
 				// polling is idempotent at control, including lost successful responses.
@@ -529,7 +529,7 @@ func installSession(ctx context.Context, store *clientstate.Store, op *clientsta
 	}
 	if found {
 		err = revokeSession(ctx, resolved, old, store)
-		if err != nil && !errors.Is(err, authorityclient.ErrUnauthenticated) {
+		if err != nil && !errors.Is(err, clientauthority.ErrUnauthenticated) {
 			return errors.Join(finishOperation(ctx, store, op, clientstate.AuthRecoveryRequired, err), cleanupIssuedSession(ctx, resolved, session))
 		}
 	}

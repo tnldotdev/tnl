@@ -5,29 +5,29 @@ import (
 	"reflect"
 	"time"
 
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 // PublishPrivate resolves captured project discovery settings before each run.
 // replacement or disappearance closes that run before a new target can receive
 // streams; the next run gets a new TLS key and assignment identities.
-type PrivateTargetHooks struct {
+type TargetHooks struct {
 	Resolver TargetResolver
 	Capture  func(TargetSnapshot) error
 }
 
-func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatepublisher.RunConfig, hooks ...PrivateTargetHooks) error {
+func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservice.RunConfig, hooks ...TargetHooks) error {
 	if len(hooks) > 1 || !plan.Protocol.Valid() || string(config.Metadata.Protocol) != string(plan.Protocol) {
 		return ErrScope
 	}
 	if err := plan.Normalize(); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(config.Metadata.TargetTls, nativeauth.PrivateServiceTLS(plan.Trust)) {
+	if !reflect.DeepEqual(config.Metadata.TargetTls, publisheridentity.ServiceTargetTLS(plan.Trust)) {
 		return ErrScope
 	}
-	var hook PrivateTargetHooks
+	var hook TargetHooks
 	if len(hooks) == 1 {
 		hook = hooks[0]
 	}
@@ -45,7 +45,7 @@ func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatep
 				return err
 			}
 		}
-		target, close, err := PrivateTarget(ctx, plan)
+		target, close, err := ServiceTarget(ctx, plan)
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatep
 		if err := PreflightPrivate(ctx, plan); err != nil {
 			return err
 		}
-		return privatepublisher.Publish(ctx, config)
+		return publisherservice.Publish(ctx, config)
 	}
 	for ctx.Err() == nil {
 		initial, err := ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
@@ -88,7 +88,7 @@ func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatep
 			}
 		}()
 		plan.Target = initial.Address
-		target, close, err := PrivateTarget(worker, plan)
+		target, close, err := ServiceTarget(worker, plan)
 		if err != nil {
 			cancel()
 			<-done
@@ -97,7 +97,7 @@ func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatep
 		config.Target = target
 		err = PreflightPrivate(worker, plan)
 		if err == nil {
-			err = privatepublisher.Publish(worker, config)
+			err = publisherservice.Publish(worker, config)
 		}
 		cancel()
 		close()

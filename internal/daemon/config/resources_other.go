@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package tnldconfig
+package config
 
 func hostMemoryBytes() int64 { return 0 }
 

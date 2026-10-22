@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"net/http"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestDrainingControlRejectsNewRunsBeforeStateWork(t *testing.T) {
@@ -18,10 +18,10 @@ func TestDrainingControlRejectsNewRunsBeforeStateWork(t *testing.T) {
 		"public URL": func(w http.ResponseWriter, r *http.Request) {
 			h.CreatePublishRun(w, r, "url", controlv1.CreatePublishRunParams{})
 		},
-		"prepare managed service": func(w http.ResponseWriter, r *http.Request) {
-			h.PreparePrivateServiceRun(w, r, "service", controlv1.PreparePrivateServiceRunParams{})
+		"prepare service": func(w http.ResponseWriter, r *http.Request) {
+			h.PrepareServiceRun(w, r, "service", controlv1.PrepareServiceRunParams{})
 		},
-		"start managed service": func(w http.ResponseWriter, r *http.Request) { h.StartManagedServiceRun(w, r, "service", "run") },
+		"start service": func(w http.ResponseWriter, r *http.Request) { h.StartServiceRun(w, r, "service", "run") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := httptest.NewRecorder()

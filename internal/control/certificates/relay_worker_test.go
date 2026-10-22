@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
@@ -16,16 +16,16 @@ func TestRelayWorkerAdvancesRelayCertificateOrder(t *testing.T) {
 	csrDER, certificatePEM := testCertificate(t, hostname, now)
 	expires := now.Add(time.Hour)
 	api := &acmeStub{
-		order: acmeclient.Order{
+		order: acme.Order{
 			URL: "https://acme.example.test/order/1", Status: "pending", Expires: &expires,
-			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+			Identifiers:    []acme.Identifier{{Type: "dns", Value: hostname}},
 			Authorizations: []string{"https://acme.example.test/authorization/1"},
 			Finalize:       "https://acme.example.test/finalize/1",
 		},
-		authorization: acmeclient.Authorization{
+		authorization: acme.Authorization{
 			URL: "https://acme.example.test/authorization/1", Status: "pending", Expires: &expires,
-			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
-			Challenges: []acmeclient.Challenge{{
+			Identifier: acme.Identifier{Type: "dns", Value: hostname},
+			Challenges: []acme.Challenge{{
 				Type: "dns-01", URL: "https://acme.example.test/challenge/1", Status: "pending", Token: "token-1",
 			}},
 		},
@@ -110,7 +110,7 @@ func TestRelayWorkerCleansTerminalChallengeFailure(t *testing.T) {
 	now := time.Now().UTC()
 	worker := &RelayWorker{config: RelayConfig{FailedRetryInterval: time.Hour, DNSChallenges: &relayDNSChallengesStub{}}}
 	work := controlstate.RelayCertificateOrderWork{State: "validating", ChallengeURL: "https://acme.example.test/challenge/1"}
-	worker.applyFailure(&work, &acmeclient.Error{
+	worker.applyFailure(&work, &acme.Error{
 		Status: 404, Type: "urn:ietf:params:acme:error:malformed", Detail: "Expired authorization",
 	}, now)
 	if work.State != "failed_cleaning" || !work.AvailableAt.Equal(now) || work.LastError == "" {

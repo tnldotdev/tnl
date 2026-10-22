@@ -6,8 +6,8 @@ import (
 	"errors"
 	"slices"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/team"
@@ -15,12 +15,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publisherServices struct {
-	authenticated         *clientauth.Client
+	authenticated         *auth.Client
 	state                 *clientstate.Store
 	hostname              string
 	namespace             string
@@ -32,7 +32,7 @@ type publisherServices struct {
 	customDomainAvailable bool
 	policyRevision        uint64
 	ephemeral             bool
-	routes                *controlclient.Client
+	routes                *clientcontrol.Client
 }
 
 type clientIPLookup interface {
@@ -78,7 +78,7 @@ func preparePublisherServices(
 	state *clientstate.Database,
 	serverURL, publicURL, name, selectedDomain, selectedTeam string,
 	ephemeral bool,
-	authenticated *clientauth.Client,
+	authenticated *auth.Client,
 ) (publisherServices, error) {
 	publisherState, err := state.Server(ctx, serverURL)
 	if err != nil {

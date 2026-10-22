@@ -95,7 +95,7 @@ SET work_owner = $1,
     updated_at = GREATEST(orders.updated_at, $3)
 FROM candidate
 WHERE orders.id = candidate.id
-RETURNING orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.private_run_id, orders.private_service_id, orders.private_run_number, orders.public_run_parent, orders.public_url_parent, orders.private_run_parent, orders.private_service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
+RETURNING orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.service_run_id, orders.service_id, orders.service_run_number, orders.public_run_parent, orders.public_url_parent, orders.service_run_parent, orders.service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
 `
 
 type ClaimACMEOrderWorkParams struct {
@@ -114,13 +114,13 @@ func (q *Queries) ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWork
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -235,7 +235,7 @@ func (q *Queries) GetACMEAccountByDirectory(ctx context.Context, directoryUrl st
 }
 
 const getACMEOrder = `-- name: GetACMEOrder :one
-SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE id = $1
 `
@@ -250,13 +250,13 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -291,7 +291,7 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 }
 
 const getACMEOrderByIdempotency = `-- name: GetACMEOrderByIdempotency :one
-SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE publish_run_id = $1
   AND idempotency_key = $2
@@ -312,13 +312,13 @@ func (q *Queries) GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrde
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -465,7 +465,7 @@ JOIN control.public_urls AS url ON url.id = run.public_url_id
 WHERE run.id = $3 AND run.public_url_id = $4
   AND run.publish_run_number = $5 AND run.closed_at IS NULL
   AND run.certificate_cache_key IS NOT NULL AND url.service_protocol = 'http'
-RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type InsertACMEOrderParams struct {
@@ -510,13 +510,13 @@ func (q *Queries) InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -639,7 +639,7 @@ func (q *Queries) ListACMEOrderAuthorizations(ctx context.Context, issuanceID st
 }
 
 const lockACMEOrder = `-- name: LockACMEOrder :one
-SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE id = $1
 FOR UPDATE
@@ -655,13 +655,13 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -696,7 +696,7 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 }
 
 const lockACMEOrderForInstall = `-- name: LockACMEOrderForInstall :one
-SELECT orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.private_run_id, orders.private_service_id, orders.private_run_number, orders.public_run_parent, orders.public_url_parent, orders.private_run_parent, orders.private_service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
+SELECT orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.service_run_id, orders.service_id, orders.service_run_number, orders.public_run_parent, orders.public_url_parent, orders.service_run_parent, orders.service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
 FROM control.acme_orders AS orders
 JOIN control.publish_runs AS issued_session
   ON issued_session.id = orders.publish_run_id
@@ -746,13 +746,13 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -808,7 +808,7 @@ SET state = 'installed',
     updated_at = GREATEST(updated_at, $1)
 WHERE id = $2
   AND state IN ('waiting_for_install', 'installed')
-RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type MarkACMEOrderInstalledParams struct {
@@ -826,13 +826,13 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
@@ -1063,7 +1063,7 @@ WHERE id = $13
   AND work_epoch = $15
   AND work_expires_at > $12
   AND order_revision = $16
-RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type SaveACMEOrderWorkParams struct {
@@ -1112,13 +1112,13 @@ func (q *Queries) SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkPa
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
-		&i.PrivateRunID,
-		&i.PrivateServiceID,
-		&i.PrivateRunNumber,
+		&i.ServiceRunID,
+		&i.ServiceID,
+		&i.ServiceRunNumber,
 		&i.PublicRunParent,
 		&i.PublicUrlParent,
-		&i.PrivateRunParent,
-		&i.PrivateServiceParent,
+		&i.ServiceRunParent,
+		&i.ServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,

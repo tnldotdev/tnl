@@ -1,5 +1,5 @@
 // Package localproxy forwards one public hostname to one HTTP or HTTPS target.
-package localproxy
+package proxy
 
 import (
 	"context"

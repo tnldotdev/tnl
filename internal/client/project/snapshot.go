@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"bytes"

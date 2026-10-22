@@ -11,22 +11,22 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/zalando/go-keyring"
 )
 
-func processFixture(t *testing.T) (projectconfig.Project, *clientstate.Database, []byte, string) {
+func processFixture(t *testing.T) (clientproject.Project, *clientstate.Database, []byte, string) {
 	t.Helper()
 	keyring.MockInit()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := projectconfig.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}}}}
+	project := clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}}}}
 	snapshot, _, err := project.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +36,14 @@ func processFixture(t *testing.T) (projectconfig.Project, *clientstate.Database,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = state.Close() })
-	path, err := privateprotocol.DescriptorPath(state.Root(), project.Root)
+	path, err := publisherprotocol.DescriptorPath(state.Root(), project.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return project, state, snapshot, path
 }
 
-func startProcess(t *testing.T, project projectconfig.Project, state *clientstate.Database, snapshot []byte, path string) (privateprotocol.Endpoint, func() error) {
+func startProcess(t *testing.T, project clientproject.Project, state *clientstate.Database, snapshot []byte, path string) (publisherprotocol.Endpoint, func() error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -69,7 +69,7 @@ func startProcess(t *testing.T, project projectconfig.Project, state *clientstat
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && Available(wait, endpoint) {
+		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil && Available(wait, endpoint) {
 			return endpoint, stop
 		}
 		select {
@@ -83,7 +83,7 @@ func startProcess(t *testing.T, project projectconfig.Project, state *clientstat
 	}
 }
 
-func assertProcessStopped(t *testing.T, state *clientstate.Database, project projectconfig.Project) {
+func assertProcessStopped(t *testing.T, state *clientstate.Database, project clientproject.Project) {
 	t.Helper()
 	snapshot, err := app.ReadSnapshotFrom(t.Context(), state, project.Root)
 	if err != nil {
@@ -106,16 +106,16 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := privateprotocol.Call(t.Context(), endpoint, "GET", "/v1/health?configuration_digest="+digest, nil, nil); err != nil {
+	if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/health?configuration_digest="+digest, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	name := "web"
-	var scoped privateprotocol.Endpoint
-	if err := privateprotocol.Call(t.Context(), endpoint, "POST", "/v1/capabilities", privateprotocol.CapabilityRequest{Scope: "app", Service: &name}, &scoped); err != nil {
+	var scoped publisherprotocol.Endpoint
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/capabilities", publisherprotocol.CapabilityRequest{Scope: "app", Service: &name}, &scoped); err != nil {
 		t.Fatal(err)
 	}
-	var assignment privateprotocol.Assignment
-	if err := privateprotocol.Call(t.Context(), scoped, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: project.Root, Service: name, Owner: strings.Repeat("a", 32), PID: os.Getpid(), Framework: privateprotocol.FrameworkNode}, &assignment); err != nil {
+	var assignment publisherprotocol.Assignment
+	if err := publisherprotocol.Call(t.Context(), scoped, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: project.Root, Service: name, Owner: strings.Repeat("a", 32), PID: os.Getpid(), Framework: publisherprotocol.FrameworkNode}, &assignment); err != nil {
 		t.Fatal(err)
 	}
 	if assignment.RegistrationID == "" || assignment.Service != name {
@@ -126,7 +126,7 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 	if err := Serve(contender, Options{Directory: project.Root, StateDir: state.Root(), Snapshot: bytes.NewReader(snapshot)}); err != nil {
 		t.Fatal(err)
 	}
-	current, err := privateprotocol.ReadEndpoint(path)
+	current, err := publisherprotocol.ReadEndpoint(path)
 	if err != nil || current.OwnerId != endpoint.OwnerId {
 		t.Fatalf("competing owner replaced the live descriptor: %+v, %v", current, err)
 	}

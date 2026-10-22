@@ -298,7 +298,7 @@
         "tnl-accounts",
         "otel-collector"
       ],
-      "semantics": "process service, not a tenant or managed service",
+      "semantics": "process service, not a tenant or service",
       "dimension_policy": "resource"
     },
     {
@@ -381,7 +381,7 @@
       "values": [
         "public_url",
         "relay",
-        "managed_service",
+        "service",
         "control",
         "service_queue"
       ],
@@ -466,9 +466,9 @@
       "values": [
         "authority",
         "public_url",
-        "managed_service",
+        "service",
         "public_url_challenge",
-        "managed_service_challenge",
+        "service_challenge",
         "relay_challenge"
       ],
       "semantics": "DNS worker domain",
@@ -713,10 +713,10 @@
     {
       "key": "tnl.service_kind",
       "values": [
-        "managed_service",
+        "service",
         "public_url"
       ],
-      "semantics": "managed service or public URL; private_service wire value normalizes to managed_service",
+      "semantics": "service or public URL; service wire value normalizes to service",
       "dimension_policy": "scoped"
     },
     {

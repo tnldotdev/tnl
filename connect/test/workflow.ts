@@ -55,10 +55,10 @@ if (operation === "prepare") {
     result.state !== "ready"
   )
     throw new Error("owner did not survive the action step");
-  const publicRuntime = JSON.parse(process.env.TNL_PROJECT_RUNTIME ?? "null") as {
+  const projectRuntime = JSON.parse(process.env.TNL_PROJECT_RUNTIME ?? "null") as {
     services?: { database?: { port: number } };
   } | null;
-  if (publicRuntime?.services?.database?.port !== 5432)
+  if (projectRuntime?.services?.database?.port !== 5432)
     throw new Error("action did not export public runtime JSON");
   core.info("native fixture is ready in a later job step");
 } else if (operation === "remove-original") {

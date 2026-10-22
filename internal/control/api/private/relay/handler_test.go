@@ -1,4 +1,4 @@
-package relayapi
+package relay
 
 import (
 	"bytes"
@@ -12,10 +12,10 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 const testRelayClusterSecret = "test-relay-cluster-secret-012345678901"
@@ -242,7 +242,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
-			assertRelayProblemType(t, response, problemtype.URL(test.problemType))
+			assertRelayProblemType(t, response, failureproblem.URL(test.problemType))
 		})
 	}
 }

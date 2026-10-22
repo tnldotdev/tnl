@@ -13,9 +13,9 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -274,19 +274,19 @@ func classifyCommandError(err error) error {
 			return err
 		}
 	}
-	if errors.Is(err, clientauth.ErrAuthenticationTimeout) {
+	if errors.Is(err, auth.ErrAuthenticationTimeout) {
 		return diagnostic.Wrap(diagnostic.AuthenticationTimeout, err)
 	}
-	if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrUnauthenticated) {
 		return diagnostic.Wrap(diagnostic.AuthenticationRequired, err)
 	}
-	if errors.Is(err, controlclient.ErrDNSProofPending) || errors.Is(err, authorityclient.ErrDNSProofPending) {
+	if errors.Is(err, clientcontrol.ErrDNSProofPending) || errors.Is(err, clientauthority.ErrDNSProofPending) {
 		return diagnostic.Wrap(diagnostic.DNSSetupPending, err)
 	}
-	if errors.Is(err, controlclient.ErrRateLimited) || errors.Is(err, authorityclient.ErrRateLimited) {
+	if errors.Is(err, clientcontrol.ErrRateLimited) || errors.Is(err, clientauthority.ErrRateLimited) {
 		return diagnostic.Wrap(diagnostic.RateLimited, err)
 	}
-	if errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrUnavailable) {
+	if errors.Is(err, clientcontrol.ErrUnavailable) || errors.Is(err, clientauthority.ErrUnavailable) {
 		return diagnostic.Wrap(diagnostic.ServerUnavailable, err)
 	}
 	return err
@@ -467,7 +467,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 		if flags.Publish.Detach {
 			if flags.Publish.EnrollmentKey == "-" {
-				return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher or --publisher-file")
+				return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
 			}
 			if flags.Publish.Output != "human" {
 				return publisherCLIError("--detach requires --output=human")
@@ -567,8 +567,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 			break
 		}
-		if parsedCommand == "publish <service-or-target>" && flags.Publish.PublisherFile != "" {
-			flags.Publish.ServerURL, err = invocation.PublisherFileServer(flags.Publish.ServerURL, flags.Publish.PublisherFile)
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "" {
+			flags.Publish.ServerURL, err = invocation.PublisherCredentialFileServer(flags.Publish.ServerURL, flags.Publish.PublisherCredentialFile)
 			if err != nil {
 				return err
 			}
@@ -617,7 +617,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runInit(ctx, flags.Init, stdout, stderr)
 	case "apply":
 		return runApply(ctx, flags.Apply, project, stdout, stderr)
-	case "bootstrap <publisher>":
+	case "bootstrap <publisher-group>":
 		return runBootstrap(ctx, flags.Bootstrap, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
@@ -680,11 +680,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":
 		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
-	case "publisher revoke <publisher-id>":
+	case "publisher revoke <publisher-identity-id>":
 		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
-	case "publisher grant add <publisher-id>":
+	case "publisher grant add <publisher-identity-id>":
 		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
-	case "publisher grant revoke <publisher-id> <grant-id>":
+	case "publisher grant revoke <publisher-identity-id> <grant-id>":
 		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
 	case "service install":
 		return runServiceInstall(ctx, flags.Service.Install, stdout, nil)

@@ -1,22 +1,22 @@
 paths:
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/http-authorize:
+  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
     post:
-      operationId: authorizeManagedHTTPVisitor
+      operationId: authorizeServiceHTTPVisitor
       security: [{ bearerAuth: [] }]
       description: Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ManagedHTTPVisitorRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPVisitorRequest" }
       responses:
         "200":
           description: Current request and ingress promotion decision
@@ -25,18 +25,18 @@ paths:
               schema:
                 { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/start:
+  /v1/services/{service_id}/runs/{service_run_id}/start:
     post:
-      operationId: startManagedServiceRun
+      operationId: startServiceRun
       security: [{ bearerAuth: [] }]
       description: Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
@@ -53,19 +53,19 @@ paths:
           description: Run token and two independent relay assignments
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRunSetup" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunSetup" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-connector:
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
     post:
       operationId: authorizeServiceConnector
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
@@ -80,18 +80,18 @@ paths:
               schema:
                 { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-client-certificate:
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     post:
       operationId: authorizeServiceClientCertificate
       description: Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
@@ -109,17 +109,17 @@ paths:
               schema:
                 { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances:
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
     parameters:
-      - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+      - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
       - {
-          name: private_run_id,
+          name: service_run_id,
           in: path,
           required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
         }
     post:
-      operationId: createPrivateCertificateIssuance
+      operationId: createServiceCertificateIssuance
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
       requestBody:
@@ -128,26 +128,26 @@ paths:
           application/json:
             schema:
               {
-                $ref: "../openapi.yaml#/components/schemas/CreatePrivateCertificateIssuanceRequest",
+                $ref: "../openapi.yaml#/components/schemas/CreateServiceCertificateIssuanceRequest",
               }
       responses:
         "201":
           description: DNS-01 issuance authorized for the exact private run and approved scope
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateCertificateIssuance" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceCertificateIssuance" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances/{issuance_id}:
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}:
     get:
-      operationId: getPrivateCertificateIssuance
+      operationId: getServiceCertificateIssuance
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
         - {
             name: issuance_id,
@@ -157,45 +157,45 @@ paths:
           }
       responses:
         "200":
-          description: Current private-run certificate issuance
+          description: Current service-run certificate issuance
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateCertificateIssuance" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceCertificateIssuance" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-installed:
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     post:
-      operationId: markPrivateCertificateInstalled
+      operationId: markServiceCertificateInstalled
       security: [{ bearerAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
-            name: private_run_id,
+            name: service_run_id,
             in: path,
             required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" },
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
           }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              { $ref: "../openapi.yaml#/components/schemas/PrivateCertificateInstalledRequest" }
+              { $ref: "../openapi.yaml#/components/schemas/ServiceCertificateInstalledRequest" }
       responses:
         "204": { description: Current run acknowledged the exact publisher-owned certificate }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs:
+  /v1/services/{service_id}/runs:
     post:
-      operationId: preparePrivateServiceRun
+      operationId: prepareServiceRun
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRunDeclaration" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunDeclaration" }
       description: Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
       security: [{ publisherAuth: [] }]
       parameters:
         [
-          { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
           { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" },
         ]
       responses:
@@ -205,46 +205,43 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema:
-                      { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRunPreparation" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunPreparation" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/private-services/{private_service_id}/runs/{private_run_id}:
+  /v1/services/{service_id}/runs/{service_run_id}:
     post:
-      operationId: heartbeatPrivateServiceRun
+      operationId: heartbeatServiceRun
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRunHeartbeat" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunHeartbeat" }
       description: Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
-      security: [{ privateRunAuth: [] }]
+      security: [{ serviceRunAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
-        - name: private_run_id
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
           in: path
           required: true
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       responses:
         "200":
           description: Current run and assignments
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceRunState" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunState" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     delete:
-      operationId: closePrivateServiceRun
-      description: Close the exact run, reject stale admissions and publish a private-service tombstone. Managed certificates remain in the publisher's shared cache.
-      security: [{ privateRunAuth: [] }]
+      operationId: closeServiceRun
+      description: Close the exact run, reject stale admissions and publish a service tombstone. Managed certificates remain in the publisher's shared cache.
+      security: [{ serviceRunAuth: [] }]
       parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }
-        - name: private_run_id
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
           in: path
           required: true
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       responses:
         "204": { description: Run closed }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

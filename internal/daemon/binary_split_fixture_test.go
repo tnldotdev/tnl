@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"net"
@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -102,7 +102,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_STORAGE_KEY":            testStorageKey,
 	})
 	owner := newBinaryTopology(t)
-	control := owner.start(t, tnldconfig.RoleControl, repositoryRoot, controlEnvironment, tnldPath, "serve")
+	control := owner.start(t, daemonconfig.RoleControl, repositoryRoot, controlEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, control, controlMetrics, databaseURL)
 
 	ingressMetrics := unusedTCPAddress(t)
@@ -121,7 +121,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_RELAY_LEASE_DURATION":   "5s",
 		"TNLD_ROUTING_TABLE_WAIT":     "1s",
 	})
-	ingress := owner.start(t, tnldconfig.RoleIngress, repositoryRoot, ingressEnvironment, tnldPath, "serve")
+	ingress := owner.start(t, daemonconfig.RoleIngress, repositoryRoot, ingressEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, ingress, ingressMetrics, databaseURL)
 
 	relayAPort := unusedTCPAndUDPPortOn(t, "127.0.0.2")
@@ -177,7 +177,7 @@ func startIntegrationBinaryRelay(
 		"TNLD_RELAY_UDP_LISTEN":           net.JoinHostPort("127.0.0.2", relayPort),
 		"TNLD_ROUTING_TABLE_WAIT":         "1s",
 	})
-	process := owner.start(t, tnldconfig.RoleRelay, repositoryRoot, environment, tnldPath, "serve")
+	process := owner.start(t, daemonconfig.RoleRelay, repositoryRoot, environment, tnldPath, "serve")
 	return process, metricsAddress
 }
 

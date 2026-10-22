@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
@@ -26,7 +26,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 			var rename func()
 			if kind == "group" {
 				r := appliedProjectRequest(t, d, now)
-				r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "remote", Target: "api.internal:3000"}, "db": {Publisher: "remote", Target: "db.internal:5432", Protocol: "postgres"}}}
+				r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}, "db": {PublisherGroup: "remote", Target: "db.internal:5432", Protocol: "postgres"}}}
 				applied, err := d.ApplyProjectConfiguration(ctx, r)
 				if err != nil {
 					t.Fatal(err)
@@ -43,7 +43,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 					}
 					for _, action := range []string{"verify", "lease"} {
 						audience := "https://control.example/v1/publisher-groups/" + action
-						proof, _ := publisheridentity.Sign(id, key, scope, audience, private, now)
+						proof, _ := publisherproof.Sign(id, key, scope, audience, private, now)
 						if action == "verify" {
 							_, err = d.VerifyPublisherGroupIdentity(ctx, id, scope, proof, audience, now)
 						} else {
@@ -62,7 +62,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 			} else {
 				r := oidcRouteRequest(t, d, now)
 				u := createTestPublicURL(t, d, r, now)
-				e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
+				e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
 				public, k, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)
@@ -97,7 +97,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				t.Helper()
 				r := PublisherRuntimeRequest{PublisherIdentityID: id, ScopeID: scope, ProcessRunID: run, Action: action, ExpectedEpoch: epoch, SourceIP: source, Audience: "https://control.example/v1/publisher-runtime", Now: now}
 				var err error
-				r.Assertion, err = publisheridentity.Sign(id, key, publisheridentity.RuntimeScope(scope, action, run, epoch), r.Audience, private, now)
+				r.Assertion, err = publisherproof.Sign(id, key, publisherproof.RuntimeScope(scope, action, run, epoch), r.Audience, private, now)
 				if err != nil {
 					t.Fatal(err)
 				}

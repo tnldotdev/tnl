@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -20,21 +20,21 @@ import (
 func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "browser-access")
 	request := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, request, now)
-	auth := browserTestAuthentication(t, database, route.ID, now)
-	preview, err := database.CreatePreview(t.Context(), route.TeamID, request.ActingIdentityID, "browser-access", now)
+	publicURL := createTestPublicURL(t, database, request, now)
+	auth := browserTestAuthentication(t, database, publicURL.ID, now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, request.ActingIdentityID, "browser-access", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID,
-		IdentityID: request.ActingIdentityID, PolicyRevision: uint64(route.PolicyRevision),
-		ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: request.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision),
+		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now); err != nil {
 		t.Fatal(err)
 	}
 	binding := bytes.Repeat([]byte{7}, 32)
-	state, err := database.BeginBrowserLogin(t.Context(), preview.ID, route.ID, "/settings?tab=profile", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, nil, now)
+	state, err := database.BeginBrowserLogin(t.Context(), preview.ID, publicURL.ID, "/settings?tab=profile", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 		t.Fatalf("another browser consumed login state: %v", err)
 	}
 	login, err := database.ConsumeBrowserLogin(t.Context(), state, binding, now)
-	if err != nil || login.PreviewID != preview.ID || login.PublicURLID != route.ID || login.ReturnPath != "/settings?tab=profile" {
+	if err != nil || login.PreviewID != preview.ID || login.PublicURLID != publicURL.ID || login.ReturnPath != "/settings?tab=profile" {
 		t.Fatalf("browser login = %+v, %v", login, err)
 	}
 	if _, err := database.ConsumeBrowserLogin(t.Context(), state, binding, now); !errors.Is(err, ErrPreviewAccess) {
@@ -77,14 +77,14 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("replayed browser handoff = %v", err)
 	}
-	session, err := database.BrowserSession(t.Context(), route.ID, cookie, now)
+	session, err := database.BrowserSession(t.Context(), publicURL.ID, cookie, now)
 	if err != nil || session.IdentityID != request.ActingIdentityID || session.AccessToken != access || session.RefreshToken != refresh {
 		t.Fatalf("browser session identity = %q, %v", session.IdentityID, err)
 	}
 	if err := database.RotateBrowserSession(t.Context(), cookie, "new-access", "new-refresh", now.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	session, err = database.BrowserSession(t.Context(), route.ID, cookie, now)
+	session, err = database.BrowserSession(t.Context(), publicURL.ID, cookie, now)
 	if err != nil || session.AccessToken != "new-access" || session.RefreshToken != "new-refresh" {
 		t.Fatalf("browser token rotation failed: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			updated, err := database.RefreshBrowserSession(t.Context(), route.ID, cookie, now.Add(2*time.Hour-15*time.Second),
+			updated, err := database.RefreshBrowserSession(t.Context(), publicURL.ID, cookie, now.Add(2*time.Hour-15*time.Second),
 				func(_ context.Context, previous string) (BrowserTokenRotation, error) {
 					if previous != "new-refresh" {
 						return BrowserTokenRotation{}, ErrPreviewAccess
@@ -122,10 +122,10 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	if rotations.Load() != 1 {
 		t.Fatalf("authority refresh calls = %d, want one", rotations.Load())
 	}
-	if err := database.RevokeBrowserSession(t.Context(), route.ID, cookie, now); err != nil {
+	if err := database.RevokeBrowserSession(t.Context(), publicURL.ID, cookie, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.BrowserSession(t.Context(), route.ID, cookie, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err := database.BrowserSession(t.Context(), publicURL.ID, cookie, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("revoked browser session = %v", err)
 	}
 }

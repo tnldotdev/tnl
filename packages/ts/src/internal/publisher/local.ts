@@ -280,8 +280,8 @@ function runtimeRequestUntraced(
                       ? "sdk.authentication_required"
                       : problem.code === "runtime.publisher_setup_required"
                         ? "sdk.publisher_setup_required"
-                        : problem.code === "runtime.publisher_file_invalid"
-                          ? "sdk.publisher_file_invalid"
+                        : problem.code === "runtime.publisher_credential_file_invalid"
+                          ? "sdk.publisher_credential_file_invalid"
                           : response.statusCode !== undefined && response.statusCode >= 500
                             ? "sdk.dev_unavailable"
                             : "sdk.request_rejected",

@@ -4,14 +4,14 @@ import (
 	"slices"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
-func ConfiguredServices(project projectconfig.Project) []Service {
+func ConfiguredServices(project clientproject.Project) []Service {
 	services := make([]Service, 0, len(project.Config.Services))
 	for name, definition := range project.Config.Services {
-		if config.PublisherName(definition) != "local" {
+		if config.PublisherGroupName(definition) != "local" {
 			continue
 		}
 		readiness := Readiness{Path: "/"}

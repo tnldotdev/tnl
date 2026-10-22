@@ -19,7 +19,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const certificateTestPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
@@ -129,7 +129,7 @@ func newCertificateTransactionTest(t *testing.T) (*certificateTestControl, *Publ
 	t.Helper()
 	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
+	state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherIdentityID(), control.setup.CertificatePlan)
 	if err != nil {
 		t.Fatal(err)
 	}

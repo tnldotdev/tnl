@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -21,10 +21,10 @@ import (
 // expiration holds one parent before those same clocks. new rows are private to
 // this transaction and cannot be held by a concurrent run worker.
 func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, project string) error {
-	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.private_services service
+	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
 		WHERE service.id IN (
-			SELECT private_service_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
-			UNION SELECT private_service_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
+			SELECT service_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
+			UNION SELECT service_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
 		ORDER BY service.id FOR UPDATE OF service`, team, project); err != nil {
 		return err
 	}
@@ -36,17 +36,17 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 	return err
 }
 
-func (d *Database) createAppliedPrivateService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration) (string, error) {
-	id, err := opaqueid.New(opaqueid.PrivateServicePrefix)
+func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration) (string, error) {
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + key))
-	_, err = q.InsertPrivateService(ctx, controlstatedb.InsertPrivateServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: r.ActorID, IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
+	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: r.ActorID, IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
 	if err != nil {
 		return "", projectConstraintError(err)
 	}
-	trust, err := appliedPrivateTargetTrust(s.TargetTLS)
+	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return "", err
 	}
@@ -54,50 +54,50 @@ func (d *Database) createAppliedPrivateService(ctx context.Context, tx pgx.Tx, q
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.private_services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4 WHERE id=$1`, id, s.Protocol, string(encoded), s.Publisher != "local")
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4 WHERE id=$1`, id, s.Protocol, string(encoded), s.PublisherGroup != "local")
 	if err != nil {
 		return "", err
 	}
-	grant, err := opaqueid.New(opaqueid.PrivateServiceGrantPrefix)
+	grant, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.private_service_grants(id,private_service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, r.ActorID, "applied-owner/"+id, digest[:], r.Now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, r.ActorID, "applied-owner/"+id, digest[:], r.Now)
 	return id, err
 }
 
-func (d *Database) updateAppliedPrivateService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id, scope string, s ProjectServiceConfiguration, now time.Time) error {
-	row, err := q.LockPrivateService(ctx, id)
+func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id, scope string, s ProjectServiceConfiguration, now time.Time) error {
+	row, err := q.LockService(ctx, id)
 	if err != nil {
 		return err
 	}
-	trust, err := appliedPrivateTargetTrust(s.TargetTLS)
+	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return err
 	}
-	metadata := PrivateServiceMetadata{Protocol: s.Protocol, TLS: trust, PublisherPool: s.Publisher != "local"}
-	saved, err := checkedPrivateMetadata(row)
+	metadata := ServiceMetadata{Protocol: s.Protocol, TLS: trust, PublisherPool: s.PublisherGroup != "local"}
+	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return err
 	}
-	changed := !privateMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
+	changed := !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
 	encoded, err := json.Marshal(trust)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.private_services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END,updated_at=$6,name=$7,name_scope=$8 WHERE id=$1`, id, s.Protocol, string(encoded), metadata.PublisherPool, changed, now, s.Name, scope)
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END,updated_at=$6,name=$7,name_scope=$8 WHERE id=$1`, id, s.Protocol, string(encoded), metadata.PublisherPool, changed, now, s.Name, scope)
 	return projectConstraintError(err)
 }
 
-func appliedPrivateTargetTrust(trust *ProjectTargetTLS) (*PrivateServiceTLS, error) {
+func appliedServiceTargetTrust(trust *ProjectTargetTLS) (*ServiceTargetTLS, error) {
 	if trust == nil {
 		return nil, nil
 	}
-	snapshot, err := (projectconfig.TargetTrustSnapshot{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).PrivateSnapshot()
+	snapshot, err := (clientproject.TargetTrustSnapshot{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).TargetTrust()
 	if err != nil {
 		return nil, errors.Join(ErrProjectConfigurationInvalid, err)
 	}
-	return &PrivateServiceTLS{Hostname: snapshot.Hostname, PEM: string(snapshot.PEM), System: snapshot.System, Digest: snapshot.Digest}, nil
+	return &ServiceTargetTLS{Hostname: snapshot.Hostname, PEM: string(snapshot.PEM), System: snapshot.System, Digest: snapshot.Digest}, nil
 }
 
 // resolve names without evaluating source files. apply repeats this read under
@@ -114,9 +114,9 @@ func (d *Database) ResolveProjectConfiguration(ctx context.Context, team, actor 
 	defer rollback(ctx, tx, "resolve project configuration", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
 		return result, err
 	}
 	return c, tx.Commit(ctx)
@@ -204,7 +204,7 @@ func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx
 }
 
 func (d *Database) revokeProjectResourcePublishers(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT id,publisher_identity_id FROM control.publisher_grants WHERE revoked_at IS NULL AND (($1::text IS NOT NULL AND private_service_id=$1) OR ($2::text IS NOT NULL AND public_url_id=$2)) ORDER BY publisher_identity_id,id`, s.PrivateServiceID, s.PublicURLID)
+	rows, err := tx.Query(ctx, `SELECT id,publisher_identity_id FROM control.publisher_grants WHERE revoked_at IS NULL AND (($1::text IS NOT NULL AND service_id=$1) OR ($2::text IS NOT NULL AND public_url_id=$2)) ORDER BY publisher_identity_id,id`, s.ServiceID, s.PublicURLID)
 	if err != nil {
 		return err
 	}
@@ -224,8 +224,8 @@ func (d *Database) revokeProjectResourcePublishers(ctx context.Context, tx pgx.T
 		return err
 	}
 	for _, g := range grants {
-		if s.PrivateServiceID.Valid {
-			err = closeRevokedPrivatePublication(ctx, tx, q, s.PrivateServiceID.String, g.publisher, g.id, now)
+		if s.ServiceID.Valid {
+			err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, g.publisher, g.id, now)
 		} else {
 			err = closeRevokedPublicPublications(ctx, tx, q, g.publisher, g.id, now)
 		}
@@ -251,20 +251,20 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 }
 
 func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
-	if s.PrivateServiceID.Valid {
-		if _, err := q.LockPrivateService(ctx, s.PrivateServiceID.String); err != nil {
+	if s.ServiceID.Valid {
+		if _, err := q.LockService(ctx, s.ServiceID.String); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE control.private_service_runs SET state='closed',closed_at=$2 WHERE private_service_id=$1 AND closed_at IS NULL`, s.PrivateServiceID.String, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, s.ServiceID.String, now); err != nil {
 			return err
 		}
-		if _, err := q.DeletePrivateService(ctx, controlstatedb.DeletePrivateServiceParams{ID: s.PrivateServiceID.String, TeamID: s.TeamID, Now: timestamptz(now)}); err != nil {
+		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: s.TeamID, Now: timestamptz(now)}); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE control.private_service_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE private_service_id=$1`, s.PrivateServiceID.String, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE control.service_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
 			return err
 		}
-		if err := privateRoutingTombstone(ctx, q, s.PrivateServiceID.String, now); err != nil {
+		if err := serviceRoutingTombstone(ctx, q, s.ServiceID.String, now); err != nil {
 			return err
 		}
 	} else if s.PublicURLID.Valid {
@@ -308,28 +308,28 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 			return grant, nil
 		}
 		table := "control.visitor_grants"
-		if s.PrivateServiceID.Valid {
-			table = "control.private_service_grants"
+		if s.ServiceID.Valid {
+			table = "control.service_grants"
 		}
 		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET revoked_at=COALESCE(revoked_at,$2) WHERE id=$1`, grant, now); err != nil {
 			return "", err
 		}
 		return "", nil
 	}
-	if !enabled || !s.PrivateServiceID.Valid && !s.PublicURLID.Valid {
+	if !enabled || !s.ServiceID.Valid && !s.PublicURLID.Valid {
 		return "", nil
 	}
 	prefix := opaqueid.SharePrefix
-	if s.PrivateServiceID.Valid {
-		prefix = opaqueid.PrivateServiceGrantPrefix
+	if s.ServiceID.Valid {
+		prefix = opaqueid.ServiceGrantPrefix
 	}
 	id, err := opaqueid.New(prefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte("applied-team/" + id))
-	if s.PrivateServiceID.Valid {
-		_, err = tx.Exec(ctx, `INSERT INTO control.private_service_grants(id,private_service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PrivateServiceID.String, s.TeamID, actor, digest[:], now)
+	if s.ServiceID.Valid {
+		_, err = tx.Exec(ctx, `INSERT INTO control.service_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
 	} else {
 		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,public_url_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PublicURLID.String, s.TeamID, actor, digest[:], now)
 	}

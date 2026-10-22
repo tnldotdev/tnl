@@ -21,9 +21,9 @@ schemas:
       key_id: { type: string }
       grant_id: { type: string }
       team_id: { type: string }
-      kind: { type: string, enum: [saved_url, namespace, private_service] }
+      kind: { type: string, enum: [saved_public_url, namespace, service] }
       public_url_id: { type: string }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       domain_id: { type: string }
       namespace: { type: string }
   PublisherTokenRequest:

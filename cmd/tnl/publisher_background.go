@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
@@ -27,9 +27,9 @@ func (flags backgroundPublishFlags) settings() invocation.BackgroundSettings {
 }
 
 func backgroundOptions(flags publishCommand) invocation.BackgroundOptions {
-	options := invocation.BackgroundOptions{PrivateOptions: privateOptions(flags), Open: flags.Open, ServerFromConfig: flags.serverFromConfig, InspectionModeFromCLI: flags.inspectionModeFromCLI, ReadinessPath: flags.publicationReadinessPath()}
+	options := invocation.BackgroundOptions{ServiceOptions: privateOptions(flags), Open: flags.Open, ServerFromConfig: flags.serverFromConfig, InspectionModeFromCLI: flags.inspectionModeFromCLI, ReadinessPath: flags.publicationReadinessPath()}
 	options.SelectProtocol = func(protocol string, private bool) (publisher.ApplicationLimits, error) {
-		flags.privateService = private
+		flags.service = private
 		if private {
 			if err := applyProtocolLimits(&flags.tunnelFlags, protocol); err != nil {
 				return publisher.ApplicationLimits{}, err
@@ -44,18 +44,18 @@ func backgroundOptions(flags publishCommand) invocation.BackgroundOptions {
 }
 
 func backgroundSelection(flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags) error {
-	return invocation.ValidateBackground(backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherID: selection.PublisherID, PublisherFile: selection.PublisherFile}, background.settings())
+	return invocation.ValidateBackground(backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherIdentityID: selection.PublisherIdentityID, PublisherCredentialFile: selection.PublisherCredentialFile}, background.settings())
 }
 
-func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, output io.Writer, input io.Reader, executor publisherjob.Executor) error {
+func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, selection enrolledPublishSelection, background backgroundPublishFlags, output io.Writer, input io.Reader, executor supervisor.Executor) error {
 	options, err := (systemStateFlags{System: background.System, SystemStateDir: background.SystemStateDir}).options()
 	if err != nil {
 		return err
 	}
-	if _, err := publisherjob.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
+	if _, err := supervisor.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
 		return err
 	}
-	return invocation.InstallEnrolled(ctx, backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherID: selection.PublisherID, PublisherFile: selection.PublisherFile}, background.settings(), options, installationPresentation(output, os.Stderr), input, executor)
+	return invocation.InstallEnrolled(ctx, backgroundOptions(flags), invocation.EnrolledSelection{EnrollmentKey: selection.EnrollmentKey, PublisherIdentityID: selection.PublisherIdentityID, PublisherCredentialFile: selection.PublisherCredentialFile}, background.settings(), options, installationPresentation(output, os.Stderr), input, executor)
 }
 
 func (flags publishCommand) publicationReadinessPath() string {

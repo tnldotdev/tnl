@@ -86,5 +86,5 @@ func PingAddress(value, protocol string) (string, string, error) {
 		}
 		return value, parsed.Scheme, nil
 	}
-	return "", "", errors.New("expected an HTTP or HTTPS public URL; use tnl connect for private services")
+	return "", "", errors.New("expected an HTTP or HTTPS public URL; use tnl connect for services")
 }

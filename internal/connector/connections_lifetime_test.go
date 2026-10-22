@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 func TestConnectionProcessLifetimeDoesNotResurrectWorkloadSessions(t *testing.T) {
@@ -16,8 +16,8 @@ func TestConnectionProcessLifetimeDoesNotResurrectWorkloadSessions(t *testing.T)
 	if deadline, err := human.healthy(); err != nil || !deadline.After(time.Now()) {
 		t.Fatal("human owner retained the one-hour cliff", err)
 	}
-	workload := &nativeConnectionBackend{nativeConnectionSession: nativeConnectionSession{workload: &workloadclient.Client{}, deadline: time.Now().Add(-time.Second)}}
-	if _, err := workload.healthy(); !errors.Is(err, connectionruntime.ErrExpired) {
+	workload := &nativeConnectionBackend{nativeConnectionSession: nativeConnectionSession{workload: &workload.Client{}, deadline: time.Now().Add(-time.Second)}}
+	if _, err := workload.healthy(); !errors.Is(err, connectorruntime.ErrExpired) {
 		t.Fatal("process lifetime revived expired workload rights", err)
 	}
 }

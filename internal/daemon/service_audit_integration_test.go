@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -13,18 +13,18 @@ import (
 	"testing"
 	"time"
 
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type auditPublicRuntimeFixture interface {
+type auditProjectRuntimeFixture interface {
 	connectors() (muxsession.Connector, muxsession.Connector)
 	waitReady(*testing.T, *integrationPublisher) publisher.Event
 }
@@ -33,7 +33,7 @@ func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
-			var fixture auditPublicRuntimeFixture
+			var fixture auditProjectRuntimeFixture
 			var inspect *sql.DB
 			var visitor *integrationVisitor
 			var process *integrationProcess
@@ -98,7 +98,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 	for _, standalone := range []bool{false, true} {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
 			opened := make(chan privateObservation, 8)
-			f := newPrivateRuntimeFixture(t, standalone, opened)
+			f := newServiceRuntimeFixture(t, standalone, opened)
 			var runtimes []*ingressRuntime
 			if standalone {
 				runtimes = f.composed.ingresses
@@ -108,15 +108,15 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 					runtimes = append(runtimes, d.ingresses[0])
 				}
 			}
-			service, err := f.identity.routes.CreatePrivateService(t.Context(), f.identity.teamID, "audit-private", "audit-private")
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private")
 			if err != nil {
 				t.Fatal(err)
 			}
-			e, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Kind: "installed", Name: "audit-publisher"})
+			e, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: "installed", Name: "audit-publisher"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := nativeauth.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, e.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, e.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,8 +125,8 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			pubCtx, stopPub := context.WithCancel(t.Context())
 			ready, pubDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				pubDone <- privatepublisher.Publish(pubCtx, privatepublisher.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target.address,
-					Metadata: controlv1.PrivateServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
 						return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 					}})
 			}()
@@ -150,7 +150,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			production, err := tcpconnect.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			production, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +165,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			visitCtx, stopVisit := context.WithCancel(t.Context())
 			visitorReady, visitDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitDone <- tcpconnect.Serve(visitCtx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
+				visitDone <- connectorstream.Serve(visitCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			joined := false
 			t.Cleanup(func() {
@@ -236,7 +236,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			}
 			privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.private_visitor_streams WHERE private_service_id=$1 AND closed_at IS NOT NULL`, service.Id).Scan(&count)
+				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.connector_visitor_streams WHERE service_id=$1 AND closed_at IS NOT NULL`, service.Id).Scan(&count)
 				return count == 3, err
 			})
 			for _, runtime := range runtimes {
@@ -257,7 +257,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if standalone {
 				oldID := serviceaudit.NewID()
 				_, err = f.inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at)
-				    VALUES($1,$2,$3,'private_service','connection.close',$4,$4)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour))
+				    VALUES($1,$2,$3,'service','connection.close',$4,$4)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour))
 				if err != nil {
 					t.Fatal(err)
 				}

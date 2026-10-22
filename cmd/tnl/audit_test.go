@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func auditEvent(cursor int64) controlv1.ServiceAuditEvent {
-	return controlv1.ServiceAuditEvent{Id: "event-" + strconv.FormatInt(cursor, 10), Cursor: strconv.FormatInt(cursor, 10), TeamId: "team-shop", ServiceId: "service-api", ServiceKind: "private_service", EventType: "visitor.admit", OccurredAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}
+	return controlv1.ServiceAuditEvent{Id: "event-" + strconv.FormatInt(cursor, 10), Cursor: strconv.FormatInt(cursor, 10), TeamId: "team-shop", ServiceId: "service-api", ServiceKind: "service", EventType: "visitor.admit", OccurredAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}
 }
 
 func TestAuditListParsesRequestedWorkflowAndProjectTeam(t *testing.T) {
@@ -93,7 +93,7 @@ func TestAuditProductionClientPaginatesWithoutChangingFilters(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client, err := controlclient.New(server.URL, server.Client(), "access")
+	client, err := clientcontrol.New(server.URL, server.Client(), "access")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,12 +160,12 @@ func TestAuditPreservesManagerAuthorizationProblem(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(controlv1.Problem{Code: controlv1.Forbidden, Status: http.StatusForbidden, Title: "service audit access denied", Detail: "service audit access denied", Type: "https://tnl.dev/p/forbidden", RequestId: "request-audit"})
 	}))
 	defer server.Close()
-	client, err := controlclient.New(server.URL, server.Client(), "access")
+	client, err := clientcontrol.New(server.URL, server.Client(), "access")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = readServiceAudit(t.Context(), client, "team-shop", controlv1.ListServiceAuditParams{}, 100)
-	var problem *controlclient.ProblemError
+	var problem *clientcontrol.ProblemError
 	if !errors.As(err, &problem) || problem.Problem.Code != controlv1.Forbidden || problem.Problem.Detail != "service audit access denied" {
 		t.Fatalf("authored server problem was replaced: %v", err)
 	}

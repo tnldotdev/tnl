@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -22,7 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
@@ -125,14 +125,14 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	post(server.Client(), endpoint, tokens[0].String(), map[string]any{"publish_run_number": 1, "events": []map[string]any{{"actor_identity_id": actor}}}, 400)
 	secret := strings.Repeat("a", 32)
 	secrets, _ := serviceapi.NewBearerSecrets(secret, "")
-	ingressHandler, err := ingressapi.NewHandler(ingressapi.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	ingressHandler, err := controlingress.NewHandler(controlingress.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ingressServer := httptest.NewTLSServer(ingressHandler)
 	t.Cleanup(ingressServer.Close)
 	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-ingress", IngressRunID: "audit-process", ProtocolVersion: 1, ConnectionCapacity: 10,
-		PrivateConnectorAddress: "127.0.0.1:9441", PrivateConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+		ConnectorAddress: "127.0.0.1:9441", ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

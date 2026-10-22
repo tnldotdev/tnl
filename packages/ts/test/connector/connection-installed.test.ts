@@ -55,7 +55,7 @@ test("installed ESM and CommonJS connections use verified owned HTTP transport o
       response.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
           schema: 1,
-          public_runtime: project,
+          project_runtime: project,
           connection: {
             schema: 1,
             protocol: "http",

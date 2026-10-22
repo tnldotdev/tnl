@@ -1,4 +1,4 @@
-package publisheridentity
+package publisherproof
 
 import (
 	"crypto/sha256"

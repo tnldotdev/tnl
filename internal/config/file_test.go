@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
@@ -148,9 +148,9 @@ func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			value := tnldconfig.Config{MetricsListen: "default", RelayStreamCapacity: 99}
+			value := daemonconfig.Config{MetricsListen: "default", RelayStreamCapacity: 99}
 			document.TNLD.Apply(&value)
-			if value.Role != tnldconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
+			if value.Role != daemonconfig.RoleRelay || value.MetricsListen != "" || value.RelayStreamCapacity != 12 || value.QUICIdleTimeout != 30*time.Second {
 				t.Fatalf("tnld = %#v", value)
 			}
 		})
@@ -423,7 +423,7 @@ func TestTNLDFilePrecedenceDistinguishesAbsentAndEmptyEnvironment(t *testing.T) 
 			if err := os.Unsetenv("TNLD_RELAY_STREAM_CAPACITY"); err != nil {
 				t.Fatal(err)
 			}
-			base := tnldconfig.Config{MetricsListen: test.environment, RelayStreamCapacity: 99}
+			base := daemonconfig.Config{MetricsListen: test.environment, RelayStreamCapacity: 99}
 			if test.flag {
 				base.MetricsListen = "flag:5678"
 			}

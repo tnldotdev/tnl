@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	devoidc "github.com/tnldotdev/tnl/internal/development/oidc"
+	"github.com/tnldotdev/tnl/internal/development/oidc"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 	cert := flag.String("cert", "/etc/tnl/local.crt", "TLS certificate")
 	key := flag.String("key", "/etc/tnl/local.key", "TLS key")
 	flag.Parse()
-	p, err := devoidc.New(devoidc.Config{Issuer: *issuer, ClientID: "tnl-local", ClientSecret: "local-development-secret", Subject: "developer", RedirectURLs: []string{*control + "/v1/auth/device/callback", *control + "/v1/browser/callback"}})
+	p, err := oidc.New(oidc.Config{Issuer: *issuer, ClientID: "tnl-local", ClientSecret: "local-development-secret", Subject: "developer", RedirectURLs: []string{*control + "/v1/auth/device/callback", *control + "/v1/browser/callback"}})
 	if err != nil {
 		log.Fatal(err)
 	}

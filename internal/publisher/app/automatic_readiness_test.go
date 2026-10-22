@@ -53,7 +53,7 @@ func waitAutomaticReady(t *testing.T, w *Workers, run uint64) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		service := w.Manager.Snapshot().Services[0]
-		if service.Ready && service.PublishRunNumber == run {
+		if service.Ready && service.RunNumber == run {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -162,7 +162,7 @@ func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testi
 	default:
 	}
 	service := w.Manager.Snapshot().Services[0]
-	if !service.Registered || !service.Routable || service.Ready || !w.Manager.Current("web", id, service.Target, 1) {
+	if !service.Registered || !service.Routable || service.Ready || !w.Manager.CurrentRun("web", id, service.Target, 1) {
 		t.Fatalf("readiness budget changed publication lifetime: %+v", service)
 	}
 	select {
@@ -378,7 +378,7 @@ func TestAutomaticReadinessReplacementBeforeAcceptanceRejectsOldSuccess(t *testi
 		t.Fatal("old probe success crossed publish run replacement")
 	}
 	expectNoAutomaticGET(t, gets)
-	if service := w.Manager.Snapshot().Services[0]; service.PublishRunNumber != 2 || service.Ready || !service.Routable {
+	if service := w.Manager.Snapshot().Services[0]; service.RunNumber != 2 || service.Ready || !service.Routable {
 		t.Fatalf("old result changed the replacement's readiness: %+v", service)
 	}
 }

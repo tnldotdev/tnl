@@ -1,52 +1,52 @@
-package controlapi
+package public
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
-	protocol := controlv1.PublicURLServiceProtocol(route.ServiceProtocol)
+func publicURLResponse(publicURL controlstate.PublicURL) controlv1.PublicURL {
+	protocol := controlv1.PublicURLServiceProtocol(publicURL.ServiceProtocol)
 	if protocol == "" {
 		protocol = controlv1.Http
 	}
 	result := controlv1.PublicURL{
-		PublisherPool: &route.PublisherPool,
-		Id:            route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
+		PublisherPool: &publicURL.PublisherPool,
+		Id:            publicURL.ID, TeamId: publicURL.TeamID, DomainId: publicURL.DomainID,
+		CanonicalHostname: publicURL.CanonicalHostname, Target: publicURL.Target,
 		ServiceProtocol:  protocol,
-		AccessMode:       controlv1.VisitorAccessMode(route.AccessMode),
-		MutationRevision: int64(route.MutationRevision),
-		PublicUrlScope:   controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
-		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
-		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
+		AccessMode:       controlv1.VisitorAccessMode(publicURL.AccessMode),
+		MutationRevision: int64(publicURL.MutationRevision),
+		PublicUrlScope:   controlv1.PublicURLScope(publicURL.PublicURLScope), Purpose: controlv1.PublicURLPurpose(publicURL.Purpose), PolicyRevision: publicURL.PolicyRevision,
+		LifecycleState: controlv1.PublicURLLifecycleState(publicURL.LifecycleState), NextPublishRunNumber: publicURL.NextPublishRunNumber,
+		Ephemeral: publicURL.Ephemeral, ExpiresAt: publicURL.ExpiresAt, CreatedAt: publicURL.CreatedAt, UpdatedAt: publicURL.UpdatedAt,
 	}
-	if route.MembershipID != "" {
-		result.MembershipId = &route.MembershipID
+	if publicURL.MembershipID != "" {
+		result.MembershipId = &publicURL.MembershipID
 	}
-	if len(route.AllowedIPPrefixes) != 0 {
-		prefixes := make([]string, len(route.AllowedIPPrefixes))
-		for index, prefix := range route.AllowedIPPrefixes {
+	if len(publicURL.AllowedIPPrefixes) != 0 {
+		prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
+		for index, prefix := range publicURL.AllowedIPPrefixes {
 			prefixes[index] = prefix.String()
 		}
 		result.AllowedIpPrefixes = &prefixes
 	}
-	if route.OpenPublishRunID != "" {
-		result.OpenPublishRunId = &route.OpenPublishRunID
+	if publicURL.OpenPublishRunID != "" {
+		result.OpenPublishRunId = &publicURL.OpenPublishRunID
 	}
 	return result
 }
 
 func publishRunSetupResponse(
-	route controlstate.PublicURL,
+	publicURL controlstate.PublicURL,
 	setup controlstate.PublishRunSetup,
 	certificatePlan controlv1.CertificatePlan,
 ) controlv1.PublishRunSetup {
 	return controlv1.PublishRunSetup{
-		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
+		PublicUrl: publicURLResponse(publicURL), PublishRun: publishRunResponse(setup),
 		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 		Traffic:              trafficLimitsResponse(setup.Traffic),

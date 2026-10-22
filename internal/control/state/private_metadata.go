@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -20,30 +20,30 @@ import (
 
 // private metadata contains public trust material only, never a target address,
 // target credential, local path, remote bundle URL, or publisher private key.
-type PrivateServiceTLS struct {
+type ServiceTargetTLS struct {
 	Hostname string `json:"hostname"`
 	System   bool   `json:"system"`
 	PEM      string `json:"pem,omitempty"`
 	Digest   string `json:"digest"`
 }
 
-type PrivateServiceMetadata struct {
-	Protocol      string             `json:"protocol"`
-	TLS           *PrivateServiceTLS `json:"target_tls,omitempty"`
-	PublisherPool bool               `json:"publisher_pool"`
-	TrustRevision int64              `json:"trust_revision"`
-	ManagedTLS    *ManagedServiceTLS `json:"managed_tls,omitempty"`
+type ServiceMetadata struct {
+	Protocol      string            `json:"protocol"`
+	TLS           *ServiceTargetTLS `json:"target_tls,omitempty"`
+	PublisherPool bool              `json:"publisher_pool"`
+	TrustRevision int64             `json:"trust_revision"`
+	Endpoint      *ServiceEndpoint  `json:"endpoint,omitempty"`
 }
 
-type ManagedServiceTLS struct {
+type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
 	Public   bool   `json:"public"`
 }
 
-func (m PrivateServiceMetadata) Validate() error {
+func (m ServiceMetadata) Validate() error {
 	if m.Protocol != "http" && m.Protocol != "tcp" && m.Protocol != "mysql" && m.Protocol != "postgres" && m.Protocol != "kubernetes" {
-		return ErrPrivateServiceConflict
+		return ErrServiceConflict
 	}
 	if m.TLS == nil {
 		return nil
@@ -55,7 +55,7 @@ func (m PrivateServiceMetadata) Validate() error {
 	}
 	digest := sha256.Sum256([]byte(s.Hostname + "\x00" + mode + "\x00" + s.PEM))
 	if s.Digest != hex.EncodeToString(digest[:]) {
-		return ErrPrivateServiceConflict
+		return ErrServiceConflict
 	}
 	return validateServiceTrustRoots(s.Hostname, s.PEM, s.System)
 }
@@ -67,7 +67,7 @@ func validateServiceTrustRoots(hostname, caPEM string, system bool) error {
 		host, err = ip.String(), nil
 	}
 	if err != nil || host != hostname || len(caPEM) > 1<<20 || system == (caPEM != "") {
-		return ErrPrivateServiceConflict
+		return ErrServiceConflict
 	}
 	if system {
 		return nil
@@ -76,47 +76,47 @@ func validateServiceTrustRoots(hostname, caPEM string, system bool) error {
 	count := 0
 	for len(bytes.TrimSpace(remaining)) != 0 {
 		if !bytes.HasPrefix(bytes.TrimSpace(remaining), []byte("-----BEGIN CERTIFICATE-----")) {
-			return ErrPrivateServiceConflict
+			return ErrServiceConflict
 		}
 		block, rest := pem.Decode(remaining)
 		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return ErrPrivateServiceConflict
+			return ErrServiceConflict
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil || !cert.IsCA || cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0 {
-			return ErrPrivateServiceConflict
+			return ErrServiceConflict
 		}
 		count++
 		if count > 32 {
-			return ErrPrivateServiceConflict
+			return ErrServiceConflict
 		}
 		remaining = rest
 	}
 	if count == 0 {
-		return ErrPrivateServiceConflict
+		return ErrServiceConflict
 	}
 	return nil
 }
 
-func checkedPrivateMetadata(row controlstatedb.ControlPrivateService) (PrivateServiceMetadata, error) {
-	m, err := decodePrivateMetadata(row.Protocol, row.TlsMetadata, row.PublisherPool, row.TrustRevision)
+func checkedServiceMetadata(row controlstatedb.ControlService) (ServiceMetadata, error) {
+	m, err := decodeServiceMetadata(row.Protocol, row.TlsMetadata, row.PublisherPool, row.TrustRevision)
 	if err != nil {
 		return m, err
 	}
 	if row.CertificateHostname != "" && row.ServicePort.Valid {
-		m.ManagedTLS = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
+		m.Endpoint = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
 	}
 	return m, nil
 }
 
-func managedServiceTLS(hostname string, port int, public bool) *ManagedServiceTLS {
+func managedServiceTLS(hostname string, port int, public bool) *ServiceEndpoint {
 	if hostname == "" || port == 0 {
 		return nil
 	}
-	return &ManagedServiceTLS{Hostname: hostname, Port: port, Public: public}
+	return &ServiceEndpoint{Hostname: hostname, Port: port, Public: public}
 }
 
-func privateMetadataMatches(saved PrivateServiceMetadata, declared PrivateServiceMetadata) bool {
+func serviceMetadataMatches(saved ServiceMetadata, declared ServiceMetadata) bool {
 	if saved.Validate() != nil || declared.Validate() != nil {
 		return false
 	}
@@ -128,7 +128,7 @@ func privateMetadataMatches(saved PrivateServiceMetadata, declared PrivateServic
 
 // metadata approval serializes with admission and publication. changing trust
 // closes every old run so a visitor cannot receive bytes using old trust.
-func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actorID string, metadata PrivateServiceMetadata, now time.Time) (result PrivateServiceRecord, retErr error) {
+func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID string, metadata ServiceMetadata, now time.Time) (result ServiceRecord, retErr error) {
 	if err := metadata.Validate(); err != nil {
 		return result, err
 	}
@@ -136,22 +136,22 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "configure private service", &retErr)()
-	row, err := lockManagedPrivateService(ctx, tx, serviceID, actorID)
+	defer rollback(ctx, tx, "configure service", &retErr)()
+	row, err := lockService(ctx, tx, serviceID, actorID)
 	if err != nil {
 		return result, err
 	}
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	saved, err := checkedPrivateMetadata(row)
+	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return result, err
 	}
 	if metadata.TrustRevision != saved.TrustRevision {
-		return result, ErrPrivateServiceConflict
+		return result, ErrServiceConflict
 	}
-	changed := !privateMetadataMatches(saved, metadata)
+	changed := !serviceMetadataMatches(saved, metadata)
 	configurationChanged := changed || saved.PublisherPool != metadata.PublisherPool
 	if configurationChanged {
 		if _, err = nextPrivateRevision(saved.TrustRevision); err != nil {
@@ -160,11 +160,11 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 	}
 	if !metadata.PublisherPool && saved.PublisherPool {
 		var count int
-		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.private_service_runs WHERE private_service_id=$1 AND closed_at IS NULL AND publisher_expires_at>$2`, serviceID, now).Scan(&count); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1 AND closed_at IS NULL AND publisher_expires_at>$2`, serviceID, now).Scan(&count); err != nil {
 			return result, err
 		}
 		if count > 1 {
-			return result, ErrPrivateServiceConflict
+			return result, ErrServiceConflict
 		}
 	}
 	var encoded []byte
@@ -174,20 +174,20 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 			return result, err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.private_services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2, tls_metadata=convert_from($3::bytea,'UTF8')::jsonb, publisher_pool=$4,
 	    trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END, updated_at=$6 WHERE id=$1`, serviceID, metadata.Protocol, encoded, metadata.PublisherPool, configurationChanged, now)
 	if err != nil {
 		return result, err
 	}
 	if changed {
-		if _, err = tx.Exec(ctx, `UPDATE control.private_service_runs SET state='closed', closed_at=$2 WHERE private_service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='closed', closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
 			return result, err
 		}
-		if err = privateRoutingTombstone(ctx, controlstatedb.New(tx), serviceID, now); err != nil {
+		if err = serviceRoutingTombstone(ctx, controlstatedb.New(tx), serviceID, now); err != nil {
 			return result, err
 		}
 	}
-	row, err = controlstatedb.New(tx).LockPrivateService(ctx, serviceID)
+	row, err = controlstatedb.New(tx).LockService(ctx, serviceID)
 	if err != nil {
 		return result, err
 	}
@@ -201,7 +201,7 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 			return result, err
 		}
 	}
-	result, err = checkedPrivateServiceRecord(row)
+	result, err = checkedServiceRecord(row)
 	if err != nil {
 		return result, err
 	}
@@ -211,17 +211,17 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 	return result, nil
 }
 
-var ErrPrivateServiceMetadata = errors.New("saved private service trust is invalid")
+var ErrServiceMetadata = errors.New("saved service trust is invalid")
 
-func decodePrivateMetadata(protocol string, encoded []byte, pool bool, revision int64) (PrivateServiceMetadata, error) {
-	m := PrivateServiceMetadata{Protocol: protocol, PublisherPool: pool, TrustRevision: revision}
+func decodeServiceMetadata(protocol string, encoded []byte, pool bool, revision int64) (ServiceMetadata, error) {
+	m := ServiceMetadata{Protocol: protocol, PublisherPool: pool, TrustRevision: revision}
 	if len(encoded) > 0 {
 		if err := json.Unmarshal(encoded, &m.TLS); err != nil {
-			return PrivateServiceMetadata{}, ErrPrivateServiceMetadata
+			return ServiceMetadata{}, ErrServiceMetadata
 		}
 	}
 	if revision < 1 || m.Validate() != nil {
-		return PrivateServiceMetadata{}, ErrPrivateServiceMetadata
+		return ServiceMetadata{}, ErrServiceMetadata
 	}
 	return m, nil
 }
@@ -233,37 +233,41 @@ type LocalServiceSource struct {
 	WorktreeKey       string `json:"worktree_key"`
 }
 
-func (d *Database) GetPrivateServiceForPublisher(ctx context.Context, id string, publisher PublisherIdentity, now time.Time) (result PrivateServiceRecord, retErr error) {
-	if !privatePublisherMatches(publisher, id) {
-		return result, ErrPrivateServiceAccess
+func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publisher PublisherIdentity, now time.Time) (result ServiceRecord, retErr error) {
+	if !servicePublisherMatches(publisher, id) {
+		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "read publisher private service", &retErr)()
-	if err = lockPrivateAdmission(ctx, tx, id); err != nil {
+	defer rollback(ctx, tx, "read publisher service", &retErr)()
+	if err = lockServiceAdmission(ctx, tx, id); err != nil {
 		return result, err
 	}
-	row, err := controlstatedb.New(tx).SelectPrivateServiceForPublisher(ctx, controlstatedb.SelectPrivateServiceForPublisherParams{PrivateServiceID: id, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, Now: timestamptz(now)})
+	row, err := controlstatedb.New(tx).SelectServiceForPublisher(ctx, controlstatedb.SelectServiceForPublisherParams{ServiceID: id, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, Now: timestamptz(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	if err != nil {
 		return result, err
 	}
-	result, err = checkedPrivateServiceRecord(row)
+	result, err = checkedServiceRecord(row)
 	if err != nil {
 		return result, err
 	}
-	settings, err := d.managedHTTPSettings(ctx, controlstatedb.New(tx), id)
+	settings, err := d.serviceHTTPSettings(ctx, controlstatedb.New(tx), id)
 	if err != nil {
 		return result, err
 	}
 	if settings != nil && settings.Limits != nil {
-		result.HTTPLimits = settings.Limits.HTTP
+		limits := settings.Limits
+		result.HTTPLimits = &ProjectHTTPApplicationLimits{Total: limits.Total, Concurrency: limits.Concurrency}
+		if limits.Rate != nil {
+			result.HTTPLimits.Rate = &ProjectApplicationRate{Count: *limits.Rate.Count, Per: limits.Rate.Per.Value().String(), Burst: limits.Rate.Burst}
+		}
 	}
-	if err = privateServiceSource(ctx, controlstatedb.New(tx), &result); err != nil {
+	if err = serviceSource(ctx, controlstatedb.New(tx), &result); err != nil {
 		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {

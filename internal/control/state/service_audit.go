@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -46,7 +46,7 @@ type ServiceAuditPage struct {
 // actor syntax are independently checked here so a malformed scope rolls back.
 func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event, requestID string) error {
 	if requestID == "" || len(requestID) > 256 || !serviceaudit.ValidReference(event.TeamID) ||
-		!serviceaudit.ValidReference(event.ServiceID) || event.ServiceKind != "public_url" && event.ServiceKind != "private_service" || event.OccurredAt.IsZero() ||
+		!serviceaudit.ValidReference(event.ServiceID) || event.ServiceKind != "public_url" && event.ServiceKind != "service" || event.OccurredAt.IsZero() ||
 		event.ActorIdentityID != "" && !serviceaudit.ValidReference(event.ActorIdentityID) ||
 		event.DeviceID != "" && !opaqueid.Valid(event.DeviceID, "vdev_") ||
 		event.PublisherIdentityID != "" && !opaqueid.Valid(event.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
@@ -60,7 +60,7 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 		return serviceaudit.ErrInvalid
 	}
 	var team string
-	err := tx.QueryRow(ctx, `SELECT team_id FROM control.public_urls WHERE id=$1 AND $2='public_url' UNION ALL SELECT team_id FROM control.private_services WHERE id=$1 AND $2='private_service'`, event.ServiceID, event.ServiceKind).Scan(&team)
+	err := tx.QueryRow(ctx, `SELECT team_id FROM control.public_urls WHERE id=$1 AND $2='public_url' UNION ALL SELECT team_id FROM control.services WHERE id=$1 AND $2='service'`, event.ServiceID, event.ServiceKind).Scan(&team)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && team != event.TeamID {
 		return ErrServiceAuditAccess
 	}
@@ -72,9 +72,9 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.identities person WHERE person.id=$1 AND (
 			EXISTS(SELECT 1 FROM control.team_memberships member WHERE member.identity_id=person.id AND member.team_id=$2 AND member.removed_at IS NULL)
 			OR $4::text IN ('invitation.accept','grant.create','device.enroll','device.revoke','certificate.client.issue') AND (
-			    EXISTS(SELECT 1 FROM control.private_service_grants g WHERE g.private_service_id=$3 AND g.identity_id=person.id)
+			    EXISTS(SELECT 1 FROM control.service_grants g WHERE g.service_id=$3 AND g.identity_id=person.id)
 			    OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.public_url_id=$3 AND g.identity_id=person.id)
-			    OR EXISTS(SELECT 1 FROM control.private_connector_sessions c WHERE c.private_service_id=$3 AND c.identity_id=person.id)
+			    OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=$3 AND c.identity_id=person.id)
 			)))`, event.ActorIdentityID, event.TeamID, event.ServiceID, event.EventType).Scan(&exists); err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 	}
 	if event.RunID != "" {
 		var matches bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs WHERE id=$1 AND public_url_id=$2 AND team_id=$3 UNION ALL SELECT 1 FROM control.private_service_runs WHERE id=$1 AND private_service_id=$2 AND team_id=$3)`, event.RunID, event.ServiceID, event.TeamID).Scan(&matches); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs WHERE id=$1 AND public_url_id=$2 AND team_id=$3 UNION ALL SELECT 1 FROM control.service_runs WHERE id=$1 AND service_id=$2 AND team_id=$3)`, event.RunID, event.ServiceID, event.TeamID).Scan(&matches); err != nil {
 			return err
 		}
 		if !matches {
@@ -155,10 +155,10 @@ func insertServiceAuditCount(ctx context.Context, tx pgx.Tx, e serviceaudit.Even
 func auditPrivateMutation(ctx context.Context, tx pgx.Tx, service, actor, operation, request string, now time.Time) error {
 	var team string
 	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT team_id,trust_revision FROM control.private_services WHERE id=$1`, service).Scan(&team, &revision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT team_id,trust_revision FROM control.services WHERE id=$1`, service).Scan(&team, &revision); err != nil {
 		return err
 	}
-	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: team, ServiceID: service, ServiceKind: "private_service", EventType: operation, OccurredAt: now, ActorIdentityID: actor, ConfigurationRevision: revision}, request)
+	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: team, ServiceID: service, ServiceKind: "service", EventType: operation, OccurredAt: now, ActorIdentityID: actor, ConfigurationRevision: revision}, request)
 }
 
 func auditPublicMutation(ctx context.Context, tx pgx.Tx, service, actor, operation, request string, now time.Time) error {
@@ -193,15 +193,15 @@ func (d *Database) ListServiceAudit(ctx context.Context, team, actor string, f S
 		return page, err
 	}
 	defer rollback(ctx, tx, "list service audit", &retErr)()
-	if err = privateServiceManager(ctx, tx, team, actor); err != nil {
-		if errors.Is(err, ErrPrivateServiceAccess) {
+	if err = serviceManager(ctx, tx, team, actor); err != nil {
+		if errors.Is(err, ErrServiceAccess) {
 			return page, ErrServiceAuditAccess
 		}
 		return page, err
 	}
 	if f.Service != "" {
 		var ids []string
-		err = tx.QueryRow(ctx, `SELECT ARRAY(SELECT id FROM control.private_services WHERE team_id=$1 AND (name=$2 OR certificate_hostname=$2) AND deleted_at IS NULL UNION ALL SELECT id FROM control.public_urls WHERE team_id=$1 AND canonical_hostname=$2 AND lifecycle_state<>'deleted' LIMIT 2)`, team, f.Service).Scan(&ids)
+		err = tx.QueryRow(ctx, `SELECT ARRAY(SELECT id FROM control.services WHERE team_id=$1 AND (name=$2 OR certificate_hostname=$2) AND deleted_at IS NULL UNION ALL SELECT id FROM control.public_urls WHERE team_id=$1 AND canonical_hostname=$2 AND lifecycle_state<>'deleted' LIMIT 2)`, team, f.Service).Scan(&ids)
 		if err != nil {
 			return page, err
 		}
@@ -384,28 +384,28 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 			// a denied visitor entry has no verified run. scope it only to
 			// the saved service of the authenticated connector session;
 			// never attach a visitor-chosen run or publisher identity.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,c.identity_id,c.device_id FROM control.private_connector_sessions c
-				JOIN control.private_services s ON s.id=c.private_service_id
-				WHERE c.id=$1 AND c.private_service_id=$2 AND c.ingress_id=$3 AND c.ingress_run_id=$4 AND c.ingress_lease_revision=$5
+			err = tx.QueryRow(ctx, `SELECT s.team_id,c.identity_id,c.device_id FROM control.connector_sessions c
+				JOIN control.services s ON s.id=c.service_id
+				WHERE c.id=$1 AND c.service_id=$2 AND c.ingress_id=$3 AND c.ingress_run_id=$4 AND c.ingress_lease_revision=$5
 				AND host(c.source_ip)=$6 AND c.bound_at IS NOT NULL AND c.bound_at<=$7::timestamptz+interval '1 minute'
-				AND NOT EXISTS(SELECT 1 FROM control.private_visitor_streams WHERE visitor_connection_id=$8)`,
+				AND NOT EXISTS(SELECT 1 FROM control.connector_visitor_streams WHERE visitor_connection_id=$8)`,
 				o.ConnectorSessionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.OccurredAt, o.VisitorConnectionID).
 				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
 		} else if o.ConnectorSessionID == "" {
 			// direct admissions have no connector session. identity is recovered
 			// only from the publisher-authenticated record, never the report.
 			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.direct_service_visitors v
-				JOIN control.private_services s ON s.id=v.private_service_id JOIN control.private_service_runs r ON r.id=v.private_run_id
-				WHERE v.visitor_connection_id=$1 AND v.private_service_id=$2 AND v.private_run_id=$3 AND v.run_number=$4
+				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
+				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
 				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		} else {
 			// the admitted stream is the source of identity and IP. a current
 			// ingress lease cannot report another ingress's private visitor.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.private_visitor_streams v
-				JOIN control.private_services s ON s.id=v.private_service_id JOIN control.private_service_runs r ON r.id=v.private_run_id
-				JOIN control.private_connector_sessions c ON c.id=v.connector_session_id
-				WHERE v.visitor_connection_id=$1 AND v.private_service_id=$2 AND v.private_run_id=$3 AND v.run_number=$4
+			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.connector_visitor_streams v
+				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
+				JOIN control.connector_sessions c ON c.id=v.connector_session_id
+				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
 				AND c.ingress_id=$5 AND c.ingress_run_id=$6 AND c.ingress_lease_revision=$7 AND host(v.source_ip)=$8
 				AND c.id=$9`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
@@ -444,10 +444,10 @@ func (s *nullableAuditString) ScanText(v pgtype.Text) error {
 }
 
 func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, operation string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.private_services s WHERE
+	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.services s WHERE
 		EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=$1 AND m.removed_at IS NULL)
-		OR EXISTS(SELECT 1 FROM control.private_service_grants g WHERE g.private_service_id=s.id AND g.identity_id=$1)
-		OR EXISTS(SELECT 1 FROM control.private_connector_sessions c WHERE c.private_service_id=s.id AND c.device_id=$2)
+		OR EXISTS(SELECT 1 FROM control.service_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
+		OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=s.id AND c.device_id=$2)
 		ORDER BY s.team_id,s.id`, identity, device)
 	if err != nil {
 		return err
@@ -468,7 +468,7 @@ func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, opera
 		return err
 	}
 	for _, s := range scopes {
-		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.team, ServiceID: s.id, ServiceKind: "private_service", EventType: operation, OccurredAt: now, ActorIdentityID: identity, DeviceID: device}, device); err != nil {
+		if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.team, ServiceID: s.id, ServiceKind: "service", EventType: operation, OccurredAt: now, ActorIdentityID: identity, DeviceID: device}, device); err != nil {
 			return err
 		}
 	}

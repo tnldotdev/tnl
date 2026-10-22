@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID) {
+func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID) {
 	w.Header().Set("Cache-Control", "no-store")
 	principal, ok := h.authorizeRouteReads(w, r)
 	if !ok {
@@ -38,7 +38,7 @@ func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusCreated, result)
 }
 
-func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID, run controlv1.PrivateRunID) {
+func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
 	w.Header().Set("Cache-Control", "no-store")
 	token, ok := requestBearerToken(r)
 	if !ok {
@@ -52,7 +52,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 	}
 	source, _ := netip.ParseAddr(body.SourceIp)
 	store, ok := h.store.(interface {
-		AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.PrivateVisitorValidity, error)
+		AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
 	})
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service client authorization is unavailable")
@@ -67,7 +67,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }
 
-func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID, run controlv1.PrivateRunID) {
+func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
 	w.Header().Set("Cache-Control", "no-store")
 	token, ok := requestBearerToken(r)
 	if !ok {
@@ -80,7 +80,7 @@ func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	store, ok := h.store.(interface {
-		AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.PrivateVisitorValidity, error)
+		AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.ServiceVisitorValidity, error)
 	})
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service connector authorization is unavailable")

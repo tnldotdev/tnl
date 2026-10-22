@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -47,7 +47,7 @@ func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (c
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("controlstate: expire saved publish runs: commit: %w", err)
 	}
-	private, err := d.ExpirePrivateServiceRuns(ctx, now)
+	private, err := d.ExpireServiceRuns(ctx, now)
 	if err != nil {
 		return count, err
 	}

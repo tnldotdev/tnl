@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type groupFixtureControl struct {
@@ -22,7 +22,7 @@ type groupFixtureControl struct {
 }
 
 func (c *groupFixtureControl) AcquirePublisherGroupLease(_ context.Context, r controlv1.PublisherGroupLeaseRequest) (controlv1.PublisherGroupLease, error) {
-	if _, err := publisheridentity.Verify(r.Assertion, c.member.PublisherIdentityId, c.member.KeyId, c.member.GroupId, "https://control.example/v1/publisher-groups/lease", c.public, time.Now()); err != nil {
+	if _, err := publisherproof.Verify(r.Assertion, c.member.PublisherIdentityId, c.member.KeyId, c.member.GroupId, "https://control.example/v1/publisher-groups/lease", c.public, time.Now()); err != nil {
 		return controlv1.PublisherGroupLease{}, err
 	}
 	c.leases++
@@ -50,7 +50,7 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 	}
 	groupName := "production"
 	fake := &groupFixtureControl{member: controlv1.PublisherGroupMember{TeamId: native.identity.teamID, ProjectKey: "example", GroupId: "pgrp_example", GroupName: groupName, PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID}, public: public}
-	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.privateServiceID, ServiceKind: "private_service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Publisher: &groupName, Target: "db.internal:5432"}}
+	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{PublisherGroup: &groupName, Target: "db.internal:5432"}}
 	group, err := NewGroup(control, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)

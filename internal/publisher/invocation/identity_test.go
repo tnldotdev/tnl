@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 	prefixes := []string{"192.0.2.1/32"}
-	route := controlv1.PublicURL{
+	publicURL := controlv1.PublicURL{
 		Id: "url_0123456789abcdefghijkl", TeamId: "team", DomainId: "domain",
 		CanonicalHostname: "web.member.example", PublicUrlScope: controlv1.Shared,
 		Purpose: controlv1.App, ServiceProtocol: controlv1.Http,
@@ -34,17 +34,17 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/public-urls":
 			page := controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}}
 			if created {
-				page.PublicUrls = append(page.PublicUrls, route)
+				page.PublicUrls = append(page.PublicUrls, publicURL)
 			}
 			_ = json.NewEncoder(w).Encode(page)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/public-urls":
 			var body controlv1.CreatePublicURLRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.CanonicalHostname != route.CanonicalHostname || body.Purpose != controlv1.App || body.Target != "" || body.AccessMode == nil || *body.AccessMode != controlv1.Anonymous {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.CanonicalHostname != publicURL.CanonicalHostname || body.Purpose != controlv1.App || body.Target != "" || body.AccessMode == nil || *body.AccessMode != controlv1.Anonymous {
 				t.Errorf("created URL with incorrect public policy: %+v, %v", body, err)
 			}
 			created = true
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(route)
+			_ = json.NewEncoder(w).Encode(publicURL)
 		default:
 			t.Errorf("unexpected control request: %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
@@ -60,15 +60,15 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))
+	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := publisherServices{state: state, routes: control, teamID: route.TeamId, domainID: route.DomainId, publicURLScope: controlv1.Shared}
-	cfg := publisher.Config{Hostname: route.CanonicalHostname, Purpose: route.Purpose, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes}
+	services := publisherServices{state: state, routes: control, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared}
+	cfg := publisher.Config{Hostname: publicURL.CanonicalHostname, Purpose: publicURL.Purpose, ServiceProtocol: publicURL.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes}
 	for range 2 {
 		selected, err := reserveConfiguredURL(t.Context(), services, cfg)
-		if err != nil || selected.Id != route.Id || !created {
+		if err != nil || selected.Id != publicURL.Id || !created {
 			t.Fatalf("selected URL = %+v; created = %t, err = %v", selected, created, err)
 		}
 	}
@@ -80,13 +80,13 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 	lookup, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	selected, err := reserveConfiguredURL(lookup, services, cfg)
-	if err != nil || selected.Id != route.Id {
+	if err != nil || selected.Id != publicURL.Id {
 		t.Fatalf("unchanged URL waited for its active publisher's hostname lock: %+v, %v", selected, err)
 	}
 }
 
 func TestReserveConfiguredURLReplacesVisitorAccessBeforeNativePublisher(t *testing.T) {
-	route := controlv1.PublicURL{
+	publicURL := controlv1.PublicURL{
 		Id: "url_0123456789abcdefghijkl", TeamId: "team", DomainId: "domain",
 		CanonicalHostname: "web.member.example", PublicUrlScope: controlv1.Shared,
 		Purpose: controlv1.App, ServiceProtocol: controlv1.Http,
@@ -100,16 +100,16 @@ func TestReserveConfiguredURLReplacesVisitorAccessBeforeNativePublisher(t *testi
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/public-urls":
-			_ = json.NewEncoder(w).Encode(controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{route}})
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/public-urls/"+route.Id+"/access":
+			_ = json.NewEncoder(w).Encode(controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{publicURL}})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/public-urls/"+publicURL.Id+"/access":
 			var body controlv1.ReplaceVisitorAccessRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Mode != controlv1.Anonymous || len(body.Ip) != 0 || body.ExpectedRevision != route.MutationRevision {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Mode != controlv1.Anonymous || len(body.Ip) != 0 || body.ExpectedRevision != publicURL.MutationRevision {
 				t.Errorf("replaced access with wrong policy: %+v, %v", body, err)
 			}
 			updates++
-			route.AccessMode = controlv1.Anonymous
-			route.MutationRevision++
-			_ = json.NewEncoder(w).Encode(route)
+			publicURL.AccessMode = controlv1.Anonymous
+			publicURL.MutationRevision++
+			_ = json.NewEncoder(w).Encode(publicURL)
 		default:
 			t.Errorf("unexpected control request: %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
@@ -125,12 +125,12 @@ func TestReserveConfiguredURLReplacesVisitorAccessBeforeNativePublisher(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))
+	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := publisherServices{state: state, routes: control, teamID: route.TeamId, domainID: route.DomainId, publicURLScope: controlv1.Shared}
-	cfg := publisher.Config{Hostname: route.CanonicalHostname, Purpose: route.Purpose, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous}
+	services := publisherServices{state: state, routes: control, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared}
+	cfg := publisher.Config{Hostname: publicURL.CanonicalHostname, Purpose: publicURL.Purpose, ServiceProtocol: publicURL.ServiceProtocol, AccessMode: controlv1.Anonymous}
 	for range 2 {
 		selected, err := reserveConfiguredURL(t.Context(), services, cfg)
 		if err != nil || selected.AccessMode != controlv1.Anonymous || updates != 1 {

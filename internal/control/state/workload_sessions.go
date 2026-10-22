@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -52,7 +52,7 @@ type WorkloadGitHubExecution struct {
 
 type ExchangeWorkloadRequest struct {
 	TeamID, ProjectKey, Workload, SourceFingerprint, Nonce string
-	Execution                                              oidcauth.WorkloadExecution
+	Execution                                              oidc.WorkloadExecution
 	PublicKey                                              ed25519.PublicKey
 	Signature                                              []byte
 	Services                                               []string
@@ -150,7 +150,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 		for _, s := range services {
-			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,private_service_id,service) SELECT $1,applied.private_service_id,applied.service FROM control.applied_project_services applied JOIN control.private_services service ON service.id=applied.private_service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, s)
+			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, s)
 			if err != nil {
 				return result, err
 			}
@@ -185,7 +185,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 }
 
 func workloadAudit(ctx context.Context, tx pgx.Tx, id, event, service string, now time.Time) error {
-	_, err := tx.Exec(ctx, `INSERT INTO control.workload_audit(workload_session_id,event,private_service_id,occurred_at) VALUES($1,$2,$3,$4)`, id, event, nullableText(service), now)
+	_, err := tx.Exec(ctx, `INSERT INTO control.workload_audit(workload_session_id,event,service_id,occurred_at) VALUES($1,$2,$3,$4)`, id, event, nullableText(service), now)
 	return err
 }
 
@@ -198,7 +198,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time)}
 	r.Binding = row.Binding
 	if row.Provider == "github" {
-		var claims oidcauth.WorkloadExecution
+		var claims oidc.WorkloadExecution
 		if err = json.Unmarshal(row.Claims, &claims); err != nil {
 			return r, err
 		}
@@ -228,7 +228,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 		return r, err
 	}
 	for _, service := range services {
-		r.ServiceIDs = append(r.ServiceIDs, service.PrivateServiceID)
+		r.ServiceIDs = append(r.ServiceIDs, service.ServiceID)
 	}
 	slices.Sort(r.ServiceIDs)
 	return r, nil
@@ -328,7 +328,7 @@ type WorkloadServiceAuthorization struct {
 // from human membership to a workload or expands the issued service snapshot.
 func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subject VisitorSubject, now time.Time) (time.Time, int64, error) {
 	if subject.Validate() != nil {
-		return time.Time{}, 0, ErrPrivateServiceAccess
+		return time.Time{}, 0, ErrServiceAccess
 	}
 	if subject.Kind == tunnelv1.VisitorHumanDevice {
 		var found bool
@@ -336,18 +336,18 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 			return time.Time{}, 0, err
 		}
 		if !found {
-			return time.Time{}, 0, ErrPrivateServiceAccess
+			return time.Time{}, 0, ErrServiceAccess
 		}
 		return privateVisitorAccess(ctx, tx, service, subject.IdentityID, now)
 	}
 	var until time.Time
 	var revision int64
 	var run, attempt, check string
-	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.private_service_id=$2 JOIN control.private_services s ON s.id=rights.private_service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.expires_at>$3`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
+	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.service_id=$2 JOIN control.services s ON s.id=rights.service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.expires_at>$3`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, subject.WorkloadSessionID, run, attempt, check)
 	}
-	return until, revision, publisherLookupError(err, ErrPrivateServiceAccess)
+	return until, revision, publisherLookupError(err, ErrServiceAccess)
 }
 
 func (d *Database) CheckWorkloadService(ctx context.Context, credential, service string, now time.Time) (r WorkloadServiceAuthorization, retErr error) {

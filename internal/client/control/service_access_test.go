@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"encoding/json"
@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestServiceAccessPaginationRejectsIncompleteOrUnsafePages(t *testing.T) {
-	const service = "psvc_0123456789abcdefghijkl"
+	const service = "svc_0123456789abcdefghijkl"
 	for _, kind := range []string{"grants", "invitations"} {
 		for _, corrupt := range []string{"missing array", "too many", "empty next", "short next", "wrong next", "cycle", "overlap", "wrong scope", "secret", "denied second page"} {
 			t.Run(kind+"/"+corrupt, func(t *testing.T) {
@@ -30,9 +30,9 @@ func TestServiceAccessPaginationRejectsIncompleteOrUnsafePages(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(controlv1.Problem{Code: controlv1.NotFound})
 						return
 					}
-					prefix := "psgr_"
+					prefix := "sgr_"
 					if kind == "invitations" {
-						prefix = "psivt_"
+						prefix = "sivt_"
 					}
 					n, start := 100, 1
 					if calls == 2 && corrupt != "cycle" && corrupt != "overlap" {
@@ -49,12 +49,12 @@ func TestServiceAccessPaginationRejectsIncompleteOrUnsafePages(t *testing.T) {
 					}
 					rows := make([]map[string]any, 0, n)
 					for i := range n {
-						row := map[string]any{"id": fmt.Sprintf("%s%022d", prefix, start+i), "private_service_id": service}
+						row := map[string]any{"id": fmt.Sprintf("%s%022d", prefix, start+i), "service_id": service}
 						if kind == "grants" {
 							row["kind"] = "identity"
 						}
 						if corrupt == "wrong scope" {
-							row["private_service_id"] = "psvc_abcdefghijkl0123456789"
+							row["service_id"] = "svc_abcdefghijkl0123456789"
 						}
 						if corrupt == "secret" {
 							row["secret"] = "never-print-this-secret"
@@ -80,13 +80,13 @@ func TestServiceAccessPaginationRejectsIncompleteOrUnsafePages(t *testing.T) {
 					t.Fatal(err)
 				}
 				if kind == "grants" {
-					rows, listErr := client.ListPrivateServiceGrants(t.Context(), service)
+					rows, listErr := client.ListServiceGrants(t.Context(), service)
 					err = listErr
 					if rows != nil {
 						t.Fatal("partial grants escaped a failed list")
 					}
 				} else {
-					rows, listErr := client.ListPrivateServiceInvitations(t.Context(), service)
+					rows, listErr := client.ListServiceInvitations(t.Context(), service)
 					err = listErr
 					if rows != nil {
 						t.Fatal("partial invitations escaped a failed list")

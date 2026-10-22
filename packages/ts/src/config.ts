@@ -19,7 +19,7 @@ type ObjectReference<Names extends string> = { readonly service: Names };
 type LocalServiceNames<Config> = Config extends { readonly services: infer Services }
   ? Extract<
       {
-        [Name in keyof Services]: Services[Name] extends { readonly publisher: infer Group }
+        [Name in keyof Services]: Services[Name] extends { readonly publisherGroup: infer Group }
           ? Group extends "local"
             ? Name
             : never
@@ -34,15 +34,22 @@ type NamedPublisherServiceNames<Config> = Config extends { readonly services: in
   : never;
 type PublisherNames<Config> =
   | "local"
-  | (Config extends { readonly publishers: infer Groups } ? Extract<keyof Groups, string> : never);
-type PublisherReference<Config, Service> = Service extends { readonly publisher: infer Group }
+  | (Config extends { readonly publisherGroups: infer Groups }
+      ? Extract<keyof Groups, string>
+      : never);
+type PublisherReference<Config, Service> = Service extends { readonly publisherGroup: infer Group }
   ? {
-      readonly publisher: Group extends PublisherNames<Config> ? Group : never;
+      readonly publisherGroup: Group extends PublisherNames<Config> ? Group : never;
     } & (Group extends "local"
       ? unknown
       : {
           readonly target: { readonly type: "address" | "eks" | "rds" };
-          readonly http?: never;
+          readonly publicURL?: never;
+          readonly http?: {
+            readonly readiness?: never;
+            readonly paths?: never;
+            readonly open?: never;
+          };
         })
   : unknown;
 type PublicLocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
@@ -81,7 +88,7 @@ type TargetReferences<Config> = {
     };
   };
 } & {
-  [Field in keyof Config as Field extends "publishers" ? Field : never]: {
+  [Field in keyof Config as Field extends "publisherGroups" ? Field : never]: {
     [Name in keyof Config[Field]]: Name extends "local"
       ? never
       : {

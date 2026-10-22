@@ -34,7 +34,7 @@ func TestPrivateHTTPRunChecksActualTargetAndFencesReplacement(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			}, CheckPrivate: func(ctx context.Context, service Service) Observation {
-				return ProbePrivateTarget(ctx, service, targettransport.Transport{Protocol: config.ProtocolHTTP})
+				return ProbeServiceTarget(ctx, service, targettransport.Transport{Protocol: config.ProtocolHTTP})
 			},
 		}, nil
 	}
@@ -76,12 +76,12 @@ func TestPrivateHTTPRunChecksActualTargetAndFencesReplacement(t *testing.T) {
 		t.Fatal("private run did not start")
 	}
 	snapshot, err := w.Check(t.Context(), []string{"web"})
-	if err != nil || !snapshot.Services[0].Ready || snapshot.Services[0].PublicURL != "" || snapshot.Services[0].PublishRunNumber != 17 {
+	if err != nil || !snapshot.Services[0].Ready || snapshot.Services[0].PublicURL != "" || snapshot.Services[0].RunNumber != 17 {
 		t.Fatalf("private readiness: %+v: %v", snapshot.Services, err)
 	}
 	replace.Store(true)
 	snapshot, err = w.Check(t.Context(), []string{"web"})
-	if err != nil || snapshot.Services[0].Ready || snapshot.Services[0].PublishRunNumber != 18 || !snapshot.Services[0].Routable {
+	if err != nil || snapshot.Services[0].Ready || snapshot.Services[0].RunNumber != 18 || !snapshot.Services[0].Routable {
 		t.Fatalf("stale private check crossed replacement: %+v: %v", snapshot.Services, err)
 	}
 	snapshot, err = w.Check(t.Context(), []string{"web"})
@@ -97,7 +97,7 @@ func TestPrivateReadinessKeepsHTTPAuthorityIndependentOfTLSTrust(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(target.Certificate())
 	transport := targettransport.Transport{Protocol: config.ProtocolHTTP, TLS: &tls.Config{RootCAs: roots, ServerName: target.Certificate().DNSNames[0]}}
-	observation := ProbePrivateTarget(t.Context(), Service{Target: target.URL, ServiceProtocol: "http", Readiness: Readiness{Path: "/"}}, transport)
+	observation := ProbeServiceTarget(t.Context(), Service{Target: target.URL, ServiceProtocol: "http", Readiness: Readiness{Path: "/"}}, transport)
 	if !observation.Ready || authority.Load() != strings.TrimPrefix(target.URL, "https://") {
 		t.Fatal("TLS certificate identity changed HTTP target authority", observation, authority.Load())
 	}

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -90,7 +90,7 @@ type OIDCIdentity struct {
 	AssertionDigest        [32]byte
 	AssertionID            string
 	AssertionExpiry        time.Time
-	TeamContexts           []oidcauth.TeamContext
+	TeamContexts           []oidc.TeamContext
 	Nonce                  string
 	ClientID               string
 	IssuedAt               time.Time

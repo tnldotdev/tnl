@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -335,13 +335,13 @@ func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t 
 		t.Fatal("device enrollment retry changed key identity", err)
 	}
 	other := finalVisitorIdentity(t, d, f.now, "device@example.test")
-	if err = d.RevokeVisitorDevice(t.Context(), other, device.ID, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if err = d.RevokeVisitorDevice(t.Context(), other, device.ID, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("another identity revoked device: %v", err)
 	}
 	if err = d.RevokeVisitorDevice(t.Context(), identity, device.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("revoked key was resurrected: %v", err)
 	}
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, identity, f.now); err != nil {
@@ -351,7 +351,7 @@ func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("disabled identity enrolled key: %v", err)
 	}
 }
@@ -445,9 +445,9 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 	}
 	check(false)
 	mode := VisitorAccessAnonymous
-	route, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, mode, []string{"192.0.2.0/24"}, uint64(revision), f.now)
-	if err != nil || route.AccessMode != mode || route.MutationRevision != uint64(revision+1) {
-		t.Fatalf("replace policy: %+v %v", route, err)
+	publicURL, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, mode, []string{"192.0.2.0/24"}, uint64(revision), f.now)
+	if err != nil || publicURL.AccessMode != mode || publicURL.MutationRevision != uint64(revision+1) {
+		t.Fatalf("replace policy: %+v %v", publicURL, err)
 	}
 	check(true)
 	input.SourceIP = "198.51.100.9"
@@ -455,9 +455,9 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, VisitorAccessRestricted, nil, uint64(revision), f.now); !errors.Is(err, ErrPublicURLMutationStale) {
 		t.Fatalf("stale policy replaced: %v", err)
 	}
-	route, err = d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, VisitorAccessRestricted, nil, uint64(revision+1), f.now)
-	if err != nil || route.AccessMode != VisitorAccessRestricted || route.MutationRevision != uint64(revision+2) {
-		t.Fatalf("remove filter: %+v %v", route, err)
+	publicURL, err = d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, owner, VisitorAccessRestricted, nil, uint64(revision+1), f.now)
+	if err != nil || publicURL.AccessMode != VisitorAccessRestricted || publicURL.MutationRevision != uint64(revision+2) {
+		t.Fatalf("remove filter: %+v %v", publicURL, err)
 	}
 	check(false)
 	var projection IngressRoutingTableProjection

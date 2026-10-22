@@ -1,4 +1,4 @@
-package projectinit
+package init
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 )
 
 func initProjectRoot(ctx context.Context, cwd string) (string, error) {
@@ -18,7 +18,7 @@ func initProjectRoot(ctx context.Context, cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, absolute)
+	worktree, err := clientproject.ResolveWorktree(ctx, absolute)
 	if err != nil {
 		return "", err
 	}
@@ -54,7 +54,7 @@ func pathInside(path, root string) bool {
 
 func existingInitConfigs(root string) []string {
 	var paths []string
-	for _, name := range projectconfig.ConfigNames() {
+	for _, name := range clientproject.ConfigNames() {
 		path := filepath.Join(root, name)
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			paths = append(paths, path)
@@ -69,7 +69,7 @@ func detectPackageManager(ctx context.Context, root, declared string) (string, e
 		{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"package-lock.json", "npm"},
 		{"npm-shrinkwrap.json", "npm"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"},
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, root)
+	worktree, err := clientproject.ResolveWorktree(ctx, root)
 	if err != nil {
 		return "", err
 	}

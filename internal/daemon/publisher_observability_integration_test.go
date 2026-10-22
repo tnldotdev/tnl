@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -181,20 +181,20 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
-			f := newPrivateRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
+			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
 			startSeparatedPrivateIngress(t, f, 0, transport, nil)
 			startSeparatedPrivateIngress(t, f, 1, transport, nil)
 			target := startPrivateEchoTarget(t)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreatePrivateService(t.Context(), f.identity.teamID, "trace", key)
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key)
 			if err != nil {
 				t.Fatal(err)
 			}
-			enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "trace"})
+			enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "trace"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := nativeauth.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -207,9 +207,9 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			ctx, cancel := context.WithCancel(collector.process(t, "publisher"))
 			ready, done := make(chan struct{}), make(chan error, 1)
 			go func() {
-				done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target.address,
-					Metadata: controlv1.PrivateServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
-					Ready:    func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
+					Ready:    func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
 						return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 					},
 				})
@@ -237,7 +237,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			control, err := tcpconnect.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -248,7 +248,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			visitorCtx, stop := context.WithCancel(collector.process(t, "client"))
 			visitorReady, visitorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitorDone <- tcpconnect.Serve(visitorCtx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
+				visitorDone <- connectorstream.Serve(visitorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stop()
@@ -280,9 +280,9 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 				t.Fatalf("echo %q: %v", body, err)
 			}
 			_ = connection.Close()
-			collector.assertChain(t, "connector.visitor_setup", "ingress.private_visitor_connection", "ingress.private_relay_attempt", "relay.open_private_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
-			collector.assertChain(t, "connector.visitor_setup", "ingress.private_visitor_connection", "ingress.private_relay_attempt", "relay.open_private_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.target_connect")
-			collector.assertChain(t, "connector.visitor_setup", "ingress.private_visitor_connection", "ingress.private_relay_attempt", "relay.open_private_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_authorization", "publisher.authorization")
+			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
+			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.target_connect")
+			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_authorization", "publisher.authorization")
 		})
 	}
 }

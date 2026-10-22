@@ -8,10 +8,10 @@ import (
 	"slices"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -19,18 +19,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type EnrolledSelection struct{ EnrollmentKey, PublisherID, PublisherFile string }
+type EnrolledSelection struct{ EnrollmentKey, PublisherIdentityID, PublisherCredentialFile string }
 
-func PublisherFileServer(selected, path string) (string, error) {
+func PublisherCredentialFileServer(selected, path string) (string, error) {
 	file, err := credentialfile.Read(path)
 	if err != nil {
 		return "", err
@@ -38,19 +38,19 @@ func PublisherFileServer(selected, path string) (string, error) {
 	if selected != "" {
 		server, err := naming.CanonicalControlURL(selected)
 		if err != nil || server != file.ControlURL {
-			return "", nativeauth.ErrScope
+			return "", publisheridentity.ErrScope
 		}
 	}
 	return file.ControlURL, nil
 }
 
-var _ publisher.PublicURLControlClient = (*nativeauth.Native)(nil)
+var _ publisher.PublicURLControlClient = (*publisheridentity.Native)(nil)
 
 // runEnrolledPublish uses only its scoped identity for URL and run operations.
 func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection EnrolledSelection, output *Presentation, input io.Reader) (result error) {
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	selected := 0
-	for _, value := range []string{selection.EnrollmentKey, selection.PublisherID, selection.PublisherFile} {
+	for _, value := range []string{selection.EnrollmentKey, selection.PublisherIdentityID, selection.PublisherCredentialFile} {
 		if value != "" {
 			selected++
 		}
@@ -58,15 +58,15 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if selected != 1 || flags.Name != "" || flags.PublicURL != "" || flags.Domain != "" || flags.Team != "" || flags.AccessToken != "" || flags.Demo {
 		return failure.Wrap("select scoped publisher", failure.PublisherSelectionInvalid, errors.New("conflicting selection"))
 	}
-	if selection.PublisherFile != "" {
-		f, err := credentialfile.Read(selection.PublisherFile)
+	if selection.PublisherCredentialFile != "" {
+		f, err := credentialfile.Read(selection.PublisherCredentialFile)
 		if err != nil {
 			return err
 		}
 		if flags.ServerURL != "" {
 			server, err := naming.CanonicalControlURL(flags.ServerURL)
 			if err != nil || server != f.ControlURL {
-				return nativeauth.ErrScope
+				return publisheridentity.ErrScope
 			}
 		}
 		flags.ServerURL = f.ControlURL
@@ -80,35 +80,35 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err != nil {
 		return err
 	}
-	control, err := controlclient.New(server, nil, "")
+	control, err := clientcontrol.New(server, nil, "")
 	if err != nil {
 		return err
 	}
-	authority, err := authorityclient.New(server, nil, "")
+	authority, err := clientauthority.New(server, nil, "")
 	if err != nil {
 		return err
 	}
-	var native *nativeauth.Native
+	var native *publisheridentity.Native
 	var identity authorityv1.PublisherEnrollmentResult
 	if selection.EnrollmentKey != "" {
 		secret, err := EnrollmentKeyInput(selection.EnrollmentKey, input)
 		if err != nil {
 			return err
 		}
-		native, identity, err = nativeauth.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control, authority, secret)
 		if err != nil {
-			if flags.Enrolled && (errors.Is(err, authorityclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrNotFound)) {
+			if flags.Enrolled && (errors.Is(err, clientauthority.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrNotFound)) {
 				return failure.Wrap("enroll publication", failure.PublisherEnrollmentRequired, err)
 			}
 			return err
 		}
-	} else if selection.PublisherID != "" {
-		native, identity, err = nativeauth.LoadNative(ctx, profile, control, authority, selection.PublisherID)
+	} else if selection.PublisherIdentityID != "" {
+		native, identity, err = publisheridentity.LoadNative(ctx, profile, control, authority, selection.PublisherIdentityID)
 		if err != nil {
 			return err
 		}
 	} else {
-		file, err := credentialfile.Read(selection.PublisherFile)
+		file, err := credentialfile.Read(selection.PublisherCredentialFile)
 		if err != nil {
 			return err
 		}
@@ -116,32 +116,32 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if err != nil {
 			return err
 		}
-		native, err = nativeauth.LoadFile(selection.PublisherFile, server, control, authority)
+		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, server, control, authority)
 		if err != nil {
 			return err
 		}
 	}
-	if flags.Enrolled && identity.Kind != authorityv1.SavedUrl {
-		return nativeauth.ErrScope
+	if flags.Enrolled && identity.Kind != authorityv1.SavedPublicUrl {
+		return publisheridentity.ErrScope
 	}
-	if identity.Kind == authorityv1.PrivateService {
+	if identity.Kind == authorityv1.Service {
 		if flags.Service != "" && config.IsPublicService(project.Config.Services[flags.Service]) {
 			return failure.Wrap("select enrolled service", failure.PublisherGrantMismatch, errors.New("grant is private"))
 		}
-		service, err := native.SavedPrivateService(ctx)
+		service, err := native.SavedService(ctx)
 		if err != nil {
 			return err
 		}
 		if flags.Protocol != "" && flags.Protocol != string(service.Protocol) {
-			return failure.Wrap("select enrolled protocol", failure.PublisherGrantMismatch, errors.New("protocol differs from private service"))
+			return failure.Wrap("select enrolled protocol", failure.PublisherGrantMismatch, errors.New("protocol differs from service"))
 		}
 		if output.Delegated != nil {
 			output.Delegated()
 		}
-		private := PrivateOptions{PublicOptions: flags.PublicOptions, Protocol: string(service.Protocol), ConfiguredPrivate: true, TargetTLS: flags.TargetTLS, PublisherFile: selection.PublisherFile, PublisherID: identity.ClientId, EnrollmentInput: input}
+		private := ServiceOptions{PublicOptions: flags.PublicOptions, Protocol: string(service.Protocol), ConfiguredPrivate: true, TargetTLS: flags.TargetTLS, PublisherCredentialFile: selection.PublisherCredentialFile, PublisherIdentityID: identity.ClientId, EnrollmentInput: input}
 		private.ServerURL = server
-		if private.PublisherFile != "" {
-			private.PublisherID = ""
+		if private.PublisherCredentialFile != "" {
+			private.PublisherIdentityID = ""
 		}
 		if flags.SelectPrivate != nil {
 			private.Limits, err = flags.SelectPrivate(service.Protocol)
@@ -149,12 +149,12 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 				return err
 			}
 		}
-		return PublishPrivate(ctx, private, flags.PrivatePresentation)
+		return PublishPrivate(ctx, private, flags.ServicePresentation)
 	}
 	// a saved-URL grant returns its exact URL; namespace grants allocate one
 	// HTTP URL per invocation and remove that same allocation after drain.
-	route, err := native.SavedURL(ctx)
-	if errors.Is(err, nativeauth.ErrScope) {
+	publicURL, err := native.SavedPublicURL(ctx)
+	if errors.Is(err, publisheridentity.ErrScope) {
 		if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetTLSName != "" {
 			return failure.Wrap("select namespace target", failure.PublisherNamespaceOptions, errors.New("unsupported namespace options"))
 		}
@@ -175,14 +175,14 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			b.AccessMode = &policy.access
 			b.Ip = &policy.prefixes
 		}
-		route, err = native.Allocate(ctx, b)
+		publicURL, err = native.Allocate(ctx, b)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := native.DeletePublicURL(cleanup, route.Id); err != nil && !errors.Is(err, controlclient.ErrNotFound) {
+			if err := native.DeletePublicURL(cleanup, publicURL.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 				result = errors.Join(result, err)
 			}
 		}()
@@ -191,31 +191,31 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	} else if flags.Ephemeral || flags.Anonymous || flags.Access != nil || len(flags.IP) > 0 {
 		return failure.Wrap("select saved URL policy", failure.PublisherSavedPolicy, errors.New("saved policy overrides supplied"))
 	}
-	if route.Purpose != controlv1.App || !route.ServiceProtocol.Valid() {
+	if publicURL.Purpose != controlv1.App || !publicURL.ServiceProtocol.Valid() {
 		return failure.Wrap("read enrolled public URL", failure.ServerResponseInvalid, errors.New("control returned an unsupported saved URL"))
 	}
-	if flags.Protocol != "" && flags.Protocol != string(route.ServiceProtocol) {
+	if flags.Protocol != "" && flags.Protocol != string(publicURL.ServiceProtocol) {
 		return failure.Wrap("select enrolled protocol", failure.PublisherGrantMismatch, errors.New("protocol differs from public URL"))
 	}
 	if flags.SelectProtocol != nil {
-		flags.Limits, err = flags.SelectProtocol(route.ServiceProtocol)
+		flags.Limits, err = flags.SelectProtocol(publicURL.ServiceProtocol)
 		if err != nil {
 			return err
 		}
 	}
-	target, err := targetplan.EnrolledAddress(route, flags.Target)
+	target, err := targetplan.EnrolledAddress(publicURL, flags.Target)
 	if err != nil {
 		return err
 	}
-	if flags.Enrolled && route.Ephemeral {
-		return nativeauth.ErrScope
+	if flags.Enrolled && publicURL.Ephemeral {
+		return publisheridentity.ErrScope
 	}
 	if flags.Enrolled {
 		if err := profile.SelectPublisherIdentity(ctx, "job", RetainedScope(flags.Target), identity.ClientId); err != nil {
 			return err
 		}
 	}
-	options, err := localproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+	options, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
 	if err != nil {
 		return err
 	}
@@ -226,7 +226,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			return err
 		}
 	}
-	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Target: target, ServiceProtocol: route.ServiceProtocol, Project: flags.ProjectRoot, Service: flags.Service})
+	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Target: target, ServiceProtocol: publicURL.ServiceProtocol, Project: flags.ProjectRoot, Service: flags.Service})
 	if err != nil {
 		return err
 	}
@@ -239,19 +239,19 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err := output.starting(tunnel.ID(), target); err != nil {
 		return err
 	}
-	if route.ServiceProtocol == controlv1.Http {
-		if err := localproxy.PreflightWithOptions(ctx, target, options); err != nil {
+	if publicURL.ServiceProtocol == controlv1.Http {
+		if err := publisherproxy.PreflightWithOptions(ctx, target, options); err != nil {
 			return err
 		}
 		output.configureBrowser(false)
 	}
 	membership := ""
-	if route.MembershipId != nil {
-		membership = *route.MembershipId
+	if publicURL.MembershipId != nil {
+		membership = *publicURL.MembershipId
 	}
 	prefixes := []string{}
-	if route.AllowedIpPrefixes != nil {
-		prefixes = slices.Clone(*route.AllowedIpPrefixes)
+	if publicURL.AllowedIpPrefixes != nil {
+		prefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	traffic, err := config.ResolveTrafficSelection(flags.WorkLimits)
@@ -262,7 +262,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err != nil {
 		return err
 	}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membership, PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: route.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedURLTarget: route.Target == "", Limits: flags.Limits, InspectionMode: inspection.Mode(flags.InspectionMode), QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: transportTLS}}
+	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membership, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: publicURL.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedPublicURLTarget: publicURL.Target == "", Limits: flags.Limits, InspectionMode: inspection.Mode(flags.InspectionMode), QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: transportTLS}}
 	if flags.Enrolled {
 		discovery, err := control.Discovery(ctx)
 		if err != nil {
@@ -270,10 +270,10 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		}
 		cfg.BrowserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
 	}
-	cfg.PublisherID = native.PublisherID()
-	if route.Ephemeral {
+	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	if publicURL.Ephemeral {
 		cfg.Ephemeral = true
-		cfg.AllocatedPublicURL = &route
+		cfg.AssignedPublicURL = &publicURL
 	}
 	recorder, err := NewInspectionRecorder(ctx, tunnel, flags.ProjectRoot, flags.Service, flags.InspectionMode, flags.Inspection)
 	if err != nil {
@@ -285,13 +285,13 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err != nil {
 		return err
 	}
-	if route.ServiceProtocol != controlv1.Http && len(cfg.Mounts) > 0 {
+	if publicURL.ServiceProtocol != controlv1.Http && len(cfg.Mounts) > 0 {
 		return failure.Wrap("select enrolled mounts", failure.PublisherGrantMismatch, errors.New("TCP publication has HTTP path mounts"))
 	}
 	cfg.Logf = output.Logf
 	cfg.Observe = func(event publisher.Event) error { return output.publisherEvent(ctx, tunnel, server, event) }
 	if flags.Enrolled {
-		publisherjob.VerifyPublicationReadiness(ctx, &cfg, flags.ReadinessPath)
+		supervisor.VerifyPublicationReadiness(ctx, &cfg, flags.ReadinessPath)
 	}
 	stopRuntime, err := startDeployedPublisher(ctx, native, server)
 	if err != nil {

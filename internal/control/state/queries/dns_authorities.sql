@@ -172,11 +172,11 @@ SELECT
         WHERE publisher_group.domain_id=sqlc.arg(authority_domain_id) AND publisher_group.deleted_at IS NULL
     )
     AND NOT EXISTS (
-        SELECT 1 FROM control.private_services service
+        SELECT 1 FROM control.services service
         WHERE service.domain_id=sqlc.arg(authority_domain_id) AND service.deleted_at IS NULL
     )
     AND NOT EXISTS (
-        SELECT 1 FROM control.managed_service_endpoints endpoint
+        SELECT 1 FROM control.service_endpoints endpoint
         WHERE endpoint.domain_id=sqlc.arg(authority_domain_id) AND endpoint.dns_state NOT IN('unmanaged','removed')
     )
     AND NOT EXISTS (

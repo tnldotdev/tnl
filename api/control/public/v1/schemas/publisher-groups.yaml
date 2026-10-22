@@ -110,7 +110,7 @@ schemas:
     properties:
       service: { type: string }
       service_id: { type: string }
-      service_kind: { type: string, enum: [public_url, private_service] }
+      service_kind: { type: string, enum: [public_url, service] }
       grant_id: { type: string }
       hostname: { type: string }
       trust_revision: { type: integer, format: int64 }

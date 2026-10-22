@@ -1,5 +1,5 @@
 // package emaildelivery sends queued invitation emails to a mailer.
-package emaildelivery
+package email
 
 import (
 	"bytes"

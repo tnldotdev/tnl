@@ -5,20 +5,20 @@ import (
 	"errors"
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/githubmetadata"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestApplyWorkloadBindingReuseAndCloudSelectors(t *testing.T) {
 	group := "production"
 	repository := "example/repository"
 	protocol := "kubernetes"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Publishers: map[string]config.Publisher{group: {}}, Services: config.Services{"cluster": {Publisher: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"cluster"}}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"cluster"}}}}}}
 	declaration, err := resolve.Declaration(t.Context(), project.Project, team.Context{}, nil)
 	if err != nil {
 		t.Fatal(err)

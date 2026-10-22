@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestCreateTeamAuthenticatesAndPreservesIdempotency(t *testing.T) {
@@ -63,7 +63,7 @@ func TestDomainClaimRequiresAutomationAndOptIn(t *testing.T) {
 }
 
 func TestAuthorityCompositionAndRetiredHumanExchanges(t *testing.T) {
-	mux, err := controlapi.NewHandler(controlapi.Config{}, nil, nil, nil)
+	mux, err := controlpublic.NewHandler(controlpublic.Config{}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

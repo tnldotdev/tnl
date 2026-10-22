@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
@@ -103,7 +103,7 @@ func storedFailureReason(err error) string {
 }
 
 func certificateFailureReason(err error) failure.Reason {
-	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+	if errors.Is(err, dns.ErrChallengesNotConfigured) {
 		return failure.ServerDNSConfigInvalid
 	}
 	if reason, ok := failure.ReasonOf(err); ok {

@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"
@@ -12,9 +12,9 @@ func TestDiscoveryPermissionsUseDeclaredResourcesOnTaskRoles(t *testing.T) {
 	text := func(value string) *string { return &value }
 	configuration := testConfig(2)
 	configuration.Services = config.Services{
-		"cluster": {Publisher: text("production"), Protocol: text("kubernetes"), Target: &config.ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
-		"db":      {Publisher: text("production"), Protocol: text("postgres"), Target: &config.ServiceTarget{Type: "rds", Instance: text("orders"), Region: text("eu-west-1")}},
-		"mysql":   {Publisher: text("production"), Protocol: text("mysql"), Target: &config.ServiceTarget{Type: "rds", Cluster: text("billing"), Region: text("us-west-2")}},
+		"cluster": {PublisherGroup: text("production"), Protocol: text("kubernetes"), Target: &config.ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
+		"db":      {PublisherGroup: text("production"), Protocol: text("postgres"), Target: &config.ServiceTarget{Type: "rds", Instance: text("orders"), Region: text("eu-west-1")}},
+		"mysql":   {PublisherGroup: text("production"), Protocol: text("mysql"), Target: &config.ServiceTarget{Type: "rds", Cluster: text("billing"), Region: text("us-west-2")}},
 	}
 	bundle, err := Generate(configuration, testSource(), []byte("// portable types\n"))
 	if err != nil {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 func (b *nativeConnectionBackend) Close(ctx context.Context) error {
@@ -22,16 +22,16 @@ func (b *nativeConnectionBackend) Close(ctx context.Context) error {
 			result = errors.Join(result, p.listener.Close())
 		}
 	}
-	clients := []*workloadclient.Client{b.workload, b.replacement}
+	clients := []*workload.Client{b.workload, b.replacement}
 	b.mu.Unlock()
 	// revocation and path cleanup share the caller's budget and start together.
 	// failed releases cannot consume the time reserved for session revocation.
 	var cleanup sync.WaitGroup
 	var resultsMu sync.Mutex
 	add := func(err error) { resultsMu.Lock(); result = errors.Join(result, err); resultsMu.Unlock() }
-	seen := map[*workloadclient.Client]bool{}
+	seen := map[*workload.Client]bool{}
 	var revokeMu sync.Mutex
-	revoke := func(client *workloadclient.Client) {
+	revoke := func(client *workload.Client) {
 		revokeMu.Lock()
 		if client == nil || seen[client] {
 			revokeMu.Unlock()

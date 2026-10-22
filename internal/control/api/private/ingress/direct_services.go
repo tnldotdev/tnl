@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 type directServiceStore interface {
@@ -42,7 +42,7 @@ func (s *service) AdmitDirectServiceVisitor(ctx context.Context, id string, body
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}
-	return ingressv1.DirectServiceVisitorAdmission{PrivateServiceId: admitted.ServiceID, PrivateRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays)}, nil
+	return ingressv1.DirectServiceVisitorAdmission{ServiceId: admitted.ServiceID, ServiceRunId: admitted.RunID, RunNumber: admitted.RunNumber, VisitorConnectionId: admitted.ConnectionID, ExpiresAt: admitted.ExpiresAt, ConnectedRelays: privateRelayResponses(admitted.Relays)}, nil
 }
 
 func (s *service) DirectServiceVisitorStatus(ctx context.Context, id string, body ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
@@ -56,7 +56,7 @@ func (s *service) DirectServiceVisitorStatus(ctx context.Context, id string, bod
 		return result, err
 	}
 	status, err := store.DirectServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, s.now())
-	if errors.Is(err, controlstate.ErrPrivateServiceAccess) || errors.Is(err, controlstate.ErrIngressLeaseStale) {
+	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrIngressLeaseStale) {
 		return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorDenied, ValidUntil: s.now()}, nil
 	}
 	if err != nil {

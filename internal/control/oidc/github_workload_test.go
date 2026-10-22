@@ -1,4 +1,4 @@
-package oidcauth_test
+package oidc_test
 
 import (
 	"errors"
@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 )
 
 func TestGitHubWorkloadClaims(t *testing.T) {
 	issuer := githubtest.New(t)
-	verifier, err := oidcauth.NewGitHubWorkloadVerifier("https://control.example:443/", issuer.Client)
+	verifier, err := oidc.NewGitHubWorkloadVerifier("https://control.example:443/", issuer.Client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestGitHubWorkloadClaims(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			claims := githubtest.Claims("https://control.example", now)
 			mutation(claims)
-			if _, err := verifier.Verify(t.Context(), issuer.Sign(t, claims)); !errors.Is(err, oidcauth.ErrUnauthenticated) {
+			if _, err := verifier.Verify(t.Context(), issuer.Sign(t, claims)); !errors.Is(err, oidc.ErrUnauthenticated) {
 				t.Fatalf("accepted invalid claims: %v", err)
 			}
 		})
@@ -54,22 +54,22 @@ func (t failedGitHubKeys) RoundTrip(*http.Request) (*http.Response, error) { ret
 func TestGitHubWorkloadSignatureAndKeyFailures(t *testing.T) {
 	issuer := githubtest.New(t)
 	other := githubtest.New(t)
-	v, err := oidcauth.NewGitHubWorkloadVerifier("https://control.example", issuer.Client)
+	v, err := oidc.NewGitHubWorkloadVerifier("https://control.example", issuer.Client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = v.Verify(t.Context(), other.Sign(t, githubtest.Claims("https://control.example", time.Now()))); !errors.Is(err, oidcauth.ErrUnauthenticated) {
+	if _, err = v.Verify(t.Context(), other.Sign(t, githubtest.Claims("https://control.example", time.Now()))); !errors.Is(err, oidc.ErrUnauthenticated) {
 		t.Fatal("accepted another signing key", err)
 	}
-	if _, err = v.Verify(t.Context(), "eyJhbGciOiJub25lIn0.e30."); !errors.Is(err, oidcauth.ErrUnauthenticated) {
+	if _, err = v.Verify(t.Context(), "eyJhbGciOiJub25lIn0.e30."); !errors.Is(err, oidc.ErrUnauthenticated) {
 		t.Fatal("accepted unsigned JWT", err)
 	}
 	cause := errors.New("local signing-key transport failure")
-	v, err = oidcauth.NewGitHubWorkloadVerifier("https://control.example", &http.Client{Transport: failedGitHubKeys{cause}})
+	v, err = oidc.NewGitHubWorkloadVerifier("https://control.example", &http.Client{Transport: failedGitHubKeys{cause}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = v.Verify(t.Context(), issuer.Sign(t, githubtest.Claims("https://control.example", time.Now()))); !errors.Is(err, oidcauth.ErrUnavailable) || !errors.Is(err, cause) {
+	if _, err = v.Verify(t.Context(), issuer.Sign(t, githubtest.Claims("https://control.example", time.Now()))); !errors.Is(err, oidc.ErrUnavailable) || !errors.Is(err, cause) {
 		t.Fatal("provider failure lost classification or cause", err)
 	}
 }

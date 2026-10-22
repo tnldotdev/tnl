@@ -16,7 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 type waitCommand struct {
@@ -70,9 +70,9 @@ func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, sna
 	}
 	probe, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	path, err := privateprotocol.DescriptorPath(state.Root(), snapshot.Project)
+	path, err := publisherprotocol.DescriptorPath(state.Root(), snapshot.Project)
 	if err == nil {
-		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && local.Available(probe, endpoint) {
+		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil && local.Available(probe, endpoint) {
 			return
 		}
 	}
@@ -104,8 +104,8 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 				fields = append(fields, value)
 			}
 		}
-		if service.PublishRunNumber != 0 {
-			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(service.PublishRunNumber, 10)})
+		if service.RunNumber != 0 {
+			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(service.RunNumber, 10)})
 		}
 		if service.Observation != nil {
 			fields = append(fields, clioutput.Field{Label: "checked at", Value: service.Observation.CheckedAt.Format(time.RFC3339Nano)})
@@ -152,7 +152,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		if !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
 		}
-		if config.PublisherName(definition) != "local" {
+		if config.PublisherGroupName(definition) != "local" {
 			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service belongs to a remote publisher"))
 		}
 	}
@@ -171,7 +171,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		return err
 	}
 	defer state.Close()
-	path, err := privateprotocol.DescriptorPath(state.Root(), project.Root)
+	path, err := publisherprotocol.DescriptorPath(state.Root(), project.Root)
 	if err != nil {
 		return err
 	}
@@ -185,13 +185,13 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 			return err
 		}
 		checked := false
-		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil {
-			request := privateprotocol.Check{}
+		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil {
+			request := publisherprotocol.Check{}
 			if len(flags.Service) != 0 {
 				request.Services = &flags.Service
 			}
 			var current clientruntime.Snapshot
-			if err := privateprotocol.Call(ctx, endpoint, "POST", "/v1/check", request, &current); err == nil {
+			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/check", request, &current); err == nil {
 				snapshot, checked = current, true
 				checkSource = "selected local publisher process (fresh public-path check)"
 			} else {

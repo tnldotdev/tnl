@@ -1,4 +1,4 @@
-package oidcauth
+package oidc
 
 import (
 	"crypto/sha256"

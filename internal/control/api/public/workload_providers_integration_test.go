@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"encoding/json"
@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationWorkloadProviderSessions(t *testing.T) {
@@ -40,7 +40,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			team := human.Identity.Memberships[0].TeamID
-			trust := oidcauth.WorkloadTrust{Provider: provider, Issuer: "https://oidc.vercel.com/acme", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
+			trust := oidc.WorkloadTrust{Provider: provider, Issuer: "https://oidc.vercel.com/acme", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
 			claims := map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": "owner:acme:project:storefront:environment:production", "owner": "acme", "owner_id": "team_one", "project": "storefront", "project_id": "prj_store", "environment": "production"}
 			if provider == "fly" {
 				trust.Issuer = "https://oidc.fly.io/acme"
@@ -60,7 +60,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			mux := http.NewServeMux()
 			server := httptest.NewTLSServer(mux)
 			t.Cleanup(server.Close)
-			if _, err = authorityapi.Register(mux, authorityapi.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
+			if _, err = controlauthority.Register(mux, controlauthority.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
 				t.Fatal(err)
 			}
 			h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
@@ -68,11 +68,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			mux.Handle("/", h)
-			owner, err := controlclient.New(server.URL, server.Client(), human.AccessToken)
+			owner, err := clientcontrol.New(server.URL, server.Client(), human.AccessToken)
 			if err != nil {
 				t.Fatal(err)
 			}
-			configuration := controlstate.ProjectConfiguration{Publishers: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {Publisher: "production", Target: "inventory.internal:3000"}, "models": {Publisher: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
+			configuration := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {PublisherGroup: "production", Target: "inventory.internal:3000"}, "models": {PublisherGroup: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
 			data, _ := json.Marshal(configuration)
 			var wire controlv1.ProjectConfiguration
 			if err = json.Unmarshal(data, &wire); err != nil {
@@ -83,7 +83,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			job, err := workloadclient.New(server.URL, server.Client())
+			job, err := workload.New(server.URL, server.Client())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,7 +137,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(session.ExpiresAt) {
 				t.Fatal("nonce retry changed fixed session", err)
 			}
-			other, err := workloadclient.New(server.URL, server.Client())
+			other, err := workload.New(server.URL, server.Client())
 			if err != nil {
 				t.Fatal(err)
 			}

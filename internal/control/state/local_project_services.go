@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -24,12 +24,12 @@ type RealizeLocalProjectServiceRequest struct {
 }
 
 type LocalProjectService struct {
-	Service        string                  `json:"service"`
-	WorktreeKey    string                  `json:"worktree_key"`
-	Kind           string                  `json:"service_kind"`
-	ServiceID      string                  `json:"service_id"`
-	Hostname       string                  `json:"hostname,omitempty"`
-	PrivateService *PrivateServiceMetadata `json:"private_service,omitempty"`
+	Service     string           `json:"service"`
+	WorktreeKey string           `json:"worktree_key"`
+	Kind        string           `json:"service_kind"`
+	ServiceID   string           `json:"service_id"`
+	Hostname    string           `json:"hostname,omitempty"`
+	Metadata    *ServiceMetadata `json:"metadata,omitempty"`
 }
 
 type GetLocalProjectServiceRequest struct {
@@ -38,7 +38,7 @@ type GetLocalProjectServiceRequest struct {
 }
 
 func validLocalProjectServiceScope(project, source, service, worktree string) bool {
-	return naming.ValidProjectKey(project) && fingerprintPattern.MatchString(source) && privateServiceName.MatchString(service) && len(worktree) >= 1 && len(worktree) <= 128 && !strings.ContainsAny(worktree, "\x00\r\n")
+	return naming.ValidProjectKey(project) && fingerprintPattern.MatchString(source) && serviceName.MatchString(service) && len(worktree) >= 1 && len(worktree) <= 128 && !strings.ContainsAny(worktree, "\x00\r\n")
 }
 
 // visitor lookup reads the recorded ID, never saved names or declarations. the
@@ -52,11 +52,11 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 		return result, err
 	}
 	defer rollback(ctx, tx, "get local project service", &retErr)()
-	row, err := controlstatedb.New(tx).GetLocalProjectPrivateService(ctx, controlstatedb.GetLocalProjectPrivateServiceParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service, WorktreeKey: r.WorktreeKey})
+	row, err := controlstatedb.New(tx).GetLocalProjectService(ctx, controlstatedb.GetLocalProjectServiceParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service, WorktreeKey: r.WorktreeKey})
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if _, _, err = privateVisitorAccess(ctx, tx, row.ControlPrivateService.ID, r.ActorID, r.Now); err != nil {
+	if _, _, err = privateVisitorAccess(ctx, tx, row.ControlService.ID, r.ActorID, r.Now); err != nil {
 		return result, err
 	}
 	// report source collisions only after authorizing the exact bound resource.
@@ -73,12 +73,12 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 	if conflict {
 		return result, ErrProjectSourceConflict
 	}
-	m, err := checkedPrivateMetadata(row.ControlPrivateService)
+	m, err := checkedServiceMetadata(row.ControlService)
 	if err != nil {
 		return result, err
 	}
 	m.TLS = nil
-	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "private_service", ServiceID: row.ControlPrivateService.ID, PrivateService: &m}
+	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: row.ControlService.ID, Metadata: &m}
 	return result, tx.Commit(ctx)
 }
 
@@ -87,24 +87,24 @@ func localProjectPrivateName(r RealizeLocalProjectServiceRequest, name string) s
 	return fmt.Sprintf("%.20s-%x", name, digest[:5])
 }
 
-func (d *Database) updateLocalPrivateService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, row controlstatedb.ControlPrivateService, s ProjectServiceConfiguration, now time.Time) error {
-	trust, err := appliedPrivateTargetTrust(s.TargetTLS)
+func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, row controlstatedb.ControlService, s ProjectServiceConfiguration, now time.Time) error {
+	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return err
 	}
-	saved, err := checkedPrivateMetadata(row)
+	saved, err := checkedServiceMetadata(row)
 	if err != nil {
 		return err
 	}
-	if !privateMetadataMatches(saved, PrivateServiceMetadata{Protocol: s.Protocol, TLS: trust}) {
-		if _, err := tx.Exec(ctx, `UPDATE control.private_service_runs SET state='closed',closed_at=$2 WHERE private_service_id=$1 AND closed_at IS NULL`, row.ID, now); err != nil {
+	if !serviceMetadataMatches(saved, ServiceMetadata{Protocol: s.Protocol, TLS: trust}) {
+		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, row.ID, now); err != nil {
 			return err
 		}
-		if err := privateRoutingTombstone(ctx, q, row.ID, now); err != nil {
+		if err := serviceRoutingTombstone(ctx, q, row.ID, now); err != nil {
 			return err
 		}
 	}
-	return d.updateAppliedPrivateService(ctx, tx, q, row.ID, row.NameScope, s, now)
+	return d.updateAppliedService(ctx, tx, q, row.ID, row.NameScope, s, now)
 }
 
 func checkLocalProjectSource(ctx context.Context, tx pgx.Tx, team, project, source string) error {
@@ -126,7 +126,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		return result, ErrProjectConfigurationInvalid
 	}
 	services := map[string]ProjectServiceConfiguration{r.Service: r.Configuration}
-	if err := (PrivateServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
+	if err := (ServicePlacement{WorktreeKey: r.WorktreeKey, WorktreeLabel: r.WorktreeLabel, DomainID: r.DomainID}).Validate(); err != nil {
 		return result, err
 	}
 	// this endpoint realizes one resource, not the path destinations. include
@@ -143,7 +143,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		return result, err
 	}
 	s := c.Services[r.Service]
-	if s.Publisher != "local" || (s.PublicURL != nil) != (r.PublicURLID != "") {
+	if s.PublisherGroup != "local" || (s.PublicURL != nil) != (r.PublicURLID != "") {
 		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -153,9 +153,9 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	defer rollback(ctx, tx, "realize local project service", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, r.TeamID); err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = privateServiceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
 		return result, err
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
@@ -178,15 +178,15 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	}
 	entry := controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: r.Service}
 	var oldGrant, creator string
-	err = tx.QueryRow(ctx, `SELECT private_service_id,public_url_id,COALESCE(visitor_grant_id,''),created_by_identity_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4 FOR UPDATE`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey).Scan(&entry.PrivateServiceID, &entry.PublicURLID, &oldGrant, &creator)
+	err = tx.QueryRow(ctx, `SELECT service_id,public_url_id,COALESCE(visitor_grant_id,''),created_by_identity_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 AND worktree_key=$4 FOR UPDATE`, r.TeamID, r.ProjectKey, r.Service, r.WorktreeKey).Scan(&entry.ServiceID, &entry.PublicURLID, &oldGrant, &creator)
 	found := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	if found && creator != r.ActorID {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
-	if found && (s.PublicURL == nil) != entry.PrivateServiceID.Valid {
+	if found && (s.PublicURL == nil) != entry.ServiceID.Valid {
 		return result, ErrProjectManaged
 	}
 	if found && s.PublicURL != nil && entry.PublicURLID.String != r.PublicURLID {
@@ -208,47 +208,47 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		entry.PublicURLID = nullableText("")
 		found, oldGrant = false, ""
 	}
-	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "private_service"}
+	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service"}
 	if s.PublicURL == nil {
 		if !found {
 			// scope saved names too, so two worktrees cannot share a private run.
 			local := s
 			local.Name = localProjectPrivateName(r, s.Name)
-			id, e := d.createAppliedPrivateService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local)
+			id, e := d.createAppliedService(ctx, tx, q, ApplyProjectConfigurationRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Now: r.Now}, r.Service, "local/"+r.ProjectKey+"/"+r.WorktreeKey, local)
 			if e != nil {
 				return result, e
 			}
-			entry.PrivateServiceID = text(id)
+			entry.ServiceID = text(id)
 		} else {
-			row, e := q.LockPrivateService(ctx, entry.PrivateServiceID.String)
+			row, e := q.LockService(ctx, entry.ServiceID.String)
 			if e != nil {
 				return result, e
 			}
 			if row.DeletedAt.Valid {
-				return result, ErrPrivateServiceAccess
+				return result, ErrServiceAccess
 			}
 			local := s
 			local.Name = localProjectPrivateName(r, s.Name)
-			if e = d.updateLocalPrivateService(ctx, tx, q, row, local, r.Now); e != nil {
+			if e = d.updateLocalService(ctx, tx, q, row, local, r.Now); e != nil {
 				return result, e
 			}
 		}
-		row, e := q.LockPrivateService(ctx, entry.PrivateServiceID.String)
+		row, e := q.LockService(ctx, entry.ServiceID.String)
 		if e != nil {
 			return result, e
 		}
-		if e = d.ensureLocalManagedEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, PrivateServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, r.Now); e != nil {
+		if e = d.ensureLocalServiceEndpoint(ctx, tx, row.ID, r.ActorID, s.Name, ServicePlacement{DomainID: r.DomainID, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, r.Now); e != nil {
 			return result, e
 		}
-		row, e = q.LockPrivateService(ctx, row.ID)
+		row, e = q.LockService(ctx, row.ID)
 		if e != nil {
 			return result, e
 		}
-		m, e := checkedPrivateMetadata(row)
+		m, e := checkedServiceMetadata(row)
 		if e != nil {
 			return result, e
 		}
-		result.PrivateService = &m
+		result.Metadata = &m
 		result.ServiceID = row.ID
 	} else {
 		u, e := q.LockPublicURLForRun(ctx, r.PublicURLID)
@@ -273,7 +273,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		result.Kind, result.ServiceID, result.Hostname = "public_url", u.ID, u.CanonicalHostname
 	}
 	if !found {
-		_, err = tx.Exec(ctx, `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,private_service_id,public_url_id,created_by_identity_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey, entry.PrivateServiceID, entry.PublicURLID, r.ActorID)
+		_, err = tx.Exec(ctx, `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,public_url_id,created_by_identity_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.WorktreeKey, entry.ServiceID, entry.PublicURLID, r.ActorID)
 		if err != nil {
 			return result, projectConstraintError(err)
 		}
@@ -341,7 +341,7 @@ func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx
 	}
 	for _, key := range keys {
 		var declared *ProjectServiceConfiguration
-		if s, found := current.Services[key]; found && s.Publisher == "local" {
+		if s, found := current.Services[key]; found && s.PublisherGroup == "local" {
 			declared = &s
 		}
 		previous, hadPrevious := old.Services[key]
@@ -354,7 +354,7 @@ func (d *Database) reconcileProjectLocalRealizations(ctx context.Context, tx pgx
 }
 
 func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key string, s *ProjectServiceConfiguration, publicChanged, reset bool) error {
-	rows, err := tx.Query(ctx, `SELECT worktree_key,private_service_id,public_url_id,COALESCE(visitor_grant_id,'') FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 ORDER BY worktree_key`, r.TeamID, r.ProjectKey, key)
+	rows, err := tx.Query(ctx, `SELECT worktree_key,service_id,public_url_id,COALESCE(visitor_grant_id,'') FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3 ORDER BY worktree_key`, r.TeamID, r.ProjectKey, key)
 	if err != nil {
 		return err
 	}
@@ -365,7 +365,7 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 	var locals []local
 	for rows.Next() {
 		v := local{entry: controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}}
-		if err = rows.Scan(&v.worktree, &v.entry.PrivateServiceID, &v.entry.PublicURLID, &v.grant); err != nil {
+		if err = rows.Scan(&v.worktree, &v.entry.ServiceID, &v.entry.PublicURLID, &v.grant); err != nil {
 			rows.Close()
 			return err
 		}
@@ -377,7 +377,7 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 		return err
 	}
 	for _, v := range locals {
-		compatible := !reset && s != nil && (s.PublicURL == nil) == v.entry.PrivateServiceID.Valid
+		compatible := !reset && s != nil && (s.PublicURL == nil) == v.entry.ServiceID.Valid
 		if err = reconcileLocalVisitorGrant(ctx, tx, v.entry, v.worktree, r.ActorID, v.grant, compatible && s.Access != nil && s.Access.Team, r.Now); err != nil {
 			return err
 		}
@@ -398,14 +398,14 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 				return err
 			}
 		}
-		if v.entry.PrivateServiceID.Valid {
-			row, e := q.LockPrivateService(ctx, v.entry.PrivateServiceID.String)
+		if v.entry.ServiceID.Valid {
+			row, e := q.LockService(ctx, v.entry.ServiceID.String)
 			if e != nil {
 				return e
 			}
 			local := *s
 			local.Name = localProjectPrivateName(RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Service: key, WorktreeKey: v.worktree}, s.Name)
-			if err = d.updateLocalPrivateService(ctx, tx, q, row, local, r.Now); err != nil {
+			if err = d.updateLocalService(ctx, tx, q, row, local, r.Now); err != nil {
 				return err
 			}
 		}
@@ -414,11 +414,11 @@ func (d *Database) reconcileLocalProjectServices(ctx context.Context, tx pgx.Tx,
 }
 
 type ProjectPublicService struct {
-	Service          string `json:"service"`
-	PublicURLID      string `json:"public_url_id,omitempty"`
-	PrivateServiceID string `json:"private_service_id,omitempty"`
-	Port             int    `json:"port"`
-	Hostname         string `json:"hostname"`
+	Service     string `json:"service"`
+	PublicURLID string `json:"public_url_id,omitempty"`
+	ServiceID   string `json:"service_id,omitempty"`
+	Port        int    `json:"port"`
+	Hostname    string `json:"hostname"`
 }
 type ProjectPublicMetadata struct {
 	SourceFingerprint string                 `json:"source_fingerprint"`
@@ -433,8 +433,8 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 		return result, err
 	}
 	defer rollback(ctx, tx, "get project public metadata", &retErr)()
-	managerErr := privateServiceManager(ctx, tx, team, actor)
-	if managerErr != nil && !errors.Is(managerErr, ErrPrivateServiceAccess) {
+	managerErr := serviceManager(ctx, tx, team, actor)
+	if managerErr != nil && !errors.Is(managerErr, ErrServiceAccess) {
 		return result, managerErr
 	}
 	manager := managerErr == nil
@@ -448,7 +448,7 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
 	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
 	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_permission(u.id,$3,'',$4))
-	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM control.applied_project_services a JOIN control.private_services s ON s.id=a.private_service_id
+	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM control.applied_project_services a JOIN control.services s ON s.id=a.service_id
 	    WHERE a.team_id=$1 AND a.project_key=$2 AND s.enabled AND s.deleted_at IS NULL AND s.public AND s.protocol='http'
 	    ORDER BY 1,2,3`, team, project, actor, now, manager)
 	if err != nil {
@@ -457,7 +457,7 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	result.Services = []ProjectPublicService{}
 	for rows.Next() {
 		var s ProjectPublicService
-		if err = rows.Scan(&s.Service, &s.PublicURLID, &s.PrivateServiceID, &s.Hostname, &s.Port); err != nil {
+		if err = rows.Scan(&s.Service, &s.PublicURLID, &s.ServiceID, &s.Hostname, &s.Port); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -471,8 +471,8 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	if !manager {
 		visible := result.Services[:0]
 		for _, service := range result.Services {
-			if service.PrivateServiceID != "" {
-				if _, _, err := privateVisitorAccess(ctx, tx, service.PrivateServiceID, actor, now); errors.Is(err, ErrPrivateServiceAccess) {
+			if service.ServiceID != "" {
+				if _, _, err := privateVisitorAccess(ctx, tx, service.ServiceID, actor, now); errors.Is(err, ErrServiceAccess) {
 					continue
 				} else if err != nil {
 					return result, err

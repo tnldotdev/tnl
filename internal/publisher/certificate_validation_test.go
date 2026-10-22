@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestAutomaticRouteAcceptsNamespaceCertificate(t *testing.T) {

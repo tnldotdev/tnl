@@ -6,7 +6,7 @@
 // seconds and do not follow redirects. network and read failures wrap
 // ErrUnavailable, but caller cancellation, invalid responses, and oversized
 // responses do not. HTTP 429 and 503 are classified before their bodies are read.
-package authorityclient
+package authority
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 const (

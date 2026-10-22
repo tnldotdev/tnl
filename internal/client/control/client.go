@@ -6,7 +6,7 @@
 // seconds. requests do not follow redirects. network and read failures wrap
 // ErrUnavailable, but caller cancellation, invalid responses, and oversized
 // responses do not. known server problem codes take precedence over status.
-package controlclient
+package control
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const (
@@ -288,12 +288,12 @@ func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname st
 	if len(page.PublicUrls) == 0 {
 		return controlv1.PublicURL{}, ErrNotFound
 	}
-	route := page.PublicUrls[0]
-	if route.Id == "" || route.TeamId != teamID || route.CanonicalHostname != hostname ||
-		(route.LifecycleState != controlv1.Enabled && route.LifecycleState != controlv1.Suspended) {
+	publicURL := page.PublicUrls[0]
+	if publicURL.Id == "" || publicURL.TeamId != teamID || publicURL.CanonicalHostname != hostname ||
+		(publicURL.LifecycleState != controlv1.Enabled && publicURL.LifecycleState != controlv1.Suspended) {
 		return controlv1.PublicURL{}, failure.Wrap("find public URL", failure.ServerResponseInvalid, errors.New("controlclient: server returned an invalid hostname lookup"))
 	}
-	return route, nil
+	return publicURL, nil
 }
 
 func (c *Client) GetPublicURL(ctx context.Context, publicURLID string) (controlv1.PublicURL, error) {

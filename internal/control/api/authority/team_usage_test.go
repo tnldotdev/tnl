@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 type teamUsageVerifier struct {
-	identity oidcauth.Identity
+	identity oidc.Identity
 	err      error
 }
 
-func (v teamUsageVerifier) Verify(context.Context, string) (oidcauth.Identity, error) {
+func (v teamUsageVerifier) Verify(context.Context, string) (oidc.Identity, error) {
 	return v.identity, v.err
 }
 
@@ -60,11 +60,11 @@ func TestWebsiteTeamUsageBoundary(t *testing.T) {
 		{name: "membership denied", state: fmt.Errorf("wrapped: %w", controlstate.ErrAuthorityAccess), credential: secret, status: 403, calls: 1, code: "forbidden"},
 		{name: "source denied", state: fmt.Errorf("wrapped: %w", controlstate.ErrServiceSourceSignInRequired), credential: secret, status: 403, calls: 1, code: "source_sign_in_required"},
 		{name: "replay denied", state: fmt.Errorf("wrapped: %w", controlstate.ErrOIDCAssertionReplay), credential: secret, status: 401, calls: 1, code: "unauthenticated"},
-		{name: "provider unavailable", verifier: errors.Join(oidcauth.ErrUnavailable, privateCause), credential: secret, status: 503, code: "unavailable"},
+		{name: "provider unavailable", verifier: errors.Join(oidc.ErrUnavailable, privateCause), credential: secret, status: 503, code: "unavailable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := &teamUsageStoreStub{err: test.state}
-			v := teamUsageVerifier{identity: oidcauth.Identity{Issuer: "https://account.example", ClientID: "tnl-control", Subject: "sam", Nonce: controlstate.TeamUsageActorNonce(http.MethodGet, target+test.signedQuery, nil)}, err: test.verifier}
+			v := teamUsageVerifier{identity: oidc.Identity{Issuer: "https://account.example", ClientID: "tnl-control", Subject: "sam", Nonce: controlstate.TeamUsageActorNonce(http.MethodGet, target+test.signedQuery, nil)}, err: test.verifier}
 			h := testHandler(t, Config{ControlURL: "https://control.example", OIDCIssuer: "https://account.example", OIDCClientID: "tnl-control", OIDCScopes: []string{"openid"}, OIDCVerifier: v, WebServiceSecret: secret}, s)
 			r := httptest.NewRequest(http.MethodGet, target+test.query, strings.NewReader(test.body))
 			r.Header.Set("Authorization", "Bearer "+test.credential)

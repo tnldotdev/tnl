@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/dns"
 )
 
 func TestLocalProviderMatchesRoute53WireAndOwnedCleanup(t *testing.T) {
@@ -16,11 +16,11 @@ func TestLocalProviderMatchesRoute53WireAndOwnedCleanup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(f.route53))
 	defer server.Close()
 	api := route53.NewFromConfig(aws.Config{Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider("tnl-local-only", "fixture-only", ""), HTTPClient: server.Client()}, func(options *route53.Options) { options.BaseEndpoint = aws.String(server.URL) })
-	provider, err := dnscontroller.NewRoute53Provider(api)
+	provider, err := dns.NewRoute53Provider(api)
 	if err != nil {
 		t.Fatal(err)
 	}
-	challenge := dnscontroller.ChallengeRecord{ZoneID: "local", ZoneDomain: "routes.example.test", RecordName: "_acme-challenge.app.routes.example.test", DesiredOwnedValues: []string{"owned-value"}}
+	challenge := dns.ChallengeRecord{ZoneID: "local", ZoneDomain: "routes.example.test", RecordName: "_acme-challenge.app.routes.example.test", DesiredOwnedValues: []string{"owned-value"}}
 	zone, err := provider.ReconcileChallenge(t.Context(), challenge)
 	if err != nil || len(zone.Nameservers) != 2 || zone.ChangeID == "" {
 		t.Fatalf("present local DNS: %+v %v", zone, err)

@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"crypto/ed25519"
@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T) {
@@ -31,15 +31,15 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	rules := []oidcauth.AdmissionRule{{Team: "studio", SourceID: "direct-company", Subjects: []string{"owner", "person"}}, {Team: "other", SourceID: "other-company", Subjects: []string{"owner", "person"}}}
+	rules := []oidc.AdmissionRule{{Team: "studio", SourceID: "direct-company", Subjects: []string{"owner", "person"}}, {Team: "other", SourceID: "other-company", Subjects: []string{"owner", "person"}}}
 	if err := d.ConfigureOIDCAdmissions(ctx, f.issuer.URL, rules, f.now); err != nil {
 		t.Fatal(err)
 	}
-	api, err := authorityclient.New(f.server.URL, f.server.Client(), "")
+	api, err := clientauthority.New(f.server.URL, f.server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	login := func(subject, selection, refresh string, proof []oidcauth.TeamContext) (authorityv1.ControlSessionResponse, error) {
+	login := func(subject, selection, refresh string, proof []oidc.TeamContext) (authorityv1.ControlSessionResponse, error) {
 		f.mu.Lock()
 		f.browserSubject, f.browserProof = subject, proof
 		f.mu.Unlock()
@@ -86,7 +86,7 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	if _, err := login("owner", "studio", person.RefreshToken, nil); err == nil {
 		t.Fatal("reauthentication switched identities")
 	}
-	if _, err := login("person", "studio", "", []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: "wrong", ConnectionRevision: 1, SourceID: "wrong", Subject: "person", AuthenticatedAt: f.now.Unix()}}); err == nil {
+	if _, err := login("person", "studio", "", []oidc.TeamContext{{TeamID: team.ID, IdentityConnectionID: "wrong", ConnectionRevision: 1, SourceID: "wrong", Subject: "person", AuthenticatedAt: f.now.Unix()}}); err == nil {
 		t.Fatal("provider custom context bypassed direct source mapping")
 	}
 	combined, err := login("person", "other", company.RefreshToken, nil)
@@ -109,11 +109,11 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	ownerCtx := controlstate.WithControlPrincipal(ctx, f.principal(companyOwner))
 	companyCtx := controlstate.WithControlPrincipal(ctx, p)
 	personalCtx := controlstate.WithControlPrincipal(ctx, f.principal(person))
-	service, err := d.CreatePrivateService(ownerCtx, team.ID, companyOwner.Identity.Identity.Id, "database", "database", time.Now())
+	service, err := d.CreateServiceAt(ownerCtx, team.ID, companyOwner.Identity.Identity.Id, "database", "database", controlstate.ServicePlacement{}, time.Now(), controlstate.ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreatePrivateServiceGrant(ownerCtx, service.ID, companyOwner.Identity.Identity.Id, "person-grant", "identity", p.IdentityID, nil, time.Now()); err != nil {
+	if _, err := d.CreateServiceGrant(ownerCtx, service.ID, companyOwner.Identity.Identity.Id, "person-grant", "identity", p.IdentityID, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -128,7 +128,7 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.IssueServiceClientCertificate(personalCtx, service.ID, p.IdentityID, device.ID, csr, time.Now()); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+	if _, err := d.IssueServiceClientCertificate(personalCtx, service.ID, p.IdentityID, device.ID, csr, time.Now()); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("personal certificate issuance: %v", err)
 	}
 	cert, err := d.IssueServiceClientCertificate(companyCtx, service.ID, p.IdentityID, device.ID, csr, time.Now())

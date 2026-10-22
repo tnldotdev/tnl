@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"context"
@@ -178,7 +178,7 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	result.Name = &savedName
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
 	if !config.IsPublicService(service) {
-		// private services never inherit public URL policy, even when the
+		// services never inherit public URL policy, even when the
 		// project also publishes HTTP services.
 		result.Tunnel = nil
 		result.Feedback, result.OAuth, result.Webhooks = nil, false, nil

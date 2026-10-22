@@ -12,7 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestPublisherCurrentShowsFileScopeWithoutItsSigningKey(t *testing.T) {
@@ -34,7 +34,7 @@ func TestPublisherCurrentShowsFileScopeWithoutItsSigningKey(t *testing.T) {
 	if err := credentialfile.Write(path, file); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TNL_PUBLISHER_FILE", path)
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", path)
 	var output bytes.Buffer
 	if err := runPublisherCurrent(t.Context(), publisherCurrentCommand{Output: statusOutputJSON}, &output); err != nil {
 		t.Fatal(err)
@@ -43,10 +43,10 @@ func TestPublisherCurrentShowsFileScopeWithoutItsSigningKey(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Source != "publisher file" || result.Scope != namespace || result.PublisherID != id || result.GrantID != grant || result.Checked || strings.Contains(output.String(), file.PrivateKey) || strings.Contains(output.String(), "private_key") {
+	if result.Source != "publisher file" || result.Scope != namespace || result.PublisherIdentityID != id || result.GrantID != grant || result.Checked || strings.Contains(output.String(), file.PrivateKey) || strings.Contains(output.String(), "private_key") {
 		t.Fatalf("unsafe publisher selection: %s", output.String())
 	}
-	t.Setenv("TNL_PUBLISHER_FILE", "")
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
 	if err := runPublisherCurrent(t.Context(), publisherCurrentCommand{}, &output); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("empty publisher file selected a fallback identity: %v", err)
 	}

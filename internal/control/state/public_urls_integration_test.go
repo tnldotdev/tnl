@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -18,15 +18,15 @@ import (
 func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "public_url_creation")
 	request := oidcRouteRequest(t, database, now)
-	route, err := database.CreatePublicURL(t.Context(), request, now)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.TeamID != request.TeamID || route.MembershipID != request.MembershipID || route.CanonicalHostname != request.CanonicalHostname || route.PolicyRevision != 1 || route.NextPublishRunNumber != 1 || route.LifecycleState != "enabled" {
-		t.Fatalf("created route = %#v", route)
+	if publicURL.TeamID != request.TeamID || publicURL.MembershipID != request.MembershipID || publicURL.CanonicalHostname != request.CanonicalHostname || publicURL.PolicyRevision != 1 || publicURL.NextPublishRunNumber != 1 || publicURL.LifecycleState != "enabled" {
+		t.Fatalf("created route = %#v", publicURL)
 	}
 	repeated, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second))
-	if err != nil || !reflect.DeepEqual(repeated, route) {
+	if err != nil || !reflect.DeepEqual(repeated, publicURL) {
 		t.Fatalf("route replay = %#v, %v", repeated, err)
 	}
 	changed := request
@@ -52,17 +52,17 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := database.ListPublicURLs(t.Context(), request.ActingIdentityID, request.TeamID, "")
-	if err != nil || len(page.PublicURLs) != 1 || page.NextCursor != "" || page.PublicURLs[0].ID != route.ID {
+	if err != nil || len(page.PublicURLs) != 1 || page.NextCursor != "" || page.PublicURLs[0].ID != publicURL.ID {
 		t.Fatalf("route page = %#v, %v", page, err)
 	}
-	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID)
-	if err != nil || !reflect.DeepEqual(loaded, route) {
+	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID)
+	if err != nil || !reflect.DeepEqual(loaded, publicURL) {
 		t.Fatalf("loaded route = %#v, %v", loaded, err)
 	}
-	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, route.ID, now); err != nil {
+	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, publicURL.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID); !errors.Is(err, ErrPublicURLNotFound) {
+	if _, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID); !errors.Is(err, ErrPublicURLNotFound) {
 		t.Fatalf("deleted route read: %v", err)
 	}
 	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLIdempotency) {
@@ -109,13 +109,13 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 		Target: "http://127.0.0.1:3000", DNSState: PublicURLDNSUnmanaged,
 	}
 	request.CanonicalHostname = "app." + members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
-	route, err := database.CreatePublicURL(t.Context(), request, now)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatalf("organization public URL: %v", err)
 	}
 	var namespace string
 	wantNamespace := members[0].MemberSlug + "." + team.DisplayName + "." + domains[0].CanonicalDomain
-	if err := database.pool.QueryRow(t.Context(), `SELECT namespace FROM control.public_urls WHERE id = $1`, route.ID).Scan(&namespace); err != nil || namespace != wantNamespace {
+	if err := database.pool.QueryRow(t.Context(), `SELECT namespace FROM control.public_urls WHERE id = $1`, publicURL.ID).Scan(&namespace); err != nil || namespace != wantNamespace {
 		t.Fatalf("organization URL namespace = %q, want %q: %v", namespace, wantNamespace, err)
 	}
 	request.IdempotencyKey, request.RequestDigest = "managed-label", sha256.Sum256([]byte("managed-label"))
@@ -133,27 +133,27 @@ func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 		request.AllowedIPPrefixes[index] = fmt.Sprintf("198.18.%d.%d/32", index/256, index%256)
 	}
 	slices.Sort(request.AllowedIPPrefixes)
-	route, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || len(route.AllowedIPPrefixes) != 512 {
-		t.Fatalf("created large public URL IP policy: %d prefixes, %v", len(route.AllowedIPPrefixes), err)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil || len(publicURL.AllowedIPPrefixes) != 512 {
+		t.Fatalf("created large public URL IP policy: %d prefixes, %v", len(publicURL.AllowedIPPrefixes), err)
 	}
-	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID)
-	if err != nil || !slices.Equal(loaded.AllowedIPPrefixes, route.AllowedIPPrefixes) {
+	loaded, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID)
+	if err != nil || !slices.Equal(loaded.AllowedIPPrefixes, publicURL.AllowedIPPrefixes) {
 		t.Fatalf("loaded policy: %d prefixes, %v", len(loaded.AllowedIPPrefixes), err)
 	}
 	var ciphertext, hashes, sealedDigest []byte
 	if err := database.pool.QueryRow(t.Context(), `SELECT allowed_ip_policy_ciphertext,
 		allowed_ip_hashes, request_digest_ciphertext
-		FROM control.public_urls WHERE id = $1`, route.ID).Scan(
+		FROM control.public_urls WHERE id = $1`, publicURL.ID).Scan(
 		&ciphertext, &hashes, &sealedDigest,
 	); err != nil || bytes.Contains(ciphertext, []byte("198.18.")) ||
 		bytes.Contains(hashes, []byte("198.18.")) || len(sealedDigest) <= 32 {
 		t.Fatalf("saved public URL retained raw policy or digest: %v", err)
 	}
 	update := AuthorizedPublicURLUpdateRequest{
-		PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
-		Target: route.Target, AllowedIPPrefixes: request.AllowedIPPrefixes[1:],
-		PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID,
+		Target: publicURL.Target, AllowedIPPrefixes: request.AllowedIPPrefixes[1:],
+		PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 	}
 	updated, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(time.Second))
 	if err != nil || len(updated.AllowedIPPrefixes) != 511 {
@@ -171,8 +171,8 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
 			type result struct {
-				route PublicURL
-				err   error
+				publicURL PublicURL
+				err       error
 			}
 			const callers = 4
 			results := make(chan result, callers)
@@ -183,8 +183,8 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 						candidate.IdempotencyKey = fmt.Sprintf("contender-%d", index)
 						candidate.RequestDigest = sha256.Sum256([]byte(candidate.IdempotencyKey))
 					}
-					route, err := database.CreatePublicURL(ctx, candidate, now)
-					results <- result{route, err}
+					publicURL, err := database.CreatePublicURL(ctx, candidate, now)
+					results <- result{publicURL, err}
 				})
 			}
 			var winner PublicURL
@@ -194,10 +194,10 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 				switch {
 				case result.err == nil:
 					successes++
-					if winner.ID != "" && !reflect.DeepEqual(result.route, winner) {
-						t.Fatalf("concurrent retry changed public_url: %#v", result.route)
+					if winner.ID != "" && !reflect.DeepEqual(result.publicURL, winner) {
+						t.Fatalf("concurrent retry changed public_url: %#v", result.publicURL)
 					}
-					winner = result.route
+					winner = result.publicURL
 				case errors.Is(result.err, ErrPublicURLConflict):
 					conflicts++
 				default:
@@ -226,14 +226,14 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "public_url_mutation")
 	request := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, request, now)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET policy_revision = 2, updated_at = $2 WHERE id = $1`, route.TeamID, now); err != nil {
+	publicURL := createTestPublicURL(t, database, request, now)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET policy_revision = 2, updated_at = $2 WHERE id = $1`, publicURL.TeamID, now); err != nil {
 		t.Fatal(err)
 	}
-	update := AuthorizedPublicURLUpdateRequest{PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: request.ActingIdentityID,
-		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 2, ExpectedMutationRevision: route.MutationRevision}
+	update := AuthorizedPublicURLUpdateRequest{PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID,
+		Target: "http://127.0.0.1:4000", AllowedIPPrefixes: []string{"192.0.2.0/24"}, PolicyRevision: 2, ExpectedMutationRevision: publicURL.MutationRevision}
 	updated, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now)
-	if err != nil || updated.Target != update.Target || updated.PolicyRevision != 2 || !reflect.DeepEqual(updated.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) || updated.TeamID != route.TeamID || updated.DomainID != route.DomainID || updated.MembershipID != route.MembershipID || updated.CanonicalHostname != route.CanonicalHostname || updated.PublicURLScope != route.PublicURLScope {
+	if err != nil || updated.Target != update.Target || updated.PolicyRevision != 2 || !reflect.DeepEqual(updated.AllowedIPPrefixes, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) || updated.TeamID != publicURL.TeamID || updated.DomainID != publicURL.DomainID || updated.MembershipID != publicURL.MembershipID || updated.CanonicalHostname != publicURL.CanonicalHostname || updated.PublicURLScope != publicURL.PublicURLScope {
 		t.Fatalf("updated route = %#v, %v", updated, err)
 	}
 	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now); !errors.Is(err, ErrPublicURLMutationStale) {
@@ -244,9 +244,9 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 		t.Fatalf("noncanonical policy: %v", err)
 	}
 	insertTestPublishRun(t, database, testPublishRun{
-		ID: "session_stale_update", PublicURLID: route.ID, TeamID: route.TeamID,
-		MembershipID: route.MembershipID, ActingIdentityID: request.ActingIdentityID, PolicyRevision: 2,
-		CertificateCacheKey: "stale-update", CertificateScope: "route", CertificateIdentifiers: []string{route.CanonicalHostname},
+		ID: "session_stale_update", PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		MembershipID: publicURL.MembershipID, ActingIdentityID: request.ActingIdentityID, PolicyRevision: 2,
+		CertificateCacheKey: "stale-update", CertificateScope: "route", CertificateIdentifiers: []string{publicURL.CanonicalHostname},
 		ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Second),
 	})
 	update.Target, update.AllowedIPPrefixes = "http://127.0.0.1:5000", []string{}
@@ -264,17 +264,17 @@ func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "ephemeral_expiry")
 	request := oidcRouteRequest(t, database, now)
 	request.Ephemeral = true
-	route, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || !route.Ephemeral || route.ExpiresAt == nil || !route.ExpiresAt.Equal(now.Add(ephemeralPublicURLGracePeriod)) {
-		t.Fatalf("ephemeral route = %#v, %v", route, err)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil || !publicURL.Ephemeral || publicURL.ExpiresAt == nil || !publicURL.ExpiresAt.Equal(now.Add(ephemeralPublicURLGracePeriod)) {
+		t.Fatalf("ephemeral route = %#v, %v", publicURL, err)
 	}
-	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), route.ExpiresAt.Add(-time.Microsecond)); err != nil || count != 0 {
+	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), publicURL.ExpiresAt.Add(-time.Microsecond)); err != nil || count != 0 {
 		t.Fatalf("early expiry = %d, %v", count, err)
 	}
-	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), *route.ExpiresAt); err != nil || count != 1 {
+	if count, err := database.DeleteExpiredEphemeralPublicURLs(t.Context(), *publicURL.ExpiresAt); err != nil || count != 1 {
 		t.Fatalf("expiry = %d, %v", count, err)
 	}
-	if _, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, route.ID); !errors.Is(err, ErrPublicURLNotFound) {
+	if _, err := database.GetPublicURL(t.Context(), request.ActingIdentityID, publicURL.ID); !errors.Is(err, ErrPublicURLNotFound) {
 		t.Fatalf("expired route read: %v", err)
 	}
 }
@@ -283,12 +283,12 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "dns_route_work")
 	request := oidcRouteRequest(t, database, now)
 	request.DNSState = PublicURLDNSPending
-	route, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || route.DNSState != PublicURLDNSPending || route.DNSAuthorityReference != "" {
-		t.Fatalf("DNS route = %#v, %v", route, err)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
+	if err != nil || publicURL.DNSState != PublicURLDNSPending || publicURL.DNSAuthorityReference != "" {
+		t.Fatalf("DNS route = %#v, %v", publicURL, err)
 	}
 	work, found, err := database.ClaimDNSPublicURLWork(t.Context(), "dns-worker", now, time.Minute)
-	if err != nil || !found || work.PublicURLID != route.ID || work.Attempts != 1 || work.WorkEpoch != 1 {
+	if err != nil || !found || work.PublicURLID != publicURL.ID || work.Attempts != 1 || work.WorkEpoch != 1 {
 		t.Fatalf("claim DNS work = %#v, %t, %v", work, found, err)
 	}
 	if _, found, err := database.ClaimDNSPublicURLWork(t.Context(), "other", now, time.Minute); err != nil || found {
@@ -303,11 +303,11 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	if _, err := database.SaveDNSPublicURLWork(t.Context(), stale, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
 		t.Fatalf("stale DNS save: %v", err)
 	}
-	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, route.ID, now); err != nil {
+	if err := database.DeletePublicURL(t.Context(), request.ActingIdentityID, publicURL.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	removal, found, err := database.ClaimDNSPublicURLWork(t.Context(), "dns-worker", now, time.Minute)
-	if err != nil || !found || removal.PublicURLID != route.ID || removal.State != PublicURLDNSRemoving || removal.Attempts != 2 {
+	if err != nil || !found || removal.PublicURLID != publicURL.ID || removal.State != PublicURLDNSRemoving || removal.Attempts != 2 {
 		t.Fatalf("DNS removal = %#v, %t, %v", removal, found, err)
 	}
 	removal.State, removal.AvailableAt = PublicURLDNSRemoved, time.Time{}
@@ -348,9 +348,9 @@ func oidcRouteRequest(t *testing.T, database *Database, now time.Time) CreatePub
 
 func createTestPublicURL(t *testing.T, database *Database, request CreatePublicURLRequest, now time.Time) PublicURL {
 	t.Helper()
-	route, err := database.CreatePublicURL(t.Context(), request, now)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return route
+	return publicURL
 }

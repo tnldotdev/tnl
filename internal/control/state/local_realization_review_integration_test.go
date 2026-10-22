@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/sha256"
@@ -91,7 +91,7 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	if err != nil || len(projection.Services) != 2 || projection.Services[0].PublicURLID == projection.Services[1].PublicURLID {
 		t.Fatal("ordinary member lost authorized realized worktree URLs", projection, err)
 	}
-	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.GetProjectConfiguration(t.Context(), r.TeamID, local.ProjectKey, member.IdentityID); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("local visitor read full configuration", err)
 	}
 	// even a same-team manager cannot bind a different member's saved URL.

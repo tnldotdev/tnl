@@ -1,6 +1,6 @@
 //go:build !darwin
 
-package clientstate
+package state
 
 import (
 	"context"

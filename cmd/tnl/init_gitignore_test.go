@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 )
 
@@ -83,7 +83,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 			// Git configuration does not inherit the user's keys.
 			initIgnoreGit(t, root, "add", ".")
 			initIgnoreGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture")
-			if err := projectmeta.Write(t.Context(), root, projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}); err != nil {
+			if err := meta.Write(t.Context(), root, meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}); err != nil {
 				t.Fatal(err)
 			}
 			for _, path := range []string{".tnl/local/project.json", ".tnl/local/project.lock", ".tnl/local/.project-interrupted"} {

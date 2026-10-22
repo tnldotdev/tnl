@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -27,7 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -90,11 +90,11 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := owner.Identity.Memberships[0]
-	service, err := d.CreatePrivateService(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", now)
+	service, err := d.CreateServiceAt(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{Scope: controlstate.PublisherScope{TeamID: member.TeamID, Kind: "private_service", PrivateServiceID: service.ID},
+	enrollment, err := d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{Scope: controlstate.PublisherScope{TeamID: member.TeamID, Kind: "service", ServiceID: service.ID},
 		Name: "claims", Kind: "installed", EditorID: owner.Identity.Identity.ID, EditorMembershipID: member.ID, PolicyRevision: uint64(member.PolicyRevision), Now: now})
 	if err != nil {
 		t.Fatal(err)
@@ -120,16 +120,16 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		}
 		leases[id] = lease
 	}
-	prep, err := d.PreparePrivateServiceRun(ctx, service.ID, publisher, "claims", now)
+	prep, err := d.PrepareServiceRun(ctx, service.ID, publisher, "claims", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.StartManagedServiceRun(ctx, service.ID, prep.RunID, prep.RunNumber, publisher, now)
+	run, err := d.StartServiceRun(ctx, service.ID, prep.RunID, prep.RunNumber, publisher, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	managedcert.Install(t, d, prep, run, now)
-	if _, err = d.HeartbeatPrivateServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 8}); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 8}); err != nil {
 		t.Fatal(err)
 	}
 	secret := strings.Repeat("s", 32)
@@ -137,7 +137,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relayapi.NewHandler(relayapi.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	handler, err := controlrelay.NewHandler(controlrelay.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,29 +218,29 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				{lease.RelayLeaseIdentity, wrongCredential.String(), slot.Revision},
 				{lease.RelayLeaseIdentity, slot.Credential, slot.Revision + 1},
 			} {
-				if _, err := d.ClaimPrivatePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, bad.lease, now); err == nil {
+				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, bad.lease, now); err == nil {
 					t.Fatal("different relay/process/credential/revision stole existing connection")
 				}
 			}
 			var state, owner, ownerRun string
 			var revision int64
-			if err := inspect.QueryRow(ctx, `SELECT state,relay_id,relay_run_id,relay_lease_revision FROM control.private_service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state, &owner, &ownerRun, &revision); err != nil ||
+			if err := inspect.QueryRow(ctx, `SELECT state,relay_id,relay_run_id,relay_lease_revision FROM control.service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state, &owner, &ownerRun, &revision); err != nil ||
 				state != expectedState || owner != lease.RelayID || ownerRun != lease.RelayRunID || revision != int64(lease.RelayLeaseRevision) {
 				t.Fatalf("exact owner changed: %s %s %s %d %v", state, owner, ownerRun, revision, err)
 			}
 		}
 		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
 			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
-		registry := NewPrivateRegistry()
-		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Private: &PrivatePublisherAcceptor{Select: func(string) (PrivatePublisherTarget, bool) {
-			return PrivatePublisherTarget{Control: controller, Registry: registry}, true
+		registry := NewServiceRegistry()
+		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Private: &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+			return ServicePublisherTarget{Control: controller, Registry: registry}, true
 		}}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ref := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: service.ID, PrivateRunID: run.RunID, RunNumber: uint64(run.RunNumber), PublisherConnectionID: slot.PublisherConnectionID,
+		ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: uint64(run.RunNumber), PublisherConnectionID: slot.PublisherConnectionID,
 			ConnectionSlot: uint8(slot.ConnectionSlot), ConnectionAssignmentRevision: uint64(slot.Revision), RelayServiceID: slot.RelayServiceID}
-		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: slot.Credential, PrivateConnection: &ref}
+		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: slot.Credential, ServiceConnection: &ref}
 		for attempt := range 2 {
 			if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
 				t.Fatal("committed claim response was not lost")
@@ -248,11 +248,11 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				_ = relayAwait(t, done)
 			}
 			var state, owner string
-			if err := inspect.QueryRow(ctx, `SELECT state,relay_id FROM control.private_service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state, &owner); err != nil || state != "connected" || owner != lease.RelayID {
+			if err := inspect.QueryRow(ctx, `SELECT state,relay_id FROM control.service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state, &owner); err != nil || state != "connected" || owner != lease.RelayID {
 				t.Fatalf("loss %d did not retain exact committed claim: %s %s %v", attempt, state, owner, err)
 			}
 			assertOwner("connected")
-			if _, err := d.HeartbeatPrivateServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil {
+			if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -263,7 +263,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		deadline := time.Now().Add(3 * time.Second)
 		for {
 			var state string
-			if err := inspect.QueryRow(ctx, `SELECT state FROM control.private_service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state); err != nil {
+			if err := inspect.QueryRow(ctx, `SELECT state FROM control.service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&state); err != nil {
 				t.Fatal(err)
 			}
 			if state == "ready" {
@@ -290,11 +290,11 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		}
 	}
 	var state string
-	if err := inspect.QueryRow(ctx, `SELECT state FROM control.private_service_runs WHERE id=$1`, run.RunID).Scan(&state); err != nil || state != "ready" {
+	if err := inspect.QueryRow(ctx, `SELECT state FROM control.service_runs WHERE id=$1`, run.RunID).Scan(&state); err != nil || state != "ready" {
 		t.Fatalf("initial two-slot startup did not reach ready: %s %v", state, err)
 	}
 	var ready int
-	if err := inspect.QueryRow(ctx, `SELECT count(*) FROM control.private_service_connection_slots WHERE private_run_id=$1 AND state='ready' AND session_open`, run.RunID).Scan(&ready); err != nil || ready != 2 {
+	if err := inspect.QueryRow(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_run_id=$1 AND state='ready' AND session_open`, run.RunID).Scan(&ready); err != nil || ready != 2 {
 		t.Fatalf("startup did not retain two independent ready owners: %d %v", ready, err)
 	}
 	mu.Lock()

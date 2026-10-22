@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"slices"
 
-	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
+	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
@@ -72,7 +72,7 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 				return fmt.Errorf("webhooks.%s: service %q is not configured", name, endpoint.Service)
 			}
 			service := services[endpoint.Service]
-			if Protocol(service) != "http" || !IsPublicService(service) || PublisherName(service) != "local" {
+			if Protocol(service) != "http" || !IsPublicService(service) || PublisherGroupName(service) != "local" {
 				return fmt.Errorf("webhooks.%s: service must be a local public HTTP service", name)
 			}
 		}
@@ -83,7 +83,7 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			return fmt.Errorf("webhooks.%s: path is also used by %s", name, previous)
 		}
 		paths[endpoint.Path] = name
-		if !webhookips.Valid(endpoint.Provider) {
+		if !webhooksource.Valid(endpoint.Provider) {
 			return fmt.Errorf("webhooks.%s: provider must be a supported provider", name)
 		}
 		if endpoint.Delivery != "" && endpoint.Delivery != "fanout" && endpoint.Delivery != "selected" {

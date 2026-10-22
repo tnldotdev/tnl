@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -77,7 +77,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 			identifiers := []string{"*." + membership.ManagedLabel + ".routes.example.test", membership.ManagedLabel + ".routes.example.test"}
-			route, err := database.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{
+			publicURL, err := database.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{
 				TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID, ActingIdentityID: session.Identity.Identity.ID,
 				IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api." + identifiers[1],
 				Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSPending,
@@ -87,10 +87,10 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 			setup, err := database.CreatePublishRun(t.Context(), controlstate.PublishRunRequest{
-				PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: session.Identity.Identity.ID,
+				PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: session.Identity.Identity.ID,
 				RetrySecret: principal.RetrySecret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
 				CertificateCacheKey: identifiers[1], CertificateScope: identifiers[1], CertificateIdentifiers: identifiers, CertificateChallenge: "dns-01",
-				ExpectedMutationRevision: route.MutationRevision,
+				ExpectedMutationRevision: publicURL.MutationRevision,
 			}, now, time.Hour, time.Hour)
 			if err != nil {
 				t.Fatal(err)
@@ -104,7 +104,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 			authentication := controlstate.PublishRunAuthentication{
-				PublicURLID: route.ID, PublishRunID: setup.PublishRunID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
+				PublicURLID: publicURL.ID, PublishRunID: setup.PublishRunID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 			}
 			issuance, err := database.CreateCertificateIssuance(t.Context(), controlstate.CreateCertificateIssuanceRequest{
 				Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance",
@@ -114,15 +114,15 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			api := &acmeStub{order: acmeclient.Order{
+			api := &acmeStub{order: acme.Order{
 				URL: orderURL, Status: "pending", Expires: &expires, Finalize: finalizeURL,
-				Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: identifiers[0]}, {Type: "dns", Value: identifiers[1]}},
+				Identifiers:    []acme.Identifier{{Type: "dns", Value: identifiers[0]}, {Type: "dns", Value: identifiers[1]}},
 				Authorizations: []string{baseAuthorization, wildAuthorization},
 			}}
 			baseFetches, wildcardFetches := 0, 0
-			api.getOrder = func(requestURL string) (acmeclient.Order, error) {
+			api.getOrder = func(requestURL string) (acme.Order, error) {
 				if requestURL != orderURL {
-					return acmeclient.Order{}, fmt.Errorf("unexpected ACME order URL %q", requestURL)
+					return acme.Order{}, fmt.Errorf("unexpected ACME order URL %q", requestURL)
 				}
 				order := api.order
 				if api.acceptCalls != 0 {
@@ -130,29 +130,29 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				}
 				return order, nil
 			}
-			api.getAuthorization = func(requestURL string) (acmeclient.Authorization, error) {
+			api.getAuthorization = func(requestURL string) (acme.Authorization, error) {
 				switch requestURL {
 				case baseAuthorization:
 					baseFetches++
-					return acmeclient.Authorization{
+					return acme.Authorization{
 						URL: requestURL, Status: "valid", Expires: &expires,
-						Identifier: acmeclient.Identifier{Type: "dns", Value: identifiers[1]},
-						Challenges: []acmeclient.Challenge{{Type: "http-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"}},
+						Identifier: acme.Identifier{Type: "dns", Value: identifiers[1]},
+						Challenges: []acme.Challenge{{Type: "http-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"}},
 					}, nil
 				case wildAuthorization:
 					wildcardFetches++
 					if transient && wildcardFetches == 1 {
-						return acmeclient.Authorization{}, &acmeclient.Error{
+						return acme.Authorization{}, &acme.Error{
 							Status: http.StatusServiceUnavailable, Type: "urn:ietf:params:acme:error:serverInternal", Detail: transientFetchError,
 						}
 					}
-					return acmeclient.Authorization{
+					return acme.Authorization{
 						URL: requestURL, Status: "pending", Wildcard: true, Expires: &expires,
-						Identifier: acmeclient.Identifier{Type: "dns", Value: identifiers[1]},
-						Challenges: []acmeclient.Challenge{{Type: "dns-01", URL: wildChallenge, Token: "wildcard-token"}},
+						Identifier: acme.Identifier{Type: "dns", Value: identifiers[1]},
+						Challenges: []acme.Challenge{{Type: "dns-01", URL: wildChallenge, Token: "wildcard-token"}},
 					}, nil
 				default:
-					return acmeclient.Authorization{}, fmt.Errorf("unexpected ACME authorization URL %q", requestURL)
+					return acme.Authorization{}, fmt.Errorf("unexpected ACME authorization URL %q", requestURL)
 				}
 			}
 
@@ -310,19 +310,19 @@ type authorizationDNSRecorder struct {
 	presentCalls, verifyCalls, cleanupCalls int
 }
 
-func (d *authorizationDNSRecorder) Present(_ context.Context, _, id string) error {
+func (d *authorizationDNSRecorder) PresentSubject(_ context.Context, _ controlstate.CertificateSubject, id string) error {
 	d.presented = id
 	d.presentCalls++
 	return nil
 }
 
-func (d *authorizationDNSRecorder) Verify(_ context.Context, _, id string) (bool, error) {
+func (d *authorizationDNSRecorder) VerifySubject(_ context.Context, _ controlstate.CertificateSubject, id string) (bool, error) {
 	d.verified = id
 	d.verifyCalls++
 	return true, nil
 }
 
-func (d *authorizationDNSRecorder) Cleanup(_ context.Context, _, id string) error {
+func (d *authorizationDNSRecorder) CleanupSubject(_ context.Context, _ controlstate.CertificateSubject, id string) error {
 	d.cleaned = id
 	d.cleanupCalls++
 	return nil

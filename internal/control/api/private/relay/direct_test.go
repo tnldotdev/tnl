@@ -1,4 +1,4 @@
-package relayapi
+package relay
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 func TestClaimRejectsMalformedCredentialWithoutStoreCall(t *testing.T) {

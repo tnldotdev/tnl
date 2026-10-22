@@ -1,4 +1,4 @@
-package feedbacktoolbar
+package toolbar
 
 import (
 	"bufio"

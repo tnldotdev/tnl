@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	devoidc "github.com/tnldotdev/tnl/internal/development/oidc"
+	"github.com/tnldotdev/tnl/internal/development/oidc"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
@@ -36,7 +36,7 @@ func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
 	control, provider := httptest.NewTLSServer(controlMux), httptest.NewTLSServer(providerMux)
 	t.Cleanup(control.Close)
 	t.Cleanup(provider.Close)
-	p, err := devoidc.New(devoidc.Config{Issuer: provider.URL, ClientID: "server", ClientSecret: "secret", Subject: "named-person", RedirectURLs: []string{control.URL + deviceCallbackPath}})
+	p, err := oidc.New(oidc.Config{Issuer: provider.URL, ClientID: "server", ClientSecret: "secret", Subject: "named-person", RedirectURLs: []string{control.URL + deviceCallbackPath}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
 	if _, err := Register(controlMux, config, d); err != nil {
 		t.Fatal(err)
 	}
-	api, err := authorityclient.New(control.URL, control.Client(), "")
+	api, err := clientauthority.New(control.URL, control.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
 	if err != nil || string(pending.Status) != "pending" || pending.Session != nil {
 		t.Fatalf("pending: %#v %v", pending, err)
 	}
-	if _, err := api.PollDeviceLogin(ctx, strings.Repeat("x", 43)); !errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if _, err := api.PollDeviceLogin(ctx, strings.Repeat("x", 43)); !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		t.Fatalf("public code guessed private result: %v", err)
 	}
 	beginBrowser := func(approval string) (string, *http.Cookie) {

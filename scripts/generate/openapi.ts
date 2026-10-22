@@ -1,7 +1,7 @@
 import { $RefParser } from "@apidevtools/json-schema-ref-parser";
 import type { FileInfo } from "@apidevtools/json-schema-ref-parser";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +19,16 @@ export const contracts = {
   publisherv1: "api/publisher/browser/v1/openapi.yaml",
   localpublisherv1: "api/publisher/local/v1/openapi.yaml",
 } as const;
+
+export const packagePaths: Record<keyof typeof contracts, string> = {
+  controlv1: "control/public/v1",
+  authorityv1: "control/authority/v1",
+  ingressv1: "control/private/ingress/v1",
+  relayv1: "control/private/relay/v1",
+  publicurlusagev1: "integrations/public-url-usage/v1",
+  publisherv1: "publisher/browser/v1",
+  localpublisherv1: "publisher/local/v1",
+};
 
 export function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -315,12 +325,17 @@ async function main(): Promise<void> {
     for (const name of Object.keys(contracts).filter(
       (name) => requested.length === 0 || requested.includes(name),
     )) {
-      const cwd = join(root, "pkg/api", name);
-      execFileSync(
-        "oapi-codegen",
-        ["--config", "oapi-codegen.yaml", join(directory, `${name}.yaml`)],
-        { cwd, stdio: "inherit" },
+      const cwd = join(root, "pkg/api", packagePaths[name as keyof typeof contracts]);
+      const configuration = record(
+        parseDocument(await readFile(join(cwd, "oapi-codegen.yaml"), "utf8")).toJS(),
       );
+      configuration.output = join(cwd, "openapi.gen.go");
+      const configPath = join(directory, `${name}.config.yaml`);
+      await writeFile(configPath, stringify(configuration));
+      execFileSync("oapi-codegen", ["--config", configPath, join(directory, `${name}.yaml`)], {
+        cwd: root,
+        stdio: "inherit",
+      });
       if (["controlv1", "authorityv1", "publisherv1"].includes(name)) {
         execFileSync(
           process.execPath,

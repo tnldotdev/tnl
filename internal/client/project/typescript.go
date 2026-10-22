@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"bytes"
@@ -270,6 +270,8 @@ var typeScriptKeyMappings = map[string]string{
 	"total_download_bytes": "totalDownloadBytes",
 	"strip_prefix":         "stripPrefix",
 	"public_url":           "publicURL",
+	"publisher_groups":     "publisherGroups",
+	"publisher_group":      "publisherGroup",
 	"publisher_pool":       "publisherPool",
 	"max_duration":         "maxDuration",
 	"team_id":              "teamId",

@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 // Config contains settings for the built-in authority API.
@@ -21,7 +21,7 @@ type Config struct {
 	OIDCClientSecret     string
 	OIDCScopes           []string
 	HTTPClient           *http.Client
-	OIDCVerifier         oidcauth.Verifier
+	OIDCVerifier         oidc.Verifier
 	WebServiceSecret     string
 	ManagedDomain        string
 	AccessTokenLifetime  time.Duration
@@ -58,10 +58,10 @@ type Store interface {
 }
 
 type handler struct {
-	workloads *oidcauth.WorkloadVerifier
+	workloads *oidc.WorkloadVerifier
 	config    Config
 	store     Store
-	oidc      *oidcauth.Server
+	oidc      *oidc.Server
 	devices   DeviceStore
 	webSecret serviceapi.BearerSecrets
 }
@@ -92,7 +92,7 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	h := &handler{config: cfg, store: store}
 	if cfg.ControlURL != "" {
 		var err error
-		h.workloads, err = oidcauth.NewWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)
+		h.workloads, err = oidc.NewWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)
 		if err != nil {
 			return nil, err
 		}
@@ -110,12 +110,12 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	if cfg.OIDCClientID != "" {
 		var err error
 		if h.config.OIDCVerifier == nil {
-			h.config.OIDCVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: cfg.HTTPClient})
+			h.config.OIDCVerifier, err = oidc.NewVerifier(oidc.VerifierConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: cfg.HTTPClient})
 			if err != nil {
 				return nil, err
 			}
 		}
-		h.oidc, err = oidcauth.NewServer(oidcauth.ServerConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scopes: cfg.OIDCScopes, RedirectURL: cfg.ControlURL + deviceCallbackPath, HTTPClient: cfg.HTTPClient})
+		h.oidc, err = oidc.NewServer(oidc.ServerConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scopes: cfg.OIDCScopes, RedirectURL: cfg.ControlURL + deviceCallbackPath, HTTPClient: cfg.HTTPClient})
 		if err != nil {
 			return nil, err
 		}

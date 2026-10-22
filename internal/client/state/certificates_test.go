@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestCSRRequiresConcreteMatchingECDSAKey(t *testing.T) {
@@ -62,7 +62,7 @@ func TestCertificateMaterialLifecycleSurvivesRestart(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "state")
 			store := testStore(t, root, "https://server.example")
-			cache, err := store.Certificates("team_1", test.plan)
+			cache, err := store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", test.plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -97,7 +97,7 @@ func TestCertificateMaterialLifecycleSurvivesRestart(t *testing.T) {
 			}
 			store = testStore(t, root, "https://server.example")
 			slices.Reverse(test.plan.Identifiers)
-			cache, err = store.Certificates("team_1", test.plan)
+			cache, err = store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", test.plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestCertificateMaterialLifecycleSurvivesRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			store = testStore(t, root, "https://server.example")
-			cache, err = store.Certificates("team_1", test.plan)
+			cache, err = store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", test.plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +150,7 @@ func TestCertificateStageRejectsInvalidCSRBeforeReplacingCurrent(t *testing.T) {
 	for _, name := range []string{"invalid_DER", "wrong_key", "extra_SAN"} {
 		t.Run(name, func(t *testing.T) {
 			store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
-			route, err := store.Certificates("team_1", exactCertificateTestPlan())
+			route, err := store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", exactCertificateTestPlan())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +195,7 @@ func TestCertificateStageRejectsInvalidCSRBeforeReplacingCurrent(t *testing.T) {
 func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 	store := testStore(t, filepath.Join(t.TempDir(), "state"), "https://server.example")
 	plan := exactCertificateTestPlan()
-	cache, err := store.Certificates("team_1", plan)
+	cache, err := store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			other, err := otherStore.Certificates(test.team, test.plan)
+			other, err := otherStore.CertificatesForPublisher(test.team, "pub_0123456789abcdefghijkl", test.plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +251,7 @@ func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	isolated, err := store.Certificates("team_1", otherPlan)
+	isolated, err := store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", otherPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 	if err != nil || bytes.Equal(pending.CSRDER, isolatedPending.CSRDER) {
 		t.Fatalf("certificate key crossed plan boundary: %v", err)
 	}
-	reopened, err := store.Certificates("team_1", plan)
+	reopened, err := store.CertificatesForPublisher("team_1", "pub_0123456789abcdefghijkl", plan)
 	if err != nil {
 		t.Fatal(err)
 	}

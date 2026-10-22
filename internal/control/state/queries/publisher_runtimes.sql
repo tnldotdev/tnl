@@ -28,11 +28,11 @@ AND control.active_publisher(p.id,sqlc.arg(now)) AND k.retired_at IS NULL AND t.
 AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND g.id=r.scope_id AND g.deleted_at IS NULL)
  OR EXISTS(SELECT 1 FROM control.publisher_grants g
  LEFT JOIN control.public_urls u ON u.id=g.public_url_id
- LEFT JOIN control.private_services s ON s.id=g.private_service_id
+ LEFT JOIN control.services s ON s.id=g.service_id
  LEFT JOIN control.domains d ON d.id=COALESCE(g.domain_id,u.domain_id,s.domain_id)
  WHERE g.id=r.scope_id AND g.publisher_identity_id=p.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
- AND ((g.kind='private_service' AND s.team_id=p.team_id AND s.enabled AND s.deleted_at IS NULL
+ AND ((g.kind='service' AND s.team_id=p.team_id AND s.enabled AND s.deleted_at IS NULL
        AND (s.domain_id IS NULL OR d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id)))
    OR (d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id)
-       AND (g.kind='namespace' OR g.kind='saved_url' AND u.team_id=p.team_id AND u.lifecycle_state='enabled' AND NOT u.ephemeral
+       AND (g.kind='namespace' OR g.kind='saved_public_url' AND u.team_id=p.team_id AND u.lifecycle_state='enabled' AND NOT u.ephemeral
             AND u.purpose IN ('app','alias','demo','oauth','webhooks')))))))::boolean;

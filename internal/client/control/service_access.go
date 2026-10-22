@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"context"
@@ -7,39 +7,39 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (c *Client) InvitePrivateServiceVisitor(ctx context.Context, service, key string, body controlv1.CreatePrivateServiceInvitationRequest) (controlv1.PrivateServiceInvitation, error) {
-	return requestWithAccess[controlv1.PrivateServiceInvitation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.InvitePrivateServiceVisitor(ctx, service, &controlv1.InvitePrivateServiceVisitorParams{IdempotencyKey: key}, body, e...)
+func (c *Client) InviteServiceVisitor(ctx context.Context, service, key string, body controlv1.CreateServiceInvitationRequest) (controlv1.ServiceInvitation, error) {
+	return requestWithAccess[controlv1.ServiceInvitation](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.InviteServiceVisitor(ctx, service, &controlv1.InviteServiceVisitorParams{IdempotencyKey: key}, body, e...)
 	})
 }
 
-func (c *Client) AcceptPrivateServiceInvitation(ctx context.Context, secret string) (controlv1.PrivateServiceGrant, error) {
-	return requestWithAccess[controlv1.PrivateServiceGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AcceptPrivateServiceInvitation(ctx, controlv1.AcceptPrivateServiceInvitationJSONRequestBody{Secret: secret}, e...)
+func (c *Client) AcceptServiceInvitation(ctx context.Context, secret string) (controlv1.ServiceGrant, error) {
+	return requestWithAccess[controlv1.ServiceGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AcceptServiceInvitation(ctx, controlv1.AcceptServiceInvitationJSONRequestBody{Secret: secret}, e...)
 	})
 }
 
-func (c *Client) ListPrivateServiceInvitations(ctx context.Context, service string) ([]controlv1.PrivateServiceInvitation, error) {
-	all := make([]controlv1.PrivateServiceInvitation, 0)
+func (c *Client) ListServiceInvitations(ctx context.Context, service string) ([]controlv1.ServiceInvitation, error) {
+	all := make([]controlv1.ServiceInvitation, 0)
 	after := ""
 	for {
-		page, err := requestWithAccess[controlv1.PrivateServiceInvitationPage](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.ListPrivateServiceInvitations(ctx, service, &controlv1.ListPrivateServiceInvitationsParams{Cursor: cursorString(after)}, e...)
+		page, err := requestWithAccess[controlv1.ServiceInvitationPage](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListServiceInvitations(ctx, service, &controlv1.ListServiceInvitationsParams{Cursor: cursorString(after)}, e...)
 		})
 		if err != nil {
 			return nil, err
 		}
 		ids := make([]string, 0, len(page.Invitations))
 		for _, row := range page.Invitations {
-			if row.PrivateServiceId != service || row.Secret != nil {
+			if row.ServiceId != service || row.Secret != nil {
 				return nil, invalidServiceAccessPage()
 			}
 			ids = append(ids, row.Id)
 		}
-		if page.Invitations == nil || !validServiceAccessPage(ids, after, page.NextCursor, opaqueid.PrivateServiceInvitationPrefix) {
+		if page.Invitations == nil || !validServiceAccessPage(ids, after, page.NextCursor, opaqueid.ServiceInvitationPrefix) {
 			return nil, invalidServiceAccessPage()
 		}
 		all = append(all, page.Invitations...)
@@ -50,31 +50,31 @@ func (c *Client) ListPrivateServiceInvitations(ctx context.Context, service stri
 	}
 }
 
-func (c *Client) RevokePrivateServiceInvitation(ctx context.Context, service, id string) error {
+func (c *Client) RevokeServiceInvitation(ctx context.Context, service, id string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePrivateServiceInvitation(ctx, service, id, e...)
+		return c.api.RevokeServiceInvitation(ctx, service, id, e...)
 	})
 	return err
 }
 
-func (c *Client) ListPrivateServiceGrants(ctx context.Context, service string) ([]controlv1.PrivateServiceGrant, error) {
-	all := make([]controlv1.PrivateServiceGrant, 0)
+func (c *Client) ListServiceGrants(ctx context.Context, service string) ([]controlv1.ServiceGrant, error) {
+	all := make([]controlv1.ServiceGrant, 0)
 	after := ""
 	for {
-		page, err := requestWithAccess[controlv1.PrivateServiceGrantPage](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-			return c.api.ListPrivateServiceGrants(ctx, service, &controlv1.ListPrivateServiceGrantsParams{Cursor: cursorString(after)}, e...)
+		page, err := requestWithAccess[controlv1.ServiceGrantPage](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListServiceGrants(ctx, service, &controlv1.ListServiceGrantsParams{Cursor: cursorString(after)}, e...)
 		})
 		if err != nil {
 			return nil, err
 		}
 		ids := make([]string, 0, len(page.Grants))
 		for _, row := range page.Grants {
-			if row.PrivateServiceId != service || !row.Kind.Valid() {
+			if row.ServiceId != service || !row.Kind.Valid() {
 				return nil, invalidServiceAccessPage()
 			}
 			ids = append(ids, row.Id)
 		}
-		if page.Grants == nil || !validServiceAccessPage(ids, after, page.NextCursor, opaqueid.PrivateServiceGrantPrefix) {
+		if page.Grants == nil || !validServiceAccessPage(ids, after, page.NextCursor, opaqueid.ServiceGrantPrefix) {
 			return nil, invalidServiceAccessPage()
 		}
 		all = append(all, page.Grants...)
@@ -109,9 +109,9 @@ func cursorString(after string) *string {
 	return &after
 }
 
-func (c *Client) RevokePrivateServiceGrant(ctx context.Context, service, id string) error {
+func (c *Client) RevokeServiceGrant(ctx context.Context, service, id string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePrivateServiceGrant(ctx, service, id, e...)
+		return c.api.RevokeServiceGrant(ctx, service, id, e...)
 	})
 	return err
 }

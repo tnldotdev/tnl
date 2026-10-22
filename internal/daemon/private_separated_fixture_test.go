@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -28,14 +28,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
-const privateRuntimeClusterSecret = "0123456789abcdef0123456789abcdef"
-const privateRuntimeStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+const serviceRuntimeClusterSecret = "0123456789abcdef0123456789abcdef"
+const serviceRuntimeStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-type privateRuntimeIdentity struct {
+type serviceRuntimeIdentity struct {
 	teamID    string
 	state     *clientstate.Store
-	routes    *controlclient.Client
-	authority *authorityclient.Client
+	routes    *clientcontrol.Client
+	authority *clientauthority.Client
 }
 
 type privateSeparatedFixture struct {
@@ -46,14 +46,14 @@ type privateSeparatedFixture struct {
 	certificateAuthority        *testCertificateAuthority
 	inspect                     *sql.DB
 	roots                       *tls.Config
-	controlConfig               tnldconfig.Config
+	controlConfig               daemonconfig.Config
 	serviceHTTP                 *http.Client
-	identity                    privateRuntimeIdentity
+	identity                    serviceRuntimeIdentity
 	tcpAddresses, quicAddresses map[string]string
 	composed                    *daemon
 	sharedTCP, sharedQUIC       string
 	defaultTiming               bool
-	configurePrivate            func(*ingress.PrivateConnectorConfig)
+	configurePrivate            func(*ingress.ConnectorConfig)
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
@@ -62,21 +62,21 @@ type privateSeparatedFixture struct {
 // the topology has one real control database/API, two ingress runtimes and two
 // relay runtimes. only infrastructure TLS uses the local test CA; private
 // ingress keys and trust are fetched from control's production issuer API.
-func newPrivateRuntimeFixture(t *testing.T, standalone bool, opened chan<- privateObservation) *privateSeparatedFixture {
-	return newPrivateRuntimeFixtureTiming(t, standalone, opened, false)
+func newServiceRuntimeFixture(t *testing.T, standalone bool, opened chan<- privateObservation) *privateSeparatedFixture {
+	return newServiceRuntimeFixtureTiming(t, standalone, opened, false)
 }
 
-func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, configure ...func(*tnldconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
-	return newPrivateRuntimeFixtureContext(t, standalone, opened, defaults, nil, configure...)
+func newServiceRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+	return newServiceRuntimeFixtureContext(t, standalone, opened, defaults, nil, configure...)
 }
 
-func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*tnldconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
-	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "private-runtime")
+	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "service-runtime")
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(t.Context(), databaseURL, privateRuntimeStorageKey, "", naming.ManagedURLModeSimple)
+	database, err := controlstate.Open(t.Context(), databaseURL, serviceRuntimeStorageKey, "", naming.ManagedURLModeSimple)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +87,13 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	t.Cleanup(func() { _ = inspect.Close() })
 	ca := newTestCertificateAuthority(t)
 	const hostname = "control.private.integration.test"
-	controlTLS := privateRuntimeTLS(t, ca, hostname)
-	config := tnldconfig.Config{Role: tnldconfig.RoleControl, ServerDomain: "private.integration.test", ManagedDomain: "apps.private.integration.test", ManagedURLMode: naming.ManagedURLModeSimple,
-		OIDCIssuer: testOIDCIssuer, OIDCClientID: "server", StorageKey: privateRuntimeStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
+	controlTLS := serviceRuntimeTLS(t, ca, hostname)
+	config := daemonconfig.Config{Role: daemonconfig.RoleControl, ServerDomain: "private.integration.test", ManagedDomain: "apps.private.integration.test", ManagedURLMode: naming.ManagedURLModeSimple,
+		OIDCIssuer: testOIDCIssuer, OIDCClientID: "server", StorageKey: serviceRuntimeStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second,
 		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
-	controlListener, privateControlListener := privateRuntimeListener(t), privateRuntimeListener(t)
+	controlListener, privateControlListener := serviceRuntimeListener(t), serviceRuntimeListener(t)
 	config.ControlListen, config.PrivateControlListen = controlListener.Addr().String(), privateControlListener.Addr().String()
 	var serviceListeners []net.Listener
 	if standalone {
@@ -118,7 +118,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	var publicListener net.Listener
 	if standalone {
-		config.Role = tnldconfig.RoleStandalone
+		config.Role = daemonconfig.RoleStandalone
 		publicListener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
@@ -133,12 +133,12 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	serviceHTTP := &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second}
 	t.Cleanup(serviceTransport.CloseIdleConnections)
-	secrets, err := serviceapi.NewBearerSecrets(privateRuntimeClusterSecret, "")
+	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	control := &daemon{database: database, controlTLS: controlTLS, serviceHTTP: serviceHTTP, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now(), relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
+	control := &daemon{database: database, controlTLS: controlTLS, serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now(), relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
 	metrics := observability.New("control")
 	if processContext != nil {
 		ctx = observability.WithMetrics(ctx, observability.FromContext(processContext("control")))
@@ -159,13 +159,13 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			settings.publicListener = combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...))
 		}
 		t.Cleanup(func() { _ = settings.publicListener.Close() })
-		settings.relayTransportTLS = privateRuntimeTLS(t, ca, settings.relayHostname)
-		settings.configurePrivate = func(id string, config *ingress.PrivateConnectorConfig) {
+		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
+		settings.configurePrivate = func(id string, config *ingress.ConnectorConfig) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
-			config.Forwarder = observingPrivateForwarder{PrivateForwarder: config.Forwarder, id: id, opened: opened}
+			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		}
 		if err := control.startStandalone(ctx, settings, metrics, handler); err != nil {
 			cancel()
@@ -173,7 +173,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			t.Fatal(err)
 		}
 		privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-			return control.ready(ctx, tnldconfig.RoleStandalone, time.Now()) == nil, nil
+			return control.ready(ctx, daemonconfig.RoleStandalone, time.Now()) == nil, nil
 		})
 	} else {
 		settings := controlSettingsFrom(config)
@@ -206,7 +206,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	saveRuntimeOIDCSession(t, state, "https://"+hostname, databaseURL, config.ManagedDomain)
-	authenticated, err := clientauth.Authenticate(t.Context(), clientauth.Config{ServerEndpoint: "https://" + hostname, State: state, HTTPClient: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, Diagnostics: io.Discard})
+	authenticated, err := auth.Authenticate(t.Context(), auth.Config{ServerEndpoint: "https://" + hostname, State: state, HTTPClient: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, Diagnostics: io.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	}
 	f := &privateSeparatedFixture{publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
 		database: database, certificateAuthority: ca,
-		identity: privateRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
+		identity: serviceRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults
 	f.processContext = processContext
 	f.visitorRoots = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pebble.roots}
@@ -242,11 +242,11 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			lifetime = observability.WithMetrics(lifetime, observability.FromContext(processContext("relay")))
 			relayMetrics = observability.FromContext(lifetime)
 		}
-		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
-		internalListener := privateRuntimeListener(t)
+		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
+		internalListener := serviceRuntimeListener(t)
 		internal := internalListener.Addr().String()
-		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: privateRuntimeClusterSecret,
-			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: privateRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
+		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
+			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
 			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
@@ -257,7 +257,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			}
 		})
 		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
-			return relay.readyRelays(tnldconfig.RoleRelay, time.Now()) == nil, nil
+			return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
 		})
 		f.tcpAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].tcpListener.Addr().String()
 		f.quicAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].udpListener.Addr().String()
@@ -285,7 +285,7 @@ func privateDisabledConnector() muxsession.Connector {
 	})
 }
 
-func privateRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname string) *tls.Config {
+func serviceRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname string) *tls.Config {
 	t.Helper()
 	material := ca.issue(t, hostname)
 	certificate, err := tls.X509KeyPair(material.certificatePEM, material.privateKeyPEM)
@@ -295,7 +295,7 @@ func privateRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname stri
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 }
 
-func privateRuntimeListener(t *testing.T) net.Listener {
+func serviceRuntimeListener(t *testing.T) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

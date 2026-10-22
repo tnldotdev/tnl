@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 )
 
 func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
@@ -26,7 +26,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	server, oauthHost := fixture.identity.controlOrigin, fixture.identity.hostname
 	quic, tcp := fixture.connectors()
 	oauth := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
-	oauth.Handler = integrationurls.OAuthHandler(state, server, oauthHost)
+	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost)
 	oauthPublisher := startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
 	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.PublicURLID, oauthReady.PublishRunNumber, 2)
@@ -74,7 +74,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
 		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 		config.Hostname = hostname
-		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, integrationGroup, tunnel.ID())
+		config.ObserveResponse = integrations.Observer(state, server, oauthHost, integrationGroup, tunnel.ID())
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:

@@ -18,11 +18,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -67,7 +67,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		hooks := localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
+		hooks := publisherproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
 			if request != nil {
 				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
 					forwarded.Store(true)
@@ -75,10 +75,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			}
 		}}
 		if config.ResolveTarget != nil {
-			handler, err = localproxy.NewWithMountsHooksOptionsAdmittedDynamic(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions,
+			handler, err = publisherproxy.NewWithMountsHooksOptionsAdmittedDynamic(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions,
 				func(request *http.Request) (string, string, error) { return config.ResolveTarget(request.Context()) }, config.OnTargetFailure)
 		} else {
-			handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.OnTargetFailure)
+			handler, err = publisherproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.OnTargetFailure)
 		}
 		if err != nil {
 			return nil, err
@@ -163,15 +163,15 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}()
 				}
-				if code := localproxy.ValidateRequest(request, hostname); code != "" {
+				if code := publisherproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code)
 					return
 				}
 				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
-				request.Header.Del(localproxy.ReadinessProbeHeader)
+				request.Header.Del(publisherproxy.ReadinessProbeHeader)
 				if proof {
 					auditReport = false
-					request = localproxy.WithReadinessProbe(request)
+					request = publisherproxy.WithReadinessProbe(request)
 				}
 				if config.AdmitRequest != nil {
 					if err := config.AdmitRequest(request); err != nil {

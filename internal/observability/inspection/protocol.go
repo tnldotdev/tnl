@@ -1,7 +1,7 @@
 package inspection
 
 // Protocol names the protocols with body-free inspection summaries. it is
-// independent of the protocols supported by public URLs or private services.
+// independent of the protocols supported by public URLs or services.
 type Protocol string
 
 const (

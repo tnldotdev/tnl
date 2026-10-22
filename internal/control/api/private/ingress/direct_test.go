@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
@@ -68,7 +68,7 @@ func TestDirectRoutingEventsProblemFieldsMatchHTTP(t *testing.T) {
 					}
 					problem.RequestId, problem.Details = "", nil
 				}
-				want := ingressv1.Problem{Status: http.StatusConflict, Type: problemtype.URL(test.name),
+				want := ingressv1.Problem{Status: http.StatusConflict, Type: failureproblem.URL(test.name),
 					Title: strings.ReplaceAll(test.name, "_", " "), Code: ingressv1.ProblemCode(test.name), Detail: test.detail}
 				if status != http.StatusConflict || !reflect.DeepEqual(problem, &want) {
 					t.Fatalf("response = %d %#v, want %#v", status, problem, want)

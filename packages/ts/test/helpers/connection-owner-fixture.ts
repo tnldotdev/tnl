@@ -85,7 +85,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       };
       const snapshot = {
         schema: 1,
-        public_runtime: project,
+        project_runtime: project,
         connection: {
           schema: 1,
           protocol,
@@ -204,8 +204,8 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
           state: "ready",
           pid: process.pid,
           expires_at,
-          public_runtime: project,
-          private_handle: file,
+          project_runtime: project,
+          connection_handle: file,
           executable: process.argv[1],
         }),
       );

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -420,7 +420,7 @@ func (w *RelayWorker) collect(ctx context.Context, client acmeAPI, work *control
 	return nil
 }
 
-func (w *RelayWorker) applyOrder(work *controlstate.RelayCertificateOrderWork, order acmeclient.Order, now time.Time) error {
+func (w *RelayWorker) applyOrder(work *controlstate.RelayCertificateOrderWork, order acme.Order, now time.Time) error {
 	if err := validateRelayOrder(order, work.TLSServerName); err != nil {
 		return err
 	}
@@ -442,7 +442,7 @@ func (w *RelayWorker) applyFailure(work *controlstate.RelayCertificateOrderWork,
 	if work.State == "failed_cleaning" {
 		return
 	}
-	var acmeError *acmeclient.Error
+	var acmeError *acme.Error
 	if errors.As(operationErr, &acmeError) && !acmeError.RetryAfter.IsZero() {
 		work.AvailableAt = acmeError.RetryAfter
 	}
@@ -457,7 +457,7 @@ func (w *RelayWorker) applyFailure(work *controlstate.RelayCertificateOrderWork,
 	}
 }
 
-func validateRelayOrder(order acmeclient.Order, hostname string) error {
+func validateRelayOrder(order acme.Order, hostname string) error {
 	if order.URL == "" || order.Status == "" || order.Finalize == "" || len(order.Identifiers) != 1 ||
 		order.Identifiers[0].Type != "dns" || order.Identifiers[0].Value != hostname {
 		return terminalf("ACME order identity does not match the relay service")

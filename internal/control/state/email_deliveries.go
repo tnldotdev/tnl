@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func emailPayloadContext(id string) string {

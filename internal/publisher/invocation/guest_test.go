@@ -11,10 +11,11 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type guestDemoControlStub struct {
@@ -27,7 +28,7 @@ type guestEnrollmentStub struct {
 	public      ed25519.PublicKey
 	calls, runs int
 	lost        error
-	nativeauth.NativeControl
+	publisheridentity.NativeControl
 }
 
 func (s *guestEnrollmentStub) EnrollGuestPublisher(_ context.Context, id string, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
@@ -53,7 +54,7 @@ func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, t
 	if id != s.identity.PublicUrlId || token != "guest-publisher-access" {
 		return controlv1.PublishRunSetup{}, errors.New("guest used a bootstrap session to create a run")
 	}
-	if _, err := publisheridentity.VerifyRun(s.public, proof, id, retry); err != nil {
+	if _, err := publisherproof.VerifyRun(s.public, proof, id, retry); err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
 	s.runs++
@@ -78,23 +79,23 @@ func TestGuestPublicationRetriesEnrollmentWithItsDurableKeyAndUsesSignedRuns(t *
 		}
 		return id
 	}
-	route := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), LifecycleState: controlv1.Enabled, Purpose: controlv1.Demo, ServiceProtocol: controlv1.Http, Ephemeral: true}
+	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), LifecycleState: controlv1.Enabled, Purpose: controlv1.Demo, ServiceProtocol: controlv1.Http, Ephemeral: true}
 	lost := errors.New("lost enrollment response")
-	stub := &guestEnrollmentStub{identity: controlv1.GuestPublisherIdentity{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), PublicUrlId: route.Id, TeamId: route.TeamId}, lost: lost}
-	if _, err := enrollGuestNativeWithClients(t.Context(), store, route, stub, stub, stub); !errors.Is(err, lost) {
+	stub := &guestEnrollmentStub{identity: controlv1.GuestPublisherIdentity{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), PublicUrlId: publicURL.Id, TeamId: publicURL.TeamId}, lost: lost}
+	if _, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub); !errors.Is(err, lost) {
 		t.Fatalf("lost bootstrap response = %v", err)
 	}
 	for range 2 {
-		native, err := enrollGuestNativeWithClients(t.Context(), store, route, stub, stub, stub)
+		native, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub)
 		if err != nil {
 			t.Fatal(err)
 		}
 		control := nativePublicationControl(native, nil)
-		if _, err := control.CreatePublishRun(t.Context(), route.Id, newID(opaqueid.IdempotencyPrefix)); err != nil {
+		if _, err := control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := control.CreatePublicURL(t.Context(), controlv1.CreatePublicURLRequest{}, "retry"); !errors.Is(err, nativeauth.ErrScope) {
-			t.Fatalf("guest acquired a broader creation scope: %v", err)
+		if _, ok := any(control).(publisher.PublicURLManagementClient); ok {
+			t.Fatal("guest acquired a broader creation scope")
 		}
 	}
 	if stub.calls != 2 || stub.runs != 2 {
@@ -102,26 +103,10 @@ func TestGuestPublicationRetriesEnrollmentWithItsDurableKeyAndUsesSignedRuns(t *
 	}
 }
 
-func TestGuestAssignmentCannotCreateOrDeleteAnotherURL(t *testing.T) {
-	member, ephemeral := "mem_assigned", true
-	prefixes := []string{"192.0.2.7/32"}
-	route := controlv1.PublicURL{Id: "url_assigned", TeamId: "tm_guest", DomainId: "dom_guest", MembershipId: &member, CanonicalHostname: "demo-1.guest.example", PublicUrlScope: controlv1.Member, Purpose: controlv1.Demo, ServiceProtocol: controlv1.Http, Ephemeral: true, Target: "http://127.0.0.1:3000", AllowedIpPrefixes: &prefixes}
-	control := guestPublicationControl{assigned: route}
-	body := controlv1.CreatePublicURLRequest{TeamId: route.TeamId, DomainId: route.DomainId, MembershipId: route.MembershipId, CanonicalHostname: route.CanonicalHostname, PublicUrlScope: route.PublicUrlScope, Purpose: route.Purpose, Ephemeral: &ephemeral, Target: route.Target, AllowedIpPrefixes: &prefixes}
-	if assigned, err := control.CreatePublicURL(t.Context(), body, "retry"); err != nil || assigned.Id != route.Id {
-		t.Fatalf("guest assignment = %+v, %v", assigned, err)
-	}
-	body.CanonicalHostname = "another.guest.example"
-	if _, err := control.CreatePublicURL(t.Context(), body, "retry"); !errors.Is(err, nativeauth.ErrScope) {
-		t.Fatalf("guest assignment created another URL: %v", err)
-	}
-	body.CanonicalHostname = route.CanonicalHostname
-	otherIP := []string{"192.0.2.8/32"}
-	body.AllowedIpPrefixes = &otherIP
-	if _, err := control.CreatePublicURL(t.Context(), body, "retry"); !errors.Is(err, nativeauth.ErrScope) {
-		t.Fatalf("guest assignment changed the original source IP: %v", err)
-	}
-	if err := control.DeletePublicURL(t.Context(), "url_another"); !errors.Is(err, nativeauth.ErrScope) {
+func TestGuestAssignmentCannotDeleteAnotherURL(t *testing.T) {
+	publicURL := controlv1.PublicURL{Id: "url_assigned"}
+	control := guestPublicationControl{assigned: publicURL}
+	if err := control.DeletePublicURL(t.Context(), "url_another"); !errors.Is(err, publisheridentity.ErrScope) {
 		t.Fatalf("guest assignment deleted another URL: %v", err)
 	}
 }

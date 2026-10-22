@@ -11,8 +11,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -69,13 +69,13 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	}
 	cfg.ControlURL, cfg.ProjectRoot, cfg.Service = server, project.Root, service.Name
 	cfg.ServiceProtocol = protocolForService(project.Config.Services[service.Name])
-	cfg.PreserveSavedURLTarget = true
+	cfg.PreserveSavedPublicURLTarget = true
 	resolved := config.ServicePublish(project.Config.Services[service.Name])
 	if resolved.TargetTLSName != nil {
 		cfg.TargetTLSName = *resolved.TargetTLSName
 	}
 	if resolved.TargetCAFile != nil {
-		cfg.TargetOptions, err = localproxy.TargetOptionsForCA(*resolved.TargetCAFile, project.Root)
+		cfg.TargetOptions, err = publisherproxy.TargetOptionsForCA(*resolved.TargetCAFile, project.Root)
 		if err != nil {
 			return app.Configuration{}, err
 		}
@@ -84,11 +84,11 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	if err != nil {
 		return app.Configuration{}, err
 	}
-	route, err := native.SavedURL(ctx)
+	publicURL, err := native.SavedPublicURL(ctx)
 	if err != nil {
 		return app.Configuration{}, err
 	}
-	realized, err := RealizeLocalService(ctx, services.authenticated.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, PublicURLID: route.Id, TargetResolver: a.TargetResolver})
+	realized, err := RealizeLocalService(ctx, services.authenticated.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, PublicURLID: publicURL.Id, TargetResolver: a.TargetResolver})
 	if err != nil {
 		return app.Configuration{}, err
 	}
@@ -103,7 +103,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	if err != nil {
 		return app.Configuration{}, err
 	}
-	cfg.Control, cfg.PublisherID = native, native.PublisherID()
+	cfg.Control, cfg.PublisherIdentityID = native, native.PublisherIdentityID()
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, service, &cfg); err != nil {
 			return app.Configuration{}, err
@@ -111,7 +111,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 	}
 	cfg.Mounts, err = ProjectMounts(project.Project, service.Name, func(name string) string {
 		for _, candidate := range a.manager.Snapshot().Services {
-			if candidate.Name == name && a.manager.Current(name, candidate.RegistrationID, candidate.Target, 0) {
+			if candidate.Name == name && a.manager.CurrentRegistration(name, candidate.RegistrationID, candidate.Target) {
 				return candidate.Target
 			}
 		}
@@ -147,7 +147,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 			if err != nil {
 				return nil, err
 			}
-			cfg.ObserveResponse = integrationurls.Observer(a.state, server, origin.Hostname, group, tunnel.ID())
+			cfg.ObserveResponse = integrations.Observer(a.state, server, origin.Hostname, group, tunnel.ID())
 		}
 		return attachRuntimeIntegrations(ctx, a.state, project.Project, service, tunnel, cfg)
 	}

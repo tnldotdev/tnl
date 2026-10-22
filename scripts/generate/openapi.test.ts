@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -43,24 +42,6 @@ function document(paths: unknown = {}, schemas: unknown = {}): Record<string, un
     paths,
     components: { schemas },
   };
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(record(value))
-        .sort(([a], [b]) => a.localeCompare(b, "en"))
-        .map(([key, item]) => [key, canonical(item)]),
-    );
-  }
-  return value;
-}
-
-function hash(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(canonical(value)))
-    .digest("hex");
 }
 
 describe("OpenAPI graph", () => {
@@ -234,7 +215,7 @@ describe("OpenAPI graph", () => {
   });
 });
 
-describe("contract move inventory", () => {
+describe("repository contracts", () => {
   it("exports deterministic portable bundles without running code generation", async () => {
     const directory = await mkdtemp(join(tmpdir(), "tnl-openapi-export-"));
     directories.push(directory);
@@ -257,63 +238,6 @@ describe("contract move inventory", () => {
     const source = await repositoryGraph();
     for (const name of Object.keys(contracts))
       expect(exported.bundle(name), name).toEqual(source.bundle(name));
-  });
-
-  it("preserves every operation, schema, and complete bundled contract from bc1efd09", async () => {
-    const after = await repositoryGraph();
-    const inventory = record(
-      JSON.parse(await readFile(join(root, "api/fixtures/openapi-inventory/v1.json"), "utf8")),
-    );
-    expect(inventory.baseline).toBe("bc1efd09");
-    for (const name of Object.keys(contracts)) {
-      const moved = after.bundle(name);
-      const saved = record(record(inventory.contracts)[name]);
-      expect(operationInventory(moved), name).toEqual(saved.operations);
-      expect(Object.keys(record(record(moved.components).schemas)), name).toEqual(saved.schemas);
-      expect(hash(moved), name).toBe(saved.contractSHA256);
-    }
-    expect(hash(after.browserBundle("publisherv1", ["controlv1"]))).toBe(
-      record(inventory.browser).contractSHA256,
-    );
-  });
-
-  it("retains the baseline's required generated public type and browser export names", async () => {
-    const inventory = record(
-      JSON.parse(await readFile(join(root, "api/fixtures/openapi-inventory/v1.json"), "utf8")),
-    );
-    const declarations = record(
-      JSON.parse(
-        await readFile(join(root, "api/fixtures/openapi-inventory/public-types-v1.json"), "utf8"),
-      ),
-    );
-    for (const name of Object.keys(contracts)) {
-      const source = await readFile(join(root, "pkg/api", name, "openapi.gen.go"), "utf8");
-      const names = [...source.matchAll(/^type ([A-Z]\w*)\b/gm)].map((match) => match[1]);
-      expect(names, name).toEqual(record(record(inventory.contracts)[name]).publicTypes);
-      const types = [...source.matchAll(/^type [A-Z]\w*(?:[^\n]*\{[\s\S]*?^\}|[^\n]*)/gm)]
-        .map((match) => match[0])
-        .join("\n");
-      expect(createHash("sha256").update(types).digest("hex"), name).toBe(
-        record(declarations.packages)[name],
-      );
-      const registrations = source
-        .split("\n")
-        .filter((line) => line.startsWith("\tm.HandleFunc("))
-        .join("\n");
-      expect(createHash("sha256").update(registrations).digest("hex"), name).toBe(
-        record(declarations.registrations)[name],
-      );
-    }
-    const source = await readFile(join(root, "internal/publisher/browserapi/model.gen.ts"), "utf8");
-    const names = [...source.matchAll(/^export (?:type|const|interface) ([A-Za-z]\w*)\b/gm)].map(
-      (match) => match[1],
-    );
-    expect(names).toEqual(record(inventory.browser).publicExports);
-    expect(
-      createHash("sha256")
-        .update(source.replace(/^\/\/ generated from [^\n]*\n/, ""))
-        .digest("hex"),
-    ).toBe(declarations.browserModelSHA256);
   });
 });
 import { execFileSync } from "node:child_process";

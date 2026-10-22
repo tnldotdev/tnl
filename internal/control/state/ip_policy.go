@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"encoding/json"
@@ -81,25 +81,25 @@ func (d *Database) openIPPolicy(publicURLID, keyID string, ciphertext []byte) ([
 	return prefixes, nil
 }
 
-func (d *Database) restorePublicURLPolicy(route *PublicURL, keyID pgtype.Text, ciphertext, hashes []byte) error {
+func (d *Database) restorePublicURLPolicy(publicURL *PublicURL, keyID pgtype.Text, ciphertext, hashes []byte) error {
 	if len(hashes) == 0 {
-		if len(ciphertext) != 0 || len(route.AllowedIPPrefixes) != 0 {
+		if len(ciphertext) != 0 || len(publicURL.AllowedIPPrefixes) != 0 {
 			return errors.New("controlstate: public URL IP policy has not been protected")
 		}
-		route.AllowedIPPrefixes = nil
+		publicURL.AllowedIPPrefixes = nil
 		return nil
 	}
 	if len(ciphertext) == 0 {
 		if keyID.Valid {
 			return errors.New("controlstate: guest IP policy has unexpected ciphertext key")
 		}
-		route.AllowedIPPrefixes = nil
+		publicURL.AllowedIPPrefixes = nil
 		return nil
 	}
-	prefixes, err := d.openIPPolicy(route.ID, keyID.String, ciphertext)
+	prefixes, err := d.openIPPolicy(publicURL.ID, keyID.String, ciphertext)
 	if err != nil {
 		return err
 	}
-	route.AllowedIPPrefixes = prefixes
+	publicURL.AllowedIPPrefixes = prefixes
 	return nil
 }

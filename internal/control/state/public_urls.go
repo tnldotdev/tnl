@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -338,7 +338,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	if request.MembershipID != "" {
 		membershipID = text(request.MembershipID)
 	}
-	managed, err := queries.ManagedNamespaceOwnsHostname(ctx, request.CanonicalHostname)
+	managed, err := queries.ServiceNamespaceOwnsHostname(ctx, request.CanonicalHostname)
 	if err != nil {
 		return result, err
 	}

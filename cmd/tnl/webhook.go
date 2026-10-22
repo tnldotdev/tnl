@@ -10,7 +10,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 )
 
 func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project projectConfiguration, use, force bool, stdout io.Writer) error {
@@ -51,7 +51,7 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 		}
 		return failure.Wrap("read webhook URL", failure.ClientStateUnavailable, err)
 	}
-	_, digest, err := integrationurls.DefinitionBytes(definition)
+	_, digest, err := integrations.DefinitionBytes(definition)
 	if err != nil {
 		return failure.Wrap("validate webhook endpoint", failure.ProjectConfigInvalid, err)
 	}

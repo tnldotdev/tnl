@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
@@ -23,7 +23,7 @@ import (
 )
 
 func workloadConfiguration() ProjectConfiguration {
-	return ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "production", Target: "api.internal:3000"}, "db": {Publisher: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
+	return ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}, "db": {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
 }
 
 func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time.Time) (ExchangeWorkloadRequest, ed25519.PrivateKey) {
@@ -32,8 +32,8 @@ func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := oidcauth.GitHubExecution{Subject: "repo:example/repository:ref:refs/heads/main", JTI: "assertion", Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Event: "push", RunID: "111", RunAttempt: "1", CheckRunID: "222", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix()}
-	request := ExchangeWorkloadRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Nonce: rand.Text(), Workload: "test", Execution: oidcauth.WorkloadExecution{Provider: "github", Issuer: oidcauth.GitHubIssuer, Subject: c.Subject, GitHub: &c, IssuedAt: c.IssuedAt, NotBefore: c.NotBefore, ExpiresAt: c.ExpiresAt}, PublicKey: public}
+	c := oidc.GitHubExecution{Subject: "repo:example/repository:ref:refs/heads/main", JTI: "assertion", Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Event: "push", RunID: "111", RunAttempt: "1", CheckRunID: "222", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(5 * time.Minute).Unix()}
+	request := ExchangeWorkloadRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint, Nonce: rand.Text(), Workload: "test", Execution: oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Subject: c.Subject, GitHub: &c, IssuedAt: c.IssuedAt, NotBefore: c.NotBefore, ExpiresAt: c.ExpiresAt}, PublicKey: public}
 	signWorkloadRequest(&request, key)
 	return request, key
 }
@@ -47,14 +47,14 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_reusable")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
-	trust := oidcauth.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
+	trust := oidc.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
 	r.Configuration.Workloads = map[string]ProjectWorkload{"storefront": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
 	request, key := workloadExchange(t, r, now)
 	request.Workload = "storefront"
-	request.Execution = oidcauth.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(2 * time.Hour).Unix(), Vercel: &oidcauth.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
+	request.Execution = oidc.WorkloadExecution{Provider: "vercel", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "owner:acme:project:store:environment:production", IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: now.Add(2 * time.Hour).Unix(), Vercel: &oidc.VercelExecution{Owner: "acme", OwnerID: "team_one", Project: "store", ProjectID: "prj_store", Environment: "production"}}
 	signWorkloadRequest(&request, key)
 	session, err := d.ExchangeWorkload(t.Context(), request, now)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"workload-a", "workload-b"} {
-		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 1, PrivateConnectorAddress: name + ".example.test:9443", PrivateConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID}, now, time.Hour); err != nil {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID}, now, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -142,7 +142,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal("expired workload retained pending capacity", err)
 	}
-	if err := d.ReleaseWorkloadIngressAssignment(ctx, second.Credential, assignments.Assignments[0].ID, expired); !errors.Is(err, ErrPrivateServiceAccess) {
+	if err := d.ReleaseWorkloadIngressAssignment(ctx, second.Credential, assignments.Assignments[0].ID, expired); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("another workload released a handle", err)
 	}
 	for _, a := range assignments.Assignments {
@@ -307,9 +307,9 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
-	group := r.Configuration.Publishers["production"]
+	group := r.Configuration.PublisherGroups["production"]
 	group.Public = true
-	r.Configuration.Publishers["production"] = group
+	r.Configuration.PublisherGroups["production"] = group
 	applied, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -321,11 +321,11 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	a := replica.assignments.Services[0]
 	access := groupAssignmentAccess(t, d, replica, a, now)
-	service, err := d.GetPrivateServiceForPublisher(ctx, a.ServiceID, access.PublisherIdentity, now)
+	service, err := d.GetServiceForPublisher(ctx, a.ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedPrivateRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
 	exchange, key := workloadExchange(t, r, now)
 	session, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
@@ -339,7 +339,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	var ingresses []IngressLease
 	for _, name := range []string{"workload-a", "workload-b"} {
-		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64, PrivateConnectorAddress: name + ".example.test:9443", PrivateConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
+		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -370,7 +370,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("workload bound as a fake person", bound, err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	stream, err := d.AuthorizePrivateServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, run.RunNumber, source, now)
+	stream, err := d.AuthorizeServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, run.RunNumber, source, now)
 	if err != nil || !stream.ValidUntil.Equal(session.ExpiresAt) {
 		t.Fatal("private admission deadline", stream, err)
 	}
@@ -380,10 +380,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if decision, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); err != nil || !decision.Allowed {
 		t.Fatal("publisher did not recheck workload connector", decision, err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision + 1}, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision + 1}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("spoofed grant revision", err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
@@ -419,7 +419,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("public active recheck", status, err)
 	}
 	for _, connector := range []bool{false, true} {
-		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "private_service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
+		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
 		if connector {
 			observation.VisitorConnectionID, observation.ConnectorSessionID = visitor, assignment.ID
 		}
@@ -430,7 +430,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, session.ExpiresAt); err != nil || decision.Allowed {
 		t.Fatal("private stream outlived job", decision, err)
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public stream outlived job", err)
 	}
 	// policy removal denies still-live admissions before their earlier deadline.
@@ -442,7 +442,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, now.Add(2*time.Second)); err != nil || decision.Allowed {
 		t.Fatal("private stream survived policy removal", decision, err)
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrPrivateServiceAccess) || decision.Allowed {
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
 		t.Fatal("public stream survived policy removal", decision, err)
 	}
 }
@@ -511,7 +511,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 		t.Fatal("apply failed to fence concurrent starts", active, err)
 	}
 	var people, devices int
-	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.identities WHERE id IN(SELECT identity_id FROM control.private_connector_sessions WHERE workload_session_id IS NOT NULL)),(SELECT count(*) FROM control.visitor_devices WHERE id IN(SELECT device_id FROM control.private_connector_sessions WHERE workload_session_id IS NOT NULL))`).Scan(&people, &devices); err != nil || people != 0 || devices != 0 {
+	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.identities WHERE id IN(SELECT identity_id FROM control.connector_sessions WHERE workload_session_id IS NOT NULL)),(SELECT count(*) FROM control.visitor_devices WHERE id IN(SELECT device_id FROM control.connector_sessions WHERE workload_session_id IS NOT NULL))`).Scan(&people, &devices); err != nil || people != 0 || devices != 0 {
 		t.Fatal("workload created a person or enrolled device", people, devices, err)
 	}
 }

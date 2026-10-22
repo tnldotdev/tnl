@@ -1,11 +1,10 @@
-package controlapi
+package public
 
 import (
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // existing run renewals and cleanup remain available during process drain.

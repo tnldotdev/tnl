@@ -5,7 +5,7 @@ paths:
           name: service_id,
           in: path,
           required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" },
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
         }
     post:
       operationId: selectWorkloadServiceRun
@@ -15,7 +15,7 @@ paths:
           description: Current publisher selection for the workload subject
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceSelection" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSelection" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/workload/ingress-assignments/{session_id}:
     parameters:
@@ -23,7 +23,7 @@ paths:
           name: session_id,
           in: path,
           required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" },
+          schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" },
         }
     delete:
       operationId: releaseWorkloadIngressAssignment
@@ -37,7 +37,7 @@ paths:
           name: session_id,
           in: path,
           required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" },
+          schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" },
         }
     get:
       operationId: getWorkloadIngressTransportTrust

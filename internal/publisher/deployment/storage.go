@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"

@@ -1,5 +1,5 @@
 // package ingresspool names the public ingress-address placement boundary.
-package ingresspool
+package pool
 
 type ID string
 

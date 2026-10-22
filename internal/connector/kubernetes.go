@@ -9,7 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // this hidden exec entry point writes only the Kubernetes wire credential on
@@ -26,14 +26,14 @@ func WriteKubeCredential(ctx context.Context, path string, output io.Writer) err
 	return json.NewEncoder(output).Encode(credential)
 }
 
-func prepareKubernetesConnection(ctx context.Context, session *Session, flags StartOptions, service controlv1.PrivateService, profile *Profile, listen string) error {
+func prepareKubernetesConnection(ctx context.Context, session *Session, flags StartOptions, service controlv1.Service, profile *Profile, listen string) error {
 	key, err := ConfiguredService(flags.project.Project, flags.Name)
 	if err != nil {
 		return err
 	}
 	sourceID, projectLabel, serviceLabel := service.Id, "services", service.Name
 	if key != "" {
-		if config.PublisherName(flags.project.Config.Services[key]) == "local" {
+		if config.PublisherGroupName(flags.project.Config.Services[key]) == "local" {
 			sourceID = flags.project.LocalPublicationIdentity().Fingerprint
 		} else {
 			source, err := flags.project.SourceIdentity(ctx)

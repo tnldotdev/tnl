@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -83,8 +83,8 @@ func TestNormalizeAppliedWebhooksRequireCurrentLocalPublicHTTPApp(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			c.Publishers = map[string]ProjectPublisherGroup{"production": {}}
-			c.Services["app"] = ProjectServiceConfiguration{Publisher: "production", Target: "http://eks.internal:3000", PublicURL: &ProjectServicePublicURL{DomainID: id}}
+			c.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+			c.Services["app"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://eks.internal:3000", PublicURL: &ProjectServicePublicURL{DomainID: id}}
 		}},
 		{"duplicate path", func(c *ProjectConfiguration) {
 			w := c.Webhooks["chat"]

@@ -4,7 +4,7 @@
   "source_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "documentation_path": "readme.md",
   "documentation_sha256": "f4b5ca97f065fb4dca0e6db0f1eaf9ec76af4efa1e54cfe2ea1a583382f97362",
-  "publishers": [
+  "publisher_groups": [
     {
       "name": "production",
       "provider": "aws",

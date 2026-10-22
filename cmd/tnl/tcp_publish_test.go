@@ -5,7 +5,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
@@ -26,7 +26,7 @@ func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
 			}
 		}
 		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: protocol}); err == nil {
-			t.Fatal("private service accepted as a public URL")
+			t.Fatal("service accepted as a public URL")
 		}
 		for _, flags := range []publishCommand{
 			{openOptions: openOptions{Open: true}},

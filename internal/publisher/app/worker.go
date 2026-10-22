@@ -315,7 +315,7 @@ func (w *Workers) checkService(ctx context.Context, service Service) (ready bool
 	var entry *proofEntry
 	var captured target.TargetSnapshot
 	var capturedTarget bool
-	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
 	defer func() {
 		if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
 			observation.Ready = false
@@ -330,7 +330,7 @@ func (w *Workers) checkService(ctx context.Context, service Service) (ready bool
 	w.mu.Lock()
 	entry = w.proofs[service.RegistrationID]
 	w.mu.Unlock()
-	if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
+	if entry == nil || entry.run.Number != service.RunNumber || entry.service.Target != service.Target {
 		return false
 	}
 	if entry.target != nil {

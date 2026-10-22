@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"context"
@@ -6,12 +6,12 @@ import (
 	"encoding/base64"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (c *Client) GetProjectPrivateService(ctx context.Context, project, service string, params controlv1.GetProjectPrivateServiceParams) (controlv1.PrivateService, error) {
-	return requestWithAccess[controlv1.PrivateService](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetProjectPrivateService(ctx, project, service, &params, editors...)
+func (c *Client) GetProjectService(ctx context.Context, project, service string, params controlv1.GetProjectServiceParams) (controlv1.Service, error) {
+	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetProjectService(ctx, project, service, &params, editors...)
 	})
 }
 

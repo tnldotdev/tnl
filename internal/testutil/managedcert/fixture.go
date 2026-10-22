@@ -16,7 +16,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
-func Install(t *testing.T, d *controlstate.Database, prep controlstate.PrivateRunPreparation, run controlstate.PrivateRunState, now time.Time) {
+func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRunPreparation, run controlstate.ServiceRunState, now time.Time) {
 	t.Helper()
 	ctx := t.Context()
 	const directory = "https://acme.example.test/directory"
@@ -35,7 +35,7 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.PrivateRu
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue, err := d.CreatePrivateCertificateIssuance(ctx, run.ServiceID, run.RunID, run.Token, directory, "test-issuance", run.RunNumber, csr, now)
+	issue, err := d.CreateServiceCertificateIssuance(ctx, run.ServiceID, run.RunID, run.Token, directory, "test-issuance", run.RunNumber, csr, now)
 	if err != nil {
 		t.Fatalf("create private certificate fixture: %v", err)
 	}
@@ -73,7 +73,7 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.PrivateRu
 	if _, err = d.SaveACMEOrderWork(ctx, work, now); err != nil {
 		t.Fatalf("save private certificate fixture: %v", err)
 	}
-	if err = d.MarkPrivateCertificateInstalled(ctx, run.ServiceID, run.RunID, run.Token, issue.ID, run.RunNumber, leaf.NotAfter, now); err != nil {
+	if err = d.MarkServiceCertificateInstalled(ctx, run.ServiceID, run.RunID, run.Token, issue.ID, run.RunNumber, leaf.NotAfter, now); err != nil {
 		t.Fatalf("install private certificate fixture: %v", err)
 	}
 }

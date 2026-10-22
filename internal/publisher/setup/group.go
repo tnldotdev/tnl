@@ -1,5 +1,5 @@
 // package publisherprovision owns durable group signing identity provisioning.
-package publisherprovision
+package setup
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type Control interface {

@@ -1,5 +1,5 @@
 // package clientserver selects the control URL shared by native clients.
-package clientserver
+package server
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestClientMapsProblemsAndRejectsTrailingJSON(t *testing.T) {
@@ -182,14 +182,14 @@ func TestClientUpdatesPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := client.UpdatePublicURL(t.Context(), "public_url_1", controlv1.UpdatePublicURLRequest{
+	publicURL, err := client.UpdatePublicURL(t.Context(), "public_url_1", controlv1.UpdatePublicURLRequest{
 		Target: target, AllowedIpPrefixes: prefixes,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(route, want) {
-		t.Fatalf("updated route = %#v", route)
+	if !reflect.DeepEqual(publicURL, want) {
+		t.Fatalf("updated route = %#v", publicURL)
 	}
 }
 

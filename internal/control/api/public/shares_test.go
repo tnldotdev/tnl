@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type selectiveShareAuthorizer struct {
@@ -100,7 +100,7 @@ func TestShareCreateAuthorizesEachIncludedURLAndHidesSecretFingerprint(t *testin
 	preview := &previewStoreStub{preview: controlstate.Preview{
 		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", PublicURLIDs: []string{"url_1"},
 	}}
-	routes := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	routes := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,

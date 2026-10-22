@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const maxCertificateFileBytes = 512 << 10
@@ -31,12 +31,12 @@ const maxCertificateFileBytes = 512 << 10
 var ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
 
 type CertificateCache struct {
-	store       *Store
-	files       *PrivateDirectory
-	teamID      string
-	publisherID string
-	plan        controlv1.CertificatePlan
-	planJSON    string
+	store               *Store
+	files               *PrivateDirectory
+	teamID              string
+	publisherIdentityID string
+	plan                controlv1.CertificatePlan
+	planJSON            string
 }
 
 type Pending struct {
@@ -84,20 +84,12 @@ func (f *certificateFile) destroy() {
 	}
 }
 
-func (s *Store) Certificates(teamID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
-	return s.certificateCache(teamID, "", plan)
-}
-
 // CertificatesForPublisher uses the same durable filesystem in development and
 // deployed publishers. neither SQLite nor its wrapping key owns TLS material.
-func (s *Store) CertificatesForPublisher(teamID, publisherID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
-	if !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
+func (s *Store) CertificatesForPublisher(teamID, publisherIdentityID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
+	if !opaqueid.Valid(publisherIdentityID, opaqueid.PublisherIdentityPrefix) {
 		return nil, errors.New("clientstate: enrolled publisher identity is required for certificate cache")
 	}
-	return s.certificateCache(teamID, publisherID, plan)
-}
-
-func (s *Store) certificateCache(teamID, publisherID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
 	if s == nil || teamID == "" || strings.TrimSpace(teamID) != teamID {
 		return nil, errors.New("clientstate: certificate state store and team are required")
 	}
@@ -109,11 +101,11 @@ func (s *Store) certificateCache(teamID, publisherID string, plan controlv1.Cert
 	if err != nil {
 		return nil, err
 	}
-	files, err := s.PublisherIdentityFiles(teamID, publisherID)
+	files, err := s.PublisherIdentityFiles(teamID, publisherIdentityID)
 	if err != nil {
 		return nil, err
 	}
-	return &CertificateCache{store: s, files: files, teamID: teamID, publisherID: publisherID, plan: plan, planJSON: string(encoded)}, nil
+	return &CertificateCache{store: s, files: files, teamID: teamID, publisherIdentityID: publisherIdentityID, plan: plan, planJSON: string(encoded)}, nil
 }
 
 func certificateFilename(plan string) string {
@@ -128,15 +120,15 @@ func (r *CertificateCache) Lock(ctx context.Context) (*Lock, error) {
 	return r.files.Lock(ctx, fmt.Sprintf("issuance-%x.lock", digest))
 }
 
-func LockPublisherHostnameContext(ctx context.Context, store *Store, hostname, publisherID string) (*Lock, error) {
-	if store == nil || !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
+func LockPublisherHostnameContext(ctx context.Context, store *Store, hostname, publisherIdentityID string) (*Lock, error) {
+	if store == nil || !opaqueid.Valid(publisherIdentityID, opaqueid.PublisherIdentityPrefix) {
 		return nil, errors.New("clientstate: state store and enrolled publisher identity are required")
 	}
 	canonical, err := naming.CanonicalizeHostname(hostname)
 	if err != nil || canonical != hostname {
 		return nil, errors.New("clientstate: canonical publisher hostname is required")
 	}
-	files, err := store.PublisherIdentityFiles("", publisherID)
+	files, err := store.PublisherIdentityFiles("", publisherIdentityID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,9 +157,9 @@ func (r *CertificateCache) read() (certificateFile, error) {
 		return value, identityFileError(ErrPublisherStateConflict)
 	}
 	if !found {
-		return certificateFile{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherID, Plan: r.plan}, nil
+		return certificateFile{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherIdentityID, Plan: r.plan}, nil
 	}
-	if json.Unmarshal(data, &value, json.RejectUnknownMembers(true)) != nil || value.Version != 1 || value.Server != r.store.controlEndpoint || value.Team != r.teamID || value.Publisher != r.publisherID || !certificateidentity.SamePlan(value.Plan, r.plan) || value.Pending == nil && value.Current == nil {
+	if json.Unmarshal(data, &value, json.RejectUnknownMembers(true)) != nil || value.Version != 1 || value.Server != r.store.controlEndpoint || value.Team != r.teamID || value.Publisher != r.publisherIdentityID || !certificateidentity.SamePlan(value.Plan, r.plan) || value.Pending == nil && value.Current == nil {
 		value.destroy()
 		return certificateFile{}, identityFileError(ErrPublisherStateConflict)
 	}
@@ -356,7 +348,7 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 }
 
 func (r *CertificateCache) pendingScope() string {
-	encoded, _ := json.Marshal([]string{r.store.controlEndpoint, r.teamID, r.publisherID, r.planJSON})
+	encoded, _ := json.Marshal([]string{r.store.controlEndpoint, r.teamID, r.publisherIdentityID, r.planJSON})
 	return string(encoded)
 }
 
@@ -436,7 +428,7 @@ func (s *Store) PublisherCertificateMaterialExists(ctx context.Context, team, pu
 			plans[cache.planJSON] = true
 		}
 	}
-	probe := &CertificateCache{store: s, files: files, teamID: team, publisherID: publisher}
+	probe := &CertificateCache{store: s, files: files, teamID: team, publisherIdentityID: publisher}
 	checkpoint, err := probe.checkpoints()
 	if err != nil {
 		return false, err
@@ -494,7 +486,7 @@ func (r *CertificateCache) checkpoints() ([]controlv1.CertificatePlan, error) {
 		return nil, err
 	}
 	var checkpoint certificateCheckpoints
-	if json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)) != nil || checkpoint.Version != 1 || checkpoint.Server != r.store.controlEndpoint || checkpoint.Team != r.teamID || checkpoint.Publisher != r.publisherID || len(checkpoint.Plans) == 0 || len(checkpoint.Plans) > 1024 {
+	if json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)) != nil || checkpoint.Version != 1 || checkpoint.Server != r.store.controlEndpoint || checkpoint.Team != r.teamID || checkpoint.Publisher != r.publisherIdentityID || len(checkpoint.Plans) == 0 || len(checkpoint.Plans) > 1024 {
 		return nil, identityFileError(ErrPublisherStateConflict)
 	}
 	seen := map[string]bool{}
@@ -524,7 +516,7 @@ func (r *CertificateCache) checkpoint() error {
 		return identityFileError(ErrPublisherStateConflict)
 	}
 	plans = append(plans, r.plan)
-	data, err := json.Marshal(certificateCheckpoints{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherID, Plans: plans})
+	data, err := json.Marshal(certificateCheckpoints{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherIdentityID, Plans: plans})
 	if err != nil || len(data) > maxCertificateFileBytes {
 		return identityFileError(ErrPublisherStateConflict)
 	}

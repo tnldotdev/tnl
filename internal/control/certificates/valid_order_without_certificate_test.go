@@ -4,16 +4,16 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 func TestRelayWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 	now := time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
 	const hostname = "relay-a.example.test"
-	api := &acmeStub{order: acmeclient.Order{
+	api := &acmeStub{order: acme.Order{
 		URL: "https://acme.example.test/order/1", Status: "valid",
-		Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+		Identifiers: []acme.Identifier{{Type: "dns", Value: hostname}},
 		Finalize:    "https://acme.example.test/finalize/1",
 	}}
 	store := &relayStoreStub{work: controlstate.RelayCertificateOrderWork{
@@ -36,12 +36,12 @@ func TestRelayWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 func TestPublicURLWorkerRetiresValidOrderWithoutCertificateURL(t *testing.T) {
 	now := time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
 	const hostname = "api.example.test"
-	api := &acmeStub{order: acmeclient.Order{
+	api := &acmeStub{order: acme.Order{
 		URL: "https://acme.example.test/order/1", Status: "valid",
-		Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+		Identifiers: []acme.Identifier{{Type: "dns", Value: hostname}},
 		Finalize:    "https://acme.example.test/finalize/1",
 	}}
-	store := &certificateStoreStub{work: controlstate.ACMEOrderWork{
+	store := &certificateStoreStub{work: controlstate.ACMEOrderWork{Subject: testCertificateSubject("public_url_test"),
 		State: "finalizing", ChallengeMethod: "dns-01", CertificateIdentifiers: []string{hostname}, OrderURL: api.order.URL,
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"},
 	}}

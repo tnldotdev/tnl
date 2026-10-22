@@ -8,24 +8,24 @@ import (
 	"net"
 	"testing"
 
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type connectServiceReaderFunc func(context.Context) ([]controlv1.PrivateService, error)
+type connectServiceReaderFunc func(context.Context) ([]controlv1.Service, error)
 
-func (f connectServiceReaderFunc) ListAvailablePrivateServices(ctx context.Context) ([]controlv1.PrivateService, error) {
+func (f connectServiceReaderFunc) ListAvailableServices(ctx context.Context) ([]controlv1.Service, error) {
 	return f(ctx)
 }
 
 func TestConnectMetadataLifecycle(t *testing.T) {
 	for _, scenario := range []string{"tls-on-off", "tls-off-on", "public-to-private", "private-to-public", "wrapped", "joined", "revoked", "protocol-change", "protocol-constraint", "invalid-trust", "ordinary-error"} {
 		t.Run(scenario, func(t *testing.T) {
-			trust, err := privatetrust.NewCache(nil).Capture(t.Context(), "", "localhost:443", config.TrustSource{CA: "system"})
+			trust, err := targettrust.NewCache(nil).Capture(t.Context(), "", "localhost:443", config.TrustSource{CA: "system"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,29 +34,29 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
-			job := publisherjob.Job{PrivateServiceID: "exact-approved-id", IdentityID: "identity", Name: "database", Protocol: "tcp", TrustRevision: 1, Target: listener.Addr().String()}
-			service := controlv1.PrivateService{Id: job.PrivateServiceID, Name: job.Name, Protocol: "tcp", TrustRevision: 2}
+			job := supervisor.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "database", Protocol: "tcp", TrustRevision: 1, Target: listener.Addr().String()}
+			service := controlv1.Service{Id: job.ServiceID, Name: job.Name, Protocol: "tcp", TrustRevision: 2}
 			requested := ""
 			switch scenario {
 			case "tls-on-off":
 				job.Trust = &trust
 			case "tls-off-on":
-				service.TargetTls = nativeauth.PrivateServiceTLS(&trust)
+				service.TargetTls = publisheridentity.ServiceTargetTLS(&trust)
 			case "public-to-private", "private-to-public":
-				job.ManagedTLS = &controlv1.ManagedServiceTLS{Hostname: "database.example.test", Port: 25443, Public: scenario == "public-to-private"}
-				service.ManagedTls = &controlv1.ManagedServiceTLS{Hostname: "database.example.test", Port: 25443, Public: scenario == "private-to-public"}
+				job.Endpoint = &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: scenario == "public-to-private"}
+				service.Endpoint = &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: scenario == "private-to-public"}
 			case "protocol-change", "protocol-constraint":
 				service.Protocol = "postgres"
 				if scenario == "protocol-constraint" {
 					requested = "tcp"
 				}
 			case "invalid-trust":
-				service.TargetTls = &controlv1.PrivateServiceTLS{Hostname: "localhost", Digest: "invalid"}
+				service.TargetTls = &controlv1.ServiceTargetTLS{Hostname: "localhost", Digest: "invalid"}
 			}
 			state := ""
 			calls, reads, readyCalls, publicationReadyCalls := 0, 0, 0, 0
 			stop := errors.New("ordinary runner failure")
-			err = runPrivateConnectorLifecycle(t.Context(), listener, job, requested, privateConnectorLifecycle{
+			err = runConnectorLifecycle(t.Context(), listener, job, requested, connectorLifecycle{
 				starting: func(context.Context) { state = "starting" },
 				publicationReady: func(context.Context) {
 					if state != "starting" || readyCalls != calls {
@@ -65,23 +65,23 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 					state = "ready"
 					publicationReadyCalls++
 				},
-				services: connectServiceReaderFunc(func(context.Context) ([]controlv1.PrivateService, error) {
+				services: connectServiceReaderFunc(func(context.Context) ([]controlv1.Service, error) {
 					reads++
 					if state != "starting" {
 						t.Fatal("refresh retained stale readiness")
 					}
 					if scenario == "revoked" {
-						return []controlv1.PrivateService{{Id: "different-id", Name: job.Name, Protocol: "tcp", TrustRevision: 2}}, nil
+						return []controlv1.Service{{Id: "different-id", Name: job.Name, Protocol: "tcp", TrustRevision: 2}}, nil
 					}
-					return []controlv1.PrivateService{service}, nil
+					return []controlv1.Service{service}, nil
 				}),
-				listen: func(_ context.Context, next publisherjob.Job) (net.Listener, error) {
-					if next.Target != job.Target || next.PrivateServiceID != job.PrivateServiceID || next.IdentityID != job.IdentityID {
+				listen: func(_ context.Context, next supervisor.Job) (net.Listener, error) {
+					if next.Target != job.Target || next.ServiceID != job.ServiceID || next.IdentityID != job.IdentityID {
 						t.Fatal("refresh changed reserved listener identity")
 					}
 					return net.Listen("tcp", next.Target)
 				},
-				serve: func(_ context.Context, listener net.Listener, current publisherjob.Job, ready func() error) error {
+				serve: func(_ context.Context, listener net.Listener, current supervisor.Job, ready func() error) error {
 					calls++
 					defer listener.Close()
 					if state != "starting" {
@@ -97,12 +97,12 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 						if current.TrustRevision != service.TrustRevision || string(current.Protocol) != string(service.Protocol) || current.Trust != nil {
 							t.Fatal("runner retained stale metadata")
 						}
-						if (current.ManagedTLS == nil) != (service.ManagedTls == nil) || current.ManagedTLS != nil && *current.ManagedTLS != *service.ManagedTls {
+						if (current.Endpoint == nil) != (service.Endpoint == nil) || current.Endpoint != nil && *current.Endpoint != *service.Endpoint {
 							t.Fatal("runner retained the old access path")
 						}
 						return stop
 					}
-					var reload error = &tcpconnect.MetadataReloadError{PrivateServiceID: job.PrivateServiceID, ApprovedRevision: 1, SelectedRevision: 2}
+					var reload error = &connectorstream.MetadataReloadError{ServiceID: job.ServiceID, ApprovedRevision: 1, SelectedRevision: 2}
 					switch scenario {
 					case "wrapped":
 						reload = fmt.Errorf("runner: %w", reload)
@@ -113,7 +113,7 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 					}
 					return reload
 				},
-				ready: func(publisherjob.Job) error {
+				ready: func(supervisor.Job) error {
 					if state != "starting" {
 						t.Fatal("ready callback retained stale readiness")
 					}

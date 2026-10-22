@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 func TestIntegrationServiceClientCertificateScopeAndRecovery(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "service_client_scope")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"orders": {Publisher: "production", Protocol: "postgres", Target: "orders.internal:5432"}}}
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"orders": {PublisherGroup: "production", Protocol: "postgres", Target: "orders.internal:5432"}}}
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -70,16 +70,16 @@ func TestIntegrationServiceClientCertificateScopeAndRecovery(t *testing.T) {
 		t.Fatal("control replica would use a different issuer", err)
 	}
 	outsider := finalVisitorIdentity(t, d, now, "unrelated-client@example.test")
-	if _, err = d.IssueServiceClientCertificate(t.Context(), service, outsider, device.ID, csr, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.IssueServiceClientCertificate(t.Context(), service, outsider, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("another identity used this device", err)
 	}
-	if _, err = d.IssueServiceClientCertificate(t.Context(), service, r.ActorID, device.ID, csr, now.Add(8*24*time.Hour)); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.IssueServiceClientCertificate(t.Context(), service, r.ActorID, device.ID, csr, now.Add(8*24*time.Hour)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired CSR retry returned unregistered certificate material", err)
 	}
 	if err = d.RevokeVisitorDevice(t.Context(), r.ActorID, device.ID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.IssueServiceClientCertificate(t.Context(), service, r.ActorID, device.ID, csr, now.Add(2*time.Second)); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.IssueServiceClientCertificate(t.Context(), service, r.ActorID, device.ID, csr, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked device obtained another certificate", err)
 	}
 }

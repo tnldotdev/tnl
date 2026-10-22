@@ -1,4 +1,4 @@
-package webhookips
+package webhooksource
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const maxCatalogBytes = 16384

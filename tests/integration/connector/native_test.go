@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -39,8 +39,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -202,9 +202,9 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		}()
 	}
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
-	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
+	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	sessionID, _ := opaqueid.New("wls_")
-	privateRun, _ := opaqueid.New(opaqueid.PrivateRunPrefix)
+	serviceRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
 	allocated, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	var exchangeAttempts atomic.Int32
 	var authorityMu sync.Mutex
 	issuer := githubtest.New(t)
-	var verifier *oidcauth.GitHubWorkloadVerifier
+	var verifier *oidc.GitHubWorkloadVerifier
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorityMu.Lock()
 		defer authorityMu.Unlock()
@@ -300,9 +300,9 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			current.RenewAfter = time.Now().Add(30 * time.Second)
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "managed_tls": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"private_service_id": service, "private_run_id": privateRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "managed_tls": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
 		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"subject": current.Subject, "assignments": assignments})
 		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
@@ -324,7 +324,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	authority.StartTLS()
 	defer authority.Close()
 	server := strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
-	verifier, err = oidcauth.NewGitHubWorkloadVerifier(server, issuer.Client)
+	verifier, err = oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publishers": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": map[string]any{"provider": "github", "github": map[string]any{"workflow": ".github/workflows/test.yml", "ref": "refs/heads/main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
+	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": map[string]any{"provider": "github", "github": map[string]any{"workflow": ".github/workflows/test.yml", "ref": "refs/heads/main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
 	data, _ := json.Marshal(config)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
 		t.Fatal(err)
@@ -408,13 +408,13 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		}
 		return output.Bytes()
 	}
-	var scope connectionruntime.Context
+	var scope connectorruntime.Context
 	if err := json.Unmarshal(call(nil, "context", "--directory", root, "--workload", "test"), &scope); err != nil {
 		t.Fatal(err)
 	}
 	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
-	request, _ := json.Marshal(connectionruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion})
-	var state connectionruntime.Status
+	request, _ := json.Marshal(connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion})
+	var state connectorruntime.Status
 	startArgs := []string{"start", "--directory", root, "--workload", "test", "--runner-temp", root}
 	if protocol == "kubernetes" {
 		path := filepath.Join(root, "cluster-token")
@@ -427,14 +427,14 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		t.Fatal(err)
 	}
 	defer func() {
-		if state.PrivateHandle != "" {
-			call(nil, "stop", "--handle", state.PrivateHandle)
+		if state.ConnectionHandle != "" {
+			call(nil, "stop", "--handle", state.ConnectionHandle)
 		}
 	}()
 	if state.PID == os.Getpid() || state.State != "ready" {
 		t.Fatal("no detached native owner")
 	}
-	if data, err := os.ReadFile(state.PrivateHandle); err != nil || bytes.Contains(data, []byte("traceparent")) || bytes.Contains(data, []byte("1111111111111111")) {
+	if data, err := os.ReadFile(state.ConnectionHandle); err != nil || bytes.Contains(data, []byte("traceparent")) || bytes.Contains(data, []byte("1111111111111111")) {
 		t.Fatal("launch parent persisted in handle")
 	}
 	if probe, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err == nil {
@@ -453,8 +453,8 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	var prepared connectionruntime.Prepared
-	if err := connectionruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.PrivateHandle, "--service", serviceName)), &prepared); err != nil {
+	var prepared connectorruntime.Prepared
+	if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -496,7 +496,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		time.Sleep(10 * time.Millisecond)
 	}
 	snapshot := prepared.Connection
-	if prepared.Schema != 1 || prepared.PublicRuntime.Services[serviceName].Hostname != managedHostname || prepared.PublicRuntime.Services[serviceName].Public != public {
+	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || prepared.ProjectRuntime.Services[serviceName].Public != public {
 		t.Fatal("prepared read did not preserve the owner's public metadata")
 	}
 	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != port || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
@@ -528,7 +528,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	}
 	if protocol == "kubernetes" {
 		var credential credentialv1.ExecCredential
-		if err := json.Unmarshal(call(nil, "kube-credential", "--handle", state.PrivateHandle, "--service", serviceName), &credential); err != nil {
+		if err := json.Unmarshal(call(nil, "kube-credential", "--handle", state.ConnectionHandle, "--service", serviceName), &credential); err != nil {
 			t.Fatal(err)
 		}
 		if credential.APIVersion != "client.authentication.k8s.io/v1" || credential.Status == nil || credential.Status.Token != "fixture-cluster-token" || credential.Status.ClientCertificateData != "" || credential.Status.ClientKeyData != "" || credential.Status.ExpirationTimestamp == nil {
@@ -562,7 +562,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			t.Fatal(err)
 		}
 		node := exec.CommandContext(t.Context(), "node", fixture, binary)
-		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.PrivateHandle, "DB_USER="+backend.User.Username(), "DB_PASSWORD="+password, "DB_NAME="+strings.TrimPrefix(backend.Path, "/"))
+		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle, "DB_USER="+backend.User.Username(), "DB_PASSWORD="+password, "DB_NAME="+strings.TrimPrefix(backend.Path, "/"))
 		if output, err := node.CombinedOutput(); err != nil {
 			t.Fatalf("installed Drizzle Kit: %v %s", err, output)
 		}
@@ -573,7 +573,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			t.Fatal(err)
 		}
 		node := exec.CommandContext(t.Context(), "node", fixture, binary, protocol)
-		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.PrivateHandle)
+		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
 		if output, err := node.CombinedOutput(); err != nil {
 			t.Fatalf("native SDK runtime: %v %s", err, output)
 		}
@@ -593,11 +593,11 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		}
 	}
 	for _, check := range qualify {
-		check(nativeConnectionFixture{Handle: state.PrivateHandle, Env: slices.Clone(env), WrongTLS: &wrongTLS, Canceled: &canceled, Stop: func() {
-			call(nil, "stop", "--handle", state.PrivateHandle)
+		check(nativeConnectionFixture{Handle: state.ConnectionHandle, Env: slices.Clone(env), WrongTLS: &wrongTLS, Canceled: &canceled, Stop: func() {
+			call(nil, "stop", "--handle", state.ConnectionHandle)
 		}})
 	}
-	call(nil, "stop", "--handle", state.PrivateHandle)
+	call(nil, "stop", "--handle", state.ConnectionHandle)
 	if state.Kubeconfig != "" {
 		if _, err := os.Stat(state.Kubeconfig); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("session kubeconfig survived owner cleanup")
@@ -613,5 +613,5 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		t.Fatal("native owner requested application certificates")
 	}
 	// cleanup is already joined; avoid a second stop with an expired handle.
-	state.PrivateHandle = ""
+	state.ConnectionHandle = ""
 }

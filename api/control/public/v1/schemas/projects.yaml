@@ -14,7 +14,7 @@ schemas:
           properties:
             service: { type: string }
             public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-            private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+            service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
             port: { type: integer, minimum: 1, maximum: 65535 }
             hostname: { type: string }
   RealizeLocalProjectServiceRequest:
@@ -36,10 +36,10 @@ schemas:
     properties:
       service: { type: string }
       worktree_key: { type: string }
-      service_kind: { type: string, enum: [private_service, public_url] }
+      service_kind: { type: string, enum: [service, public_url] }
       service_id: { type: string }
       hostname: { type: string }
-      private_service: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceMetadata" }
+      metadata: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
   ApplyProjectConfigurationRequest:
     type: object
     additionalProperties: false
@@ -55,7 +55,7 @@ schemas:
     type: object
     description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
     additionalProperties: false
-    required: [publishers, services, oauth, webhooks]
+    required: [publisher_groups, services, oauth, webhooks]
     properties:
       workloads:
         type: object
@@ -64,13 +64,13 @@ schemas:
       oauth:
         type: boolean
         default: false
-        description: Desired local app-led OAuth integration URL declaration. Control stores the declaration and revision; applying it does not provision a handler on a named publisher group.
+        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
       webhooks:
         type: object
         maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
         description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
-      publishers:
+      publisher_groups:
         {
           type: object,
           maxProperties: 32,
@@ -130,7 +130,7 @@ schemas:
       cluster: { type: string, maxLength: 100 }
       instance: { type: string, maxLength: 100 }
       endpoint: { type: string, enum: [writer, reader] }
-    description: Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control and apply never fetch a target, TLS roots, or AWS credentials. EKS requires kubernetes; RDS requires the specified postgres or mysql protocol, verified against provider metadata by the publisher.
+    description: Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
   ProjectWebhook:
     type: object
     additionalProperties: false
@@ -156,13 +156,13 @@ schemas:
     additionalProperties: false
     required: [target]
     properties:
-      publisher: { type: string, default: local }
+      publisher_group: { type: string, default: local }
       name: { type: string, maxLength: 32 }
-      protocol: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceProtocol" }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       target:
         type: string
         maxLength: 8192
-        description: Public targets use the runtime NormalizeTarget rules, including an explicit port and no trailing slash on HTTP/HTTPS origins. Private targets normalize to host:port; private HTTPS origins require target_tls and plaintext HTTP origins forbid it. The publisher uses the approved transport/trust snapshot independently of mandatory managed visitor TLS. Only local publishers may use deferred app (HTTP only), compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control never discovers or executes those targets.
+        description: Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
@@ -171,8 +171,10 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local HTTP behavior. Named publisher groups reject http settings until their execution contract supports readiness and path mounts.
+    description: Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
     properties:
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:
         type: object
         additionalProperties: false
@@ -201,8 +203,8 @@ schemas:
       ephemeral:
         type: boolean
         default: false
-        description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups use managed endpoints and reject true.
-    description: Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
+        description: Local declarations may request an ephemeral worktree URL.
+    description: Enables a local service's public URL. Named publisher groups use http settings and reject this block.
   ProjectPublicAccess:
     type: object
     additionalProperties: false
@@ -239,7 +241,7 @@ schemas:
     type: object
     additionalProperties: false
     required: [hostname, digest]
-    description: Publisher-to-target TLS trust for http, tcp, postgres, or mysql, independent of mandatory managed visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem. No filesystem path or remote bundle URL is accepted.
+    description: Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
       ca_pem: { type: string, maxLength: 1048576 }
@@ -301,11 +303,11 @@ schemas:
       public: { type: boolean }
   AppliedProjectService:
     type: object
-    required: [service, publisher, service_kind, desired_revision, trust_revision]
+    required: [service, publisher_group, service_kind, desired_revision, trust_revision]
     properties:
       service: { type: string }
-      publisher: { type: string }
-      service_kind: { type: string, enum: [public_url, private_service, local] }
+      publisher_group: { type: string }
+      service_kind: { type: string, enum: [public_url, service, local] }
       service_id: { type: string }
       hostname: { type: string }
       desired_revision: { type: integer, format: int64 }

@@ -1,5 +1,5 @@
 // Package publicurlusageworker finishes and sends stored public URL usage reports.
-package publicurlusageworker
+package usage
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/workerloop"
-	"github.com/tnldotdev/tnl/pkg/api/publicurlusagev1"
+	publicurlusagev1 "github.com/tnldotdev/tnl/pkg/api/integrations/public-url-usage/v1"
 )
 
 const (

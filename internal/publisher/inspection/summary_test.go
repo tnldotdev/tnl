@@ -1,4 +1,4 @@
-package protocolinspection
+package inspection
 
 import (
 	"bytes"

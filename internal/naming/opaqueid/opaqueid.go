@@ -57,12 +57,12 @@ const (
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
 	PreviewPrefix                    = "pv_"
-	PrivateServicePrefix             = "psvc_"
+	ServicePrefix                    = "svc_"
 	VisitorDevicePrefix              = "vdev_"
-	PrivateRunPrefix                 = "psrun_"
-	PrivateConnectorSessionPrefix    = "pcs_"
-	PrivateServiceInvitationPrefix   = "psivt_"
-	PrivateServiceGrantPrefix        = "psgr_"
+	ServiceRunPrefix                 = "srun_"
+	ConnectorSessionPrefix           = "cns_"
+	ServiceInvitationPrefix          = "sivt_"
+	ServiceGrantPrefix               = "sgr_"
 )
 
 // New returns a type prefix followed by 22 uniformly sampled alphanumeric characters.

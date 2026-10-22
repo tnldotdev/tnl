@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 var readVercelWorkload = vercelWorkloadMetadata
 
-func bindProviderWorkload(ctx context.Context, p config.Workload, previous controlstate.ProjectWorkload) (oidcauth.WorkloadTrust, error) {
-	t := oidcauth.WorkloadTrust{Provider: p.Provider, Claims: map[string]string{}}
+func bindProviderWorkload(ctx context.Context, p config.Workload, previous controlstate.ProjectWorkload) (oidc.WorkloadTrust, error) {
+	t := oidc.WorkloadTrust{Provider: p.Provider, Claims: map[string]string{}}
 	switch p.Provider {
 	case "vercel":
 		if p.TeamSlug == "" || p.IssuerMode == "" {

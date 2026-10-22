@@ -1,4 +1,4 @@
-package privateprotocol
+package protocol
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	api "github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
+	api "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 type Endpoint = api.Endpoint

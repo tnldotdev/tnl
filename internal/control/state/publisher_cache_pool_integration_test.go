@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -46,7 +46,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	var materials []clientstate.Material
 	var csrs [][]byte
 	for index := range 2 {
-		enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: url.TeamID, Kind: "saved_url", PublicURLID: url.ID}, now)
+		enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: url.TeamID, Kind: "saved_public_url", PublicURLID: url.ID}, now)
 		public, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +69,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 		request.RequestDigest = sha256.Sum256([]byte(request.IdempotencyKey))
 		request.CertificateCacheKey, request.CertificateScope, request.CertificateIdentifiers, request.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
 		request.PublisherIdentityID, request.PublisherGrantID, request.PublisherKeyID = publisher.ID, publisher.GrantID, publisher.KeyID
-		request.PublisherRunProof, err = publisheridentity.SignRun(key, url.ID, request.IdempotencyKey)
+		request.PublisherRunProof, err = publisherproof.SignRun(key, url.ID, request.IdempotencyKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -156,7 +156,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	request := runs[0].request
 	request.IdempotencyKey = "publisher-cache-restart"
 	request.ExpectedMutationRevision = current.MutationRevision
-	request.PublisherRunProof, err = publisheridentity.SignRun(signingKeys[0], url.ID, request.IdempotencyKey)
+	request.PublisherRunProof, err = publisherproof.SignRun(signingKeys[0], url.ID, request.IdempotencyKey)
 	if err != nil {
 		t.Fatal(err)
 	}

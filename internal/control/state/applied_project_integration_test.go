@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -16,22 +17,23 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func appliedProjectRequest(t *testing.T, d *Database, now time.Time) ApplyProjectConfigurationRequest {
 	t.Helper()
 	r := oidcRouteRequest(t, d, now)
-	return ApplyProjectConfigurationRequest{TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
+	return ApplyProjectConfigurationRequest{TeamID: r.TeamID, ActorID: r.ActingIdentityID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://localhost:3000"}}}, Now: now}
 }
 
 func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_concurrency")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration.Publishers = map[string]ProjectPublisherGroup{"production": {}}
-	r.Configuration.Services["web"] = ProjectServiceConfiguration{Publisher: "production", Target: "http://localhost:3000"}
+	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"production": {}}
+	r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:3000"}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
@@ -54,14 +56,14 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 		}
 		original = v.value
 	}
-	if original.Services[0].Kind != "private_service" {
+	if original.Services[0].Kind != "service" {
 		t.Fatal("HTTP without public_url became public")
 	}
 	for index := range 2 {
 		workers.Go(func() {
 			c := r
 			c.ExpectedRevision = 1
-			c.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {Publisher: "production", Target: fmt.Sprintf("http://localhost:%d", 4000+index)}}}
+			c.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {PublisherGroup: "production", Target: fmt.Sprintf("http://localhost:%d", 4000+index)}}}
 			v, e := d.ApplyProjectConfiguration(ctx, c)
 			done <- outcome{v, e}
 		})
@@ -93,9 +95,9 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	bad := r
 	bad.ExpectedRevision = current.Revision
 	bad.Configuration = current.Configuration
-	bad.Configuration.Services["a-new"] = ProjectServiceConfiguration{Publisher: "production", Target: "http://localhost:7000"}
-	bad.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{Publisher: "production", Name: "web", Target: "http://localhost:8000"}
-	if _, err = d.ApplyProjectConfiguration(ctx, bad); !errors.Is(err, ErrPrivateServiceConflict) {
+	bad.Configuration.Services["a-new"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "http://localhost:7000"}
+	bad.Configuration.Services["z-conflict"] = ProjectServiceConfiguration{PublisherGroup: "production", Name: "web", Target: "http://localhost:8000"}
+	if _, err = d.ApplyProjectConfiguration(ctx, bad); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("expected atomic name conflict: %v", err)
 	}
 	after, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID)
@@ -106,7 +108,7 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 		t.Fatalf("failed apply committed desired state: %#v", after)
 	}
 	var count int
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.private_services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 1 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("failed apply leaked services: %d %v", count, err)
 	}
 	var sealed []byte
@@ -150,7 +152,7 @@ func enrollAppliedGroup(t *testing.T, d *Database, r ApplyProjectConfigurationRe
 	if err != nil || retry != m {
 		t.Fatal("same key redemption changed member", err)
 	}
-	assertion, err := publisheridentity.Sign(m.PublisherIdentityID, m.KeyID, m.GroupID, "https://control.example/v1/publisher-groups/lease", key, now)
+	assertion, err := publisherproof.Sign(m.PublisherIdentityID, m.KeyID, m.GroupID, "https://control.example/v1/publisher-groups/lease", key, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +172,7 @@ func enrollAppliedGroup(t *testing.T, d *Database, r ApplyProjectConfigurationRe
 
 func groupAssignmentAccess(t *testing.T, d *Database, replica enrolledGroupReplica, a PublisherGroupServiceAssignment, now time.Time) PublisherAccess {
 	t.Helper()
-	assertion, err := publisheridentity.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, a.GrantID, publisherTestAudience, replica.private, now)
+	assertion, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, a.GrantID, publisherTestAudience, replica.private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,10 +187,10 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"web":   {Publisher: "production", Name: "production", Target: "http://app.internal:3000", PublicURL: &ProjectServicePublicURL{Access: &ProjectPublicAccess{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}, Access: &ProjectServiceAccess{Team: true}},
-		"db":    {Publisher: "production", Protocol: "postgres", Target: "db.internal:5432", Access: &ProjectServiceAccess{Team: true}},
-		"stage": {Publisher: "staging", Target: "http://staging.internal:3000"},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
+		"web":   {PublisherGroup: "production", Name: "production", Target: "http://app.internal:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.0/24"}}}, Access: &ProjectServiceAccess{Team: true}},
+		"db":    {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432", Access: &ProjectServiceAccess{Team: true}},
+		"stage": {PublisherGroup: "staging", Target: "http://staging.internal:3000"},
 	}}
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -218,37 +220,37 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 		t.Fatal("one key enrolled in two groups", err)
 	}
 	var oldAccess []PublisherAccess
-	var privateRuns []PrivateRunState
+	var serviceRuns []ServiceRunState
 	for _, replica := range []enrolledGroupReplica{a, b} {
 		for _, assignment := range replica.assignments.Services {
 			access := groupAssignmentAccess(t, d, replica, assignment, now)
 			oldAccess = append(oldAccess, access)
-			if assignment.Kind == "private_service" {
-				trust, err := appliedPrivateTargetTrust(assignment.Configuration.TargetTLS)
+			if assignment.Kind == "service" {
+				trust, err := appliedServiceTargetTrust(assignment.Configuration.TargetTLS)
 				if err != nil {
 					t.Fatal(err)
 				}
-				metadata := PrivateServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-				prepared, err := d.PreparePrivateServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "group", now, metadata)
+				metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
+				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "group", now, metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
-				run, err := d.StartManagedServiceRun(t.Context(), assignment.ServiceID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, now)
+				run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, now)
 				if err != nil {
 					t.Fatal(err)
 				}
-				privateRuns = append(privateRuns, run)
+				serviceRuns = append(serviceRuns, run)
 				installPrivateTestCertificate(t, d, prepared, run, now)
 				for _, slot := range run.Connections {
 					lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-					if _, err = d.ClaimPrivatePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+					if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
 						t.Fatal(err)
 					}
-					if _, err = d.ReadyPrivatePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
+					if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if state, err := d.HeartbeatPrivateServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+				if state, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
 					t.Fatalf("group private run not ready: %+v %v", state, err)
 				}
 			} else {
@@ -259,7 +261,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if len(privateRuns) != 4 || privateRuns[0].Connections[0].PublisherConnectionID == privateRuns[2].Connections[0].PublisherConnectionID || privateRuns[0].RunID == privateRuns[2].RunID {
+	if len(serviceRuns) != 4 || serviceRuns[0].Connections[0].PublisherConnectionID == serviceRuns[2].Connections[0].PublisherConnectionID || serviceRuns[0].RunID == serviceRuns[2].RunID {
 		t.Fatal("private replicas share run identity or publisher assignment")
 	}
 	status, err = d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
@@ -278,22 +280,22 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if _, err = d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
 		t.Fatal("revoked replica retained group lease", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(t.Context(), privateRuns[0].ServiceID, privateRuns[0].RunID, privateRuns[0].Token, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[0].ServiceID, serviceRuns[0].RunID, serviceRuns[0].Token, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked replica retained private run", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(t.Context(), privateRuns[1].ServiceID, privateRuns[1].RunID, privateRuns[1].Token, now); !errors.Is(err, ErrPrivateServiceAccess) {
-		t.Fatal("revoked replica retained managed HTTP run", err)
+	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[1].ServiceID, serviceRuns[1].RunID, serviceRuns[1].Token, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("revoked replica retained service HTTP run", err)
 	}
-	if state, err := d.HeartbeatPrivateServiceRun(t.Context(), privateRuns[2].ServiceID, privateRuns[2].RunID, privateRuns[2].Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[2].ServiceID, serviceRuns[2].RunID, serviceRuns[2].Token, now); err != nil || state.State != "ready" {
 		t.Fatal("revoking one replica disturbed its peer private run", err)
 	}
-	if state, err := d.HeartbeatPrivateServiceRun(t.Context(), privateRuns[3].ServiceID, privateRuns[3].RunID, privateRuns[3].Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[3].ServiceID, serviceRuns[3].RunID, serviceRuns[3].Token, now); err != nil || state.State != "ready" {
 		t.Fatal("revoking one replica disturbed its peer HTTP run", err)
 	}
 	// a trust change keeps the saved service ID, closes old runs, and replaces
 	// exact grants before any replica can acknowledge or run the new revision.
 	r.ExpectedRevision = 1
-	r.Configuration.Publishers["production"] = ProjectPublisherGroup{Description: "updated production group"}
+	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Description: "updated production group"}
 	db := r.Configuration.Services["db"]
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00database.internal\x00"))
 	db.TargetTLS = &ProjectTargetTLS{Hostname: "database.internal", Digest: hex.EncodeToString(digest[:])}
@@ -314,22 +316,22 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 			t.Fatal("trust revision did not advance")
 		}
 	}
-	for _, run := range privateRuns {
-		if run.ServiceID != privateRuns[0].ServiceID {
+	for _, run := range serviceRuns {
+		if run.ServiceID != serviceRuns[0].ServiceID {
 			continue
 		}
-		if _, err = d.HeartbeatPrivateServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now); !errors.Is(err, ErrPrivateServiceAccess) {
+		if _, err = d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("old private run survived trust change", err)
 		}
 	}
 	for _, access := range oldAccess {
-		if access.Scope.PrivateServiceID == privateRuns[0].ServiceID {
+		if access.Scope.ServiceID == serviceRuns[0].ServiceID {
 			if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
 				t.Fatal("old private access survived replacement", err)
 			}
 		}
 	}
-	page, err := d.ListServiceAudit(t.Context(), r.TeamID, r.ActorID, ServiceAuditFilter{ServiceID: privateRuns[0].ServiceID, Limit: 256}, now)
+	page, err := d.ListServiceAudit(t.Context(), r.TeamID, r.ActorID, ServiceAuditFilter{ServiceID: serviceRuns[0].ServiceID, Limit: 256}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +353,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 		t.Fatalf("missing group audit facts: enrolled=%t revoked=%t description=%t", enrolled, revoked, described)
 	}
 	r.ExpectedRevision = updated.Revision
-	delete(r.Configuration.Publishers, "production")
+	delete(r.Configuration.PublisherGroups, "production")
 	delete(r.Configuration.Services, "web")
 	delete(r.Configuration.Services, "db")
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
@@ -392,7 +394,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_move")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "production", Target: "https://api.internal:8443", Access: &ProjectServiceAccess{Team: true}}}}
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "https://api.internal:8443", Access: &ProjectServiceAccess{Team: true}}}}
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00api.internal\x00"))
 	service := r.Configuration.Services["api"]
 	service.TargetTLS = &ProjectTargetTLS{Hostname: "api.internal", Digest: hex.EncodeToString(digest[:])}
@@ -410,7 +412,7 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 		replicas = append(replicas, enrollAppliedGroup(t, d, r, e, now))
 	}
 	old := groupAssignmentAccess(t, d, replicas[0], replicas[0].assignments.Services[0], now)
-	service.Publisher = "staging"
+	service.PublisherGroup = "staging"
 	service.Access = nil
 	r.Configuration.Services["api"] = service
 	r.ExpectedRevision = 1
@@ -434,15 +436,15 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 	}
 	current := groupAssignmentAccess(t, d, replicas[1], staging.Services[0], now)
 	a := staging.Services[0]
-	trust, err := appliedPrivateTargetTrust(service.TargetTLS)
+	trust, err := appliedServiceTargetTrust(service.TargetTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PreparePrivateServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, PrivateServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}); err != nil {
+	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}); err != nil {
 		t.Fatal("private HTTP/TLS assignment is not publishable", err)
 	}
 	var teamGrants int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.private_service_grants WHERE private_service_id=$1 AND kind='team' AND revoked_at IS NULL`, a.ServiceID).Scan(&teamGrants); err != nil || teamGrants != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, a.ServiceID).Scan(&teamGrants); err != nil || teamGrants != 0 {
 		t.Fatal("removed declarative team access survived", err)
 	}
 	r.ExpectedRevision = 2
@@ -512,36 +514,36 @@ func TestIntegrationAppliedProjectLocalDeferredTargets(t *testing.T) {
 	}
 }
 
-func TestIntegrationAppliedProjectPublicSettingsAndTargetTrust(t *testing.T) {
+func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "applied_public_settings")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
 	trust := appliedTargetTrust(t, "upstream.internal")
 	total := 100
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {
-		Publisher: "production", Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
-		PublicURL: &ProjectServicePublicURL{Access: &ProjectPublicAccess{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &ProjectPublicLimits{HTTP: &ProjectHTTPApplicationLimits{Total: &total}}},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"web": {
+		PublisherGroup: "production", Name: "application", Target: "https://192.0.2.8:8443", TargetTLS: trust,
+		HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: []string{"192.0.2.10"}}, Limits: &config.WorkLimits{Total: &total}},
 	}}}
 	status, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := status.Services[0].ServiceID
-	u, err := d.GetPrivateService(t.Context(), id, r.ActorID)
+	u, err := d.GetService(t.Context(), id, r.ActorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.ManagedTLS == nil || u.ManagedTLS.Public || !strings.HasPrefix(u.ManagedTLS.Hostname, "application.") || status.Services[0].Public {
+	if u.Endpoint == nil || u.Endpoint.Public || !strings.HasPrefix(u.Endpoint.Hostname, "application.") || status.Services[0].Public {
 		t.Fatalf("HTTP settings overrode group reachability: %+v", u)
 	}
 	checkIP := func(allowed, denied string) {
 		t.Helper()
 		q := controlstatedb.New(d.pool)
-		if err := d.managedHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
+		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
 			t.Fatal(err)
 		}
-		if err := d.managedHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrPrivateServiceAccess) {
-			t.Fatal("managed HTTP source filter widened", err)
+		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("service HTTP source filter widened", err)
 		}
 	}
 	checkIP("192.0.2.10", "203.0.113.10")
@@ -551,17 +553,17 @@ func TestIntegrationAppliedProjectPublicSettingsAndTargetTrust(t *testing.T) {
 	}
 	replica := enrollAppliedGroup(t, d, r, enrollment, now)
 	a := replica.assignments.Services[0]
-	if a.Configuration.TargetTLS == nil || *a.Configuration.TargetTLS != *trust || a.Configuration.PublicURL.Access.IP[0] != "192.0.2.10/32" {
+	if a.Configuration.TargetTLS == nil || *a.Configuration.TargetTLS != *trust || a.Configuration.HTTP.Access.IP[0] != "192.0.2.10/32" {
 		t.Fatalf("assignment lost target trust or HTTP settings: %+v", a.Configuration)
 	}
 	old := groupAssignmentAccess(t, d, replica, a, now)
-	approved, err := d.GetPrivateServiceForPublisher(t.Context(), id, old.PublisherIdentity, now)
+	approved, err := d.GetServiceForPublisher(t.Context(), id, old.PublisherIdentity, now)
 	if err != nil || approved.HTTPLimits == nil || *approved.HTTPLimits.Total != 100 {
 		t.Fatal("publisher did not receive approved HTTP limits", err)
 	}
 	s := r.Configuration.Services["web"]
-	s.PublicURL.Access = &ProjectPublicAccess{Mode: "restricted", IP: []string{"203.0.113.0/24"}}
-	s.PublicURL.Limits.HTTP.Total = new(250)
+	s.HTTP.Access = &config.Access{Mode: "restricted", IP: []string{"203.0.113.0/24"}}
+	s.HTTP.Limits.Total = new(250)
 	r.Configuration.Services["web"] = s
 	r.ExpectedRevision = 1
 	updated, err := d.ApplyProjectConfiguration(t.Context(), r)
@@ -569,7 +571,7 @@ func TestIntegrationAppliedProjectPublicSettingsAndTargetTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	if updated.Services[0].ServiceID != id {
-		t.Fatal("changing HTTP settings replaced its managed service")
+		t.Fatal("changing HTTP settings replaced its service")
 	}
 	checkIP("203.0.113.10", "192.0.2.10")
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), old.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
@@ -579,10 +581,10 @@ func TestIntegrationAppliedProjectPublicSettingsAndTargetTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Services[0].Configuration.PublicURL.Access.IP[0] != "203.0.113.0/24" || *current.Services[0].Configuration.TargetTLS != *trust {
+	if current.Services[0].Configuration.HTTP.Access.IP[0] != "203.0.113.0/24" || *current.Services[0].Configuration.TargetTLS != *trust {
 		t.Fatal("updated assignment dropped HTTP policy or target trust")
 	}
-	if *current.Services[0].Configuration.PublicURL.Limits.HTTP.Total != 250 {
+	if *current.Services[0].Configuration.HTTP.Limits.Total != 250 {
 		t.Fatal("updated HTTP limits lost")
 	}
 	var sealed []byte
@@ -592,8 +594,30 @@ func TestIntegrationAppliedProjectPublicSettingsAndTargetTrust(t *testing.T) {
 	// a true remote ephemeral declaration cannot silently turn into a saved pool.
 	bad := r
 	bad.ExpectedRevision = updated.Revision
-	bad.Configuration.Services["web"].PublicURL.Ephemeral = true
+	invalidService := bad.Configuration.Services["web"]
+	invalidService.PublicURL = &ProjectServicePublicURL{Ephemeral: true}
+	bad.Configuration.Services["web"] = invalidService
 	if _, err = d.ApplyProjectConfiguration(t.Context(), bad); !errors.Is(err, ErrProjectConfigurationInvalid) {
 		t.Fatal("unsupported ephemeral pooled URL was silently accepted", err)
+	}
+	// a corrupt stored rate must deny admission instead of reaching pointer
+	// conversion in the publisher projection.
+	s.PublicURL = nil
+	period := config.Duration(time.Second)
+	s.HTTP.Limits.Rate = &config.Rate{Per: &period}
+	bad.Configuration.Services["web"] = s
+	encoded, err := json.Marshal(bad.Configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.pool.Exec(t.Context(), `UPDATE control.applied_projects SET configuration_ciphertext=$3,storage_key_id=$4 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, encrypted, d.storageKey.CurrentID()); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("malformed stored HTTP limits admitted a visitor", err)
 	}
 }

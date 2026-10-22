@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -15,14 +15,14 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startIntegrationURLWorker(t *testing.T, worker integrationurls.Publisher) <-chan publisher.Event {
+func startIntegrationURLWorker(t *testing.T, worker integrations.Publisher) <-chan publisher.Event {
 	t.Helper()
 	prepare := worker.Prepare
-	worker.Prepare = func(ctx context.Context) (integrationurls.Snapshot, error) {
+	worker.Prepare = func(ctx context.Context) (integrations.Snapshot, error) {
 		snapshot, err := prepare(ctx)
 		if err != nil {
 			return snapshot, err
@@ -80,10 +80,10 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	quic, tcp := fixture.connectors()
 	oauthConfig := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
 	oauthConfig.Purpose = controlv1.Oauth
-	oauthConfig.Handler = integrationurls.OAuthHandler(state, server, oauthHost)
-	oauthReady := startIntegrationURLWorker(t, integrationurls.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,
-		Prepare: func(context.Context) (integrationurls.Snapshot, error) {
-			return integrationurls.Snapshot{Config: oauthConfig}, nil
+	oauthConfig.Handler = integrations.OAuthHandler(state, server, oauthHost)
+	oauthReady := startIntegrationURLWorker(t, integrations.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,
+		Prepare: func(context.Context) (integrations.Snapshot, error) {
+			return integrations.Snapshot{Config: oauthConfig}, nil
 		}})
 	waitIntegrationURLWorkerReady(t, oauthReady)
 	primary := filepath.Join(t.TempDir(), "main")
@@ -122,7 +122,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
 		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 		config.Hostname = "api-" + name + "." + namespace
-		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, group, tunnel.ID())
+		config.ObserveResponse = integrations.Observer(state, server, oauthHost, group, tunnel.ID())
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:
@@ -142,10 +142,10 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 			t.Fatal(err)
 		}
 		aliasConfig := fixture.identity.publisherConfig(target.URL, quic, tcp)
-		aliasConfig.PreserveSavedURLTarget = true
+		aliasConfig.PreserveSavedPublicURLTarget = true
 		aliasConfig.Purpose = controlv1.Alias
 		aliasConfig.Hostname, aliasConfig.ObserveResponse = aliasHost, config.ObserveResponse
-		worker := integrationurls.AliasPublisher(state, store, selection, tunnel.ID(), aliasConfig, nil)
+		worker := integrations.AliasPublisher(state, store, selection, tunnel.ID(), aliasConfig, nil)
 		apps = append(apps, app{name: name, project: project, callbacks: callbacks, ready: startIntegrationURLWorker(t, worker)})
 	}
 	first := waitIntegrationURLWorkerReady(t, apps[0].ready)

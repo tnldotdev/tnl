@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type localAuthorizer struct {

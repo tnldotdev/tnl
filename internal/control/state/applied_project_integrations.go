@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"encoding/json"
@@ -19,8 +19,8 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	services := config.Services{}
 	for name, service := range c.Services {
 		protocol := service.Protocol
-		publisher := service.Publisher
-		declared := config.Service{Protocol: &protocol, Publisher: &publisher, HTTP: service.HTTP}
+		publisher := service.PublisherGroup
+		declared := config.Service{Protocol: &protocol, PublisherGroup: &publisher, HTTP: service.HTTP}
 		if service.PublicURL != nil {
 			declared.Tunnel = &config.Tunnel{}
 		}
@@ -28,7 +28,7 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 		if service.HTTP != nil {
 			for _, mount := range service.HTTP.Paths {
 				destination, found := c.Services[mount.Service]
-				if !found || mount.Service == name || destination.Protocol != "http" || destination.Publisher != "local" {
+				if !found || mount.Service == name || destination.Protocol != "http" || destination.PublisherGroup != "local" {
 					return ErrProjectConfigurationInvalid
 				}
 			}
@@ -37,7 +37,7 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	definitions := map[string]config.Webhook{}
 	for name, w := range c.Webhooks {
 		service, declared := c.Services[w.Service]
-		if !declared || service.Protocol != "http" || service.PublicURL == nil || service.Publisher != "local" || len(w.Path) > 2048 || len(w.Methods) > 7 || len(w.SourceIPs) > 256 {
+		if !declared || service.Protocol != "http" || service.PublicURL == nil || service.PublisherGroup != "local" || len(w.Path) > 2048 || len(w.Methods) > 7 || len(w.SourceIPs) > 256 {
 			return ErrProjectConfigurationInvalid
 		}
 		definitions[name] = config.Webhook{Service: w.Service, Path: w.Path, Provider: w.Provider, Delivery: w.Delivery, Methods: w.Methods, SourceIPs: w.SourceIPs}

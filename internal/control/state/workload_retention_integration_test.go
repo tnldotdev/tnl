@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
@@ -64,7 +64,7 @@ func drainWorkloadHistory(t *testing.T, d *Database, now time.Time, limit int) i
 func workloadHistoryCounts(t *testing.T, d *Database) map[string]int64 {
 	t.Helper()
 	counts := map[string]int64{}
-	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_ingress_requests", "workload_client_certificates", "workload_audit", "private_connector_sessions", "private_visitor_streams", "direct_service_visitors"} {
+	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_ingress_requests", "workload_client_certificates", "workload_audit", "connector_sessions", "connector_visitor_streams", "direct_service_visitors"} {
 		var count int64
 		if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.`+table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -166,7 +166,7 @@ func TestIntegrationWorkloadRetentionAssertionBoundary(t *testing.T) {
 	p := r.Configuration.Workloads["test"]
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
-	trust := oidcauth.WorkloadTrust{Provider: "oidc", Issuer: "https://issuer.example/workloads", JWKSURL: "https://issuer.example/keys", Audience: "test", Claims: map[string]string{"sub": "worker"}}
+	trust := oidc.WorkloadTrust{Provider: "oidc", Issuer: "https://issuer.example/workloads", JWKSURL: "https://issuer.example/keys", Audience: "test", Claims: map[string]string{"sub": "worker"}}
 	r.Configuration.Workloads["long-assertion"] = ProjectWorkload{Provider: "oidc", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 10}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestIntegrationWorkloadRetentionAssertionBoundary(t *testing.T) {
 	github, request, key := retentionWorkload(t, d, r, at, 1)
 	request.Workload = "long-assertion"
 	request.Nonce = "long_assertion_nonce"
-	request.Execution = oidcauth.WorkloadExecution{Provider: "oidc", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "worker", IssuedAt: at.Unix(), NotBefore: at.Unix(), ExpiresAt: at.Add(12 * time.Hour).Unix(), Claims: map[string]string{}}
+	request.Execution = oidc.WorkloadExecution{Provider: "oidc", Issuer: trust.Issuer, Audience: trust.Audience, TrustDigest: trust.Digest(), Subject: "worker", IssuedAt: at.Unix(), NotBefore: at.Unix(), ExpiresAt: at.Add(12 * time.Hour).Unix(), Claims: map[string]string{}}
 	signWorkloadRequest(&request, key)
 	reusable, err := d.ExchangeWorkload(t.Context(), request, at)
 	if err != nil {
@@ -220,11 +220,11 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	}
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	access := groupAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
-	service, err := d.GetPrivateServiceForPublisher(ctx, replica.assignments.Services[0].ServiceID, access.PublisherIdentity, now)
+	service, err := d.GetServiceForPublisher(ctx, replica.assignments.Services[0].ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedPrivateRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
 	var sessions []WorkloadSession
 	var connectors, visitors []string
 	var certificates [][]byte
@@ -234,11 +234,11 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		at := now.Add(-time.Duration(50-i) * 24 * time.Hour)
 		s, _, _ := retentionWorkload(t, d, r, at, i)
 		sessions = append(sessions, s)
-		connector := mustOpaqueID(t, opaqueid.PrivateConnectorSessionPrefix)
+		connector := mustOpaqueID(t, opaqueid.ConnectorSessionPrefix)
 		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 		cert := sha256.Sum256([]byte(fmt.Sprint("certificate-", i)))
 		connectors, visitors, certificates = append(connectors, connector), append(visitors, visitor), append(certificates, cert[:])
-		if _, err := d.pool.Exec(ctx, `INSERT INTO control.private_connector_sessions(id,workload_session_id,credential_digest,private_service_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at) VALUES($1,$2,$3,$4,'retention','old-run',1,$5,$6)`, connector, s.ID, cert[:], service.ID, at, s.ExpiresAt); err != nil {
+		if _, err := d.pool.Exec(ctx, `INSERT INTO control.connector_sessions(id,workload_session_id,credential_digest,service_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at) VALUES($1,$2,$3,$4,'retention','old-run',1,$5,$6)`, connector, s.ID, cert[:], service.ID, at, s.ExpiresAt); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_ingress_requests VALUES($1,'retry',$2,'ciphertext','key');`, s.ID, service.ID); err != nil {
@@ -247,17 +247,17 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_client_certificates VALUES($1,$2,$3,$1,'certificate',$4)`, cert[:], s.ID, service.ID, s.ExpiresAt); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.pool.Exec(ctx, `INSERT INTO control.private_visitor_streams(workload_session_id,visitor_connection_id,private_service_id,private_run_id,run_number,connector_session_id,source_ip,grant_revision,valid_until,created_at) VALUES($1,$2,$3,$4,$5,$6,'192.0.2.1',1,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, connector, s.LeaseExpiresAt, at); err != nil {
+		if _, err := d.pool.Exec(ctx, `INSERT INTO control.connector_visitor_streams(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,connector_session_id,source_ip,grant_revision,valid_until,created_at) VALUES($1,$2,$3,$4,$5,$6,'192.0.2.1',1,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, connector, s.LeaseExpiresAt, at); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// retained live decisions, certificate, and JTI each pin a different old
 	// subject. these defensive seeds also exercise stale dependent deadlines.
-	if _, err := d.pool.Exec(ctx, `UPDATE control.private_visitor_streams SET valid_until=$2 WHERE visitor_connection_id=$1`, visitors[0], now.Add(time.Minute)); err != nil {
+	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_visitor_streams SET valid_until=$2 WHERE visitor_connection_id=$1`, visitors[0], now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err := d.pool.Exec(ctx, `INSERT INTO control.direct_service_visitors(workload_session_id,visitor_connection_id,private_service_id,private_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
+	if _, err := d.pool.Exec(ctx, `INSERT INTO control.direct_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.workload_client_certificates SET expires_at=$2 WHERE workload_session_id=$1`, sessions[2].ID, now.Add(time.Hour)); err != nil {
@@ -301,12 +301,12 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		t.Fatal("active subject snapshot changed", err)
 	}
 	var storedConnector, storedCert, storedDirect bool
-	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.private_connector_sessions WHERE id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.direct_service_visitors WHERE visitor_connection_id=$3)`, connectors[0], certificates[1], direct).Scan(&storedConnector, &storedCert, &storedDirect); err != nil || !storedConnector || !storedCert || !storedDirect {
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_sessions WHERE id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.direct_service_visitors WHERE visitor_connection_id=$3)`, connectors[0], certificates[1], direct).Scan(&storedConnector, &storedCert, &storedDirect); err != nil || !storedConnector || !storedCert || !storedDirect {
 		t.Fatal("live admission references were erased", err)
 	}
 	// the older run sweeper must neither erase these workload handles early nor
 	// fail on their retained FK references when running beside workload cleanup.
-	if _, err := d.ExpirePrivateServiceRuns(ctx, now); err != nil {
+	if _, err := d.ExpireServiceRuns(ctx, now); err != nil {
 		t.Fatal("shared expiration worker conflicted with retained references", err)
 	}
 	if n := drainWorkloadHistory(t, d, now, 2); n != 0 {

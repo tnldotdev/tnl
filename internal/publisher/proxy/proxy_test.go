@@ -1,4 +1,4 @@
-package localproxy
+package proxy
 
 import (
 	"bufio"

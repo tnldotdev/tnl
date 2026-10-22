@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/filelock"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -24,8 +24,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
-	localpublisher "github.com/tnldotdev/tnl/internal/publisher/localapi"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/publisher/localapi"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -37,57 +37,57 @@ type Options struct {
 	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
 }
 
-func ResolveProject(ctx context.Context, options Options) (projectconfig.Project, string, error) {
+func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
 	root := options.StateDir
 	var err error
 	if root == "" {
 		root, err = clientstate.DefaultDir()
 	}
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
 	directory, err := filepath.Abs(options.Directory)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
 	directory, err = filepath.EvalSymlinks(directory)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
 	if options.Snapshot != nil {
-		project, err := projectconfig.ReadSnapshot(options.Snapshot)
+		project, err := clientproject.ReadSnapshot(options.Snapshot)
 		if err != nil {
-			return projectconfig.Project{}, "", err
+			return clientproject.Project{}, "", err
 		}
 		if project.Root != directory || project.Selection.Path != "" && filepath.Dir(project.Selection.Path) != directory {
-			return projectconfig.Project{}, "", errors.New("selected project snapshot belongs to another directory")
+			return clientproject.Project{}, "", errors.New("selected project snapshot belongs to another directory")
 		}
 		if err := config.ValidateTNL(project.Config); err != nil {
-			return projectconfig.Project{}, "", err
+			return clientproject.Project{}, "", err
 		}
 		return project, root, nil
 	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
 	defer state.Close()
 	salt, err := state.WorktreeHashSalt(ctx)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
-	selection, err := projectconfig.SelectProjectConfig(ctx, directory, "", os.Getenv("TNL_CONFIG"), false)
+	selection, err := clientproject.SelectProjectConfig(ctx, directory, "", os.Getenv("TNL_CONFIG"), false)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
-	project, err := projectconfig.Resolve(ctx, selection, directory, salt)
+	project, err := clientproject.Resolve(ctx, selection, directory, salt)
 	if err != nil {
-		return projectconfig.Project{}, "", err
+		return clientproject.Project{}, "", err
 	}
 	if selected := os.Getenv("TNL_SERVER"); selected != "" {
 		canonical, err := clientstate.CanonicalServer(selected)
 		if err != nil {
-			return projectconfig.Project{}, "", err
+			return clientproject.Project{}, "", err
 		}
 		project.Config.Server = &canonical
 	}
@@ -96,46 +96,46 @@ func ResolveProject(ctx context.Context, options Options) (projectconfig.Project
 	return project, state.Root(), nil
 }
 
-func Available(ctx context.Context, endpoint privateprotocol.Endpoint) bool {
-	return privateprotocol.Call(ctx, endpoint, "GET", "/v1/health", nil, nil) == nil
+func Available(ctx context.Context, endpoint publisherprotocol.Endpoint) bool {
+	return publisherprotocol.Call(ctx, endpoint, "GET", "/v1/health", nil, nil) == nil
 }
 
-func EnsureOwner(ctx context.Context, project projectconfig.Project, root string) (privateprotocol.Endpoint, error) {
-	path, err := privateprotocol.DescriptorPath(root, project.Root)
+func EnsureOwner(ctx context.Context, project clientproject.Project, root string) (publisherprotocol.Endpoint, error) {
+	path, err := publisherprotocol.DescriptorPath(root, project.Root)
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
 	_, digest, err := project.Snapshot()
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
-	selected := func(endpoint privateprotocol.Endpoint) (privateprotocol.Endpoint, error) {
-		err := privateprotocol.Call(ctx, endpoint, "GET", "/v1/health?configuration_digest="+digest, nil, nil)
+	selected := func(endpoint publisherprotocol.Endpoint) (publisherprotocol.Endpoint, error) {
+		err := publisherprotocol.Call(ctx, endpoint, "GET", "/v1/health?configuration_digest="+digest, nil, nil)
 		if err != nil {
-			var response *privateprotocol.ResponseError
+			var response *publisherprotocol.ResponseError
 			if errors.As(err, &response) && response.Code == string(failure.AppConfigurationConflict) {
-				return privateprotocol.Endpoint{}, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, err)
+				return publisherprotocol.Endpoint{}, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, err)
 			}
-			return privateprotocol.Endpoint{}, failure.Wrap("check project owner", failure.ClientStateUnavailable, err)
+			return publisherprotocol.Endpoint{}, failure.Wrap("check project owner", failure.ClientStateUnavailable, err)
 		}
 		return endpoint, nil
 	}
-	if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && Available(ctx, endpoint) {
+	if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil && Available(ctx, endpoint) {
 		return selected(endpoint)
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
 	snapshot, _, err := project.Snapshot()
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
 	command := exec.Command(executable, "runtime", "serve", "--directory", project.Root, "--state-dir", root, "--snapshot-stdin")
 	command.Env = observability.LaunchEnvironment(ctx, os.Environ())
 	command.Stdin = bytes.NewReader(snapshot)
 	if err := command.Start(); err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
 	childDone := make(chan error, 1)
 	go func() { childDone <- command.Wait() }()
@@ -144,74 +144,74 @@ func EnsureOwner(ctx context.Context, project projectconfig.Project, root string
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && Available(ctx, endpoint) {
+		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil && Available(ctx, endpoint) {
 			return selected(endpoint)
 		}
 		select {
 		case err := <-childDone:
 			if err != nil {
-				return privateprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, err)
+				return publisherprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, err)
 			}
 			childDone = nil
 		case <-ctx.Done():
-			return privateprotocol.Endpoint{}, ctx.Err()
+			return publisherprotocol.Endpoint{}, ctx.Err()
 		case <-timer.C:
-			return privateprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, errors.New("local publisher did not start"))
+			return publisherprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, errors.New("local publisher did not start"))
 		case <-ticker.C:
 		}
 	}
 }
 
-func OwnerEndpoint(ctx context.Context, options Options) (privateprotocol.Endpoint, error) {
+func OwnerEndpoint(ctx context.Context, options Options) (publisherprotocol.Endpoint, error) {
 	project, root, err := ResolveProject(ctx, options)
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
 	return EnsureOwner(ctx, project, root)
 }
 
-func Endpoint(ctx context.Context, options Options, service, invocationID string) (privateprotocol.Endpoint, error) {
+func Endpoint(ctx context.Context, options Options, service, invocationID string) (publisherprotocol.Endpoint, error) {
 	project, root, err := ResolveProject(ctx, options)
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
-	request := privateprotocol.CapabilityRequest{Scope: "app"}
+	request := publisherprotocol.CapabilityRequest{Scope: "app"}
 	if invocationID != "" {
 		if service != "" {
-			return privateprotocol.Endpoint{}, errors.New("select a service or invocation")
+			return publisherprotocol.Endpoint{}, errors.New("select a service or invocation")
 		}
 		request.Scope, request.InvocationId = "invocation", &invocationID
 	} else {
 		name, err := project.AppService(options.Directory, service)
 		if err != nil {
-			return privateprotocol.Endpoint{}, err
+			return publisherprotocol.Endpoint{}, err
 		}
 		request.Service = &name
 	}
 	owner, err := EnsureOwner(ctx, project, root)
 	if err != nil {
-		return privateprotocol.Endpoint{}, err
+		return publisherprotocol.Endpoint{}, err
 	}
-	var endpoint privateprotocol.Endpoint
-	if err := privateprotocol.Call(ctx, owner, "POST", "/v1/capabilities", request, &endpoint); err != nil {
-		return privateprotocol.Endpoint{}, err
+	var endpoint publisherprotocol.Endpoint
+	if err := publisherprotocol.Call(ctx, owner, "POST", "/v1/capabilities", request, &endpoint); err != nil {
+		return publisherprotocol.Endpoint{}, err
 	}
 	return endpoint, nil
 }
 
 type appPreparation struct {
 	configuration clientruntime.Configuration
-	project       projectconfig.Project
-	framework     privateprotocol.Framework
-	assignment    privateprotocol.Assignment
-	invocation    *privateprotocol.Invocation
+	project       clientproject.Project
+	framework     publisherprotocol.Framework
+	assignment    publisherprotocol.Assignment
+	invocation    *publisherprotocol.Invocation
 }
 
 type appRuntime struct {
 	manager        *clientruntime.Manager
 	workers        *clientruntime.Workers
-	capabilities   *privateprotocol.Capabilities
-	project        projectconfig.Project
+	capabilities   *publisherprotocol.Capabilities
+	project        clientproject.Project
 	state          *clientstate.Database
 	TargetResolver target.TargetResolver
 	mu             sync.Mutex
@@ -265,7 +265,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return err
 	}
-	path, err := privateprotocol.DescriptorPath(root, project.Root)
+	path, err := publisherprotocol.DescriptorPath(root, project.Root)
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return err
 	}
-	capabilities, err := privateprotocol.NewCapabilities("http://" + listener.Addr().String())
+	capabilities, err := publisherprotocol.NewCapabilities("http://" + listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 	}()
 	// unregister joins the publication after draining its visitor streams.
 	requestBase := observability.Independent(ctx)
-	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
+	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: publisherprotocol.MaxBytes}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() {
@@ -315,10 +315,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 		_ = server.Shutdown(shutdown)
 		_ = server.Close()
 	}()
-	if err := privateprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
+	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
 		return err
 	}
-	defer privateprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
+	defer publisherprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
 	finishStartup(nil)
 	ctx = observability.Independent(ctx)
 	ticker := time.NewTicker(time.Second)
@@ -348,7 +348,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
 		_, digest, err := a.project.Snapshot()
 		return digest, err
 	}, AppService: func(name string) bool {
@@ -357,7 +357,7 @@ func (a *appRuntime) handler() http.Handler {
 	}}).Handler()
 }
 
-func (a *appRuntime) register(ctx context.Context, request privateprotocol.Registration) error {
+func (a *appRuntime) register(ctx context.Context, request publisherprotocol.Registration) error {
 	a.mu.Lock()
 	preparation, found := a.prepared[request.RegistrationID]
 	a.mu.Unlock()
@@ -369,79 +369,79 @@ func (a *appRuntime) register(ctx context.Context, request privateprotocol.Regis
 	return a.manager.RegisterContext(ctx, request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
 }
 
-func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (privateprotocol.Assignment, error) {
-	if request.Version != 1 || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
-		return privateprotocol.Assignment{}, errors.New("invalid app preparation")
+func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prepare) (publisherprotocol.Assignment, error) {
+	if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
+		return publisherprotocol.Assignment{}, errors.New("invalid app preparation")
 	}
 	name, err := a.project.AppService(request.Directory, request.Service)
 	if err != nil {
-		return privateprotocol.Assignment{}, err
+		return publisherprotocol.Assignment{}, err
 	}
 	release, err := a.beginPreparation(ctx, name)
 	if err != nil {
-		return privateprotocol.Assignment{}, err
+		return publisherprotocol.Assignment{}, err
 	}
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	metadata, err := a.operations(a.project).Metadata(ctx)
 	if err != nil {
-		return privateprotocol.Assignment{}, err
+		return publisherprotocol.Assignment{}, err
 	}
-	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
-		return privateprotocol.Assignment{}, err
+	if err := meta.Write(ctx, a.project.Root, metadata); err != nil {
+		return publisherprotocol.Assignment{}, err
 	}
 	selected := metadata.Services[name]
 	id, err := a.manager.Reserve(name, request.Owner, request.PID, selected.URL)
 	if err != nil {
-		return privateprotocol.Assignment{}, err
+		return publisherprotocol.Assignment{}, err
 	}
-	assignment := privateprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
 	a.mu.Unlock()
 	return assignment, nil
 }
 
-func (a *appRuntime) acquire(ctx context.Context, request privateprotocol.Lease) (privateprotocol.Registration, error) {
+func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Lease) (publisherprotocol.Registration, error) {
 	_, digest, err := a.project.Snapshot()
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	if request.ConfigurationDigest != digest {
-		return privateprotocol.Registration{}, failure.Wrap("acquire configured service", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict)
+		return publisherprotocol.Registration{}, failure.Wrap("acquire configured service", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict)
 	}
 	release, err := a.beginPreparation(ctx, request.Service)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	resolved, err := target.ResolveTarget(ctx, a.project, request.Service, a.resolver())
 	if err != nil {
-		return privateprotocol.Registration{}, failure.Wrap("resolve named service target", failure.InvalidTunnelFlags, err)
+		return publisherprotocol.Registration{}, failure.Wrap("resolve named service target", failure.InvalidTunnelFlags, err)
 	}
 	metadata, err := a.operations(a.project).Metadata(ctx)
 	if err != nil {
 		if _, classified := failure.ReasonOf(err); classified {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
-		return privateprotocol.Registration{}, failure.Wrap("resolve named service metadata", failure.ProjectConfigInvalid, err)
+		return publisherprotocol.Registration{}, failure.Wrap("resolve named service metadata", failure.ProjectConfigInvalid, err)
 	}
 	selected := metadata.Services[request.Service]
 	address := selected.URL
 	id, err := a.manager.Reserve(request.Service, request.Owner, request.Pid, address)
 	if err != nil {
-		return privateprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
+		return publisherprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
 	}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{project: a.project}
 	a.mu.Unlock()
-	registration := privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
+	registration := publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, registration.Target, ""); err != nil {
 		_ = a.manager.Unregister(id, request.Owner)
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	return registration, nil
 }
@@ -454,7 +454,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 		return clientruntime.Configuration{}, clientruntime.ErrRegistrationStale
 	}
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return a.operations(preparation.project).PrivateConfiguration(ctx, service)
+		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
 		return preparation.configuration, nil
@@ -462,7 +462,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	return a.operations(preparation.project).PublicConfiguration(ctx, service)
 }
 
-func (a *appRuntime) operations(project projectconfig.Project) *invocation.ProjectRuntime {
+func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {
 	operations := invocation.NewProjectRuntime(project, a.state, a.manager, a.resolver())
 	operations.AttachPublication = a.AttachPublication
 	return operations

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/sha256"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
@@ -57,7 +58,22 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	if s.HTTP != nil {
 		// remote readiness and path mounts have no group-worker execution contract.
 		// reject them before storing a declaration instead of dropping settings.
-		if s.Protocol != "http" || s.Publisher != "local" {
+		if s.Protocol != "http" {
+			return ErrProjectConfigurationInvalid
+		}
+		if s.PublisherGroup != "local" {
+			if config.ValidateGroupHTTP(s.HTTP) != nil {
+				return ErrProjectConfigurationInvalid
+			}
+			if s.HTTP.Access != nil {
+				s.HTTP.Access.Mode = s.HTTP.Access.VisitorMode()
+				prefixes, err := authorization.CanonicalizeIPPrefixes(s.HTTP.Access.IP)
+				if err != nil {
+					return ErrProjectConfigurationInvalid
+				}
+				s.HTTP.Access.IP = prefixes
+			}
+		} else if s.HTTP.Access != nil || s.HTTP.Limits != nil {
 			return ErrProjectConfigurationInvalid
 		}
 		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
@@ -75,7 +91,7 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	descriptor := s.TargetDiscovery != nil
 	var err error
 	if descriptor {
-		if s.Target != "" || s.TargetTLS != nil || s.Publisher == "local" {
+		if s.Target != "" || s.TargetTLS != nil || s.PublisherGroup == "local" {
 			return ErrProjectConfigurationInvalid
 		}
 		s.TargetDiscovery, err = s.TargetDiscovery.Normalize(s.Protocol)
@@ -85,14 +101,14 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
 	}
-	if err != nil || descriptor && s.TargetDiscovery == nil && s.Publisher != "local" {
+	if err != nil || descriptor && s.TargetDiscovery == nil && s.PublisherGroup != "local" {
 		return ErrProjectConfigurationInvalid
 	}
-	if s.PublicURL != nil && s.Protocol != "http" {
+	if s.PublicURL != nil && (s.Protocol != "http" || s.PublisherGroup != "local") {
 		return ErrProjectConfigurationInvalid
 	}
 	if !descriptor {
-		if s.PublicURL != nil && s.Publisher == "local" {
+		if s.PublicURL != nil && s.PublisherGroup == "local" {
 			canonical, err := targetsyntax.NormalizeTarget(s.Target)
 			if err != nil {
 				return ErrProjectConfigurationInvalid
@@ -135,20 +151,11 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 		if p.DomainID != "" && !opaqueid.Valid(p.DomainID, opaqueid.DomainPrefix) {
 			return ErrProjectConfigurationInvalid
 		}
-		// a named group's endpoint and reachability belong to the group. the
-		// HTTP block may narrow visitor IPs, never create a second public URL or
-		// enable anonymous access. unsupported endpoint/limit overrides fail.
-		if s.Publisher != "local" && (p.DomainID != "" || p.Hostname != "" || p.Ephemeral || p.Limits != nil && p.Limits.Traffic != nil) {
-			return ErrProjectConfigurationInvalid
-		}
 		if p.Access == nil {
 			p.Access = &ProjectPublicAccess{}
 		}
 		if p.Access.Mode == "" {
 			p.Access.Mode = "restricted"
-		}
-		if s.Publisher != "local" && p.Access.Mode != "restricted" {
-			return ErrProjectConfigurationInvalid
 		}
 		if !VisitorAccessMode(p.Access.Mode).Valid() || len(p.Access.IP) > 256 {
 			return ErrProjectConfigurationInvalid

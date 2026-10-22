@@ -10,11 +10,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -43,7 +43,7 @@ func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T
 		{controlstate.ErrRelayDraining, tunnelv1.DrainingPublisherConnection},
 		{controlstate.ErrRelayConnectionCapacity, tunnelv1.CapacityExceeded},
 	} {
-		client, err := relayapi.NewDirectClient(relayapi.DirectConfig{
+		client, err := controlrelay.NewDirectClient(controlrelay.DirectConfig{
 			Store: directClaimStore{failure: test.failure}, LeaseDuration: time.Minute,
 		})
 		if err != nil {
@@ -72,7 +72,7 @@ func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T
 }
 
 type directClaimStore struct {
-	relayapi.Store
+	controlrelay.Store
 	failure error
 }
 

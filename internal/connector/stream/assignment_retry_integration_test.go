@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"bytes"
@@ -15,11 +15,11 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
+func TestIntegrationConnectorRecoversCommittedAssignments(t *testing.T) {
 	var mu sync.Mutex
 	bodies, results := map[string][][]byte{}, map[string][][]byte{}
 	f := newLifecycleDatabaseFixture(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -62,7 +62,7 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 	for index := range 2 {
 		id := fmt.Sprintf("ingress-%d", index)
 		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
-			ConnectionCapacity: 1, PrivateConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+index), PrivateConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
+			ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+index), ConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,28 +74,28 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 	}
 	adapter := control.(*controlAdapter)
 	t.Cleanup(func() { _ = adapter.Close() })
-	device, err := adapter.PrivateConnectorSigner(t.Context(), f.identity)
+	device, err := adapter.ConnectorSigner(t.Context(), f.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); err == nil {
+		if _, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); err == nil {
 			t.Fatal("lost startup response succeeded")
 		}
 		if f.reservations(t) != 2 {
 			t.Fatal("startup retry changed reserved capacity")
 		}
 	}
-	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
+	healthy, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
+	other, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: f.service.Id,
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: f.service.Id,
 		SessionID: healthy.SessionID, Credential: healthy.Credential, Subject: device.Subject, Nonce: nonce}
 	digest, _ := hello.Claim().Digest()
 	hello.Signature = device.Sign(digest)
@@ -105,18 +105,18 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 	if _, err := f.database.RenewIngress(t.Context(), controlstate.IngressRenewal{IngressLeaseIdentity: leases[healthy.IngressID], ReportedConnections: 1}, time.Now(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.ReleasePrivateConnectorAssignment(t.Context(), other.SessionID); err != nil {
+	if err := adapter.ReleaseConnectorAssignment(t.Context(), other.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1); err == nil {
+		if _, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1); err == nil {
 			t.Fatal("lost renewal response succeeded")
 		}
 		if f.reservations(t) != 2 {
 			t.Fatal("renewal retry changed reserved capacity")
 		}
 	}
-	renewed, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
+	renewed, err := adapter.ConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,10 +125,10 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 	}
 	var total int
 	var valid bool
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.private_connector_sessions`).Scan(&total); err != nil || total != 3 {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_sessions`).Scan(&total); err != nil || total != 3 {
 		t.Fatalf("lost responses created extra reservations: count=%d err=%v", total, err)
 	}
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NULL AND bound_at IS NOT NULL FROM control.private_connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&valid); err != nil || !valid {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT revoked_at IS NULL AND bound_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, healthy.SessionID).Scan(&valid); err != nil || !valid {
 		t.Fatal("renewal invalidated healthy sibling", err)
 	}
 	mu.Lock()
@@ -151,16 +151,16 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 			}
 		}
 		// credentials must be recoverable only through the encrypted result.
-		var setups []controlv1.PrivateConnectorSessionSetup
+		var setups []controlv1.ConnectorSessionSetup
 		if strings.HasSuffix(path, "/ingress-assignments") {
 			_ = json.Unmarshal(results[path][0], &setups)
 		} else {
-			var setup controlv1.PrivateConnectorSessionSetup
+			var setup controlv1.ConnectorSessionSetup
 			_ = json.Unmarshal(results[path][0], &setup)
 			setups = append(setups, setup)
 		}
 		var ciphertext []byte
-		if err := f.inspect.QueryRowContext(t.Context(), `SELECT result_ciphertext FROM control.private_ingress_assignment_requests WHERE identity_id=$1 AND idempotency_key=$2`, f.identity, request.IdempotencyKey).Scan(&ciphertext); err != nil {
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT result_ciphertext FROM control.connector_ingress_assignment_requests WHERE identity_id=$1 AND idempotency_key=$2`, f.identity, request.IdempotencyKey).Scan(&ciphertext); err != nil {
 			t.Fatal(err)
 		}
 		for _, setup := range setups {

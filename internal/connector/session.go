@@ -7,14 +7,14 @@ import (
 	"reflect"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 // Operations composes native connector operations with the client's sign-in UI.
@@ -33,22 +33,22 @@ type SessionOpener func(context.Context, SessionOptions, string, io.Writer) (*Se
 type Session struct {
 	database          *clientstate.Database
 	store             *clientstate.Store
-	authenticated     *clientauth.Client
+	authenticated     *auth.Client
 	identity          authorityv1.IdentityContext
 	currentMembership func(context.Context) (authorityv1.Membership, error)
 }
 
-func NewSession(database *clientstate.Database, store *clientstate.Store, authenticated *clientauth.Client, identity authorityv1.IdentityContext, membership func(context.Context) (authorityv1.Membership, error)) *Session {
+func NewSession(database *clientstate.Database, store *clientstate.Store, authenticated *auth.Client, identity authorityv1.IdentityContext, membership func(context.Context) (authorityv1.Membership, error)) *Session {
 	return &Session{database: database, store: store, authenticated: authenticated, identity: identity, currentMembership: membership}
 }
 
 func (s *Session) Close() error { return s.database.Close() }
 
-type projectConfiguration struct{ projectconfig.Project }
+type projectConfiguration struct{ clientproject.Project }
 
 // a lost exchange response must retry the same assertion and in-memory key.
 // a replacement owner/key cannot take over an already committed execution.
-func exchangeConnectionWorkload(ctx context.Context, client *workloadclient.Client, scope connectionruntime.Context, assertion string) (authorityv1.WorkloadSession, error) {
+func exchangeConnectionWorkload(ctx context.Context, client *workload.Client, scope connectorruntime.Context, assertion string) (authorityv1.WorkloadSession, error) {
 	var session authorityv1.WorkloadSession
 	var err error
 	for attempt := range 3 {
@@ -76,9 +76,9 @@ func Identify(ctx context.Context, options ContextOptions, input io.Reader) (aut
 	if err != nil {
 		return authorityv1.WorkloadIdentity{}, err
 	}
-	var request connectionruntime.StartRequest
-	if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
-		return authorityv1.WorkloadIdentity{}, connectionruntime.ErrInvalid
+	var request connectorruntime.StartRequest
+	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
+		return authorityv1.WorkloadIdentity{}, connectorruntime.ErrInvalid
 	}
 	if request.Assertion == "" {
 		m, err := workloadmanifest.Read(options.Manifest)
@@ -89,12 +89,12 @@ func Identify(ctx context.Context, options ContextOptions, input io.Reader) (aut
 		if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 			hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 		}
-		request.Assertion, err = workloadclient.Acquire(ctx, hints, nil)
+		request.Assertion, err = workload.Acquire(ctx, hints, nil)
 		if err != nil {
 			return authorityv1.WorkloadIdentity{}, err
 		}
 	}
-	client, err := workloadclient.New(scope.Server, nil)
+	client, err := workload.New(scope.Server, nil)
 	if err != nil {
 		return authorityv1.WorkloadIdentity{}, err
 	}

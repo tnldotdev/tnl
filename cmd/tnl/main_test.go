@@ -14,9 +14,9 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -72,7 +72,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 }
 
-func TestInstallRequiresASavedURLSelectorBeforeProjectState(t *testing.T) {
+func TestInstallRequiresASavedPublicURLSelectorBeforeProjectState(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "user-state")
 	service := filepath.Join(t.TempDir(), "service-state")
 	var output, diagnostics bytes.Buffer
@@ -254,9 +254,9 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"publisher", "enroll", "--namespace"}, "publisher enroll <public-url-id>"},
 		{[]string{"publisher", "enroll", "url_0123456789abcdefghijkl"}, "publisher enroll <public-url-id>"},
 		{[]string{"publisher", "list"}, "publisher list"},
-		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-id>"},
-		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
-		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
+		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-identity-id>"},
+		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-identity-id>"},
+		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-identity-id> <grant-id>"},
 		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
 		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
@@ -578,9 +578,9 @@ func TestTerminalResultUsesErrorLeaves(t *testing.T) {
 }
 
 func TestClassifyCommandErrorMapsAuthenticationTimeout(t *testing.T) {
-	err := classifyCommandError(fmt.Errorf("login: %w", clientauth.ErrAuthenticationTimeout))
+	err := classifyCommandError(fmt.Errorf("login: %w", auth.ErrAuthenticationTimeout))
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.AuthenticationTimeout ||
-		!errors.Is(err, clientauth.ErrAuthenticationTimeout) {
+		!errors.Is(err, auth.ErrAuthenticationTimeout) {
 		t.Fatalf("classified error = %v, code = %q", err, code)
 	}
 	if canceled := classifyCommandError(context.Canceled); canceled != context.Canceled {
@@ -593,10 +593,10 @@ func TestClassifyCommandErrorMapsCommonServerFailures(t *testing.T) {
 		cause error
 		code  diagnostic.Code
 	}{
-		{controlclient.ErrUnavailable, diagnostic.ServerUnavailable},
-		{authorityclient.ErrRateLimited, diagnostic.RateLimited},
-		{controlclient.ErrDNSProofPending, diagnostic.DNSSetupPending},
-		{authorityclient.ErrUnauthenticated, diagnostic.AuthenticationRequired},
+		{clientcontrol.ErrUnavailable, diagnostic.ServerUnavailable},
+		{clientauthority.ErrRateLimited, diagnostic.RateLimited},
+		{clientcontrol.ErrDNSProofPending, diagnostic.DNSSetupPending},
+		{clientauthority.ErrUnauthenticated, diagnostic.AuthenticationRequired},
 	} {
 		classified := classifyCommandError(fmt.Errorf("request: %w", test.cause))
 		if code, ok := diagnostic.CodeOf(classified); !ok || code != test.code || !errors.Is(classified, test.cause) {

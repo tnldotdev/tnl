@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // real TLS and HTTP proof bytes exercise the native session boundary. provider
@@ -35,7 +35,7 @@ func TestConnectionPendingReplacementIsRevokedAfterInventoryFailure(t *testing.T
 func runConnectionReplacement(t *testing.T, pending bool) {
 	t.Helper()
 	const binding = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	team, service := "tm_"+strings.Repeat("t", 22), "psvc_"+strings.Repeat("p", 22)
+	team, service := "tm_"+strings.Repeat("t", 22), "svc_"+strings.Repeat("p", 22)
 	oldID, newID := "wls_"+strings.Repeat("s", 22), "wls_"+strings.Repeat("n", 22)
 	makeSession := func(id string) authorityv1.WorkloadSession {
 		now := time.Now()
@@ -129,7 +129,7 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 				_, _ = w.Write([]byte(`{"status":503,"code":"unavailable","detail":"inventory unavailable"}`))
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": "db", "protocol": "postgres", "managed_tls": controlv1.ManagedServiceTLS{Hostname: "db.example.test", Port: 15443, Public: false}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": "db", "protocol": "postgres", "endpoint": controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443, Public: false}}}})
 		case "/v1/workload/services/" + service + "/authorization":
 			_ = json.NewEncoder(w).Encode(controlv1.WorkloadServiceAuthorization{Subject: newSession.Subject, ServiceId: service, ValidUntil: newSession.LeaseExpiresAt, PolicyRevision: 1})
 		case "/v1/workload/services/" + service + "/run":
@@ -154,17 +154,17 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 		}
 	}))
 	defer server.Close()
-	client, err := workloadclient.New(server.URL, server.Client())
+	client, err := workload.New(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "first", []string{"db", "removed"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: connectionruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), nativeConnectionSession: nativeConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	b := &nativeConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), nativeConnectionSession: nativeConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
-	b.prepared["db"] = &preparedConnection{ready: true, sessionID: oldID, service: controlv1.PrivateService{Id: service, Protocol: controlv1.Postgres, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "db.example.test", Port: 15443}}}
+	b.prepared["db"] = &preparedConnection{ready: true, sessionID: oldID, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}
 	b.prepared["removed"] = &preparedConnection{ready: true, sessionID: oldID}
 	if err := b.Attach(t.Context(), "first"); err == nil || b.replacement == nil || b.workload != client {
 		t.Fatal("lost replacement exchange abandoned its original key or replaced the live adapter", err)

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,14 +10,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func publisherOwnsRun(ctx context.Context, q *controlstatedb.Queries, p PublisherIdentity, u controlstatedb.ControlPublicUrl) error {
 	if p.Scope.TeamID != u.TeamID || u.LifecycleState != "enabled" {
 		return ErrPublisherIdentity
 	}
-	if p.Scope.Kind == "saved_url" {
+	if p.Scope.Kind == "saved_public_url" {
 		if p.Scope.PublicURLID != u.ID || p.GuestID == "" && u.Ephemeral {
 			return ErrPublisherIdentity
 		}
@@ -51,7 +51,7 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return [32]byte{}, publisherLookupError(err, ErrPublisherIdentity)
 	}
-	secret, err := publisheridentity.VerifyRun(k.PublicKey, r.PublisherRunProof, u.ID, r.IdempotencyKey)
+	secret, err := publisherproof.VerifyRun(k.PublicKey, r.PublisherRunProof, u.ID, r.IdempotencyKey)
 	if err != nil {
 		return [32]byte{}, ErrPublisherIdentity
 	}
@@ -105,7 +105,7 @@ func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queri
 }
 
 func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u PublicURL, _ bool) (authorization.CertificatePlan, error) {
-	if p.Scope.Kind != "saved_url" && p.Scope.Kind != "namespace" || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || p.Scope.Kind == "saved_url" && u.ID != p.Scope.PublicURLID || p.Scope.Kind == "namespace" && (!u.Ephemeral || u.ServiceProtocol != PublicURLServiceHTTP) {
+	if p.Scope.Kind != "saved_public_url" && p.Scope.Kind != "namespace" || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || p.Scope.Kind == "saved_public_url" && u.ID != p.Scope.PublicURLID || p.Scope.Kind == "namespace" && (!u.Ephemeral || u.ServiceProtocol != PublicURLServiceHTTP) {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
 	domain, err := controlstatedb.New(d.pool).GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: u.DomainID, TeamID: text(u.TeamID)})
@@ -121,7 +121,7 @@ func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u 
 
 func publisherCertificatePlan(p PublisherIdentity, hostname, namespace string, apexAllowed bool) *authorization.CertificatePlan {
 	// a saved-URL grant cannot give its publisher a key covering sibling URLs.
-	if p.Scope.Kind == "saved_url" {
+	if p.Scope.Kind == "saved_public_url" {
 		return authorization.PublicURLCertificatePlan(hostname, hostname, false, false)
 	}
 	if p.Scope.Kind != "namespace" || p.Scope.Namespace != namespace {

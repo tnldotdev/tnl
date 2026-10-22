@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 // VisitorAccessMode selects whether tnl requires a visitor credential.
 type VisitorAccessMode string

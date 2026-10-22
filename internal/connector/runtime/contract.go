@@ -1,6 +1,6 @@
 // package connectionruntime owns one bounded native connection session and its
 // private local IPC. public runtime metadata never contains capabilities or keys.
-package connectionruntime
+package runtime
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
@@ -98,10 +98,10 @@ func (Connection) GoString() string { return "private native connection" }
 // Prepared pairs one owner's public metadata with its current private snapshot.
 // readers never re-evaluate project configuration, Git, or authentication.
 type Prepared struct {
-	Schema        int                        `json:"schema"`
-	PublicRuntime projectmeta.PublicMetadata `json:"public_runtime"`
-	Connection    Connection                 `json:"connection"`
-	Verification  *AssertionVerification     `json:"verification,omitempty"`
+	Schema         int                    `json:"schema"`
+	ProjectRuntime meta.PublicMetadata    `json:"project_runtime"`
+	Connection     Connection             `json:"connection"`
+	Verification   *AssertionVerification `json:"verification,omitempty"`
 }
 
 // AssertionVerification comes only from authority-confirmed exact assertion
@@ -116,22 +116,22 @@ func (Prepared) String() string   { return "private prepared connection" }
 func (Prepared) GoString() string { return "private prepared connection" }
 
 type Status struct {
-	Schema        int                        `json:"schema"`
-	State         string                     `json:"state"`
-	PID           int                        `json:"pid"`
-	ExpiresAt     time.Time                  `json:"expires_at"`
-	PublicRuntime projectmeta.PublicMetadata `json:"public_runtime"`
-	PrivateHandle string                     `json:"private_handle"`
-	Executable    string                     `json:"executable"`
-	Kubeconfig    string                     `json:"kubeconfig,omitempty"`
-	Reason        string                     `json:"reason,omitempty"`
+	Schema           int                 `json:"schema"`
+	State            string              `json:"state"`
+	PID              int                 `json:"pid"`
+	ExpiresAt        time.Time           `json:"expires_at"`
+	ProjectRuntime   meta.PublicMetadata `json:"project_runtime"`
+	ConnectionHandle string              `json:"connection_handle"`
+	Executable       string              `json:"executable"`
+	Kubeconfig       string              `json:"kubeconfig,omitempty"`
+	Reason           string              `json:"reason,omitempty"`
 }
 
 // Backend is implemented by the native CLI's human/workload adapters. Start
 // establishes identity and the authorized snapshot; Connect prepares only its
 // requested service. Renew may narrow a workload's fixed session deadline.
 type Backend interface {
-	Start(context.Context) (projectmeta.PublicMetadata, time.Time, error)
+	Start(context.Context) (meta.PublicMetadata, time.Time, error)
 	Connect(context.Context, string) (Connection, error)
 	Prepared(string) (Connection, error)
 	Renew(context.Context) (time.Time, error)

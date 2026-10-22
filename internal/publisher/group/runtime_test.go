@@ -1,4 +1,4 @@
-package grouppublisher
+package group
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type groupControl struct {
@@ -28,7 +28,7 @@ func (c *groupControl) PublisherRuntime(_ context.Context, r controlv1.Publisher
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.fail {
-		return controlv1.PublisherRuntimeResponse{}, controlclient.ErrUnavailable
+		return controlv1.PublisherRuntimeResponse{}, clientcontrol.ErrUnavailable
 	}
 	epoch := r.ExpectedEpoch
 	if r.Action == controlv1.RuntimeStart {
@@ -40,7 +40,7 @@ func (c *groupControl) Assignments(context.Context, string) (controlv1.Publisher
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.fail {
-		return controlv1.PublisherGroupAssignments{}, controlclient.ErrUnavailable
+		return controlv1.PublisherGroupAssignments{}, clientcontrol.ErrUnavailable
 	}
 	return c.assignment, nil
 }
@@ -60,7 +60,7 @@ func groupFixture(t *testing.T) (*groupControl, ed25519.PrivateKey) {
 	group := "cloud"
 	return &groupControl{expires: time.Now().Add(time.Second), acks: make(chan controlv1.PublisherGroupAcknowledgement, 100), assignment: controlv1.PublisherGroupAssignments{
 		Member: controlv1.PublisherGroupMember{GroupId: "group-one", GroupName: group, ProjectKey: "project-one", PublisherIdentityId: "publisher-one", KeyId: "key-one", TeamId: "team-one"}, Revision: 1, ConfigurationHash: strings.Repeat("a", 64),
-		Services: []controlv1.PublisherGroupServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "private_service", Configuration: controlv1.ProjectServiceConfiguration{Publisher: &group, Target: "db.internal:5432"}}},
+		Services: []controlv1.PublisherGroupServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "service", Configuration: controlv1.ProjectServiceConfiguration{PublisherGroup: &group, Target: "db.internal:5432"}}},
 	}}, key
 }
 func receive(t *testing.T, channel <-chan string) string {
@@ -199,7 +199,7 @@ func TestSelectorRenameDoesNotRestartPublication(t *testing.T) {
 	control.mu.Lock()
 	control.assignment.Services = append([]controlv1.PublisherGroupServiceAssignment(nil), control.assignment.Services...)
 	control.assignment.Member.GroupName = "renamed"
-	control.assignment.Services[0].Configuration.Publisher = new("renamed")
+	control.assignment.Services[0].Configuration.PublisherGroup = new("renamed")
 	control.assignment.Revision++
 	control.assignment.ConfigurationHash = strings.Repeat("b", 64)
 	control.mu.Unlock()
@@ -234,7 +234,7 @@ func TestRevokedServiceGrantRefreshesAssignmentsWithoutLosingGroup(t *testing.T)
 	go func() {
 		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
 			if attempts.Add(1) == 1 {
-				return controlclient.ErrUnauthenticated
+				return clientcontrol.ErrUnauthenticated
 			}
 			if a.GrantId == "exact-grant" {
 				control.mu.Lock()

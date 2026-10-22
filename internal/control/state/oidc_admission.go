@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -16,13 +16,13 @@ import (
 
 type configuredAdmission struct {
 	issuer, connection string
-	rule               oidcauth.AdmissionRule
+	rule               oidc.AdmissionRule
 }
 
 // ConfigureOIDCAdmissions runs once before serving. an existing/retired source
 // is never replaced by configuration reconciliation; replacement is an explicit
 // owner operation, and the new source's eligibility stays independently scoped.
-func (d *Database) ConfigureOIDCAdmissions(ctx context.Context, issuer string, rules []oidcauth.AdmissionRule, now time.Time) (retErr error) {
+func (d *Database) ConfigureOIDCAdmissions(ctx context.Context, issuer string, rules []oidc.AdmissionRule, now time.Time) (retErr error) {
 	if len(rules) == 0 {
 		return nil
 	}
@@ -97,7 +97,7 @@ func (d *Database) mapDirectOIDCAdmission(ctx context.Context, q *controlstatedb
 	if !configured {
 		return nil
 	}
-	if a.issuer != i.Issuer || a.connection != intent.IdentityConnectionID || len(i.TeamContexts) != 0 || !a.rule.Allows(oidcauth.Identity{Subject: i.Subject, TenantID: i.TenantID, HostedDomain: i.HostedDomain, Groups: i.Groups}) {
+	if a.issuer != i.Issuer || a.connection != intent.IdentityConnectionID || len(i.TeamContexts) != 0 || !a.rule.Allows(oidc.Identity{Subject: i.Subject, TenantID: i.TenantID, HostedDomain: i.HostedDomain, Groups: i.Groups}) {
 		return ErrControlAuthentication
 	}
 	if i.AuthenticatedAt.IsZero() || i.AuthenticatedAt.Unix() <= 0 || i.AuthenticatedAt.After(now.Add(time.Minute)) || !i.AuthenticatedAt.Add(CompanyAuthenticationLifetime).After(now) {
@@ -157,6 +157,6 @@ func (d *Database) mapDirectOIDCAdmission(ctx context.Context, q *controlstatedb
 	if err := q.PutCompanyEligibility(ctx, controlstatedb.PutCompanyEligibilityParams{IdentityConnectionID: c.ID, TeamID: intent.TeamID, IdentityID: identityID, Subject: i.Subject, ConnectionRevision: c.Revision, Revision: previous.Revision + 1, Eligible: true, ValidUntil: timestamptz(i.AuthenticatedAt.Add(CompanyAuthenticationLifetime)), RequestDigest: digest[:], Now: timestamptz(now)}); err != nil {
 		return err
 	}
-	i.TeamContexts = []oidcauth.TeamContext{{TeamID: intent.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: i.Subject, AuthenticatedAt: i.AuthenticatedAt.Unix()}}
+	i.TeamContexts = []oidc.TeamContext{{TeamID: intent.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: i.Subject, AuthenticatedAt: i.AuthenticatedAt.Unix()}}
 	return nil
 }

@@ -94,7 +94,7 @@ func TestPublicReadinessUsesHeadersOnlyAndDoesNotFollowRedirects(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			body := &unreadBody{t: t}
 			calls := 0
-			observation := Probe(t.Context(), Service{RegistrationID: "registration", PublishRunNumber: 7, PublicURL: "https://app.example"}, roundTrip(func(request *http.Request) (*http.Response, error) {
+			observation := Probe(t.Context(), Service{RegistrationID: "registration", RunNumber: 7, PublicURL: "https://app.example"}, roundTrip(func(request *http.Request) (*http.Response, error) {
 				calls++
 				if request.Method != "GET" || request.URL.String() != "https://app.example/" || request.Header.Get(ProbeHeader) != "" || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" {
 					t.Fatalf("probe = %#v", request)
@@ -106,7 +106,7 @@ func TestPublicReadinessUsesHeadersOnlyAndDoesNotFollowRedirects(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: http.Header{"Location": []string{"https://other.example"}}, Body: body, Request: request}, nil
 			}))
 			want := status >= 200 && status < 300
-			if observation.Ready != want || calls != 1 || !body.closed || observation.RegistrationID != "registration" || observation.PublishRunNumber != 7 {
+			if observation.Ready != want || calls != 1 || !body.closed || observation.RegistrationID != "registration" || observation.RunNumber != 7 {
 				t.Fatalf("readiness = %#v, calls = %d", observation, calls)
 			}
 		})

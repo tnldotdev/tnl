@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"encoding/json"
@@ -7,11 +7,11 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
@@ -87,7 +87,7 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code controlv1.ProblemCode, title string) string {
-	return problemtype.Write(response, status, string(code), title, title)
+	return failureproblem.Write(response, status, string(code), title, title)
 }
 
 func writeUnavailableProblem(response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
@@ -95,7 +95,7 @@ func writeUnavailableProblem(response http.ResponseWriter, operation failure.Ope
 	operatorlog.ReportContext(observability.ResponseContext(response), operation, reason, requestID, err)
 }
 
-func newRequestID() string { return problemtype.NewRequestID() }
+func newRequestID() string { return failureproblem.NewRequestID() }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
 	httpjson.Write(response, status, value)

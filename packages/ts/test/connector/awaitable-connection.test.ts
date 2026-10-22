@@ -73,14 +73,14 @@ const connection = () => ({
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   ssl: { servername: service.hostname, rejectUnauthorized: true },
 });
-const prepared = () => ({ schema: 1, public_runtime: project, connection: connection() });
+const prepared = () => ({ schema: 1, project_runtime: project, connection: connection() });
 const started = () => ({
   schema: 1,
   state: "ready",
   pid: 123,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
-  public_runtime: project,
-  private_handle: "/private/prepared/handle.json",
+  project_runtime: project,
+  connection_handle: "/private/prepared/handle.json",
   executable: "/installed/matching/tnl",
 });
 
@@ -249,7 +249,7 @@ describe("awaitable root connection handles", () => {
     const metadata = { ...service, protocol: "kubernetes", port: 15443, url };
     const value = {
       schema: 1,
-      public_runtime: { ...project, services: { database: metadata } },
+      project_runtime: { ...project, services: { database: metadata } },
       connection: {
         ...connection(),
         protocol: "kubernetes",

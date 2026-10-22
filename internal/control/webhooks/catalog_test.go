@@ -1,4 +1,4 @@
-package webhookcatalog
+package webhooks
 
 import (
 	"errors"

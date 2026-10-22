@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -234,7 +234,7 @@ func TestTeamSessionOpenAndLifetime(t *testing.T) {
 	defer server.Close()
 	session, err := Open(t.Context(), Options{StateDir: filepath.Join(t.TempDir(), "state"), ServerURL: server.URL,
 		AccessToken: token.String(), ProjectTeam: "project", HTTPClient: server.Client(), Diagnostics: io.Discard,
-		AuthenticationPrompt: func(clientauth.Prompt) error { t.Error("unexpected authentication prompt"); return nil },
+		AuthenticationPrompt: func(auth.Prompt) error { t.Error("unexpected authentication prompt"); return nil },
 		OpenURL:              func(string) error { t.Error("unexpected browser opener"); return nil },
 	})
 	if err != nil {
@@ -328,7 +328,7 @@ func TestTeamSessionRejectsGuestBeforeAuthentication(t *testing.T) {
 	if reason, _, ok := failure.Describe(err); session != nil || !ok || reason != failure.GuestSignInRequired || !strings.Contains(err.Error(), "saved guest credential does not authorize this command") {
 		t.Fatalf("guest command = %+v, %v", session, err)
 	}
-	if err := clientauth.RequireSignInOutsideDemo(t.Context(), db, server, token.String()); err != nil {
+	if err := auth.RequireSignInOutsideDemo(t.Context(), db, server, token.String()); err != nil {
 		t.Fatalf("explicit credential was replaced with a guest: %v", err)
 	}
 }

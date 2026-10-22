@@ -75,7 +75,7 @@ func ValidateAliases(config TNL) error {
 		if Protocol(service) != "http" {
 			return fmt.Errorf("aliases.%s: service must use protocol http", key)
 		}
-		if !IsPublicService(service) || PublisherName(service) != "local" {
+		if !IsPublicService(service) || PublisherGroupName(service) != "local" {
 			return fmt.Errorf("aliases.%s: service must use the local publisher and an explicit public_url block", key)
 		}
 		if alias.Name != nil && alias.PublicURL != nil {

@@ -31,13 +31,13 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN)
 }
 
-type PrivateQUICConnector struct {
+type ConnectorQUIC struct {
 	TLSConfig *tls.Config
 	Config    QUICConfig
 }
 
-func (c PrivateQUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, PrivateALPN)
+func (c ConnectorQUIC) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN)
 }
 
 func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string) (Session, error) {
@@ -79,8 +79,8 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	return listenQUICWithALPN(address, tlsConfig, config, ALPN)
 }
 
-func ListenPrivateQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
-	return listenQUICWithALPN(address, tlsConfig, config, PrivateALPN)
+func ListenConnectorQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
+	return listenQUICWithALPN(address, tlsConfig, config, ConnectorALPN)
 }
 
 // ListenQUICProtocols shares one infrastructure socket across the two tunnel
@@ -91,12 +91,12 @@ func ListenQUICProtocols(address string, tlsConfig *tls.Config, config QUICConfi
 	}
 	serverConfig := tlsConfig.Clone()
 	serverConfig.MinVersion = tls.VersionTLS13
-	serverConfig.NextProtos = []string{ALPN, PrivateALPN}
+	serverConfig.NextProtos = []string{ALPN, ConnectorALPN}
 	listener, transport, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: listen shared QUIC: %w", err)
 	}
-	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, protocols: map[string]struct{}{ALPN: {}, PrivateALPN: {}}}, nil
+	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, protocols: map[string]struct{}{ALPN: {}, ConnectorALPN: {}}}, nil
 }
 
 func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig, alpn string) (*QUICListener, error) {

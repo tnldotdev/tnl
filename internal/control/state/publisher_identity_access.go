@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 // livePublisher locks identity before grant. callers creating runs hold the URL
@@ -50,7 +50,7 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 		if err != nil {
 			return PublisherIdentity{}, g, publisherLookupError(err, ErrPublisherIdentity)
 		}
-		if trial.TeamID != i.TeamID || g.Kind != "saved_url" || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.UsedBytes >= GuestByteAllowance || trial.ActiveReadyAt.Valid && time.Duration(trial.UsedReadyNs)+max(time.Duration(0), now.Sub(trial.ActiveReadyAt.Time)) >= GuestReadyAllowance {
+		if trial.TeamID != i.TeamID || g.Kind != "saved_public_url" || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.UsedBytes >= GuestByteAllowance || trial.ActiveReadyAt.Valid && time.Duration(trial.UsedReadyNs)+max(time.Duration(0), now.Sub(trial.ActiveReadyAt.Time)) >= GuestReadyAllowance {
 			return PublisherIdentity{}, g, ErrPublisherIdentity
 		}
 		if sourceIP != "" {
@@ -67,7 +67,7 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 }
 
 func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, audience, assertion, sourceIP string, now time.Time) (result PublisherAccess, retErr error) {
-	kid, err := publisheridentity.KeyID(assertion)
+	kid, err := publisherproof.KeyID(assertion)
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
@@ -91,7 +91,7 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	if k.RetiredAt.Valid {
 		return result, ErrPublisherIdentity
 	}
-	a, err := publisheridentity.Verify(assertion, id, kid, grant, audience, k.PublicKey, now)
+	a, err := publisherproof.Verify(assertion, id, kid, grant, audience, k.PublicKey, now)
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
@@ -170,7 +170,7 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if !opaqueid.Valid(replacementID, opaqueid.PublisherIdentityKeyPrefix) {
 		return ErrPublisherIdentity
 	}
-	a, err := publisheridentity.Verify(proof, identity.ID, replacementID, identity.GrantID, audience, public, now)
+	a, err := publisherproof.Verify(proof, identity.ID, replacementID, identity.GrantID, audience, public, now)
 	if err != nil {
 		return ErrPublisherIdentity
 	}
@@ -190,7 +190,7 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if k.RetiredAt.Valid {
 		return ErrPublisherIdentity
 	}
-	current, err := publisheridentity.Verify(currentProof, identity.ID, identity.KeyID, identity.GrantID, publisheridentity.RotationAudience(audience, replacementID, public), k.PublicKey, now)
+	current, err := publisherproof.Verify(currentProof, identity.ID, identity.KeyID, identity.GrantID, publisherproof.RotationAudience(audience, replacementID, public), k.PublicKey, now)
 	if err != nil {
 		return ErrPublisherIdentity
 	}

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"errors"
@@ -8,24 +8,24 @@ import (
 func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "previews")
 	routeRequest := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, routeRequest, now)
-	group, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
+	publicURL := createTestPublicURL(t, database, routeRequest, now)
+	group, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
 	if err != nil || group.ID == "" || len(group.PublicURLIDs) != 0 {
 		t.Fatalf("create preview = %+v, %v", group, err)
 	}
-	retry, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
+	retry, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
 	if err != nil || retry.ID != group.ID {
 		t.Fatalf("idempotent preview = %+v, %v", retry, err)
 	}
 	attach := AddPreviewPublicURLRequest{
-		PreviewID: group.ID, PublicURLID: route.ID, TeamID: route.TeamID,
-		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(route.PolicyRevision),
-		ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: group.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision),
+		ExpectedMutationRevision: publicURL.MutationRevision,
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: group.ID, PublicURLID: route.ID, TeamID: route.TeamID,
-		IdentityID: "someone-else", PolicyRevision: uint64(route.PolicyRevision),
-		ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: group.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: "someone-else", PolicyRevision: uint64(publicURL.PolicyRevision),
+		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("another identity attached to preview: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
 	}
 	attach.ExpectedMutationRevision--
 	group, err = database.AddPreviewPublicURL(t.Context(), attach, now)
-	if err != nil || len(group.PublicURLIDs) != 1 || group.PublicURLIDs[0] != route.ID {
+	if err != nil || len(group.PublicURLIDs) != 1 || group.PublicURLIDs[0] != publicURL.ID {
 		t.Fatalf("attached public URL = %+v, %v", group, err)
 	}
 	group, err = database.AddPreviewPublicURL(t.Context(), attach, now)
@@ -47,25 +47,25 @@ func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
 func TestIntegrationTeamAccessStaysInOnePreviewAndCanBeRevoked(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team-preview-access")
 	routeRequest := oidcRouteRequest(t, database, now)
-	route := createTestPublicURL(t, database, routeRequest, now)
-	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "team-access", now)
+	publicURL := createTestPublicURL(t, database, routeRequest, now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "team-access", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	attach := AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID,
-		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(route.PolicyRevision),
-		ExpectedMutationRevision: route.MutationRevision,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: routeRequest.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision),
+		ExpectedMutationRevision: publicURL.MutationRevision,
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), attach, now); err != nil {
 		t.Fatal(err)
 	}
 	request := SetPreviewTeamAccessRequest{
-		PreviewID: preview.ID, TeamID: route.TeamID, IdentityID: routeRequest.ActingIdentityID,
-		PolicyRevision: uint64(route.PolicyRevision), Enabled: true,
-		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision}},
+		PreviewID: preview.ID, TeamID: publicURL.TeamID, IdentityID: routeRequest.ActingIdentityID,
+		PolicyRevision: uint64(publicURL.PolicyRevision), Enabled: true,
+		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision}},
 	}
-	other, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "other-team-access", now)
+	other, err := database.CreatePreview(t.Context(), publicURL.TeamID, routeRequest.ActingIdentityID, "other-team-access", now)
 	if err != nil {
 		t.Fatal(err)
 	}

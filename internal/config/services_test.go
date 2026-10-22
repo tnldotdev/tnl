@@ -21,16 +21,16 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"removed HTTP publisher pool", `{"services":{"web":{"publisher_pool":true}}}`, false},
 		{"removed private publisher pool", `{"services":{"db":{"publisher_pool":true,"protocol":"postgres","target":{"type":"address","address":5432}}}}`, false},
 		{"removed disabled pool", `{"services":{"web":{"publisher_pool":false}}}`, false},
-		{"named remote publisher", `{"publishers":{"cloud":{"description":"production database"}},"services":{"db":{"publisher":"cloud","protocol":"postgres","target":{"type":"address","address":"db.internal:5432"},"access":{"team":true}}}}`, true},
-		{"reserved local publisher", `{"publishers":{"local":{}}}`, false},
-		{"publisher type removed", `{"publishers":{"cloud":{"type":"self-hosted"}}}`, false},
-		{"unknown publisher", `{"services":{"web":{"publisher":"unknown"}}}`, false},
-		{"remote app unsupported", `{"publishers":{"cloud":{}},"services":{"web":{"publisher":"cloud"}}}`, false},
-		{"remote readiness unsupported", `{"publishers":{"cloud":{}},"services":{"web":{"publisher":"cloud","public_url":{},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}}}`, false},
-		{"remote mounts unsupported", `{"publishers":{"cloud":{}},"services":{"web":{"publisher":"cloud","public_url":{},"target":{"type":"address","address":3000},"http":{"paths":{"/api":"api"}}},"api":{}}}`, false},
-		{"mount to remote unsupported", `{"publishers":{"cloud":{}},"services":{"web":{"public_url":{},"http":{"paths":{"/api":"api"}}},"api":{"publisher":"cloud","target":{"type":"address","address":4000}}}}`, false},
+		{"named remote publisher", `{"publisher_groups":{"cloud":{"description":"production database"}},"services":{"db":{"publisher_group":"cloud","protocol":"postgres","target":{"type":"address","address":"db.internal:5432"},"access":{"team":true}}}}`, true},
+		{"reserved local publisher", `{"publisher_groups":{"local":{}}}`, false},
+		{"publisher type removed", `{"publisher_groups":{"cloud":{"type":"self-hosted"}}}`, false},
+		{"unknown publisher", `{"services":{"web":{"publisher_group":"unknown"}}}`, false},
+		{"remote app unsupported", `{"publisher_groups":{"cloud":{}},"services":{"web":{"publisher_group":"cloud"}}}`, false},
+		{"remote readiness unsupported", `{"publisher_groups":{"cloud":{}},"services":{"web":{"publisher_group":"cloud","target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}}}`, false},
+		{"remote mounts unsupported", `{"publisher_groups":{"cloud":{}},"services":{"web":{"publisher_group":"cloud","target":{"type":"address","address":3000},"http":{"paths":{"/api":"api"}}},"api":{}}}`, false},
+		{"mount to remote unsupported", `{"publisher_groups":{"cloud":{}},"services":{"web":{"public_url":{},"http":{"paths":{"/api":"api"}}},"api":{"publisher_group":"cloud","target":{"type":"address","address":4000}}}}`, false},
 		{"private webhook rejected", `{"services":{"api":{}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, false},
-		{"remote webhook rejected", `{"publishers":{"cloud":{}},"services":{"api":{"publisher":"cloud","public_url":{},"target":{"type":"address","address":3000}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, false},
+		{"remote webhook rejected", `{"publisher_groups":{"cloud":{}},"services":{"api":{"publisher_group":"cloud","target":{"type":"address","address":3000},"http":{}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, false},
 		{"local address webhook", `{"services":{"api":{"public_url":{},"target":{"type":"address","address":3000}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
 		{"local compose webhook", `{"services":{"api":{"public_url":{},"target":{"type":"compose","service":"api","port":3000}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
 		{"local docker webhook", `{"services":{"api":{"public_url":{},"target":{"type":"docker","container":"api","port":3000}}},"webhooks":{"event":{"service":"api","path":"/event","provider":"custom"}}}`, true},
@@ -45,7 +45,7 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"compose", `{"services":{"db":{"protocol":"postgres","target":{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"server_name":"db.internal","ca_file":"certs/ca.pem"}}}}}`, true},
 		{"compose defaults", `{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}`, true},
 		{"docker", `{"services":{"cache":{"protocol":"tcp","target":{"type":"docker","container":"shop-cache_1","port":6379}}}}`, true},
-		{"removed publisher placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{"target":{"type":"app"}}}}`, false},
+		{"removed publisher placement", `{"publisher_group":{"type":"compose","service":"publisher"},"services":{"web":{"target":{"type":"app"}}}}`, false},
 		{"mixed public defaults", `{"public_url":{"access":"anonymous","limits":{"http":{"concurrency":3}}},"services":{"web":{},"db":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
 		{"public HTTPS upstream TLS name", `{"services":{"web":{"public_url":{},"target":{"type":"address","address":"https://127.0.0.1:3000","tls":{"server_name":"web.internal","ca_file":"certs/ca.pem"}}}}}`, true},
 		{"MySQL system TLS", `{"services":{"db":{"protocol":"mysql","target":{"type":"address","address":3306,"tls":{}}}}}`, true},
@@ -112,11 +112,11 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"HTTP TCP limits", `{"services":{"web":{"public_url":{"limits":{"tcp":{"total":1}}}}}}`, false},
 		{"TLS plain HTTP", `{"services":{"web":{"target":{"type":"address","address":3000,"tls":{}}}}}`, false},
 		{"TLS invalid name", `{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432},"tls":{"hostname":"db/path","ca":"system"}}}}`, false},
-		{"removed publisher port", `{"publisher":{"type":"compose","service":"publisher","port":8765}}`, false},
-		{"removed publisher root", `{"publisher":{"type":"compose","service":"publisher","project_root":"/project"}}`, false},
-		{"removed publisher descriptors", `{"publisher":{"type":"compose","service":"publisher","app_endpoints":{"web":"/run/web.json"}}}`, false},
-		{"host descriptor", `{"publisher":{"type":"host","app_endpoints":{"web":"/run/web.json"}}}`, false},
-		{"host empty foreign field", `{"publisher":{"type":"host","port":0}}`, false},
+		{"removed publisher port", `{"publisher_group":{"type":"compose","service":"publisher","port":8765}}`, false},
+		{"removed publisher root", `{"publisher_group":{"type":"compose","service":"publisher","project_root":"/project"}}`, false},
+		{"removed publisher descriptors", `{"publisher_group":{"type":"compose","service":"publisher","app_endpoints":{"web":"/run/web.json"}}}`, false},
+		{"host descriptor", `{"publisher_group":{"type":"host","app_endpoints":{"web":"/run/web.json"}}}`, false},
+		{"host empty foreign field", `{"publisher_group":{"type":"host","port":0}}`, false},
 		{"null target", `{"services":{"web":{"target":null}}}`, false},
 		{"null variant field", `{"services":{"web":{"target":{"type":"app","address":null}}}}`, false},
 		{"numeric Docker identifier", `{"services":{"web":{"target":{"type":"docker","container":123,"port":3000}}}}`, false},
@@ -222,15 +222,15 @@ func TestNativeResolutionHelpersSelectProtocolAndInspection(t *testing.T) {
 	}
 }
 
-func TestPrivateServiceNameDefaultsToValidatedServiceKey(t *testing.T) {
+func TestServiceNameDefaultsToValidatedServiceKey(t *testing.T) {
 	protocol := "tcp"
 	service := Service{Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("5432")}}
-	if got := PrivateServiceName("orders", service); got != "orders" {
+	if got := ServiceName("orders", service); got != "orders" {
 		t.Fatalf("default private name = %q", got)
 	}
 	override := "database"
 	service.Name = &override
-	if got := PrivateServiceName("orders", service); got != override {
+	if got := ServiceName("orders", service); got != override {
 		t.Fatalf("explicit private name = %q", got)
 	}
 	if err := ValidateTNL(TNL{Services: Services{"orders": service}}); err != nil {

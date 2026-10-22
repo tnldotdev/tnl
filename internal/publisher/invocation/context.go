@@ -8,14 +8,14 @@ import (
 	"io"
 	"os"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type TeamSelection struct {
@@ -38,11 +38,11 @@ func (current TeamSelection) Context() clientteam.Context {
 	return clientteam.NewContext(current.team, current.membership, current.domains, current.mode)
 }
 
-func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
+func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*auth.Client, error) {
 	if os.Getenv("TNL_ACCESS_TOKEN") != "" && os.Getenv("TNL_SERVER") == "" {
 		return nil, failure.Wrap("select credential server", failure.InvalidTunnelFlags, errors.New("an explicit access token requires TNL_SERVER"))
 	}
-	return clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: os.Getenv("TNL_ACCESS_TOKEN"), Diagnostics: io.Discard})
+	return auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: os.Getenv("TNL_ACCESS_TOKEN"), Diagnostics: io.Discard})
 }
 
 func publisherCLIError(message string) error {
@@ -78,7 +78,7 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	worktree, err := clientproject.ResolveWorktree(ctx, cwd)
 	if err != nil {
 		return "", err
 	}

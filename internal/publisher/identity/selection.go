@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"bytes"
@@ -14,8 +14,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrSetupRequired = errors.New("no namespace publisher is set up; run tnl publisher setup --namespace")
@@ -194,20 +194,20 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 // ResolveAdHoc selects one scoped identity for tnl.open and app-owned HTTP
 // publication. explicit selection wins over the local developer default; a
 // configured file always wins over that default and fails closed on errors.
-func ResolveAdHoc(ctx context.Context, state *clientstate.Store, control NativeControl, authority EnrollmentAuthority, server, team, domain, namespace, publisherFile, enrollmentKey, publisherID string, adapter *Native) (*Native, error) {
-	if publisherFile == "" && enrollmentKey == "" && publisherID == "" && adapter == nil {
-		if configured, present := os.LookupEnv("TNL_PUBLISHER_FILE"); present {
+func ResolveAdHoc(ctx context.Context, state *clientstate.Store, control NativeControl, authority EnrollmentAuthority, server, team, domain, namespace, publisherCredentialFile, enrollmentKey, publisherIdentityID string, adapter *Native) (*Native, error) {
+	if publisherCredentialFile == "" && enrollmentKey == "" && publisherIdentityID == "" && adapter == nil {
+		if configured, present := os.LookupEnv("TNL_PUBLISHER_CREDENTIAL_FILE"); present {
 			if configured == "" {
 				return nil, credentialfile.ErrInvalid
 			}
-			publisherFile = configured
+			publisherCredentialFile = configured
 		}
 	}
-	if publisherFile != "" {
-		if enrollmentKey != "" || publisherID != "" || adapter != nil {
+	if publisherCredentialFile != "" {
+		if enrollmentKey != "" || publisherIdentityID != "" || adapter != nil {
 			return nil, ErrSelection
 		}
-		n, err := LoadFile(publisherFile, server, control, authority)
+		n, err := LoadFile(publisherCredentialFile, server, control, authority)
 		if err != nil {
 			return nil, err
 		}
@@ -219,8 +219,8 @@ func ResolveAdHoc(ctx context.Context, state *clientstate.Store, control NativeC
 		}
 		return n, nil
 	}
-	if enrollmentKey != "" || publisherID != "" || adapter != nil {
-		n, err := Resolve(ctx, state, control, authority, enrollmentKey, publisherID, adapter)
+	if enrollmentKey != "" || publisherIdentityID != "" || adapter != nil {
+		n, err := Resolve(ctx, state, control, authority, enrollmentKey, publisherIdentityID, adapter)
 		if err != nil {
 			return nil, err
 		}

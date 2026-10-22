@@ -1,4 +1,4 @@
-package localproxy_test
+package proxy_test
 
 import (
 	"crypto/tls"
@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 )
 
 func TestPublicURLForwardingPreservesApplicationPaths(t *testing.T) {
@@ -33,7 +33,7 @@ func TestPublicURLForwardingPreservesApplicationPaths(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer upstream.Close()
-			proxy, err := localproxy.NewWithMountsHooksOptions(upstream.URL, "preview.example", 1, nil, localproxy.ResponseHooks{}, localproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs})
+			proxy, err := publisherproxy.NewWithMountsHooksOptions(upstream.URL, "preview.example", 1, nil, publisherproxy.ResponseHooks{}, publisherproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs})
 			if err != nil {
 				t.Fatal(err)
 			}

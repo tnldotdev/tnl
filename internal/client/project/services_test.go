@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"os"
@@ -16,7 +16,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"app default", `{services:{web:{}}}`, true},
 		{"removed HTTP publisher pool", `{services:{web:{publisherPool:true}}}`, false},
 		{"removed private publisher pool", `{services:{db:{publisherPool:true,protocol:"tcp",target:{type:"address",address:5432}}}}`, false},
-		{"remote group", `{publishers:{cloud:{description:"database"}},services:{db:{publisher:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, true},
+		{"remote group", `{publisherGroups:{cloud:{description:"database"}},services:{db:{publisherGroup:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, true},
 		{"no root pool default", `{publisherPool:true,services:{web:{}}}`, false},
 		{"no public URL pool", `{services:{web:{publicURL:{publisherPool:true,access:"anonymous"}}}}`, false},
 		{"no duplicated public URL name", `{services:{web:{name:"site",publicURL:{name:"other",access:"anonymous"}}}}`, false},
@@ -30,7 +30,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
 		{"explicit private name", `{services:{orders:{protocol:"tcp",name:"database",target:{type:"address",address:5432}}}}`, true},
 		{"conflicting private names", `{services:{orders:{protocol:"tcp",target:{type:"address",address:5432}},database:{protocol:"tcp",name:"orders",target:{type:"address",address:3306}}}}`, false},
-		{"private service public URL", `{services:{db:{protocol:"tcp",publicURL:{hostname:"db.example"},target:{type:"address",address:5432}}}}`, false},
+		{"service public URL", `{services:{db:{protocol:"tcp",publicURL:{hostname:"db.example"},target:{type:"address",address:5432}}}}`, false},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
 		{"traffic", `{publicURL:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
 		{"old root", `{publish:{target:3000}}`, false},
@@ -141,8 +141,8 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := project.Config.Services["db"].Target
-		if got := config.PrivateServiceName("db", project.Config.Services["db"]); got != "db" {
-			t.Fatalf("default private service name = %q", got)
+		if got := config.ServiceName("db", project.Config.Services["db"]); got != "db" {
+			t.Fatalf("default service name = %q", got)
 		}
 		if target.Project == nil || target.File == nil || *target.Project != project.Worktree.Label.FullLabel || *target.File != "compose.yml" {
 			t.Fatalf("Compose target defaults = %+v", target)

@@ -16,17 +16,17 @@ schemas:
         type: string
         format: email
         maxLength: 320
-  PrivateServiceInvitationCredential:
-    $ref: "../../../public/v1/openapi.yaml#/components/schemas/PrivateServiceInvitationCredential"
-  PrivateServiceInvitationPreview:
+  ServiceInvitationCredential:
+    $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceInvitationCredential"
+  ServiceInvitationPreview:
     type: object
     additionalProperties: false
-    required: [private_service_id, team_id, name, protocol, expires_at]
+    required: [service_id, team_id, name, protocol, expires_at]
     properties:
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
       name: { type: string }
       protocol: { type: string }
       expires_at: { type: string, format: date-time }
-  PrivateServiceID:
-    $ref: "../../../public/v1/openapi.yaml#/components/schemas/PrivateServiceID"
+  ServiceID:
+    $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceID"

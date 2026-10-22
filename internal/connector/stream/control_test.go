@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"bytes"
@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -42,7 +42,7 @@ func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := controlclient.New(server.URL, server.Client(), "signed-in-visitor")
+	client, err := clientcontrol.New(server.URL, server.Client(), "signed-in-visitor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,18 +98,18 @@ func TestControlDevicePersistsRetryKeyAndRejectsChangedEnrollment(t *testing.T) 
 				}
 				_ = json.NewEncoder(w).Encode(result)
 			})
-			if _, err := control.PrivateConnectorSigner(t.Context(), identity); err == nil {
+			if _, err := control.ConnectorSigner(t.Context(), identity); err == nil {
 				t.Fatal("invalid enrollment accepted")
 			}
 			stored, found, err := state.VisitorDevice(t.Context(), identity)
 			if err != nil || !found || stored.ID != "" {
 				t.Fatal("failed enrollment replaced or enrolled the protected key")
 			}
-			device, err := control.PrivateConnectorSigner(t.Context(), identity)
+			device, err := control.ConnectorSigner(t.Context(), identity)
 			if err != nil || device.Subject.DeviceID != id || !bytes.Equal(device.PublicKey, stored.SigningKey.Public().(ed25519.PublicKey)) || !ed25519.Verify(device.PublicKey, []byte("proof"), device.Sign([]byte("proof"))) {
 				t.Fatal("retry did not enroll the original key")
 			}
-			if _, err := control.PrivateConnectorSigner(t.Context(), identity); err != nil || calls != 2 {
+			if _, err := control.ConnectorSigner(t.Context(), identity); err != nil || calls != 2 {
 				t.Fatal("enrolled device was unnecessarily enrolled again")
 			}
 			for _, format := range []string{"%v", "%+v", "%#v"} {
@@ -122,7 +122,7 @@ func TestControlDevicePersistsRetryKeyAndRejectsChangedEnrollment(t *testing.T) 
 }
 
 func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
-	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.PrivateServicePrefix)
+	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.ServicePrefix)
 	var pairs [][2]string
 	var singles []string
 	var excluded []string
@@ -135,11 +135,11 @@ func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			_ = json.NewEncoder(w).Encode(controlv1.VisitorDevice{Id: device, IdentityId: identity, PublicKey: body.PublicKey, CreatedAt: time.Now()})
 		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
-			ids := [2]string{connectorID(t, opaqueid.PrivateConnectorSessionPrefix), connectorID(t, opaqueid.PrivateConnectorSessionPrefix)}
+			ids := [2]string{connectorID(t, opaqueid.ConnectorSessionPrefix), connectorID(t, opaqueid.ConnectorSessionPrefix)}
 			pairs = append(pairs, ids)
-			setups := []controlv1.PrivateConnectorSessionSetup{}
+			setups := []controlv1.ConnectorSessionSetup{}
 			for i, id := range ids {
-				setups = append(setups, controlv1.PrivateConnectorSessionSetup{ConnectorSessionId: id, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), PrivateServiceId: service,
+				setups = append(setups, controlv1.ConnectorSessionSetup{ConnectorSessionId: id, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), ServiceId: service,
 					IngressId: []string{"a", "b"}[i], IngressAddress: "127.0.0.1:443", TlsServerName: "ingress.example", SessionCredential: "one-use", ExpiresAt: time.Now().Add(time.Minute)})
 			}
 			// control response order is not a stable connection slot.
@@ -159,9 +159,9 @@ func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
 			if ingress == exclude {
 				ingress = "b"
 			}
-			id := connectorID(t, opaqueid.PrivateConnectorSessionPrefix)
+			id := connectorID(t, opaqueid.ConnectorSessionPrefix)
 			singles = append(singles, id)
-			_ = json.NewEncoder(w).Encode(controlv1.PrivateConnectorSessionSetup{ConnectorSessionId: id, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), PrivateServiceId: service,
+			_ = json.NewEncoder(w).Encode(controlv1.ConnectorSessionSetup{ConnectorSessionId: id, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), ServiceId: service,
 				IngressId: ingress, IngressAddress: "127.0.0.1:443", TlsServerName: "ingress.example", SessionCredential: "one-use", ExpiresAt: time.Now().Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
 			parts := strings.Split(r.URL.Path, "/")
@@ -178,7 +178,7 @@ func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
 		}
 	})
 	for _, slot := range []uint8{0, 0, 1, 1} {
-		if _, err := control.PrivateConnectorAssignment(t.Context(), service, tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}, slot); err == nil {
+		if _, err := control.ConnectorAssignment(t.Context(), service, tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}, slot); err == nil {
 			t.Fatal("missing transport trust used default roots")
 		}
 	}
@@ -189,7 +189,7 @@ func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
 	for range 4 {
 		for slot := range uint8(2) {
 			workers.Go(func() {
-				if _, err := control.PrivateConnectorAssignment(t.Context(), service, tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}, slot); err == nil {
+				if _, err := control.ConnectorAssignment(t.Context(), service, tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}, slot); err == nil {
 					t.Error("failed trust lookup returned an assignment")
 				}
 			})
@@ -227,9 +227,9 @@ func TestControlAssignmentFailureConsumesOnlyRequestedSlot(t *testing.T) {
 }
 
 func TestControlSelectionBindsDeviceServiceProtocolAndRevision(t *testing.T) {
-	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.PrivateServicePrefix)
-	selected := controlv1.PrivateServiceSelection{Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), PrivateServiceId: service, PrivateRunId: connectorID(t, opaqueid.PrivateRunPrefix),
-		Protocol: controlv1.PrivateServiceProtocol("http"), TrustRevision: 4, RunNumber: 9, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "service.example.test", Port: 25443}, ExpiresAt: time.Now().Add(time.Minute)}
+	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.ServicePrefix)
+	selected := controlv1.ServiceSelection{Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: identity}), ServiceId: service, ServiceRunId: connectorID(t, opaqueid.ServiceRunPrefix),
+		Protocol: controlv1.ServiceProtocol("http"), TrustRevision: 4, RunNumber: 9, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service.example.test", Port: 25443}, ExpiresAt: time.Now().Add(time.Minute)}
 	var mu sync.Mutex
 	control, _ := adapterFixture(t, identity, func(_ *clientstate.Store, w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/visitor-devices" {
@@ -242,14 +242,14 @@ func TestControlSelectionBindsDeviceServiceProtocolAndRevision(t *testing.T) {
 		defer mu.Unlock()
 		_ = json.NewEncoder(w).Encode(selected)
 	})
-	run, err := control.ResolvePrivateService(t.Context(), service)
-	if err != nil || run.TrustRevision != 4 || run.Protocol != "http" || run.ManagedTLS == nil || run.ManagedTLS.Hostname != selected.ManagedTls.Hostname {
+	run, err := control.ResolveService(t.Context(), service)
+	if err != nil || run.TrustRevision != 4 || run.Protocol != "http" || run.Endpoint == nil || run.Endpoint.Hostname != selected.Endpoint.Hostname {
 		t.Fatalf("selected metadata changed: %+v %v", run, err)
 	}
 	mu.Lock()
 	selected.Subject.DeviceId = new(connectorID(t, "vdev_"))
 	mu.Unlock()
-	if _, err := control.ResolvePrivateService(t.Context(), service); err == nil {
+	if _, err := control.ResolveService(t.Context(), service); err == nil {
 		t.Fatal("selection for another device accepted")
 	}
 }

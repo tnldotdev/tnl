@@ -55,17 +55,17 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 		t.Fatal(err)
 	}
 	run := <-started
-	if !manager.Observe(Observation{RegistrationID: id, PublishRunNumber: run, Ready: true}) {
+	if !manager.Observe(Observation{RegistrationID: id, RunNumber: run, Ready: true}) {
 		t.Fatal("current observation rejected")
 	}
 	if err := manager.Register(id, "owner", "http://127.0.0.1:1235", "node"); err != nil {
 		t.Fatal(err)
 	}
 	next := <-started
-	if next == run || manager.Observe(Observation{RegistrationID: id, PublishRunNumber: run, Ready: true}) {
+	if next == run || manager.Observe(Observation{RegistrationID: id, RunNumber: run, Ready: true}) {
 		t.Fatal("old run observation crossed listener replacement")
 	}
-	if !manager.Current("web", id, "http://127.0.0.1:1235", next) || manager.Current("web", id, "http://127.0.0.1:1234", run) {
+	if !manager.CurrentRun("web", id, "http://127.0.0.1:1235", next) || manager.CurrentRun("web", id, "http://127.0.0.1:1234", run) {
 		t.Fatal("request admission crossed replacement")
 	}
 	if err := manager.RenewTarget(id, "owner", "http://127.0.0.1:1234"); !errors.Is(err, ErrRegistrationStale) {
@@ -77,7 +77,7 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 	if err := manager.Unregister(id, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if manager.Current("web", id, "http://127.0.0.1:1235", next) || manager.Observe(Observation{RegistrationID: id, PublishRunNumber: next, Ready: true}) {
+	if manager.CurrentRun("web", id, "http://127.0.0.1:1235", next) || manager.Observe(Observation{RegistrationID: id, RunNumber: next, Ready: true}) {
 		t.Fatal("unregistered listener admitted work")
 	}
 	restarted, err := manager.Reserve("web", "new", 2, "https://web.example")
@@ -122,7 +122,7 @@ func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testi
 	if err := manager.Register(id, "owner", target, ""); err != nil {
 		t.Fatal(err)
 	}
-	if !manager.CurrentRegistration("web", id, target) || manager.CurrentRun("web", id, target, 0) || manager.Current("web", id, target, 0) {
+	if !manager.CurrentRegistration("web", id, target) || manager.CurrentRun("web", id, target, 0) || manager.CurrentRun("web", id, target, 0) {
 		t.Fatal("registration ownership granted run-zero authority")
 	}
 	if err := manager.Published(id, 0, true); !errors.Is(err, ErrRegistrationStale) {
@@ -135,7 +135,7 @@ func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testi
 	if !current || !service.Registered || service.Routable || service.Ready || manager.CurrentRun("web", id, target, 8) {
 		t.Fatal("exact provisioning run was conflated with routability", service)
 	}
-	observation := Observation{RegistrationID: id, Target: target, PublishRunNumber: 7, Ready: true}
+	observation := Observation{RegistrationID: id, Target: target, RunNumber: 7, Ready: true}
 	if manager.Observe(observation) {
 		t.Fatal("unroutable run accepted readiness")
 	}
@@ -281,7 +281,7 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 		t.Fatal(err)
 	}
 	<-started
-	manager.Observe(Observation{RegistrationID: id, PublishRunNumber: 1, Ready: true, Readiness: Readiness{Path: "/"}})
+	manager.Observe(Observation{RegistrationID: id, RunNumber: 1, Ready: true, Readiness: Readiness{Path: "/"}})
 	if err := manager.Configure([]Service{{Name: "api", Readiness: Readiness{Path: "/health"}}, {Name: "worker"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 	default:
 		t.Fatal("configuration did not join the removed publisher")
 	}
-	if manager.Current("api", id, "http://127.0.0.1:1234", 1) {
+	if manager.CurrentRun("api", id, "http://127.0.0.1:1234", 1) {
 		t.Fatal("removed service still admitted requests")
 	}
 }
@@ -330,7 +330,7 @@ func TestAbruptOwnerRestartInvalidatesPersistedRegistration(t *testing.T) {
 	crashed := manager.Snapshot()
 	crashed.Services[0].Registered, crashed.Services[0].Routable, crashed.Services[0].Ready = true, true, true
 	crashed.Services[0].RegistrationID = "reg_previous"
-	crashed.Services[0].PublishRunNumber = 7
+	crashed.Services[0].RunNumber = 7
 	if err := CommitSnapshot(t.Context(), manager.database, &crashed, "service.registered", nil); err != nil {
 		t.Fatal(err)
 	}

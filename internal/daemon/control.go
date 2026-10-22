@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -9,18 +9,18 @@ import (
 	"net/http"
 	"time"
 
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
-	controlproxy "github.com/tnldotdev/tnl/internal/control/proxy"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
+	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
-	return controlapi.Config{
+func controlAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) controlpublic.Config {
+	return controlpublic.Config{
 		TrafficDefaults:                   cfg.TrafficDefaults(),
 		TrafficCeiling:                    cfg.TrafficCeiling(),
 		Role:                              cfg.Role,
@@ -44,8 +44,8 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 	}
 }
 
-func authorityAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) authorityapi.Config {
-	return authorityapi.Config{
+func authorityAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) controlauthority.Config {
+	return controlauthority.Config{
 		ControlURL: cfg.ControlOrigin(),
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDomain:        cfg.ManagedDomain,
@@ -59,7 +59,7 @@ func authorityAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) auth
 }
 
 func newPublicAPIHandler(
-	cfg tnldconfig.Config,
+	cfg daemonconfig.Config,
 	startedAt time.Time,
 	httpClient *http.Client,
 	database *controlstate.Database,
@@ -73,17 +73,17 @@ func newPublicAPIHandler(
 	controlConfig.Route53CredentialsReadiness = route53Readiness
 	controlConfig.ControlReadiness = func() error { return d.readyControl(cfg.Role, time.Now()) }
 	controlConfig.AcceptingNewWork = func() bool { return !d.draining.Load() }
-	if cfg.Role == tnldconfig.RoleStandalone {
+	if cfg.Role == daemonconfig.RoleStandalone {
 		controlConfig.IngressReadiness = func() error { return d.readyIngress(time.Now()) }
 		controlConfig.RelayReadiness = func() error { return d.readyRelays(cfg.Role, time.Now()) }
 	}
-	mux, err := controlapi.NewHandler(
+	mux, err := controlpublic.NewHandler(
 		controlConfig, database, database, database.Readiness,
 	)
 	if err != nil {
 		return nil, err
 	}
-	var authorityRoutes authorityapi.Routes
+	var authorityRoutes controlauthority.Routes
 	owner := d.ctx
 	if owner == nil {
 		owner = observability.WithMetrics(context.Background(), metrics)
@@ -93,14 +93,14 @@ func newPublicAPIHandler(
 	if err := database.SeedHumanAuthentication(seedContext, cfg.ManagedDomain, controlstate.HumanAuthenticationSeeds{Issuer: cfg.OIDCIssuer, Administrators: cfg.InitialAdministrators, TeamOwners: cfg.InitialTeamOwners, DefaultTeam: cfg.DefaultTeam, DefaultTeamMembers: cfg.DefaultTeamMembers}, time.Now()); err != nil {
 		return nil, err
 	}
-	admissions, err := oidcauth.LoadAdmissions(cfg.OIDCAdmissionFile)
+	admissions, err := oidc.LoadAdmissions(cfg.OIDCAdmissionFile)
 	if err != nil {
 		return nil, err
 	}
 	if err := database.ConfigureOIDCAdmissions(seedContext, cfg.OIDCIssuer, admissions, time.Now()); err != nil {
 		return nil, err
 	}
-	authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, httpClient), database)
+	authorityRoutes, err = controlauthority.Register(mux, authorityAPIConfigFrom(cfg, httpClient), database)
 	if err != nil {
 		return nil, err
 	}
@@ -125,10 +125,10 @@ func newPublicAPIHandler(
 type controlSettings struct {
 	listen   string
 	listener net.Listener
-	proxy    controlproxy.Config
+	proxy    controlProxy.Config
 }
 
-func controlSettingsFrom(cfg tnldconfig.Config) controlSettings {
+func controlSettingsFrom(cfg daemonconfig.Config) controlSettings {
 	return controlSettings{listen: cfg.ControlListen, proxy: cfg.ControlProxy()}
 }
 

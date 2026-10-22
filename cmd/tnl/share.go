@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
@@ -27,7 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type shareCommand struct {
@@ -98,9 +98,9 @@ type shareServiceResult struct {
 
 func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL, hostnames map[string]string) map[string]shareServiceResult {
 	byHostname := make(map[string]controlv1.PublicURL, len(routes))
-	for _, route := range routes {
-		if route.ServiceProtocol == controlv1.Http {
-			byHostname[route.CanonicalHostname] = route
+	for _, publicURL := range routes {
+		if publicURL.ServiceProtocol == controlv1.Http {
+			byHostname[publicURL.CanonicalHostname] = publicURL
 		}
 	}
 	services := make(map[string]shareServiceResult, len(routes))
@@ -108,8 +108,8 @@ func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL
 		if !config.IsPublicService(service) {
 			continue
 		}
-		if route, found := byHostname[hostnames[name]]; found {
-			services[name] = shareServiceResult{PublicURLID: route.Id, PublicURL: "https://" + route.CanonicalHostname}
+		if publicURL, found := byHostname[hostnames[name]]; found {
+			services[name] = shareServiceResult{PublicURLID: publicURL.Id, PublicURL: "https://" + publicURL.CanonicalHostname}
 		}
 	}
 	return services
@@ -153,12 +153,12 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 			return controlv1.PublicURL{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a public URL ID, bare hostname, or HTTPS origin")))
 		}
 	}
-	for _, route := range routes {
-		if route.Id == selector || route.CanonicalHostname == hostname {
-			return route, nil
+	for _, publicURL := range routes {
+		if publicURL.Id == selector || publicURL.CanonicalHostname == hostname {
+			return publicURL, nil
 		}
 	}
-	return controlv1.PublicURL{}, controlclient.ErrNotFound
+	return controlv1.PublicURL{}, clientcontrol.ErrNotFound
 }
 
 func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer, services map[string]shareServiceResult) (*clientteam.Session, controlv1.Preview, []controlv1.PublicURL, error) {
@@ -190,7 +190,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		}
 		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.ServerResponseInvalid, errors.New("server returned a preview for another team"))
 	}
-	resolver := resolve.NewMetadataResolver(session.Database(), project.Project, func(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
+	resolver := resolve.NewMetadataResolver(session.Database(), project.Project, func(ctx context.Context, state *clientstate.Database, server string) (*auth.Client, error) {
 		return projectAuthentication(ctx, state, server, command, os.Stdin, diagnostics)
 	})
 	resolver.Seed(session.Authenticated().ServerEndpoint, session.Authenticated())
@@ -207,18 +207,18 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	routes := make([]controlv1.PublicURL, 0, len(names))
 	hostnames := make(map[string]string, len(names))
 	for _, name := range names {
-		route, routeErr := session.Authenticated().Control.GetPublicURLByHostname(ctx, current.Team().Id, metadata.Services[name].Hostname)
-		if routeErr == nil && route.ServiceProtocol != controlv1.Http {
+		publicURL, routeErr := session.Authenticated().Control.GetPublicURLByHostname(ctx, current.Team().Id, metadata.Services[name].Hostname)
+		if routeErr == nil && publicURL.ServiceProtocol != controlv1.Http {
 			continue
 		}
-		if routeErr != nil || !slices.Contains(preview.PublicUrlIds, route.Id) {
+		if routeErr != nil || !slices.Contains(preview.PublicUrlIds, publicURL.Id) {
 			session.Close()
 			if routeErr != nil {
 				return nil, controlv1.Preview{}, nil, fmt.Errorf("service %q: %w", name, routeErr)
 			}
 			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; start it with its tnl integration", name))
 		}
-		routes = append(routes, route)
+		routes = append(routes, publicURL)
 		hostnames[name] = metadata.Services[name].Hostname
 	}
 	for name, service := range shareServiceURLs(project, routes, hostnames) {
@@ -345,9 +345,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 
 func anonymousPreviewPublicURLIDs(routes []controlv1.PublicURL) []string {
 	ids := make([]string, 0, len(routes))
-	for _, route := range routes {
-		if route.ServiceProtocol == controlv1.Http {
-			ids = append(ids, route.Id)
+	for _, publicURL := range routes {
+		if publicURL.ServiceProtocol == controlv1.Http {
+			ids = append(ids, publicURL.Id)
 		}
 	}
 	slices.Sort(ids)
@@ -662,7 +662,7 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 		if err != nil {
 			return err
 		}
-		return controlclient.ErrNotFound
+		return clientcontrol.ErrNotFound
 	}
 	if _, err := session.Authenticated().Control.RevokeShare(ctx, share.Id); err != nil {
 		return err

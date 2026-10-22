@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
@@ -96,8 +96,8 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 		t.Fatal("control identity ID accepted as website OIDC sub")
 	}
 	decode(provision(ownerSub, "directory-owner", setup.SetupToken, setup.IdentityConnection, 1, true), 204, nil)
-	companyProof := func(c controlstate.IdentityConnection, subject string) []oidcauth.TeamContext {
-		return []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: subject, AuthenticatedAt: now.Unix()}}
+	companyProof := func(c controlstate.IdentityConnection, subject string) []oidc.TeamContext {
+		return []oidc.TeamContext{{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: subject, AuthenticatedAt: now.Unix()}}
 	}
 	badSource := companyProof(setup.IdentityConnection, "directory-owner")
 	badSource[0].SourceID = "other-tenant"
@@ -137,7 +137,7 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 	}
 	login := func(sub, subject string) authorityv1.ControlSessionResponse {
 		t.Helper()
-		client, e := authorityclient.New(server.URL, server.Client(), "")
+		client, e := clientauthority.New(server.URL, server.Client(), "")
 		if e != nil {
 			t.Fatal(e)
 		}

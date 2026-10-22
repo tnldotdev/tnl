@@ -1,4 +1,4 @@
-package privatetrust
+package targettrust
 
 import (
 	"bytes"

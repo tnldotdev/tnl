@@ -1,10 +1,10 @@
-package controlclient
+package control
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // ListServiceAudit reads one manager-authorized page using the person's session.

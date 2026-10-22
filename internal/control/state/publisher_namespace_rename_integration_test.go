@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"errors"
@@ -13,8 +13,8 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.DNSAutomation = true
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
-		"api": {Publisher: "production", Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}, "staging": {}}, Services: map[string]ProjectServiceConfiguration{
+		"api": {PublisherGroup: "production", Target: "api.internal:3000", Access: &ProjectServiceAccess{Team: true}},
 	}}
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -27,20 +27,20 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	assignment := replica.assignments.Services[0]
 	access := groupAssignmentAccess(t, d, replica, assignment, now)
-	prep, err := d.PreparePrivateServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "old-run", now, PrivateServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "old-run", now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.StartManagedServiceRun(t.Context(), assignment.ServiceID, prep.RunID, prep.RunNumber, access.PublisherIdentity, now)
+	run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prep.RunID, prep.RunNumber, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, _, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
+	grants, _, err := d.ListServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := RenamePublisherNamespaceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID, Group: "production", NamespaceLabel: "staging", ExpectedRevision: applied.Revision, IdempotencyKey: "rename-one", DNSAutomation: true, Now: now.Add(time.Second)}
-	if _, err := d.RenamePublisherNamespace(t.Context(), request); !errors.Is(err, ErrPrivateServiceConflict) {
+	if _, err := d.RenamePublisherNamespace(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("namespace collision accepted", err)
 	}
 	current, err := d.GetProjectConfiguration(t.Context(), r.TeamID, r.ProjectKey, r.ActorID)
@@ -58,14 +58,14 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if renamed.Revision != applied.Revision+1 || renamed.Services[0].ServiceID != assignment.ServiceID || renamed.Services[0].Port != applied.Services[0].Port || renamed.Services[0].Hostname == applied.Services[0].Hostname || renamed.ConfigurationHash != applied.ConfigurationHash || !reflect.DeepEqual(renamed.Configuration, applied.Configuration) {
 		t.Fatal("namespace rename changed service identity or configuration", renamed)
 	}
-	after, _, err := d.ListPrivateServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
+	after, _, err := d.ListServiceGrants(t.Context(), assignment.ServiceID, r.ActorID, "")
 	if err != nil || !reflect.DeepEqual(grants, after) {
 		t.Fatal("visitor grants changed", err)
 	}
-	if _, err := d.HeartbeatPrivateServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, request.Now); err == nil {
+	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, request.Now); err == nil {
 		t.Fatal("old run token survived namespace rename")
 	}
-	if _, err := d.PreparePrivateServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "stale-authority", request.Now, PrivateServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}); err == nil {
+	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "stale-authority", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}); err == nil {
 		t.Fatal("old publication authority survived rename")
 	}
 	next, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, request.Now)
@@ -74,25 +74,25 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	}
 	replica.assignments = next
 	newAccess := groupAssignmentAccess(t, d, replica, next.Services[0], request.Now)
-	newPrep, err := d.PreparePrivateServiceRun(t.Context(), assignment.ServiceID, newAccess.PublisherIdentity, "new-run", request.Now, PrivateServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+	newPrep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, newAccess.PublisherIdentity, "new-run", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
 	if err != nil || newPrep.CertificatePlan.Scope == prep.CertificatePlan.Scope || reflect.DeepEqual(newPrep.CertificatePlan.Identifiers, prep.CertificatePlan.Identifiers) {
 		t.Fatal("old certificate scope reused", err)
 	}
 	var oldRetired, newPending bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM control.managed_service_endpoints WHERE hostname=$1 AND retired_at IS NOT NULL AND dns_state='removing'),EXISTS(SELECT 1 FROM control.managed_service_endpoints WHERE hostname=$2 AND retired_at IS NULL AND dns_state='pending')`, applied.Services[0].Hostname, renamed.Services[0].Hostname).Scan(&oldRetired, &newPending); err != nil || !oldRetired || !newPending {
+	if err := d.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=$1 AND retired_at IS NOT NULL AND dns_state='removing'),EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=$2 AND retired_at IS NULL AND dns_state='pending')`, applied.Services[0].Hostname, renamed.Services[0].Hostname).Scan(&oldRetired, &newPending); err != nil || !oldRetired || !newPending {
 		t.Fatal("DNS transition not atomic", err)
 	}
 	var reusable bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT control.managed_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(8*24*time.Hour)).Scan(&reusable); err != nil || reusable {
+	if err := d.pool.QueryRow(t.Context(), `SELECT control.service_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(8*24*time.Hour)).Scan(&reusable); err != nil || reusable {
 		t.Fatal("DNS cleanup did not hold old namespace", err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.managed_service_endpoints SET dns_state='removed',dns_available_at=NULL WHERE hostname=$1`, applied.Services[0].Hostname); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.service_endpoints SET dns_state='removed',dns_available_at=NULL WHERE hostname=$1`, applied.Services[0].Hostname); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.pool.QueryRow(t.Context(), `SELECT control.managed_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(time.Hour)).Scan(&reusable); err != nil || reusable {
+	if err := d.pool.QueryRow(t.Context(), `SELECT control.service_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(time.Hour)).Scan(&reusable); err != nil || reusable {
 		t.Fatal("DNS cleanup bypassed quarantine", err)
 	}
-	if err := d.pool.QueryRow(t.Context(), `SELECT control.managed_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(8*24*time.Hour)).Scan(&reusable); err != nil || !reusable {
+	if err := d.pool.QueryRow(t.Context(), `SELECT control.service_namespace_reusable($1,$2)`, prep.CertificatePlan.Scope, now.Add(8*24*time.Hour)).Scan(&reusable); err != nil || !reusable {
 		t.Fatal("retired scope could not be reused after all boundaries cleared", err)
 	}
 	// concurrent exact retries all return the same historical response.
@@ -108,7 +108,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	wg.Wait()
 	changed := request
 	changed.NamespaceLabel = "other"
-	if _, err := d.RenamePublisherNamespace(t.Context(), changed); !errors.Is(err, ErrPrivateServiceConflict) {
+	if _, err := d.RenamePublisherNamespace(t.Context(), changed); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("request key changed meaning", err)
 	}
 	changed.IdempotencyKey = "race-loser"

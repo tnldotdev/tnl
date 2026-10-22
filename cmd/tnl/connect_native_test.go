@@ -40,7 +40,7 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 
 func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
-		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "psvc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test:25443/"}
+		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test:25443/"}
 		var output bytes.Buffer
 		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen); err != nil {
 			t.Fatal(err)
@@ -54,7 +54,7 @@ func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 func TestNativeProfileOutputUsesSharedRendererWidth(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolPostgres, config.ProtocolMySQL, config.ProtocolTCP, config.ProtocolKubernetes} {
-			profile := connector.Profile{Schema: 1, ServiceID: "psvc_0123456789ABCDEFGHIJKL", Protocol: protocol, Hostname: "orders.production.example.test", Public: public, Host: "127.0.0.1", Port: 15432, TLS: "managed service hostname verification", Command: []string{"client", "orders.production.example.test:15432"}}
+			profile := connector.Profile{Schema: 1, ServiceID: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Hostname: "orders.production.example.test", Public: public, Host: "127.0.0.1", Port: 15432, TLS: "service hostname verification", Command: []string{"client", "orders.production.example.test:15432"}}
 			var output bytes.Buffer
 			if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:15432"); err != nil {
 				t.Fatal(err)

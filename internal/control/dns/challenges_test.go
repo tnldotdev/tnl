@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Present(t.Context(), "public_url_1", "acme_authorization_1"); err != nil {
+	if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1"); err != nil {
 		t.Fatal(err)
 	}
 	wantValues := []string{
@@ -45,13 +46,13 @@ func TestChallengeManagerReconcilesDurablePresentationSet(t *testing.T) {
 		t.Fatalf("presented challenge record = %#v", provider.record)
 	}
 	store.challenge.State = "presented"
-	verified, err := manager.Verify(t.Context(), "public_url_1", "acme_authorization_1")
+	verified, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 	if err != nil || !verified || verifier.expected != base64.RawURLEncoding.EncodeToString(current[:]) {
 		t.Fatalf("verified = %v, expected %q, error %v", verified, verifier.expected, err)
 	}
 	store.challenge.State = "cleaning"
 	store.challenge.Presentations[0].Active = false
-	if err := manager.Cleanup(t.Context(), "public_url_1", "acme_authorization_1"); err != nil {
+	if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1"); err != nil {
 		t.Fatal(err)
 	}
 	wantRemaining := []string{base64.RawURLEncoding.EncodeToString(concurrent[:])}
@@ -75,16 +76,16 @@ func TestChallengeManagerWaitsForRoute53Propagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	ready, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
 	if err != nil || ready || verifier.calls != 0 {
 		t.Fatalf("pending Route 53 change reached CA readiness: ready=%t checks=%d error=%v", ready, verifier.calls, err)
 	}
-	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
 	if err != nil || ready || provider.calls != 1 || verifier.calls != 0 {
 		t.Fatalf("pending change was rewritten or verified: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 	provider.pending = false
-	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_1")
+	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
 	if err != nil || !ready || verifier.calls != 1 {
 		t.Fatalf("INSYNC Route 53 change did not become ready: ready=%t checks=%d error=%v", ready, verifier.calls, err)
 	}
@@ -108,7 +109,7 @@ func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := first.Verify(t.Context(), "public_url_1", "authorization_1")
+	ready, err := first.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
 	if err != nil || ready || provider.refreshCalls != 1 || verifier.calls != 0 {
 		t.Fatalf("lost receipt recovery: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
 	}
@@ -117,7 +118,7 @@ func TestChallengeManagerRecoversLostChangeReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err = restarted.Verify(t.Context(), "public_url_1", "authorization_1")
+	ready, err = restarted.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_1")
 	if err != nil || !ready || provider.refreshCalls != 1 || verifier.calls != 1 {
 		t.Fatalf("restarted change check: ready=%t refreshes=%d checks=%d error=%v", ready, provider.refreshCalls, verifier.calls, err)
 	}
@@ -140,25 +141,25 @@ func TestChallengeManagerWaitsForLatestSharedTXTChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Present(t.Context(), "public_url_1", "authorization_wildcard"); err != nil {
+	if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_wildcard"); err != nil {
 		t.Fatal(err)
 	}
 	store.challenge.State = "cleaning"
 	store.challenge.Presentations[0].Active = false
 	provider.pending = true
-	if err := manager.Cleanup(t.Context(), "public_url_1", "authorization_wildcard"); !errors.Is(err, errChallengePropagationPending) {
+	if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_wildcard"); !errors.Is(err, errChallengePropagationPending) {
 		t.Fatalf("cleanup completed before latest TXT change propagated: %v", err)
 	}
 	store.challenge.State = "presented"
 	store.challenge.AuthorizationID = "authorization_exact"
 	store.challenge.Identifier = "member.tunnels.example.test"
 	store.challenge.ChallengeDigest = secondDigest
-	ready, err := manager.Verify(t.Context(), "public_url_1", "authorization_exact")
+	ready, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_exact")
 	if !errors.Is(err, errChallengePropagationPending) || ready || provider.calls != 1 || verifier.calls != 0 {
 		t.Fatalf("other authorization changed the pending shared TXT: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
 	provider.pending = false
-	ready, err = manager.Verify(t.Context(), "public_url_1", "authorization_exact")
+	ready, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "authorization_exact")
 	if err != nil || !ready || provider.calls != 2 || verifier.calls != 1 {
 		t.Fatalf("other authorization after shared TXT sync: ready=%t writes=%d checks=%d error=%v", ready, provider.calls, verifier.calls, err)
 	}
@@ -180,16 +181,16 @@ func TestChallengeManagerUsesOwnedCustomZone(t *testing.T) {
 			}
 			switch phase {
 			case "presenting":
-				err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
+				err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			case "presented":
 				var verified bool
-				verified, err = manager.Verify(t.Context(), "public_url_1", "acme_authorization_1")
+				verified, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 				if !verified || verifier.expected != base64.RawURLEncoding.EncodeToString(store.challenge.ChallengeDigest[:]) ||
 					verifier.recordName != "_acme-challenge.api.claimed.example.test" || !slices.Equal(verifier.nameservers, provider.zone.Nameservers) {
 					t.Errorf("verification = %v, verifier %#v", verified, verifier)
 				}
 			case "cleaning":
-				err = manager.Cleanup(t.Context(), "public_url_1", "acme_authorization_1")
+				err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -232,11 +233,11 @@ func TestChallengeManagerClaimedAuthorityGuards(t *testing.T) {
 					}
 					switch phase {
 					case "presenting":
-						err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
+						err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 					case "presented":
-						_, err = manager.Verify(t.Context(), "public_url_1", "acme_authorization_1")
+						_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 					case "cleaning":
-						err = manager.Cleanup(t.Context(), "public_url_1", "acme_authorization_1")
+						err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 					}
 					var terminal *terminalError
 					if !errors.As(err, &terminal) || provider.calls != 0 || verifier.calls != 0 {
@@ -261,11 +262,11 @@ func TestChallengeManagerReleasingAuthorityAllowsOnlyCleanup(t *testing.T) {
 			}
 			switch phase {
 			case "presenting":
-				err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
+				err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			case "presented":
-				_, err = manager.Verify(t.Context(), "public_url_1", "acme_authorization_1")
+				_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			case "cleaning":
-				err = manager.Cleanup(t.Context(), "public_url_1", "acme_authorization_1")
+				err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			}
 			if phase == "cleaning" {
 				if err != nil || provider.calls != 1 || len(provider.record.DesiredOwnedValues) != 0 || len(provider.record.PreviouslyOwnedValues) != 1 {
@@ -312,11 +313,11 @@ func TestChallengeManagerRejectsWrongPhaseBeforeDNSWork(t *testing.T) {
 				}
 				switch operation {
 				case "present":
-					err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
+					err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 				case "verify":
-					_, err = manager.Verify(t.Context(), "public_url_1", "acme_authorization_1")
+					_, err = manager.VerifySubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 				case "cleanup":
-					err = manager.Cleanup(t.Context(), "public_url_1", "acme_authorization_1")
+					err = manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 				}
 				var terminal *terminalError
 				if !errors.As(err, &terminal) || provider.calls != 0 || verifier.calls != 0 {
@@ -349,7 +350,7 @@ func TestChallengeManagerResolvesHostedManagedContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = manager.Present(t.Context(), "public_url_1", "acme_authorization_1")
+			err = manager.PresentSubject(t.Context(), publicDNSSubject("public_url_1"), "acme_authorization_1")
 			if test.valid {
 				if err != nil || store.authorityCalls != 0 || provider.calls != 1 || provider.record.ZoneID != "ZMANAGED" || provider.record.ZoneDomain != "tunnels.example.test" || provider.record.CustomZone {
 					t.Fatalf("managed context: error %v, provider %#v", err, provider)
@@ -382,11 +383,19 @@ func (s *challengeStoreStub) WithDNSRecordLock(_ context.Context, _ string, run 
 	return run()
 }
 
-func (s *challengeStoreStub) GetDNSChallengeContext(ctx context.Context, publicURLID, authorizationID string) (controlstate.DNSChallengeContext, error) {
+func (s *challengeStoreStub) GetDNSChallengeContextForSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string) (controlstate.DNSChallengeContext, error) {
 	if s.getContext != nil {
-		return s.getContext(ctx, publicURLID, authorizationID)
+		value, err := s.getContext(ctx, subject.ID, authorizationID)
+		value.Subject = subject
+		return value, err
 	}
-	return s.challenge, nil
+	value := s.challenge
+	value.Subject = subject
+	return value, nil
+}
+
+func publicDNSSubject(id string) controlstate.CertificateSubject {
+	return controlstate.CertificateSubject{Kind: controlstate.CertificateSubjectPublicURL, ID: id, RunID: "session_" + strings.TrimPrefix(id, "public_url_"), RunNumber: 1}
 }
 
 func (s *challengeStoreStub) GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error) {

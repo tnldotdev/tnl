@@ -1,4 +1,4 @@
-package integrationurls
+package integrations
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
+	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -53,10 +53,10 @@ type Webhooks struct {
 }
 
 func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string)) (*Webhooks, []string, error) {
-	return newWebhooks(ctx, state, server, group, hostname, definitions, report, webhookips.Resolve)
+	return newWebhooks(ctx, state, server, group, hostname, definitions, report, webhooksource.Resolve)
 }
 
-func newWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhookips.Cache, string, string) (webhookips.Source, error)) (*Webhooks, []string, error) {
+func newWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhooksource.Cache, string, string) (webhooksource.Source, error)) (*Webhooks, []string, error) {
 	services := config.Services{}
 	providers := map[string]bool{}
 	for _, definition := range definitions {
@@ -75,7 +75,7 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server, group
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	sources := map[string]webhookips.Source{}
+	sources := map[string]webhooksource.Source{}
 	for _, name := range names {
 		source, err := resolve(ctx, state, server, name)
 		if err != nil {

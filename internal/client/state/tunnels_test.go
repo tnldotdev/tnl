@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
@@ -143,7 +143,7 @@ func TestPrivateDatabaseLabelsCannotAcquirePublicTunnelPorts(t *testing.T) {
 	}
 	snapshot, err := database.Snapshot(t.Context())
 	if err != nil || len(snapshot.Tunnels) != 0 {
-		t.Fatalf("invalid private service left a public tunnel: %#v, %v", snapshot, err)
+		t.Fatalf("invalid service left a public tunnel: %#v, %v", snapshot, err)
 	}
 }
 

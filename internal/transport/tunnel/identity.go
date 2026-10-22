@@ -12,10 +12,10 @@ func PublicForwardingRef(h tunnelv1.InternalForwardingHeader) tunnelv1.Publisher
 	}
 }
 
-// PrivateForwardingRef projects the complete private assignment identity.
-func PrivateForwardingRef(h tunnelv1.PrivateForwardingHeader) tunnelv1.PrivatePublisherConnectionRef {
-	return tunnelv1.PrivatePublisherConnectionRef{
-		PrivateServiceID: h.PrivateServiceID, PrivateRunID: h.PrivateRunID, RunNumber: h.RunNumber,
+// ServiceForwardingRef projects the complete private assignment identity.
+func ServiceForwardingRef(h tunnelv1.ServiceForwardingHeader) tunnelv1.ServicePublisherConnectionRef {
+	return tunnelv1.ServicePublisherConnectionRef{
+		ServiceID: h.ServiceID, ServiceRunID: h.ServiceRunID, RunNumber: h.RunNumber,
 		PublisherConnectionID: h.PublisherConnectionID, ConnectionSlot: h.ConnectionSlot,
 		ConnectionAssignmentRevision: h.ConnectionAssignmentRevision, RelayServiceID: h.RelayServiceID,
 	}

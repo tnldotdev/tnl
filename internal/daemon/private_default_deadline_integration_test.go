@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type privateRecheckFaults struct {
@@ -33,13 +33,13 @@ type defaultPrivateRecheck struct {
 	faults *privateRecheckFaults
 }
 
-func (c defaultPrivateRecheck) RecheckPrivateServiceVisitor(ctx context.Context, id string, body ingressv1.PrivateServiceVisitorRecheck) (ingressv1.PrivateServiceVisitorRecheckResult, error) {
+func (c defaultPrivateRecheck) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage == body.VisitorConnectionId {
-		return ingressv1.PrivateServiceVisitorRecheckResult{}, errors.New("control recheck unavailable")
+		return ingressv1.ServiceVisitorRecheckResult{}, errors.New("control recheck unavailable")
 	}
-	result, err := c.PrivateControl.RecheckPrivateServiceVisitor(ctx, id, body)
+	result, err := c.PrivateControl.RecheckServiceVisitor(ctx, id, body)
 	if err == nil && result.Allowed {
 		c.faults.checks[body.VisitorConnectionId]++
 	}
@@ -47,15 +47,15 @@ func (c defaultPrivateRecheck) RecheckPrivateServiceVisitor(ctx context.Context,
 }
 
 type defaultPublisherRecheck struct {
-	privatepublisher.RunControl
+	publisherservice.RunControl
 	faults *privateRecheckFaults
 }
 
-func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ManagedRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage == body.VisitorConnectionId {
-		return controlv1.ServiceClientCertificateDecision{}, controlclient.ErrUnavailable
+		return controlv1.ServiceClientCertificateDecision{}, clientcontrol.ErrUnavailable
 	}
 	decision, err := c.RunControl.AuthorizeServiceConnector(ctx, service, run, token, body)
 	if err == nil && decision.Allowed {
@@ -67,9 +67,9 @@ func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, 
 func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	opened := make(chan privateObservation, 4)
-	f := newPrivateRuntimeFixtureTiming(t, false, opened, true)
+	f := newServiceRuntimeFixtureTiming(t, false, opened, true)
 	faults := &privateRecheckFaults{checks: make(map[string]int), publisherUntil: make(map[string]time.Time)}
-	f.configurePrivate = func(config *ingress.PrivateConnectorConfig) {
+	f.configurePrivate = func(config *ingress.ConnectorConfig) {
 		// observe real control decisions without changing scheduling hints or TTLs.
 		config.Control = defaultPrivateRecheck{config.Control, faults}
 	}
@@ -77,7 +77,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", opened)
 	target := startPrivateEchoTarget(t)
 	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-	service, err := f.identity.routes.CreatePrivateService(t.Context(), f.identity.teamID, "default-leases", key)
+	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "default-leases", key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := tcpconnect.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := control.PrivateConnectorSigner(t.Context(), person.Identity.Id)
+	device, err := control.ConnectorSigner(t.Context(), person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,8 +101,8 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- tcpconnect.Serve(ctx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id,
-			Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
+		done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id,
+			Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -142,7 +142,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	observation := <-opened
 	visitorID := observation.header.VisitorConnectionID
 	var initial time.Time
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.private_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&initial); err != nil {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.connector_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&initial); err != nil {
 		t.Fatal(err)
 	}
 	// cross more than two full production 30-second lease cycles on this socket.
@@ -156,7 +156,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	}
 	var count int
 	var latest time.Time
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),max(valid_until) FROM control.private_visitor_streams WHERE connector_session_id=$1 AND closed_at IS NULL`, observation.header.Connector.SessionID).Scan(&count, &latest); err != nil || count != 1 || !latest.After(initial.Add(30*time.Second)) {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),max(valid_until) FROM control.connector_visitor_streams WHERE connector_session_id=$1 AND closed_at IS NULL`, observation.header.Connector.SessionID).Scan(&count, &latest); err != nil || count != 1 || !latest.After(initial.Add(30*time.Second)) {
 		t.Fatalf("did not renew the same admitted visitor: count=%d err=%v", count, err)
 	}
 	select {
@@ -172,7 +172,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if checks < 2 {
 		t.Fatalf("only %d successful default rechecks", checks)
 	}
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.private_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&latest); err != nil {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.connector_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&latest); err != nil {
 		t.Fatal(err)
 	}
 	if !publisherUntil.IsZero() && publisherUntil.Before(latest) {

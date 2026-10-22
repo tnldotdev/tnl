@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -13,9 +13,9 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/control/certificates"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	controldns "github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 // only the DNS provider is local. Pebble performs DNS-01 validation against
@@ -83,13 +83,13 @@ func privateFixtureDNSListeners(t *testing.T) (net.Listener, net.PacketConn) {
 	t.Fatal("reserve one DNS port for TCP and UDP")
 	return nil, nil
 }
-func (f *privateFixtureDNS) ReconcileChallenge(_ context.Context, r dnscontroller.ChallengeRecord) (dnscontroller.Zone, error) {
+func (f *privateFixtureDNS) ReconcileChallenge(_ context.Context, r controldns.ChallengeRecord) (controldns.Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.txt[dns.Fqdn(r.RecordName)] = slices.Clone(r.DesiredOwnedValues)
-	return dnscontroller.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-change"}, nil
+	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-change"}, nil
 }
-func (f *privateFixtureDNS) RefreshChallenge(ctx context.Context, r dnscontroller.ChallengeRecord) (dnscontroller.Zone, error) {
+func (f *privateFixtureDNS) RefreshChallenge(ctx context.Context, r controldns.ChallengeRecord) (controldns.Zone, error) {
 	return f.ReconcileChallenge(ctx, r)
 }
 func (f *privateFixtureDNS) ChangeReady(context.Context, string) (bool, error) { return true, nil }
@@ -107,24 +107,24 @@ func (f *privateFixtureDNS) VerifyChallenge(ctx context.Context, name, expected 
 	}
 	return false, nil
 }
-func (f *privateFixtureDNS) PublishAddress(_ context.Context, r dnscontroller.AddressRecord) (dnscontroller.Zone, error) {
+func (f *privateFixtureDNS) PublishAddress(_ context.Context, r controldns.AddressRecord) (controldns.Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ip[dns.Fqdn(r.CanonicalHostname)] = slices.Clone(r.IngressIPv4Addresses)
 	if r.WildcardHostname != "" {
 		f.ip[dns.Fqdn(r.WildcardHostname)] = slices.Clone(r.IngressIPv4Addresses)
 	}
-	return dnscontroller.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-address"}, nil
+	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-address"}, nil
 }
-func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r dnscontroller.AddressRecord) (dnscontroller.Zone, error) {
+func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r controldns.AddressRecord) (controldns.Zone, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.ip, dns.Fqdn(r.CanonicalHostname))
 	delete(f.ip, dns.Fqdn(r.WildcardHostname))
-	return dnscontroller.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-remove"}, nil
+	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-remove"}, nil
 }
-func (f *privateFixtureDNS) EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (dnscontroller.Zone, error) {
-	return dnscontroller.Zone{}, errors.New("fixture supports its managed domain only")
+func (f *privateFixtureDNS) EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (controldns.Zone, error) {
+	return controldns.Zone{}, errors.New("fixture supports its managed domain only")
 }
 func (f *privateFixtureDNS) ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error {
 	return errors.New("unexpected custom domain release")
@@ -151,7 +151,7 @@ func (f *privateFixtureDNS) VerifyPublicURL(ctx context.Context, name string, ip
 	return len(ipv6) == 0 && slices.Equal(addresses, expected), nil
 }
 
-func privateFixtureACME(t *testing.T, d *controlstate.Database, cfg *tnldconfig.Config) (integrationPebble, *privateFixtureDNS) {
+func privateFixtureACME(t *testing.T, d *controlstate.Database, cfg *daemonconfig.Config) (integrationPebble, *privateFixtureDNS) {
 	t.Helper()
 	provider := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, 0, provider.address)
@@ -168,10 +168,10 @@ func privateFixtureACME(t *testing.T, d *controlstate.Database, cfg *tnldconfig.
 	return pebble, provider
 }
 
-func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daemon, d *controlstate.Database, cfg tnldconfig.Config, pebble integrationPebble, provider *privateFixtureDNS) {
+func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daemon, d *controlstate.Database, cfg daemonconfig.Config, pebble integrationPebble, provider *privateFixtureDNS) {
 	t.Helper()
-	dnsConfig := dnscontroller.Config{WorkerID: "private-fixture-dns", ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID, IngressIPv4Addresses: cfg.IngressIPv4Addresses, PollInterval: 20 * time.Millisecond}
-	manager, err := dnscontroller.NewChallengeManager(d, provider, provider, dnsConfig)
+	dnsConfig := controldns.Config{WorkerID: "private-fixture-dns", ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID, IngressIPv4Addresses: cfg.IngressIPv4Addresses, PollInterval: 20 * time.Millisecond}
+	manager, err := controldns.NewChallengeManager(d, provider, provider, dnsConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daem
 	if err != nil {
 		t.Fatal(err)
 	}
-	addresses, err := dnscontroller.New(d, provider, provider, dnsConfig)
+	addresses, err := controldns.New(d, provider, provider, dnsConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

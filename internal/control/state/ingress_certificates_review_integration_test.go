@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func ingressTrustReviewDTO(t IngressTransportTrust) controlv1.IngressTransportTrust {
@@ -32,7 +32,7 @@ func ingressTrustReviewDTO(t IngressTransportTrust) controlv1.IngressTransportTr
 func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "ingress_transport_review")
 	owner := oidcRouteRequest(t, d, now)
-	service, err := d.CreatePrivateService(t.Context(), owner.TeamID, owner.ActingIdentityID, "database", "create", now)
+	service, err := d.CreateServiceAt(t.Context(), owner.TeamID, owner.ActingIdentityID, "database", "create", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 			t.Fatal(err)
 		}
 		registration := IngressRegistration{IngressID: fmt.Sprintf("ingress-%d", index), IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 8,
-			PrivateConnectorAddress: listener.Addr().String(), PrivateConnectorTLSServerName: "private-ingress.example.test"}
+			ConnectorAddress: listener.Addr().String(), ConnectorTLSServerName: "private-ingress.example.test"}
 		lease, err := d.RegisterIngress(t.Context(), registration, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
@@ -77,7 +77,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if material.TLSServerName != registration.PrivateConnectorTLSServerName || material.NotAfter.After(lease.LeaseExpiresAt) || !material.NotAfter.After(now) {
+		if material.TLSServerName != registration.ConnectorTLSServerName || material.NotAfter.After(lease.LeaseExpiresAt) || !material.NotAfter.After(now) {
 			t.Fatal("certificate escaped its registered hostname/lease deadline")
 		}
 		if strings.Contains(fmt.Sprint(material), "PRIVATE KEY") {
@@ -132,7 +132,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		if trust.IngressID != assignment.IngressID || trust.TLSServerName != assignment.TLSServerName {
 			t.Fatal("assignment trust changed peer identity")
 		}
-		config, err := controlclient.IngressTransportTLSConfig(ingressTrustReviewDTO(trust))
+		config, err := clientcontrol.IngressTransportTLSConfig(ingressTrustReviewDTO(trust))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,9 +153,9 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 			t.Fatalf("verified local ingress transport: %q %v", response, err)
 		}
 		_ = connection.Close()
-		otherAddress := registrations[0].PrivateConnectorAddress
+		otherAddress := registrations[0].ConnectorAddress
 		if otherAddress == assignment.IngressAddress {
-			otherAddress = registrations[1].PrivateConnectorAddress
+			otherAddress = registrations[1].ConnectorAddress
 		}
 		// both nodes use the same DNS identity and issuer: only the exact
 		// process-key/URI pin distinguishes the wrong live ingress.
@@ -165,10 +165,10 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		}
 		bad := ingressTrustReviewDTO(trust)
 		bad.TlsServerName = "other.example.test"
-		if _, err = controlclient.IngressTransportTLSConfig(bad); err == nil {
+		if _, err = clientcontrol.IngressTransportTLSConfig(bad); err == nil {
 			t.Fatal("wrong transport hostname was accepted")
 		}
-		if _, err = d.GetVisitorIngressTransportTrust(t.Context(), "another-identity", assignment.ID, now); !errors.Is(err, ErrPrivateServiceAccess) {
+		if _, err = d.GetVisitorIngressTransportTrust(t.Context(), "another-identity", assignment.ID, now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatalf("another identity read device assignment trust: %v", err)
 		}
 	}
@@ -186,7 +186,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		t.Fatal("node key was not encrypted at rest", err)
 	}
 	conflict := registrations[0]
-	conflict.PrivateConnectorAddress = "127.0.0.1:1"
+	conflict.ConnectorAddress = "127.0.0.1:1"
 	if _, err = d.RegisterIngress(t.Context(), conflict, now.Add(time.Second), time.Minute); !errors.Is(err, ErrIngressAlreadyRunning) {
 		t.Fatalf("live process changed its advertised certificate endpoint: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 	if err = rotated.RevokeVisitorDevice(t.Context(), owner.ActingIdentityID, device.ID, replaceAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = rotated.GetVisitorIngressTransportTrust(t.Context(), owner.ActingIdentityID, assignments[1].ID, replaceAt); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = rotated.GetVisitorIngressTransportTrust(t.Context(), owner.ActingIdentityID, assignments[1].ID, replaceAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("revoked device read transport trust: %v", err)
 	}
 }

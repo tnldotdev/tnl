@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestConcurrentRefreshSerializesAndReusesRotatedToken(t *testing.T) {
@@ -215,8 +215,8 @@ func TestForcedRefreshFailureNeverPromptsOrChangesSession(t *testing.T) {
 		invalid bool
 		want    error
 	}{
-		{"rejected", 401, false, authorityclient.ErrUnauthenticated},
-		{"transient", 503, false, authorityclient.ErrUnavailable},
+		{"rejected", 401, false, clientauthority.ErrUnauthenticated},
+		{"transient", 503, false, clientauthority.ErrUnavailable},
 		{"invalid issued identity", 200, true, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {

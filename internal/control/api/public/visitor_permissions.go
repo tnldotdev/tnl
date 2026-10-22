@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"net/netip"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type VisitorStore interface {
@@ -136,7 +136,7 @@ func validVisitorSource(value string) bool {
 }
 func writeVisitorDecisionProblem(w http.ResponseWriter, operation string, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, controlstate.ErrControlAuthentication), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, authorityclient.ErrUnauthenticated), errors.Is(err, authorization.ErrUnauthenticated):
+	case errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, controlstate.ErrControlAuthentication), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, clientauthority.ErrUnauthenticated), errors.Is(err, authorization.ErrUnauthenticated):
 		writeBearerProblem(w)
 	case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess), errors.Is(err, controlstate.ErrPublishRunStale), errors.Is(err, authorization.ErrForbidden):
 		writeProblem(w, 403, controlv1.Forbidden, "visitor permission denied")

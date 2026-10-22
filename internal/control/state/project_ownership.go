@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -25,8 +25,8 @@ func rejectPublisherGroupGrantMutation(ctx context.Context, tx pgx.Tx, publisher
 
 func rejectProjectManagedDefinition(ctx context.Context, tx pgx.Tx, id string) error {
 	var managed bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.applied_project_services WHERE private_service_id=$1 OR public_url_id=$1)
-	    OR EXISTS(SELECT 1 FROM control.local_project_services WHERE private_service_id=$1 OR public_url_id=$1)`, id).Scan(&managed)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.applied_project_services WHERE service_id=$1 OR public_url_id=$1)
+	    OR EXISTS(SELECT 1 FROM control.local_project_services WHERE service_id=$1 OR public_url_id=$1)`, id).Scan(&managed)
 	if err != nil {
 		return err
 	}

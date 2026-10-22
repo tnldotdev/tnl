@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 	db.Instrument(m)
 	old := time.Now().Add(-serviceaudit.Retention - time.Hour)
 	for range 3 {
-		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at) VALUES($1,'team_fixture','service_fixture','private_service','connection.close',$2,$2)`, serviceaudit.NewID(), old); err != nil {
+		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at) VALUES($1,'team_fixture','service_fixture','service','connection.close',$2,$2)`, serviceaudit.NewID(), old); err != nil {
 			t.Fatal(err)
 		}
 	}

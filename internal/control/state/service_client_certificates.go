@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	visitorissuer "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
+	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -23,7 +23,7 @@ import (
 const serviceClientIssuerContext = "service-client-certificate-issuer/v1"
 
 type ServiceClientCertificate struct {
-	ServiceID      string    `json:"private_service_id"`
+	ServiceID      string    `json:"service_id"`
 	CertificatePEM string    `json:"certificate_pem"`
 	IssuerPEM      string    `json:"issuer_pem"`
 	ExpiresAt      time.Time `json:"expires_at"`
@@ -31,7 +31,7 @@ type ServiceClientCertificate struct {
 
 // the seed is durable control-only state. losing an individual control process
 // never changes the client issuer, and storage-key rotation preserves its key.
-func (d *Database) ServiceClientIssuer(ctx context.Context) (*visitorissuer.Issuer, error) {
+func (d *Database) ServiceClientIssuer(ctx context.Context) (*controlvisitor.Issuer, error) {
 	var ciphertext []byte
 	var keyID string
 	err := d.pool.QueryRow(ctx, `SELECT seed_ciphertext,storage_key_id FROM control.service_client_certificate_issuer WHERE id`).Scan(&ciphertext, &keyID)
@@ -58,7 +58,7 @@ func (d *Database) ServiceClientIssuer(ctx context.Context) (*visitorissuer.Issu
 		return nil, err
 	}
 	defer clear(seed)
-	issuer, err := visitorissuer.New(seed)
+	issuer, err := controlvisitor.New(seed)
 	if err != nil {
 		return nil, err
 	}
@@ -76,9 +76,9 @@ func (d *Database) ServiceClientIssuer(ctx context.Context) (*visitorissuer.Issu
 
 func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, identity, device string, csr []byte, now time.Time) (result ServiceClientCertificate, retErr error) {
 	if !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
-	if _, err := visitorissuer.ValidateCSR(csr); err != nil {
+	if _, err := controlvisitor.ValidateCSR(csr); err != nil {
 		return result, ErrCertificateIssuanceInvalid
 	}
 	issuer, err := d.ServiceClientIssuer(ctx)
@@ -90,7 +90,7 @@ func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, i
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue service client certificate", &retErr)()
-	if err = lockPrivateAdmission(ctx, tx, service); err != nil {
+	if err = lockServiceAdmission(ctx, tx, service); err != nil {
 		return result, err
 	}
 	_, _, err = privateVisitorAccess(ctx, tx, service, identity, now)
@@ -102,11 +102,11 @@ func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, i
 		return result, err
 	}
 	if !validDevice {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	digest := sha256.Sum256(csr)
 	var certificate []byte
-	err = tx.QueryRow(ctx, `SELECT certificate_pem,expires_at FROM control.service_client_certificates WHERE private_service_id=$1 AND device_id=$2 AND identity_id=$3 AND csr_digest=$4 AND revoked_at IS NULL AND expires_at>$5`, service, device, identity, digest[:], now).Scan(&certificate, &result.ExpiresAt)
+	err = tx.QueryRow(ctx, `SELECT certificate_pem,expires_at FROM control.service_client_certificates WHERE service_id=$1 AND device_id=$2 AND identity_id=$3 AND csr_digest=$4 AND revoked_at IS NULL AND expires_at>$5`, service, device, identity, digest[:], now).Scan(&certificate, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// this credential proves identity and key possession. live permission
 		// checks still bound access by the current grant, run and lease deadlines.
@@ -121,30 +121,30 @@ func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, i
 			return result, parseErr
 		}
 		certificateDigest := sha256.Sum256(leaf.Raw)
-		err = tx.QueryRow(ctx, `INSERT INTO control.service_client_certificates(certificate_digest,private_service_id,identity_id,device_id,csr_digest,certificate_pem,created_at,expires_at,control_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(private_service_id,device_id,csr_digest) DO UPDATE SET csr_digest=EXCLUDED.csr_digest WHERE control.service_client_certificates.revoked_at IS NULL AND control.service_client_certificates.expires_at>$7 RETURNING certificate_pem,expires_at`, certificateDigest[:], service, identity, device, digest[:], certificate, now, leaf.NotAfter, nullableText(companySessionID(ctx, identity))).Scan(&certificate, &result.ExpiresAt)
+		err = tx.QueryRow(ctx, `INSERT INTO control.service_client_certificates(certificate_digest,service_id,identity_id,device_id,csr_digest,certificate_pem,created_at,expires_at,control_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(service_id,device_id,csr_digest) DO UPDATE SET csr_digest=EXCLUDED.csr_digest WHERE control.service_client_certificates.revoked_at IS NULL AND control.service_client_certificates.expires_at>$7 RETURNING certificate_pem,expires_at`, certificateDigest[:], service, identity, device, digest[:], certificate, now, leaf.NotAfter, nullableText(companySessionID(ctx, identity))).Scan(&certificate, &result.ExpiresAt)
 	}
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	// a newly authenticated company session may renew this device's existing
 	// certificate binding; the earlier session's proof cannot be extended.
-	if _, err = tx.Exec(ctx, `UPDATE control.service_client_certificates SET control_session_id=$4 WHERE private_service_id=$1 AND identity_id=$2 AND device_id=$3 AND csr_digest=$5 AND revoked_at IS NULL AND expires_at>$6`, service, identity, device, nullableText(companySessionID(ctx, identity)), digest[:], now); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.service_client_certificates SET control_session_id=$4 WHERE service_id=$1 AND identity_id=$2 AND device_id=$3 AND csr_digest=$5 AND revoked_at IS NULL AND expires_at>$6`, service, identity, device, nullableText(companySessionID(ctx, identity)), digest[:], now); err != nil {
 		return result, err
 	}
 	var team string
-	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.private_services WHERE id=$1`, service).Scan(&team); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.services WHERE id=$1`, service).Scan(&team); err != nil {
 		return result, err
 	}
-	if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: team, ServiceID: service, ServiceKind: "private_service", EventType: "certificate.client.issue", ActorIdentityID: identity, DeviceID: device, OccurredAt: now}, device+"/"+hex.EncodeToString(digest[:])); err != nil {
+	if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: team, ServiceID: service, ServiceKind: "service", EventType: "certificate.client.issue", ActorIdentityID: identity, DeviceID: device, OccurredAt: now}, device+"/"+hex.EncodeToString(digest[:])); err != nil {
 		return result, err
 	}
 	result.ServiceID, result.CertificatePEM, result.IssuerPEM = service, string(certificate), string(issuer.CertificatePEM())
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, service, runID, token, visitor string, number int64, source netip.Addr, der []byte, now time.Time) (result PrivateVisitorValidity, retErr error) {
+func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, service, runID, token, visitor string, number int64, source netip.Addr, der []byte, now time.Time) (result ServiceVisitorValidity, retErr error) {
 	if len(der) == 0 || len(der) > 16<<10 || !source.IsValid() || source.Zone() != "" {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	issuer, err := d.ServiceClientIssuer(ctx)
 	if err != nil {
@@ -152,30 +152,30 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 	}
 	leaf, err := x509.ParseCertificate(der)
 	if err != nil {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	subject, err := issuer.Subject(leaf, service, now)
 	if err != nil {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "authorize service client certificate", &retErr)()
-	if err = lockPrivateAdmission(ctx, tx, service); err != nil {
+	if err = lockServiceAdmission(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	if err := d.managedHTTPSourceAllowed(ctx, q, service, source); err != nil {
+	if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
 		return result, err
 	}
-	run, err := privateRunAuthorization(ctx, tx, q, service, runID, token, now)
+	run, err := serviceRunAuthorization(ctx, tx, q, service, runID, token, now)
 	if err != nil {
 		return result, err
 	}
 	if run.RunNumber != number {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	digest := sha256.Sum256(der)
 	if subject.WorkloadSessionID != "" {

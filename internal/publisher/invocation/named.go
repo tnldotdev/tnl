@@ -6,19 +6,19 @@ import (
 	"os"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	localpublisher "github.com/tnldotdev/tnl/internal/publisher/localapi"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/publisher/localapi"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 // runNamedPublish acquires a configured service through the project owner. the
 // parent CLI resolves project/config flags and calls this for named services.
 // replacement owners are rediscovered and receive a fresh lease; an old owner
 // capability or registration is never replayed against the replacement.
-func PublishNamed(ctx context.Context, project projectconfig.Project, name, stateDir string, resolveOwner func(context.Context, projectconfig.Project, string) (privateprotocol.Endpoint, error), output *Presentation) (result error) {
+func PublishNamed(ctx context.Context, project clientproject.Project, name, stateDir string, resolveOwner func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error), output *Presentation) (result error) {
 	ctx, finishStartup := observability.ClientOperation(ctx, "client.publish.startup")
 	defer func() { finishStartup(result) }()
 	if _, found := project.Config.Services[name]; !found {
@@ -42,13 +42,13 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 	if err != nil {
 		return err
 	}
-	ownerID, err := privateprotocol.Random(16)
+	ownerID, err := publisherprotocol.Random(16)
 	if err != nil {
 		return err
 	}
-	lease := &localpublisher.LeaseClient{Resolve: func(ctx context.Context) (privateprotocol.Endpoint, error) {
+	lease := &localapi.LeaseClient{Resolve: func(ctx context.Context) (publisherprotocol.Endpoint, error) {
 		return resolveOwner(ctx, project, root)
-	}, Request: privateprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest}}
+	}, Request: publisherprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest}}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 10*time.Second)
 		defer cancel()
@@ -59,7 +59,7 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 	defer ticker.Stop()
 	lastRun := uint64(0)
 	lastOwner, lastTunnel := "", ""
-	lastPrivateTarget := ""
+	lastServiceTarget := ""
 	var ownerRecoveryDeadline time.Time
 	for {
 		if ctx.Err() != nil {
@@ -76,7 +76,7 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 		endpoint, registration, err := lease.Renew(attempt)
 		finishAttempt(err)
 		if err != nil {
-			var response *privateprotocol.ResponseError
+			var response *publisherprotocol.ResponseError
 			if errors.As(err, &response) {
 				if response.Code == "runtime.owner_conflict" {
 					return failure.Wrap("acquire named service", failure.AppOwnerConflict, err)
@@ -87,7 +87,7 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 					}
 				}
 			}
-			if lastOwner == "" || errors.Is(err, privateprotocol.ErrUnauthorized) || errors.Is(err, privateprotocol.ErrForbidden) || errors.Is(err, clientruntime.ErrOwnerConflict) {
+			if lastOwner == "" || errors.Is(err, publisherprotocol.ErrUnauthorized) || errors.Is(err, publisherprotocol.ErrForbidden) || errors.Is(err, clientruntime.ErrOwnerConflict) {
 				return err
 			}
 			// a restarted local publisher may be unavailable until its new
@@ -113,22 +113,22 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 		if endpoint.OwnerId != lastOwner {
 			lastOwner = endpoint.OwnerId
 			lastRun = 0
-			lastTunnel, lastPrivateTarget = "", ""
+			lastTunnel, lastServiceTarget = "", ""
 		}
 		var snapshot clientruntime.Snapshot
 		status, finishStatus := observability.ClientOperation(ctx, "client.publish.status")
-		statusErr := privateprotocol.Call(status, endpoint, "GET", "/v1/status", nil, &snapshot)
+		statusErr := publisherprotocol.Call(status, endpoint, "GET", "/v1/status", nil, &snapshot)
 		finishStatus(statusErr)
 		if statusErr == nil {
 			for _, service := range snapshot.Services {
 				if service.Name != name || service.RegistrationID != registration.RegistrationID {
 					continue
 				}
-				if service.PublicURL == "" && service.Target != "" && lastPrivateTarget != service.Target {
+				if service.PublicURL == "" && service.Target != "" && lastServiceTarget != service.Target {
 					if err := output.starting("", service.Target); err != nil {
 						return err
 					}
-					lastPrivateTarget = service.Target
+					lastServiceTarget = service.Target
 				}
 				if service.TunnelID != "" && service.TunnelID != lastTunnel {
 					if err := output.starting(service.TunnelID, service.Target); err != nil {
@@ -136,16 +136,16 @@ func PublishNamed(ctx context.Context, project projectconfig.Project, name, stat
 					}
 					lastTunnel = service.TunnelID
 				}
-				if !service.Routable && service.PublishRunNumber != 0 {
-					if err := output.provisioning(service.PublicURL, service.PublishRunNumber); err != nil {
+				if !service.Routable && service.RunNumber != 0 {
+					if err := output.provisioning(service.PublicURL, service.RunNumber); err != nil {
 						return err
 					}
 				}
-				if service.Routable && service.PublishRunNumber != lastRun {
-					if err := output.ready(service.PublicURL, service.PublishRunNumber); err != nil {
+				if service.Routable && service.RunNumber != lastRun {
+					if err := output.ready(service.PublicURL, service.RunNumber); err != nil {
 						return err
 					}
-					lastRun = service.PublishRunNumber
+					lastRun = service.RunNumber
 				}
 				if !service.Routable && service.Failure != "" && service.ProvisioningStage == "" {
 					reason := failure.TransportUnavailable

@@ -10,21 +10,21 @@ import (
 	"slices"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func guestForDemo(
 	ctx context.Context, state *clientstate.Database, serverURL string, flags PublicOptions,
 ) (*clientstate.GuestSession, error) {
-	control, err := controlclient.New(serverURL, nil, "")
+	control, err := clientcontrol.New(serverURL, nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func guestForDemoWithControl(
 
 func guestPublisherServices(
 	ctx context.Context, state *clientstate.Database, serverURL, hostname string,
-	guest clientstate.GuestSession, routes *controlclient.Client,
+	guest clientstate.GuestSession, routes *clientcontrol.Client,
 ) (publisherServices, error) {
 	store, err := state.Server(ctx, serverURL)
 	if err != nil {
@@ -111,44 +111,44 @@ func createGuestDemoURL(ctx context.Context, services publisherServices, cfg pub
 		return controlv1.PublicURL{}, err
 	}
 	protocol, ephemeral := controlv1.Http, true
-	route, err := services.routes.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{
+	publicURL, err := services.routes.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{
 		TeamId: services.teamID, MembershipId: &services.membershipID, DomainId: services.domainID,
 		CanonicalHostname: services.hostname, Purpose: controlv1.Demo, PublicUrlScope: controlv1.Member,
 		ServiceProtocol: &protocol, Target: cfg.Target, AllowedIpPrefixes: &cfg.AllowedIPPrefixes, Ephemeral: &ephemeral,
 	}, key)
 	if err != nil {
-		return route, err
+		return publicURL, err
 	}
 	prefixes := []string{}
-	if route.AllowedIpPrefixes != nil {
-		prefixes = *route.AllowedIpPrefixes
+	if publicURL.AllowedIpPrefixes != nil {
+		prefixes = *publicURL.AllowedIpPrefixes
 	}
-	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != services.hostname || route.Purpose != controlv1.Demo || route.ServiceProtocol != controlv1.Http || route.PublicUrlScope != controlv1.Member || route.MembershipId == nil || *route.MembershipId != services.membershipID || !route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.Target != cfg.Target || len(prefixes) != 1 || !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != services.hostname || publicURL.Purpose != controlv1.Demo || publicURL.ServiceProtocol != controlv1.Http || publicURL.PublicUrlScope != controlv1.Member || publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID || !publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.Target != cfg.Target || len(prefixes) != 1 || !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
 		return controlv1.PublicURL{}, failure.Wrap("assign guest demo URL", failure.ServerResponseInvalid, errors.New("control returned a different guest demo URL or source IP policy"))
 	}
-	return route, nil
+	return publicURL, nil
 }
 
 // the guest session may assign a demo URL, but every run uses its own key and
 // URL-scoped trial grant. the server checks the original guest source IP.
-func enrollGuestNative(ctx context.Context, services publisherServices, route controlv1.PublicURL) (*nativeauth.Native, error) {
-	control, err := controlclient.New(services.routes.ControlURL(), nil, "")
+func enrollGuestNative(ctx context.Context, services publisherServices, publicURL controlv1.PublicURL) (*publisheridentity.Native, error) {
+	control, err := clientcontrol.New(services.routes.ControlURL(), nil, "")
 	if err != nil {
 		return nil, err
 	}
-	authority, err := authorityclient.New(services.routes.ControlURL(), nil, "")
+	authority, err := clientauthority.New(services.routes.ControlURL(), nil, "")
 	if err != nil {
 		return nil, err
 	}
-	return enrollGuestNativeWithClients(ctx, services.state, route, services.routes, control, authority)
+	return enrollGuestNativeWithClients(ctx, services.state, publicURL, services.routes, control, authority)
 }
 
 type guestEnrollmentClient interface {
 	EnrollGuestPublisher(context.Context, string, ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error)
 }
 
-func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store, route controlv1.PublicURL, bootstrap guestEnrollmentClient, control nativeauth.NativeControl, authority nativeauth.AssertionExchanger) (*nativeauth.Native, error) {
-	scope := "guest-publisher:" + route.Id
+func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store, publicURL controlv1.PublicURL, bootstrap guestEnrollmentClient, control publisheridentity.NativeControl, authority publisheridentity.AssertionExchanger) (*publisheridentity.Native, error) {
+	scope := "guest-publisher:" + publicURL.Id
 	lock, err := store.LockPublisherSigningIdentity(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -159,11 +159,11 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 		return nil, err
 	}
 	if found {
-		native, _, err := nativeauth.LoadNative(ctx, store, control, authority, saved.ID)
+		native, _, err := publisheridentity.LoadNative(ctx, store, control, authority, saved.ID)
 		if err != nil {
 			return nil, err
 		}
-		return native, native.SelectRoute(route)
+		return native, native.SelectPublicURL(publicURL)
 	}
 	pending, found, err := store.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
 	if err != nil {
@@ -174,17 +174,17 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 		if err != nil {
 			return nil, err
 		}
-		pending = clientstate.PendingPublisherEnrollment{EnrollmentID: route.Id, SelectionKind: "project", SelectionKey: scope, PublicKey: public, SigningKey: private, ExpiresAt: time.Now().Add(24 * time.Hour)}
+		pending = clientstate.PendingPublisherEnrollment{EnrollmentID: publicURL.Id, SelectionKind: "project", SelectionKey: scope, PublicKey: public, SigningKey: private, ExpiresAt: time.Now().Add(24 * time.Hour)}
 		if err := store.SavePendingPublisherEnrollment(ctx, pending); err != nil {
 			return nil, err
 		}
 	}
 	if len(pending.SigningKey) != ed25519.PrivateKeySize || !pending.ExpiresAt.After(time.Now()) {
-		return nil, nativeauth.ErrScope
+		return nil, publisheridentity.ErrScope
 	}
 	private := ed25519.PrivateKey(pending.SigningKey)
 	if !private.Equal(ed25519.NewKeyFromSeed(private.Seed())) || !private.Public().(ed25519.PublicKey).Equal(ed25519.PublicKey(pending.PublicKey)) {
-		return nil, nativeauth.ErrScope
+		return nil, publisheridentity.ErrScope
 	}
 	var identity authorityv1.PublisherEnrollmentResult
 	if len(pending.ResultJSON) != 0 {
@@ -192,24 +192,24 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 			return nil, err
 		}
 	} else {
-		issued, err := bootstrap.EnrollGuestPublisher(ctx, route.Id, private.Public().(ed25519.PublicKey))
+		issued, err := bootstrap.EnrollGuestPublisher(ctx, publicURL.Id, private.Public().(ed25519.PublicKey))
 		if err != nil {
 			return nil, err
 		}
-		if issued.PublicUrlId != route.Id || issued.TeamId != route.TeamId {
-			return nil, failure.Wrap("enroll guest publisher", failure.ServerResponseInvalid, nativeauth.ErrScope)
+		if issued.PublicUrlId != publicURL.Id || issued.TeamId != publicURL.TeamId {
+			return nil, failure.Wrap("enroll guest publisher", failure.ServerResponseInvalid, publisheridentity.ErrScope)
 		}
-		identity = authorityv1.PublisherEnrollmentResult{ClientId: issued.ClientId, KeyId: issued.KeyId, GrantId: issued.GrantId, TeamId: issued.TeamId, PublicUrlId: &issued.PublicUrlId, Kind: authorityv1.SavedUrl}
+		identity = authorityv1.PublisherEnrollmentResult{ClientId: issued.ClientId, KeyId: issued.KeyId, GrantId: issued.GrantId, TeamId: issued.TeamId, PublicUrlId: &issued.PublicUrlId, Kind: authorityv1.SavedPublicUrl}
 		pending.ResultJSON, err = json.Marshal(identity)
 		if err != nil {
 			return nil, err
 		}
 	}
-	native, err := nativeauth.NewNative(control, authority, identity, private)
+	native, err := publisheridentity.NewNative(control, authority, identity, private)
 	if err != nil {
 		return nil, err
 	}
-	if err := native.SelectRoute(route); err != nil {
+	if err := native.SelectPublicURL(publicURL); err != nil {
 		return nil, err
 	}
 	if err := store.RecordPublisherEnrollmentResult(ctx, pending.EnrollmentID, pending.ResultJSON); err != nil {

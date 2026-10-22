@@ -43,9 +43,9 @@ tasks:
 
   http-services:
     dir: "{{.ROOT_DIR}}"
-    desc: Check applied HTTP settings, visitor admission, and managed HTTP streams with disposable PostgreSQL
+    desc: Check applied HTTP settings, visitor admission, and service HTTP streams with disposable PostgreSQL
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/daemon -run='^TestIntegration(AppliedProjectHTTPContracts|ManagedHTTPAuthentication)' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/daemon -run='^TestIntegration(AppliedProjectHTTPContracts|ServiceHTTPAuthentication)' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   owner-lifecycle:
     dir: "{{.ROOT_DIR}}"
@@ -144,9 +144,9 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
-  private-services:
+  services:
     dir: "{{.ROOT_DIR}}"
-    desc: Check private services, applied publisher groups, and audit in disposable PostgreSQL
+    desc: Check services, applied publisher groups, and audit in disposable PostgreSQL
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state ./internal/control/state/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
@@ -176,17 +176,17 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./cmd/tnl -run='^TestIntegration(ServiceActor|PrivateServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./cmd/tnl -run='^TestIntegration(ServiceActor|ServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   management:
     dir: "{{.ROOT_DIR}}"
     desc: Check publisher claims, manager lookup, AWS bootstrap and connector lifecycle
     cmds:
-      - task: :go:test:integration:private-claims
+      - task: :go:test:integration:service-claims
       - task: :go:test:integration:service-access
       - task: :go:test:integration:aws-bootstrap
       - task: :go:test:integration:tcp-lifecycle
-      - task: :go:test:integration:private-sshd
+      - task: :go:test:integration:sshd
 
   publisher-egress:
     dir: "{{.ROOT_DIR}}"
@@ -194,11 +194,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state -run='^TestIntegrationPublisherRuntime' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
-  private-topology:
+  service-topology:
     dir: "{{.ROOT_DIR}}"
     desc: Verify private visitor lifecycle through separated and standalone roles
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|ManagedTLSProductionPath|ManagedHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|EndpointProductionPath|ServiceHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
   publisher-observability:
     dir: "{{.ROOT_DIR}}"
@@ -226,9 +226,9 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector/stream -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector/stream -run='^TestIntegration(ConnectorReleasesLowCapacityReservations|ConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
-  private-claims:
+  service-claims:
     dir: "{{.ROOT_DIR}}"
     desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
     cmds:
@@ -294,7 +294,7 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=binary -tnl-test-compose-host-address='{{.COMPOSE_HOST_ADDRESS}}'
 
-  private-sshd:
+  sshd:
     dir: "{{.ROOT_DIR}}"
     desc: Verify an existing OpenSSH daemon through private QUIC and TLS/TCP streams
     cmds:

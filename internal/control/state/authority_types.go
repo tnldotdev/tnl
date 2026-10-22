@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 // TeamRole is a membership's authorization role.
 type TeamRole string

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -96,6 +96,11 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 	if err != nil || !found || first.ID != issuance.ID || first.WorkEpoch != 1 || first.Account.AccountURL != "https://acme.example.test/account/1" {
 		t.Fatalf("first work = %#v, %t, %v", first, found, err)
 	}
+	crossed := first
+	crossed.Subject.RunNumber++
+	if _, err := database.SaveACMEOrderWork(t.Context(), crossed, now); !errors.Is(err, ErrCertificateIssuanceInvalid) {
+		t.Fatalf("crossed certificate subject save: %v", err)
+	}
 	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "other", now, time.Minute); err != nil || found {
 		t.Fatalf("concurrent work = %t, %v", found, err)
 	}
@@ -162,7 +167,7 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if err != nil || !found || cleanup.State != "installed" || cleanup.Authorizations[0].State != "cleaning" {
 		t.Fatalf("cleanup did not survive restart: found=%t state=%q error=%v", found, cleanup.State, err)
 	}
-	challenge, err := database.GetDNSChallengeContext(t.Context(), authentication.PublicURLID, cleanup.Authorizations[0].ID)
+	challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), cleanup.Subject, cleanup.Authorizations[0].ID)
 	if err != nil || len(challenge.Presentations) != 1 || challenge.Presentations[0].Active {
 		t.Fatalf("installed certificate kept DNS presentation active: %+v, %v", challenge.Presentations, err)
 	}
@@ -213,12 +218,12 @@ func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	database, now := newCertificatePlanDatabase(t)
 	plan := CertificatePlan{CacheKey: "api.example.test", Scope: "api.example.test", Identifiers: []string{"api.example.test"}, ChallengeMethod: "dns-01"}
-	route, authentication := newExternalPlanSession(t, database, now, "team_external", "api.example.test", "managed:example.test", plan)
+	_, authentication := newExternalPlanSession(t, database, now, "team_external", "api.example.test", "managed:example.test", plan)
 	work := createPlanIssuanceWork(t, database, now, authentication, plan, false, nil)
 	if len(work.Authorizations) != 1 || !opaqueid.Valid(work.Authorizations[0].PresentationReference, opaqueid.ACMEPresentationPrefix) {
 		t.Fatalf("DNS authorizations = %#v", work.Authorizations)
 	}
-	challenge, err := database.GetDNSChallengeContext(t.Context(), route.ID, work.Authorizations[0].ID)
+	challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), work.Subject, work.Authorizations[0].ID)
 	if err != nil || len(challenge.Presentations) != 1 || !challenge.Presentations[0].Active || challenge.PresentationReference != work.Authorizations[0].PresentationReference {
 		t.Fatalf("DNS challenge = %#v, %v", challenge, err)
 	}
@@ -237,7 +242,7 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 		len(cleanup.Authorizations) != 1 || cleanup.Authorizations[0].State != "cleaning" {
 		t.Fatalf("canceled cleanup = %#v, %t, %v", cleanup, found, err)
 	}
-	challenge, err = database.GetDNSChallengeContext(t.Context(), route.ID, cleanup.Authorizations[0].ID)
+	challenge, err = database.GetDNSChallengeContextForSubject(t.Context(), cleanup.Subject, cleanup.Authorizations[0].ID)
 	if err != nil || len(challenge.Presentations) != 1 || challenge.Presentations[0].Active {
 		t.Fatalf("cleaning challenge = %#v, %v", challenge, err)
 	}

@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestShareLifetimeAcceptsDaysAndBoundsExpiration(t *testing.T) {
@@ -81,11 +81,11 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
-			control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))
+			control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := clientteam.NewSession(nil, nil, &clientauth.Client{Control: control}, authorityv1.IdentityContext{}, clientteam.Options{})
+			session := clientteam.NewSession(nil, nil, &auth.Client{Control: control}, authorityv1.IdentityContext{}, clientteam.Options{})
 			var output bytes.Buffer
 			if kind == "invite" {
 				err = createShareInvitation(t.Context(), session, shareInviteCreateCommand{URL: id, Email: "reviewer@example.test"}, time.Hour, &output)
@@ -134,7 +134,7 @@ func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 			t.Fatalf("invalid page %q was accepted", selector)
 		}
 	}
-	if _, err := selectSharePublicURL("other.example.test", routes); !errors.Is(err, controlclient.ErrNotFound) {
+	if _, err := selectSharePublicURL("other.example.test", routes); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("unconfigured hostname = %v", err)
 	}
 }

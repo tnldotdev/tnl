@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // PrivateDirectory holds small durable identity files. SQLite and its wrapping
@@ -273,6 +274,9 @@ func (s *Store) WithIdentityDirectory(path string) (*Store, error) {
 func (s *Store) IdentityDirectory() string { return s.identityDir }
 
 func (s *Store) PublisherIdentityFiles(team, publisher string) (*PrivateDirectory, error) {
+	if s == nil || !opaqueid.Valid(publisher, opaqueid.PublisherIdentityPrefix) {
+		return nil, identityFileError(ErrPublisherStateConflict)
+	}
 	root, err := OpenPrivateDirectory(s.identityDir)
 	if err != nil {
 		return nil, err

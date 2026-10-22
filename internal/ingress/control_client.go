@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 // HTTPControlClient adapts the generated private API client to ingress control operations.
@@ -35,36 +35,36 @@ func (c *HTTPControlClient) GetIngressTransportCertificate(ctx context.Context, 
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) ClaimPrivateConnectorSession(ctx context.Context, ingressID string, body ingressv1.PrivateConnectorSessionClaim) (ingressv1.PrivateConnectorSessionResult, error) {
-	response, err := c.client.ClaimPrivateConnectorSessionWithResponse(ctx, ingressID, body)
+func (c *HTTPControlClient) ClaimConnectorSession(ctx context.Context, ingressID string, body ingressv1.ConnectorSessionClaim) (ingressv1.ConnectorSessionResult, error) {
+	response, err := c.client.ClaimConnectorSessionWithResponse(ctx, ingressID, body)
 	if err != nil {
-		return ingressv1.PrivateConnectorSessionResult{}, err
+		return ingressv1.ConnectorSessionResult{}, err
 	}
 	if response == nil {
-		return ingressv1.PrivateConnectorSessionResult{}, ingressHTTPProblem(0, nil)
+		return ingressv1.ConnectorSessionResult{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.PrivateConnectorSessionResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.ConnectorSessionResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) AuthorizePrivateServiceStream(ctx context.Context, ingressID string, body ingressv1.PrivateServiceStreamClaim) (ingressv1.PrivateServiceStreamResult, error) {
-	response, err := c.client.AuthorizePrivateServiceStreamWithResponse(ctx, ingressID, body)
+func (c *HTTPControlClient) AuthorizeServiceStream(ctx context.Context, ingressID string, body ingressv1.ServiceStreamClaim) (ingressv1.ServiceStreamResult, error) {
+	response, err := c.client.AuthorizeServiceStreamWithResponse(ctx, ingressID, body)
 	if err != nil {
-		return ingressv1.PrivateServiceStreamResult{}, err
+		return ingressv1.ServiceStreamResult{}, err
 	}
 	if response == nil {
-		return ingressv1.PrivateServiceStreamResult{}, ingressHTTPProblem(0, nil)
+		return ingressv1.ServiceStreamResult{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.PrivateServiceStreamResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.ServiceStreamResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) ClosePrivateServiceStream(ctx context.Context, ingressID, visitorID string, body ingressv1.ClosePrivateServiceStreamJSONRequestBody) error {
-	response, err := c.client.ClosePrivateServiceStreamWithResponse(ctx, ingressID, visitorID, body)
+func (c *HTTPControlClient) CloseServiceStream(ctx context.Context, ingressID, visitorID string, body ingressv1.CloseServiceStreamJSONRequestBody) error {
+	response, err := c.client.CloseServiceStreamWithResponse(ctx, ingressID, visitorID, body)
 	if err != nil {
 		return err
 	}
@@ -77,44 +77,44 @@ func (c *HTTPControlClient) ClosePrivateServiceStream(ctx context.Context, ingre
 	return nil
 }
 
-func (c *HTTPControlClient) RecheckPrivateServiceVisitor(ctx context.Context, ingressID string, body ingressv1.PrivateServiceVisitorRecheck) (ingressv1.PrivateServiceVisitorRecheckResult, error) {
-	response, err := c.client.RecheckPrivateServiceVisitorWithResponse(ctx, ingressID, body)
+func (c *HTTPControlClient) RecheckServiceVisitor(ctx context.Context, ingressID string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
+	response, err := c.client.RecheckServiceVisitorWithResponse(ctx, ingressID, body)
 	if err != nil {
-		return ingressv1.PrivateServiceVisitorRecheckResult{}, err
+		return ingressv1.ServiceVisitorRecheckResult{}, err
 	}
 	if response == nil {
-		return ingressv1.PrivateServiceVisitorRecheckResult{}, ingressHTTPProblem(0, nil)
+		return ingressv1.ServiceVisitorRecheckResult{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.PrivateServiceVisitorRecheckResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.ServiceVisitorRecheckResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) GetPrivateServiceSnapshot(ctx context.Context, ingressID string, params ingressv1.GetPrivateServiceSnapshotParams) (ingressv1.PrivateServiceSnapshot, error) {
-	response, err := c.client.GetPrivateServiceSnapshotWithResponse(ctx, ingressID, &params)
+func (c *HTTPControlClient) GetServiceSnapshot(ctx context.Context, ingressID string, params ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error) {
+	response, err := c.client.GetServiceSnapshotWithResponse(ctx, ingressID, &params)
 	if err != nil {
-		return ingressv1.PrivateServiceSnapshot{}, err
+		return ingressv1.ServiceSnapshot{}, err
 	}
 	if response == nil {
-		return ingressv1.PrivateServiceSnapshot{}, ingressHTTPProblem(0, nil)
+		return ingressv1.ServiceSnapshot{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.PrivateServiceSnapshot{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.ServiceSnapshot{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) GetPrivateServiceEvents(ctx context.Context, ingressID string, params ingressv1.GetPrivateServiceEventsParams) (ingressv1.PrivateServiceSnapshot, error) {
-	response, err := c.client.GetPrivateServiceEventsWithResponse(ctx, ingressID, &params)
+func (c *HTTPControlClient) GetServiceEvents(ctx context.Context, ingressID string, params ingressv1.GetServiceEventsParams) (ingressv1.ServiceSnapshot, error) {
+	response, err := c.client.GetServiceEventsWithResponse(ctx, ingressID, &params)
 	if err != nil {
-		return ingressv1.PrivateServiceSnapshot{}, err
+		return ingressv1.ServiceSnapshot{}, err
 	}
 	if response == nil {
-		return ingressv1.PrivateServiceSnapshot{}, ingressHTTPProblem(0, nil)
+		return ingressv1.ServiceSnapshot{}, ingressHTTPProblem(0, nil)
 	}
 	if response.JSON200 == nil {
-		return ingressv1.PrivateServiceSnapshot{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+		return ingressv1.ServiceSnapshot{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
 	}
 	return *response.JSON200, nil
 }

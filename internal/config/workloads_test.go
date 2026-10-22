@@ -8,14 +8,14 @@ import (
 )
 
 func TestWorkloadProviderDeclarationsAndLegacyRejection(t *testing.T) {
-	services := Services{"inventory": {Publisher: new("production"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {Publisher: new("production"), Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
+	services := Services{"inventory": {PublisherGroup: new("production"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:3000"))}}, "models": {PublisherGroup: new("production"), Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("localhost:5432"))}}}
 	for _, p := range []Workload{
 		{Provider: "vercel", TeamID: "team_one", ProjectID: "prj_store", Environment: "production", Services: []string{"inventory", "models"}},
 		{Provider: "fly", Org: "acme", OrgID: "123", App: "store", AppID: "456", Services: []string{"inventory"}},
 		{Provider: "oidc", Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/.well-known/jwks", Audience: "store", Claims: map[string]string{"sub": "store"}, Services: []string{"models"}},
 	} {
 		t.Run(p.Provider, func(t *testing.T) {
-			configuration := TNL{Publishers: map[string]Publisher{"production": {}}, Services: services, Workloads: map[string]Workload{"storefront": p}}
+			configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: services, Workloads: map[string]Workload{"storefront": p}}
 			if err := ValidateTNL(configuration); err != nil {
 				t.Fatal("valid provider rejected", err)
 			}

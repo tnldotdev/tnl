@@ -8,16 +8,16 @@ import (
 	"os"
 	"time"
 
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/sys/unix"
 )
 
-func runConnectStdio(ctx context.Context, session *Session, service controlv1.PrivateService, input *os.File, output io.Writer) error {
-	configuration, err := connectConfiguration(ctx, session, publisherjob.Job{PrivateServiceID: service.Id,
-		IdentityID: session.identity.Identity.Id, Protocol: config.ProtocolTCP, TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls})
+func runConnectStdio(ctx context.Context, session *Session, service controlv1.Service, input *os.File, output io.Writer) error {
+	configuration, err := connectConfiguration(ctx, session, supervisor.Job{ServiceID: service.Id,
+		IdentityID: session.identity.Identity.Id, Protocol: config.ProtocolTCP, TrustRevision: service.TrustRevision, Endpoint: service.Endpoint})
 	if err != nil {
 		return err
 	}
@@ -25,7 +25,7 @@ func runConnectStdio(ctx context.Context, session *Session, service controlv1.Pr
 	if err != nil {
 		return err
 	}
-	return tcpconnect.Stream(ctx, local, configuration)
+	return connectorstream.Stream(ctx, local, configuration)
 }
 
 // duplicate pipe descriptors in nonblocking mode so cancellation can interrupt

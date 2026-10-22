@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"net"
@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"testing"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
-func TestIntegrationPrivateRuntimeReservesStandaloneServicePorts(t *testing.T) {
+func TestIntegrationServiceRuntimeReservesStandaloneServicePorts(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	newPrivateRuntimeFixtureTiming(t, true, nil, false, func(cfg *tnldconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
+	newServiceRuntimeFixtureTiming(t, true, nil, false, func(cfg *daemonconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
 		ports, err := cfg.ServicePortInventory()
 		if err != nil {
 			t.Fatal(err)
@@ -29,7 +29,7 @@ func TestIntegrationPrivateRuntimeReservesStandaloneServicePorts(t *testing.T) {
 	})
 }
 
-func TestIntegrationPrivateRuntimeReservesControlPorts(t *testing.T) {
+func TestIntegrationServiceRuntimeReservesControlPorts(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
 		name := "separated"
@@ -37,7 +37,7 @@ func TestIntegrationPrivateRuntimeReservesControlPorts(t *testing.T) {
 			name = "standalone"
 		}
 		t.Run(name, func(t *testing.T) {
-			newPrivateRuntimeFixtureTiming(t, standalone, nil, false, func(cfg *tnldconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
+			newServiceRuntimeFixtureTiming(t, standalone, nil, false, func(cfg *daemonconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
 				addresses := []string{cfg.ControlListen}
 				if !standalone {
 					addresses = append(addresses, cfg.PrivateControlListen)
@@ -56,7 +56,7 @@ func TestIntegrationPrivateRuntimeReservesControlPorts(t *testing.T) {
 
 func TestIntegrationStandalonePublishReservesSockets(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	newStandalonePublishFixture(t, "reserved", func(cfg tnldconfig.Config) {
+	newStandalonePublishFixture(t, "reserved", func(cfg daemonconfig.Config) {
 		addresses := []string{cfg.ControlListen, cfg.MetricsListen, cfg.IngressListen}
 		ports, err := cfg.ServicePortInventory()
 		if err != nil {
@@ -79,14 +79,14 @@ func TestIntegrationStandalonePublishReservesSockets(t *testing.T) {
 
 func TestIntegrationSplitPublishReservesSockets(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	newSplitPublishFixtureWithOptions(t, "reserved", splitPublishOptions{configureProcess: func(cfg *tnldconfig.Config) {
+	newSplitPublishFixtureWithOptions(t, "reserved", splitPublishOptions{configureProcess: func(cfg *daemonconfig.Config) {
 		addresses := []string{cfg.MetricsListen}
 		switch cfg.Role {
-		case tnldconfig.RoleControl:
+		case daemonconfig.RoleControl:
 			addresses = append(addresses, cfg.ControlListen, cfg.PrivateControlListen)
-		case tnldconfig.RoleIngress:
+		case daemonconfig.RoleIngress:
 			addresses = append(addresses, cfg.IngressListen)
-		case tnldconfig.RoleRelay:
+		case daemonconfig.RoleRelay:
 			addresses = append(addresses, cfg.RelayTCPListen, cfg.InternalRelayListen)
 		}
 		if cfg.Role.RunsControl() || cfg.Role.RunsIngress() {

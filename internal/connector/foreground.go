@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type StartOptions struct {
@@ -26,14 +26,14 @@ type StartOptions struct {
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
 	Foreground, Detach, Install, System, Stdio                     bool
 	SystemStateDir, DetachedChild, Output                          string
-	Project                                                        projectconfig.Project
+	Project                                                        clientproject.Project
 	project                                                        projectConfiguration
 	DetachLaunch                                                   func() error
 	Ready                                                          func(io.Writer, Profile, string) error
 	Starting                                                       func(context.Context)
 	PublicationReady                                               func(context.Context)
 	Prepared                                                       func(context.Context, Profile)
-	ServiceOptions                                                 publisherjob.ServiceOptions
+	ServiceOptions                                                 supervisor.ServiceOptions
 }
 
 func ValidateMode(flags StartOptions) error {
@@ -65,7 +65,7 @@ func connectModeError(reason failure.Reason) error {
 	return failure.Wrap("select connection mode", reason, errors.New("connect mode validation failed"))
 }
 
-func ValidateServiceMode(flags StartOptions, service controlv1.PrivateService) error {
+func ValidateServiceMode(flags StartOptions, service controlv1.Service) error {
 	if err := ValidateService(service); err != nil {
 		return err
 	}
@@ -143,15 +143,15 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		return runConnectStdio(observability.Independent(ctx), session, service, input, output)
 	}
 	flags.Protocol = string(service.Protocol)
-	if flags.Listen == "" && service.ManagedTls != nil {
-		flags.Listen = net.JoinHostPort("127.0.0.1", strconv.Itoa(service.ManagedTls.Port))
+	if flags.Listen == "" && service.Endpoint != nil {
+		flags.Listen = net.JoinHostPort("127.0.0.1", strconv.Itoa(service.Endpoint.Port))
 	}
 	identity := session.identity.Identity.Id
-	jobID := publisherjob.JobKey(session.authenticated.ServerEndpoint, "connect", identity+":"+service.Id)
-	var registry *publisherjob.Registry
+	jobID := supervisor.JobKey(session.authenticated.ServerEndpoint, "connect", identity+":"+service.Id)
+	var registry *supervisor.Registry
 	listenAddress := ""
 	if flags.Install {
-		registry, err = publisherjob.Open(ctx, publisherjob.OpenOptions{Root: options.Root, User: true})
+		registry, err = supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: true})
 		if err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return err
 		}
 		for _, existing := range jobs {
-			if existing.ID == jobID && existing.Kind == publisherjob.KindConnector && (flags.Listen == "" || flags.Listen == existing.Target) {
+			if existing.ID == jobID && existing.Kind == supervisor.KindConnector && (flags.Listen == "" || flags.Listen == existing.Target) {
 				listenAddress = existing.Target
 			}
 		}
@@ -176,15 +176,15 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		if override == "" {
 			override = listenAddress
 		}
-		listenAddress, err = session.store.PrivateServiceListenAddress(ctx, identity, service.Id, portProtocol, override)
+		listenAddress, err = session.store.ServiceListenAddress(ctx, identity, service.Id, portProtocol, override)
 		if err != nil {
 			return err
 		}
 	} else if listenAddress == "" {
 		if flags.Listen == "" {
-			listener, err = session.store.ListenPrivateService(ctx, identity, service.Id, portProtocol)
+			listener, err = session.store.ListenService(ctx, identity, service.Id, portProtocol)
 		} else {
-			listener, err = session.store.ListenPrivateServiceAt(ctx, identity, service.Id, flags.Listen)
+			listener, err = session.store.ListenServiceAt(ctx, identity, service.Id, flags.Listen)
 		}
 		if err != nil {
 			return err
@@ -192,12 +192,12 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		defer listener.Close()
 		listenAddress = listener.Addr().String()
 	}
-	job := publisherjob.Job{Kind: publisherjob.KindConnector, ID: jobID, Name: service.Name,
-		Server: session.authenticated.ServerEndpoint, PrivateServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
+	job := supervisor.Job{Kind: supervisor.KindConnector, ID: jobID, Name: service.Name,
+		Server: session.authenticated.ServerEndpoint, ServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
 		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision}
-	job.ManagedTLS = service.ManagedTls
-	writeReady := func(job publisherjob.Job, destination io.Writer) error {
-		profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: job.PrivateServiceID, Protocol: controlv1.PrivateServiceProtocol(job.Protocol), Enabled: true, ManagedTls: job.ManagedTLS}, job.Target)
+	job.Endpoint = service.Endpoint
+	writeReady := func(job supervisor.Job, destination io.Writer) error {
+		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
 		if err != nil {
 			return err
 		}
@@ -220,17 +220,17 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		}
 		return writeReady(job, output)
 	}
-	return runPrivateConnectorLifecycle(observability.Independent(ctx), listener, job, requestedProtocol, privateConnectorLifecycle{
+	return runConnectorLifecycle(observability.Independent(ctx), listener, job, requestedProtocol, connectorLifecycle{
 		starting:         flags.Starting,
 		publicationReady: flags.PublicationReady,
 		services:         session.authenticated.Control,
-		listen: func(ctx context.Context, job publisherjob.Job) (net.Listener, error) {
-			return session.store.ListenPrivateServiceAt(ctx, job.IdentityID, job.PrivateServiceID, job.Target)
+		listen: func(ctx context.Context, job supervisor.Job) (net.Listener, error) {
+			return session.store.ListenServiceAt(ctx, job.IdentityID, job.ServiceID, job.Target)
 		},
-		serve: func(ctx context.Context, listener net.Listener, job publisherjob.Job, ready func() error) error {
-			return servePrivateConnector(ctx, session, listener, job, ready)
+		serve: func(ctx context.Context, listener net.Listener, job supervisor.Job, ready func() error) error {
+			return serveConnector(ctx, session, listener, job, ready)
 		},
-		ready: func(job publisherjob.Job) error {
+		ready: func(job supervisor.Job) error {
 			finishStartup(nil)
 			if flags.Output == "json" {
 				return writeReady(job, output)
@@ -240,35 +240,35 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	})
 }
 
-func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.PrivateService, error) {
+func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.Service, error) {
 	key, err := ConfiguredService(project.Project, name)
 	if err != nil {
-		return controlv1.PrivateService{}, err
+		return controlv1.Service{}, err
 	}
 	team := ""
 	if flags.Team != "" || flags.ProjectTeam != "" || key != "" {
 		membership, err := session.currentMembership(ctx)
 		if err != nil {
-			return controlv1.PrivateService{}, err
+			return controlv1.Service{}, err
 		}
 		team = membership.TeamId
 	}
 	return Select(ctx, session.authenticated.Control, project.Project, name, team)
 }
 
-type privateConnectorLifecycle struct {
+type connectorLifecycle struct {
 	starting         func(context.Context)
 	publicationReady func(context.Context)
 	services         connectInventoryReader
-	listen           func(context.Context, publisherjob.Job) (net.Listener, error)
-	serve            func(context.Context, net.Listener, publisherjob.Job, func() error) error
-	ready            func(publisherjob.Job) error
+	listen           func(context.Context, supervisor.Job) (net.Listener, error)
+	serve            func(context.Context, net.Listener, supervisor.Job, func() error) error
+	ready            func(supervisor.Job) error
 }
 
 // Serve joins its streams, paths and assignment owner before returning. only its
 // metadata boundary can reopen this exact reserved port in the same process.
 // installed connectors already refresh through the supervisor's job attempts.
-func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, job publisherjob.Job, requestedProtocol string, lifecycle privateConnectorLifecycle) error {
+func runConnectorLifecycle(ctx context.Context, listener net.Listener, job supervisor.Job, requestedProtocol string, lifecycle connectorLifecycle) error {
 	for {
 		if lifecycle.starting != nil {
 			lifecycle.starting(ctx)
@@ -283,7 +283,7 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 			return nil
 		})
 		_ = listener.Close()
-		if !tcpconnect.IsMetadataReload(err) {
+		if !connectorstream.IsMetadataReload(err) {
 			return err
 		}
 		if lifecycle.starting != nil {
@@ -292,11 +292,11 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 		if ctx.Err() != nil {
 			return nil
 		}
-		services, err := lifecycle.services.ListAvailablePrivateServices(ctx)
+		services, err := lifecycle.services.ListAvailableServices(ctx)
 		if err != nil {
 			return err
 		}
-		service, err := privateServiceIDSelection(services, job.PrivateServiceID, "")
+		service, err := serviceIDSelection(services, job.ServiceID, "")
 		if err != nil {
 			return err
 		}
@@ -305,7 +305,7 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 		}
 		job.Trust = nil
 		job.Name, job.Protocol, job.TrustRevision = service.Name, config.ProtocolName(service.Protocol), service.TrustRevision
-		job.ManagedTLS = service.ManagedTls
+		job.Endpoint = service.Endpoint
 		listener, err = lifecycle.listen(ctx, job)
 		if err != nil {
 			return err
@@ -313,29 +313,29 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 	}
 }
 
-func servePrivateConnector(ctx context.Context, session *Session, listener net.Listener, job publisherjob.Job, ready func() error) error {
+func serveConnector(ctx context.Context, session *Session, listener net.Listener, job supervisor.Job, ready func() error) error {
 	configuration, err := connectConfiguration(ctx, session, job)
 	if err != nil {
 		return err
 	}
 	configuration.Ready = ready
-	return tcpconnect.Serve(ctx, listener, configuration)
+	return connectorstream.Serve(ctx, listener, configuration)
 }
 
-func connectConfiguration(ctx context.Context, session *Session, job publisherjob.Job) (tcpconnect.Config, error) {
-	control, err := tcpconnect.NewControl(session.authenticated.Control, session.store, job.IdentityID)
+func connectConfiguration(ctx context.Context, session *Session, job supervisor.Job) (connectorstream.Config, error) {
+	control, err := connectorstream.NewControl(session.authenticated.Control, session.store, job.IdentityID)
 	if err != nil {
-		return tcpconnect.Config{}, err
+		return connectorstream.Config{}, err
 	}
 	var serviceTLS *tls.Config
-	if job.ManagedTLS != nil {
-		serviceTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: job.ManagedTLS.Hostname}
+	if job.Endpoint != nil {
+		serviceTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: job.Endpoint.Hostname}
 	}
-	return tcpconnect.Config{Control: control, PrivateServiceID: job.PrivateServiceID,
-		IdentityID: job.IdentityID, Protocol: string(job.Protocol), TrustRevision: job.TrustRevision, ManagedTLS: job.ManagedTLS, ServiceTLS: serviceTLS}, nil
+	return connectorstream.Config{Control: control, ServiceID: job.ServiceID,
+		IdentityID: job.IdentityID, Protocol: string(job.Protocol), TrustRevision: job.TrustRevision, Endpoint: job.Endpoint, ServiceTLS: serviceTLS}, nil
 }
 
-func waitInstalledConnectorReady(ctx context.Context, registry *publisherjob.Registry, id string) error {
+func waitInstalledConnectorReady(ctx context.Context, registry *supervisor.Registry, id string) error {
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	tick := time.NewTicker(50 * time.Millisecond)
@@ -358,7 +358,7 @@ func waitInstalledConnectorReady(ctx context.Context, registry *publisherjob.Reg
 	}
 }
 
-func (o Operations) RunInstalled(ctx context.Context, job publisherjob.Job, ready func() error) error {
+func (o Operations) RunInstalled(ctx context.Context, job supervisor.Job, ready func() error) error {
 	session, err := o.OpenSession(ctx, SessionOptions{ServerURL: job.Server, StateDir: job.StateDir}, "tnl connect", io.Discard)
 	if err != nil {
 		return err
@@ -367,11 +367,11 @@ func (o Operations) RunInstalled(ctx context.Context, job publisherjob.Job, read
 	if session.identity.Identity.Id != job.IdentityID {
 		return publisherCLIError("connector sign-in identity changed; remove and install it for the current identity")
 	}
-	services, err := session.authenticated.Control.ListAvailablePrivateServices(ctx)
+	services, err := session.authenticated.Control.ListAvailableServices(ctx)
 	if err != nil {
 		return err
 	}
-	service, err := privateServiceIDSelection(services, job.PrivateServiceID, "")
+	service, err := serviceIDSelection(services, job.ServiceID, "")
 	if err != nil {
 		return err
 	}
@@ -381,11 +381,11 @@ func (o Operations) RunInstalled(ctx context.Context, job publisherjob.Job, read
 	job.Protocol = config.ProtocolName(service.Protocol)
 	job.Trust = nil
 	job.TrustRevision = service.TrustRevision
-	job.ManagedTLS = service.ManagedTls
-	listener, err := session.store.ListenPrivateServiceAt(ctx, job.IdentityID, job.PrivateServiceID, job.Target)
+	job.Endpoint = service.Endpoint
+	listener, err := session.store.ListenServiceAt(ctx, job.IdentityID, job.ServiceID, job.Target)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	return servePrivateConnector(ctx, session, listener, job, ready)
+	return serveConnector(ctx, session, listener, job, ready)
 }

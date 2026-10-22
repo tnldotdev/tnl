@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type scopedHTTPDecision struct {
@@ -22,7 +22,7 @@ type scopedHTTPDecision struct {
 
 func (c *scopedHTTPDecision) AuthorizeHTTPVisitor(_ context.Context, run string, input controlv1.HTTPVisitorRequest, token credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
 	c.calls++
-	if run != c.runID || token != "private-run-token" || input.SourceIp != "192.0.2.10" && input.SourceIp != "192.0.2.11" {
+	if run != c.runID || token != "service-run-token" || input.SourceIp != "192.0.2.10" && input.SourceIp != "192.0.2.11" {
 		c.t.Error("HTTP authorization lost trusted run, token, or source")
 	}
 	expires := time.Now().Add(time.Minute)
@@ -32,7 +32,7 @@ func (c *scopedHTTPDecision) AuthorizeHTTPVisitor(_ context.Context, run string,
 func TestHTTPDecisionCacheBindsRunSourceProofAndDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := &scopedHTTPDecision{t: t, allowed: true, runID: "run-one"}
-		access := &browserAccess{client: client, runID: client.runID, publicURLID: "url-one", version: 7, token: "private-run-token", decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
+		access := &browserAccess{client: client, runID: client.runID, publicURLID: "url-one", version: 7, token: "service-run-token", decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
 		request := httptest.NewRequest("GET", "https://route.example/", nil)
 		request.RemoteAddr = "203.0.113.99:1234"
 		request.Header.Set("X-Forwarded-For", "203.0.113.100")

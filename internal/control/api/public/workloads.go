@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type WorkloadVisitorStore interface {
@@ -17,7 +17,7 @@ type WorkloadVisitorStore interface {
 	CreateWorkloadIngressAssignments(context.Context, string, string, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
 	IssueWorkloadServiceClientCertificate(context.Context, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
 	CreateWorkloadIngressAssignmentSet(context.Context, string, string, string, int, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
-	SelectWorkloadServiceRun(context.Context, string, string, time.Time) (controlstate.PrivateServiceSelection, error)
+	SelectWorkloadServiceRun(context.Context, string, string, time.Time) (controlstate.ServiceSelection, error)
 	GetWorkloadIngressTransportTrust(context.Context, string, string, time.Time) (controlstate.IngressTransportTrust, error)
 	ReleaseWorkloadIngressAssignment(context.Context, string, string, time.Time) error
 }
@@ -37,7 +37,7 @@ func (h *handler) workloadVisitor(w http.ResponseWriter, r *http.Request) (Workl
 	return store, token, true
 }
 func workloadVisitorProblem(w http.ResponseWriter, err error) {
-	if errors.Is(err, controlstate.ErrPrivateServiceConflict) {
+	if errors.Is(err, controlstate.ErrServiceConflict) {
 		writeProblem(w, 409, controlv1.Conflict, "workload ingress assignment is no longer claimable; request fresh assignments")
 		return
 	}
@@ -45,7 +45,7 @@ func workloadVisitorProblem(w http.ResponseWriter, err error) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload certificate signing request")
 		return
 	}
-	if errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+	if errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, controlstate.ErrServiceAccess) {
 		writeProblem(w, 403, controlv1.Forbidden, "workload session does not currently authorize this service")
 		return
 	}
@@ -103,10 +103,10 @@ func (h *handler) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *htt
 	writeJSON(w, 200, result)
 }
 
-func privateSelectionResponse(selected controlstate.PrivateServiceSelection) controlv1.PrivateServiceSelection {
-	return controlv1.PrivateServiceSelection{PrivateServiceId: selected.PrivateServiceID, PrivateRunId: selected.PrivateRunID, RunNumber: selected.RunNumber,
+func privateSelectionResponse(selected controlstate.ServiceSelection) controlv1.ServiceSelection {
+	return controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
 		Subject: visitorsubject.Wire(selected.Subject), ExpiresAt: selected.ExpiresAt,
-		Protocol: controlv1.PrivateServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, ManagedTls: managedTLSResponse(selected.ManagedTLS)}
+		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint)}
 }
 
 func (h *handler) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, service string) {

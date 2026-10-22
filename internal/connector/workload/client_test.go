@@ -1,4 +1,4 @@
-package workloadclient
+package workload
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
@@ -43,9 +43,9 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 				s.Subject.WorkloadSessionId = new("wls_" + strings.Repeat("a", 22))
 			}, false},
 			{"expanded rights", func(s *authorityv1.WorkloadSession) {
-				s.ServiceIds = append(s.ServiceIds, "psvc_"+strings.Repeat("a", 22))
+				s.ServiceIds = append(s.ServiceIds, "svc_"+strings.Repeat("a", 22))
 			}, false},
-			{"replaced rights", func(s *authorityv1.WorkloadSession) { s.ServiceIds[0] = "psvc_" + strings.Repeat("a", 22) }, false},
+			{"replaced rights", func(s *authorityv1.WorkloadSession) { s.ServiceIds[0] = "svc_" + strings.Repeat("a", 22) }, false},
 			{"expired lease", func(s *authorityv1.WorkloadSession) { s.LeaseExpiresAt = time.Now().Add(-time.Second) }, false},
 		} {
 			t.Run(operation+"/"+tc.name, func(t *testing.T) {
@@ -107,7 +107,7 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 func sessionFixture(provider controlv1.WorkloadProvider) authorityv1.WorkloadSession {
 	id := "wls_" + strings.Repeat("s", 22)
 	now := time.Now()
-	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: now.Add(time.Hour), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"psvc_" + strings.Repeat("p", 22)}}
+	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: now.Add(time.Hour), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"svc_" + strings.Repeat("p", 22)}}
 	s.Binding = strings.Repeat("b", 64)
 	if provider == controlv1.WorkloadGitHub {
 		s.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}

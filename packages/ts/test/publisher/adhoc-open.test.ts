@@ -71,7 +71,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
         service = String(payload.invocation_id);
         owner = String(payload.owner);
         target = String(payload.target);
-        expect(payload.publisher_id).toBe(`pub_${"A".repeat(22)}`);
+        expect(payload.publisher_identity_id).toBe(`pub_${"A".repeat(22)}`);
         expect(payload.credential).toBeUndefined();
         response.end(JSON.stringify({ version: 1, registration_id: id, owner, target }));
       } else if (request.url === "/v1/status") {
@@ -94,7 +94,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
   try {
     const handle = await openServer(
       app,
-      { publisherID: `pub_${"A".repeat(22)}` },
+      { publisherIdentityID: `pub_${"A".repeat(22)}` },
       {
         start: async (_directory, _binary, selection) => ({
           version: 1,
@@ -148,8 +148,8 @@ test("default invocation rediscovery retains automatic publisher selection after
           const payload = record(body, "invocation");
           target = String(payload.target);
           ids.push(String(payload.invocation_id));
-          expect(payload).not.toHaveProperty("publisher_id");
-          expect(payload).not.toHaveProperty("publisher_file");
+          expect(payload).not.toHaveProperty("publisher_identity_id");
+          expect(payload).not.toHaveProperty("publisher_credential_file");
           expect(payload).not.toHaveProperty("enrollment_key");
           return {
             version: 1,
@@ -181,7 +181,7 @@ test("close interrupts status polling and joins unregister without waiting for i
   let unregistered = false;
   const handle = await openFetch(
     () => new Response("app"),
-    { publisherID: `pub_${"A".repeat(22)}` },
+    { publisherIdentityID: `pub_${"A".repeat(22)}` },
     {
       start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
         service = selection?.invocationID ?? "";
@@ -217,7 +217,7 @@ test("explicit publisher file is passed only to native and never enters status",
   let target = "";
   const handle = await openFetch(
     () => new Response("app"),
-    { publisherFile: "/private/publisher.json" },
+    { publisherCredentialFile: "/private/publisher.json" },
     {
       start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
         service = selection?.invocationID ?? "";
@@ -234,8 +234,8 @@ test("explicit publisher file is passed only to native and never enters status",
         if (operation === "ad-hoc/register") {
           const payload = record(body, "invocation");
           target = String(payload.target);
-          expect(payload.publisher_file).toBe("/private/publisher.json");
-          expect(payload.publisher_id).toBeUndefined();
+          expect(payload.publisher_credential_file).toBe("/private/publisher.json");
+          expect(payload.publisher_identity_id).toBeUndefined();
           return { version: 1, registration_id: id, owner: payload.owner, target };
         }
         if (operation === "status") return snapshot(service, target);
@@ -249,8 +249,8 @@ test("explicit publisher file is passed only to native and never enters status",
 });
 
 test("publisher file configured after the owner starts reaches the native invocation", async () => {
-  const prior = process.env.TNL_PUBLISHER_FILE;
-  process.env.TNL_PUBLISHER_FILE = "/private/production-publisher.json";
+  const prior = process.env.TNL_PUBLISHER_CREDENTIAL_FILE;
+  process.env.TNL_PUBLISHER_CREDENTIAL_FILE = "/private/production-publisher.json";
   let service = "";
   let target = "";
   try {
@@ -273,7 +273,7 @@ test("publisher file configured after the owner starts reaches the native invoca
           if (operation === "ad-hoc/register") {
             const payload = record(body, "invocation");
             target = String(payload.target);
-            expect(payload.publisher_file).toBe("/private/production-publisher.json");
+            expect(payload.publisher_credential_file).toBe("/private/production-publisher.json");
             return { version: 1, registration_id: id, owner: payload.owner, target };
           }
           if (operation === "status") return snapshot(service, target);
@@ -285,8 +285,8 @@ test("publisher file configured after the owner starts reaches the native invoca
     expect(JSON.stringify(handle)).not.toContain("production-publisher.json");
     await handle.close();
   } finally {
-    if (prior === undefined) delete process.env.TNL_PUBLISHER_FILE;
-    else process.env.TNL_PUBLISHER_FILE = prior;
+    if (prior === undefined) delete process.env.TNL_PUBLISHER_CREDENTIAL_FILE;
+    else process.env.TNL_PUBLISHER_CREDENTIAL_FILE = prior;
   }
 });
 
@@ -300,14 +300,17 @@ test("invalid explicit publisher selection fails before contacting native", asyn
     await expect(
       openServer(
         app,
-        { publisherFile: "relative/file" },
+        { publisherCredentialFile: "relative/file" },
         { start, request: async () => undefined, pause: async () => {} },
       ),
     ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
     await expect(
       openServer(
         app,
-        { publisherFile: "/private/file", publisherID: `pub_${"A".repeat(22)}` } as never,
+        {
+          publisherCredentialFile: "/private/file",
+          publisherIdentityID: `pub_${"A".repeat(22)}`,
+        } as never,
         { start, request: async () => undefined, pause: async () => {} },
       ),
     ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });

@@ -43,7 +43,7 @@ func TestDetachedChildProcess(t *testing.T) {
 	}
 	if protocol, ok := strings.CutPrefix(*detachedHelperMode, "connection-"); ok {
 		detachedPublicationStarting(ctx)
-		profile := connector.Profile{Schema: 1, ServiceID: "psvc_0123456789ABCDEFGHIJKL", Protocol: config.ProtocolName(protocol), Hostname: "approved.example.test", ManagedPort: 25443, Host: "127.0.0.1", Port: 15432, Public: true, ConnectorRequired: true, Authentication: "connector"}
+		profile := connector.Profile{Schema: 1, ServiceID: "svc_0123456789ABCDEFGHIJKL", Protocol: config.ProtocolName(protocol), Hostname: "approved.example.test", ServicePort: 25443, Host: "127.0.0.1", Port: 15432, Public: true, ConnectorRequired: true, Authentication: "connector"}
 		detachedConnectorPrepared(ctx, profile)
 		time.Sleep(100 * time.Millisecond)
 		detachedPublicationReady(ctx)

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -29,7 +29,7 @@ func jsonBytes(t *testing.T, value any) []byte {
 	return data
 }
 
-func fixture(t *testing.T) (projectconfig.Project, Container) {
+func fixture(t *testing.T) (clientproject.Project, Container) {
 	t.Helper()
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
@@ -42,7 +42,7 @@ func fixture(t *testing.T) (projectconfig.Project, Container) {
 	}
 	project, file, service, port := "fixture", "compose.yaml", "db", 5432
 	protocol := "postgres"
-	p := projectconfig.Project{Root: root, Worktree: projectconfig.Worktree{Root: root, Label: projectconfig.WorktreeLabel{FullLabel: "fixture-012345"}}, Config: config.TNL{Services: config.Services{
+	p := clientproject.Project{Root: root, Worktree: clientproject.Worktree{Root: root, Label: clientproject.WorktreeLabel{FullLabel: "fixture-012345"}}, Config: config.TNL{Services: config.Services{
 		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Project: &project, File: &file, Service: &service, Port: &port}},
 	}}}
 	c := Container{ID: strings.Repeat("a", 64), Name: "/fixture-db-1"}
@@ -59,7 +59,7 @@ func fixture(t *testing.T) (projectconfig.Project, Container) {
 	return p, c
 }
 
-func dockerFixture(t *testing.T, p projectconfig.Project, selected func() Container) Runner {
+func dockerFixture(t *testing.T, p clientproject.Project, selected func() Container) Runner {
 	t.Helper()
 	return runnerFunc(func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
 		switch {

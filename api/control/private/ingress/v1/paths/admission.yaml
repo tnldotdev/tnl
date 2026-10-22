@@ -56,9 +56,9 @@ paths:
       responses:
         "204": { description: Exact visitor reservation released; duplicate closure is harmless }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-services/streams/{visitor_connection_id}:
+  /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id}:
     delete:
-      operationId: closePrivateServiceStream
+      operationId: closeServiceStream
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
         - name: visitor_connection_id
@@ -77,30 +77,30 @@ paths:
                 ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
                 ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
                 connector_session_id:
-                  { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+                  { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
       responses:
         "204": { description: Exact stream capacity released; duplicate closure is harmless }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim:
+  /internal/v1/ingresses/{ingress_id}/connector-sessions/claim:
     post:
-      operationId: claimPrivateConnectorSession
+      operationId: claimConnectorSession
       description: Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionClaim" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionClaim" }
       responses:
         "200":
           description: Authenticated mux session, without visitor stream permission
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionResult" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionResult" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-services/snapshot:
+  /internal/v1/ingresses/{ingress_id}/services/snapshot:
     get:
-      operationId: getPrivateServiceSnapshot
+      operationId: getServiceSnapshot
       description: Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IngressID"
@@ -109,19 +109,17 @@ paths:
       responses:
         "200":
           {
-            description: Current private service projections,
+            description: Current service projections,
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceSnapshot" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSnapshot" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-services/events:
+  /internal/v1/ingresses/{ingress_id}/services/events:
     get:
-      operationId: getPrivateServiceEvents
+      operationId: getServiceEvents
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IngressID"
         - $ref: "../openapi.yaml#/components/parameters/IngressRunID"
@@ -139,15 +137,13 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceSnapshot" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSnapshot" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-services/claim:
+  /internal/v1/ingresses/{ingress_id}/services/claim:
     post:
-      operationId: authorizePrivateServiceStream
+      operationId: authorizeServiceStream
       description: Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
       requestBody:
@@ -156,9 +152,7 @@ paths:
           content:
             {
               application/json:
-                {
-                  schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceStreamClaim" },
-                },
+                { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceStreamClaim" } },
             },
         }
       responses:
@@ -168,28 +162,24 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema:
-                      { $ref: "../openapi.yaml#/components/schemas/PrivateServiceStreamResult" },
-                  },
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceStreamResult" } },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/private-services/recheck:
+  /internal/v1/ingresses/{ingress_id}/services/recheck:
     post:
-      operationId: recheckPrivateServiceVisitor
+      operationId: recheckServiceVisitor
       description: Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceVisitorRecheck" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceVisitorRecheck" }
       responses:
         "200":
           description: Current permission for one already admitted visitor
           content:
             application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/PrivateServiceVisitorRecheckResult" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceVisitorRecheckResult" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

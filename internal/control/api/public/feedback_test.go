@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -59,7 +59,7 @@ func TestFeedbackOwnerReadsOnlyManageablePublicURLThreads(t *testing.T) {
 	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 1,
 	}}
-	h := &handler{feedback: store, authorizer: authorizer, store: &publicURLMutationStoreStub{route: controlstate.PublicURL{
+	h := &handler{feedback: store, authorizer: authorizer, store: &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: thread.PublicURLID, TeamID: thread.TeamID, DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,

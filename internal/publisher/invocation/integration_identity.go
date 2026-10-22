@@ -5,13 +5,13 @@ import (
 	"errors"
 	"slices"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database, services publisherServices, hostname string, purpose controlv1.PublicURLPurpose, allowed ...[]string) (publisher.Config, error) {
@@ -24,8 +24,8 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 		return cfg, err
 	}
 	defer lock.Close()
-	route, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, hostname)
-	if errors.Is(err, controlclient.ErrNotFound) {
+	publicURL, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, hostname)
+	if errors.Is(err, clientcontrol.ErrNotFound) {
 		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if keyErr != nil {
 			return cfg, keyErr
@@ -35,35 +35,35 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 		if services.publicURLScope == controlv1.Member {
 			body.MembershipId = &services.membershipID
 		}
-		route, err = services.routes.CreatePublicURL(ctx, body, key)
+		publicURL, err = services.routes.CreatePublicURL(ctx, body, key)
 	}
 	if err != nil {
 		return cfg, err
 	}
-	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != hostname || route.Purpose != purpose || route.ServiceProtocol != controlv1.Http || route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.PublicUrlScope != services.publicURLScope {
+	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != hostname || publicURL.Purpose != purpose || publicURL.ServiceProtocol != controlv1.Http || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope {
 		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL differs from the selected project"))
 	}
-	if route.PublicUrlScope == controlv1.Member && (route.MembershipId == nil || *route.MembershipId != services.membershipID) || route.PublicUrlScope == controlv1.Shared && route.MembershipId != nil {
+	if publicURL.PublicUrlScope == controlv1.Member && (publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID) || publicURL.PublicUrlScope == controlv1.Shared && publicURL.MembershipId != nil {
 		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL belongs to a different membership"))
 	}
 	currentPolicy := []string{}
-	if route.AllowedIpPrefixes != nil {
-		currentPolicy = *route.AllowedIpPrefixes
+	if publicURL.AllowedIpPrefixes != nil {
+		currentPolicy = *publicURL.AllowedIpPrefixes
 	}
-	if route.Target != integrationURLTarget || !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
-		route, err = services.routes.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{Target: integrationURLTarget, AllowedIpPrefixes: cfg.AllowedIPPrefixes})
+	if publicURL.Target != integrationURLTarget || !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
+		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: integrationURLTarget, AllowedIpPrefixes: cfg.AllowedIPPrefixes})
 		if err != nil {
 			return cfg, err
 		}
 	}
-	native, _, err := nativeauth.EnsureOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, route)
+	native, _, err := publisheridentity.EnsureOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, publicURL)
 	if err != nil {
 		return cfg, err
 	}
-	if err := native.SelectRoute(route); err != nil {
+	if err := native.SelectPublicURL(publicURL); err != nil {
 		return cfg, err
 	}
-	cfg.Control, cfg.PreserveSavedURLTarget = nativePublicationControl(native, services.routes), true
-	cfg.PublisherID = native.PublisherID()
+	cfg.Control, cfg.PreserveSavedPublicURLTarget = nativePublicationControl(native, services.routes), true
+	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	return cfg, nil
 }

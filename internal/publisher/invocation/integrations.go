@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -21,28 +21,28 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // control stores a fixed placeholder for integration URLs. workers handle
 // requests directly after visitor TLS ends at the publisher and never dial it.
 const integrationURLTarget = "http://127.0.0.1:1"
 
-func projectIntegrationGroup(project projectconfig.Project, namespace string) string {
-	return projectconfig.SharedProjectIdentity(project.Worktree, project.Root) + "\x00" + namespace
+func projectIntegrationGroup(project clientproject.Project, namespace string) string {
+	return clientproject.SharedProjectIdentity(project.Worktree, project.Root) + "\x00" + namespace
 }
 
 // projectOAuthPublisher selects the project domain even when the app service
 // overrides its domain. the provider registers only one callback URL.
-func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server, team string, authenticated *clientauth.Client) (projectmeta.IntegrationOrigin, publisherServices, error) {
+func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, project clientproject.Project, server, team string, authenticated *auth.Client) (meta.IntegrationOrigin, publisherServices, error) {
 	domain := ""
 	if project.Config.Tunnel != nil && project.Config.Tunnel.Domain != nil {
 		domain = *project.Config.Tunnel.Domain
 	}
 	services, err := preparePublisherServices(ctx, state, server, "", "", domain, team, false, authenticated)
 	if err != nil {
-		return projectmeta.IntegrationOrigin{}, publisherServices{}, err
+		return meta.IntegrationOrigin{}, publisherServices{}, err
 	}
 	origin, err := resolve.IntegrationOrigin(ctx, state, project, server, services.namespace, "oauth")
 	return origin, services, err
@@ -61,25 +61,25 @@ func reportIntegrationURL(tunnel *clientstate.Tunnel, output *Presentation, stat
 	}
 }
 
-func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) func() {
+func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
-	integrationURLPublisher := integrationurls.Publisher{
+	integrationURLPublisher := integrations.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
-		Prepare: func(ctx context.Context) (integrationurls.Snapshot, error) {
+		Prepare: func(ctx context.Context) (integrations.Snapshot, error) {
 			config, err := nativeIntegrationConfig(ctx, state, services, oauth.Hostname, controlv1.Oauth)
 			if err != nil {
-				return integrationurls.Snapshot{}, err
+				return integrations.Snapshot{}, err
 			}
 			config.OnWarning = publishWarning(tunnel, output)
-			config.Handler = integrationurls.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
+			config.Handler = integrations.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
 				if telemetry != nil {
 					telemetry.Report(newIntegrationTelemetry(telemetryOAuthRedirected, ""))
 				}
 			})
-			return integrationurls.Snapshot{Config: config}, nil
+			return integrations.Snapshot{Config: config}, nil
 		},
 		Report: func(event publisher.Event, err error) {
 			reportMu.Lock()
@@ -101,7 +101,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	return func() { cancel(); <-done }
 }
 
-func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project projectconfig.Project, tunnel *clientstate.Tunnel, service, group string, output *Presentation, telemetry telemetryReporter) func() {
+func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project clientproject.Project, tunnel *clientstate.Tunnel, service, group string, output *Presentation, telemetry telemetryReporter) func() {
 	if len(project.Config.Webhooks) == 0 {
 		return func() {}
 	}
@@ -119,7 +119,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	slices.Sort(names)
 	registered := make(map[string]config.Webhook, len(names))
 	for _, name := range names {
-		encoded, _, err := integrationurls.DefinitionBytes(project.Config.Webhooks[name])
+		encoded, _, err := integrations.DefinitionBytes(project.Config.Webhooks[name])
 		if err == nil {
 			err = tunnel.RegisterWebhookEndpoint(ctx, name, encoded)
 		}
@@ -192,7 +192,7 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 	}
 	for _, name := range slices.Sorted(maps.Keys(definitions)) {
 		definition := definitions[name]
-		_, digest, err := integrationurls.DefinitionBytes(definition)
+		_, digest, err := integrations.DefinitionBytes(definition)
 		if err != nil {
 			continue
 		}
@@ -211,7 +211,7 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 	return ""
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) integrationurls.Publisher {
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group string, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry telemetryReporter) integrations.Publisher {
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	failure := func(message string) {
@@ -237,17 +237,17 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 		digest := sha256.Sum256(encoded)
 		return definitions, hex.EncodeToString(digest[:]), nil
 	}
-	return integrationurls.Publisher{
+	return integrations.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: origin.Hostname,
-		Prepare: func(ctx context.Context) (integrationurls.Snapshot, error) {
+		Prepare: func(ctx context.Context) (integrations.Snapshot, error) {
 			definitions, revision, err := definitionsAt(ctx)
 			if err != nil {
-				return integrationurls.Snapshot{}, err
+				return integrations.Snapshot{}, err
 			}
-			handler, prefixes, err := integrationurls.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, origin.Hostname, definitions,
+			handler, prefixes, err := integrations.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, origin.Hostname, definitions,
 				func(endpoint, receiver, reason string) { failure(endpoint + " to " + receiver + ": " + reason) })
 			if err != nil {
-				return integrationurls.Snapshot{}, err
+				return integrations.Snapshot{}, err
 			}
 			for _, name := range slices.Sorted(maps.Keys(definitions)) {
 				reportIntegrationURL(tunnel, output, "webhook policy", "", clioutput.Fields(
@@ -263,11 +263,11 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			}
 			config, err := nativeIntegrationConfig(ctx, state, services, origin.Hostname, controlv1.Webhooks, prefixes)
 			if err != nil {
-				return integrationurls.Snapshot{}, err
+				return integrations.Snapshot{}, err
 			}
 			config.Handler, config.AllowedIPPrefixes = handler, prefixes
 			config.OnWarning = publishWarning(tunnel, output)
-			return integrationurls.Snapshot{Config: config, Revision: revision}, nil
+			return integrations.Snapshot{Config: config, Revision: revision}, nil
 		},
 		Revision: func(ctx context.Context) (string, error) {
 			_, revision, err := definitionsAt(ctx)

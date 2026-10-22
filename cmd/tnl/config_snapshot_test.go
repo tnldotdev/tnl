@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 )
 
 func TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink(t *testing.T) {
@@ -23,7 +23,7 @@ func TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink(t *testing.T) {
 			if err := os.WriteFile(path, []byte(`export default () => ({`+inspection+`services: {web: {}}});`), 0600); err != nil {
 				t.Fatal(err)
 			}
-			project, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: path}, alias, [32]byte{})
+			project, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: path}, alias, [32]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}

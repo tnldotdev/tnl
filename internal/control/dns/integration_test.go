@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			seedHostedChallenge(t, database, sql, name, domain, reference)
 			if !custom {
-				challenge, err := database.GetDNSChallengeContext(t.Context(), "public_url_"+name, "authorization_"+name)
+				challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name)
 				if err != nil || challenge.CanonicalDomain != "" || challenge.DNSAuthorityReference != reference {
 					t.Fatalf("hosted managed context = %#v, error %v", challenge, err)
 				}
@@ -57,7 +57,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Present(t.Context(), "public_url_"+name, "authorization_"+name); err != nil {
+			if err := manager.PresentSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if provider.record.CustomZone != custom || provider.record.ZoneDomain != domain || provider.record.RecordName != "_acme-challenge.member."+domain {
@@ -66,34 +66,34 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'presented' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if valid, err := manager.Verify(t.Context(), "public_url_"+name, "authorization_"+name); err != nil || !valid {
+			if valid, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil || !valid {
 				t.Fatalf("verify = %v, %v", valid, err)
 			}
 			if custom {
 				if _, err := sql.Exec(t.Context(), `UPDATE control.dns_authorities SET state = 'releasing' WHERE authority_reference = $1`, reference); err != nil {
 					t.Fatal(err)
 				}
-				if valid, err := manager.Verify(t.Context(), "public_url_"+name, "authorization_"+name); err == nil || valid {
+				if valid, err := manager.VerifySubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err == nil || valid {
 					t.Fatalf("releasing authority verified new work: %v, %v", valid, err)
 				}
 			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.acme_authorizations SET state = 'cleaning' WHERE id = $1`, "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Cleanup(t.Context(), "public_url_"+name, "authorization_"+name); err != nil {
+			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err != nil {
 				t.Fatal(err)
 			}
 			if len(provider.record.DesiredOwnedValues) != 0 || len(provider.record.PreviouslyOwnedValues) != 1 {
 				t.Fatalf("cleanup %#v", provider.record)
 			}
 			calls := provider.calls
-			if err := manager.Cleanup(t.Context(), "wrong_route", "authorization_"+name); !errors.Is(err, controlstate.ErrDNSChallengeNotFound) {
+			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("wrong_route"), "authorization_"+name); !errors.Is(err, controlstate.ErrDNSChallengeNotFound) {
 				t.Fatalf("wrong route identity = %v", err)
 			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.public_urls SET canonical_hostname = $2 WHERE id = $1`, "public_url_"+name, "outside."+name+".example.test"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Cleanup(t.Context(), "public_url_"+name, "authorization_"+name); err == nil || provider.calls != calls {
+			if err := manager.CleanupSubject(t.Context(), publicDNSSubject("public_url_"+name), "authorization_"+name); err == nil || provider.calls != calls {
 				t.Fatalf("out-of-scope route cleanup = %v, calls %d", err, provider.calls)
 			}
 		})
@@ -144,7 +144,9 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
 	var workers sync.WaitGroup
 	t.Cleanup(func() { release(); cancel(); workers.Wait() })
-	workers.Go(func() { firstDone <- manager.Present(ctx, "public_url_new", "authorization_new") })
+	workers.Go(func() {
+		firstDone <- manager.PresentSubject(ctx, publicDNSSubject("public_url_new"), "authorization_new")
+	})
 	select {
 	case <-providerStarted:
 	case err := <-firstDone:
@@ -155,7 +157,9 @@ func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	if _, err := sql.Exec(ctx, `UPDATE control.acme_authorizations SET state = 'cleaning' WHERE id = 'authorization_old'`); err != nil {
 		t.Fatal(err)
 	}
-	workers.Go(func() { secondDone <- otherManager.Cleanup(ctx, "public_url_old", "authorization_old") })
+	workers.Go(func() {
+		secondDone <- otherManager.CleanupSubject(ctx, publicDNSSubject("public_url_old"), "authorization_old")
+	})
 	// observe PostgreSQL contention rather than assuming a goroutine was scheduled.
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()

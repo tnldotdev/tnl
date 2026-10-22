@@ -23,11 +23,11 @@ schemas:
           type: integer
           minimum: 1024
           maximum: 65535
-      private_connector_address:
+      connector_address:
         type: string
         maxLength: 512
         description: Direct reachable endpoint for this ingress process; required for private visitor placement.
-      private_connector_tls_server_name:
+      connector_tls_server_name:
         type: string
         maxLength: 253
         description: Infrastructure TLS identity presented on the direct connector endpoint.

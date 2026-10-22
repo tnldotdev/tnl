@@ -6,16 +6,18 @@ import (
 	"net/http"
 	"os"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 )
 
-// Publisher is a locally held signing identity and one selected grant. prepare
-// one once to reuse it across independent Go ad-hoc invocations.
-type Publisher = nativeauth.Native
+// PublisherIdentity holds one signing identity and selected namespace grant.
+// prepare it once to reuse it across independent ad-hoc invocations.
+type PublisherIdentity struct {
+	value *publisheridentity.Native
+}
 
 type StateProtection string
 
@@ -24,13 +26,13 @@ const (
 	ProtectionKeychain StateProtection = "keychain"
 )
 
-var ErrPublisherScope = nativeauth.ErrScope
-var ErrPublisherSelection = nativeauth.ErrSelection
+var ErrPublisherScope = publisheridentity.ErrScope
+var ErrPublisherSelection = publisheridentity.ErrSelection
 
-// PreparePublisher loads a selected namespace identity
+// PreparePublisherIdentity loads a selected namespace identity
 // using protected local state. it closes the database before returning; Open
 // opens its own certificate state for the duration of each publication.
-func PreparePublisher(ctx context.Context, options Options) (*Publisher, error) {
+func PreparePublisherIdentity(ctx context.Context, options Options) (*PublisherIdentity, error) {
 	state, _, _, publisher, err := preparePublisher(ctx, options)
 	if err != nil {
 		return nil, err
@@ -38,29 +40,32 @@ func PreparePublisher(ctx context.Context, options Options) (*Publisher, error) 
 	if err := state.Close(); err != nil {
 		return nil, err
 	}
-	return publisher, nil
+	return &PublisherIdentity{value: publisher}, nil
 }
 
-func preparePublisher(ctx context.Context, options Options) (*clientstate.Database, *clientstate.Store, string, *nativeauth.Native, error) {
+func preparePublisher(ctx context.Context, options Options) (*clientstate.Database, *clientstate.Store, string, *publisheridentity.Native, error) {
 	selected := 0
 	if options.EnrollmentKey != "" {
 		selected++
 	}
-	if options.PublisherID != "" {
+	if options.PublisherIdentityID != "" {
 		selected++
 	}
-	if options.Publisher != nil {
+	if options.PublisherIdentity != nil {
 		selected++
 	}
-	if options.PublisherFile != "" {
+	if options.PublisherCredentialFile != "" {
 		selected++
 	}
 	if selected > 1 {
 		return nil, nil, "", nil, ErrPublisherSelection
 	}
 	server := options.ServerURL
-	if options.Publisher != nil {
-		origin := options.Publisher.ControlURL()
+	if options.PublisherIdentity != nil {
+		if options.PublisherIdentity.value == nil {
+			return nil, nil, "", nil, ErrPublisherScope
+		}
+		origin := options.PublisherIdentity.value.ControlURL()
 		if origin == "" {
 			return nil, nil, "", nil, ErrPublisherScope
 		}
@@ -89,7 +94,7 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	fail := func(err error) (*clientstate.Database, *clientstate.Store, string, *nativeauth.Native, error) {
+	fail := func(err error) (*clientstate.Database, *clientstate.Store, string, *publisheridentity.Native, error) {
 		return nil, nil, "", nil, errors.Join(err, database.Close())
 	}
 	server, err = clientserver.Select(ctx, database, server)
@@ -104,7 +109,11 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	if err != nil {
 		return fail(err)
 	}
-	native, err := nativeauth.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", options.PublisherFile, options.EnrollmentKey, options.PublisherID, options.Publisher)
+	var selectedIdentity *publisheridentity.Native
+	if options.PublisherIdentity != nil {
+		selectedIdentity = options.PublisherIdentity.value
+	}
+	native, err := publisheridentity.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
 	if err != nil {
 		return fail(err)
 	}
@@ -114,11 +123,11 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	return database, profile, server, native, nil
 }
 
-func publisherClients(server string, httpClient *http.Client) (*controlclient.Client, *authorityclient.Client, error) {
-	control, err := controlclient.New(server, httpClient, "")
+func publisherClients(server string, httpClient *http.Client) (*clientcontrol.Client, *clientauthority.Client, error) {
+	control, err := clientcontrol.New(server, httpClient, "")
 	if err != nil {
 		return nil, nil, err
 	}
-	authority, err := authorityclient.New(server, httpClient, "")
+	authority, err := clientauthority.New(server, httpClient, "")
 	return control, authority, err
 }

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -18,11 +18,11 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 		t.Fatal(err)
 	}
 	privateRequest := oidcRouteRequest(t, d, now)
-	service, err := d.CreatePrivateService(t.Context(), privateRequest.TeamID, privateRequest.ActingIdentityID, "private", "private", now)
+	service, err := d.CreateServiceAt(t.Context(), privateRequest.TeamID, privateRequest.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, privateRequest, PublisherScope{TeamID: privateRequest.TeamID, Kind: "private_service", PrivateServiceID: service.ID}, now)
+	enrollment := publisherEnrollment(t, d, privateRequest, PublisherScope{TeamID: privateRequest.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -31,19 +31,19 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PreparePrivateServiceRun(t.Context(), service.ID, publisher, "private", now)
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "private", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.StartManagedServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now); !errors.Is(err, ErrInsufficientRelayServices) {
+	if _, err = d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now); !errors.Is(err, ErrInsufficientRelayServices) {
 		t.Fatalf("private run bypassed HTTP relay reservations: %v", err)
 	}
 	if err = d.ClosePublishRun(t.Context(), publicRun.PublishRunID, publicRun.PublishRunToken, now); err != nil {
 		t.Fatal(err)
 	}
-	privateRun, err := d.StartManagedServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
-	if err != nil || len(privateRun.Connections) != 2 {
-		t.Fatalf("released HTTP capacity could not serve private run: %+v %v", privateRun, err)
+	serviceRun, err := d.StartServiceRun(t.Context(), service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	if err != nil || len(serviceRun.Connections) != 2 {
+		t.Fatalf("released HTTP capacity could not serve private run: %+v %v", serviceRun, err)
 	}
 	var slots int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_service_connection_slots WHERE session_open AND state='assigned'`).Scan(&slots); err != nil || slots != 2 {

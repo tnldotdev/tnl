@@ -1,6 +1,6 @@
 // Package controlstate stores persistent control state in PostgreSQL and changes
 // that state in transactions. it also manages schema migrations.
-package controlstate
+package state
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-control-fresh-v1-services-native-owner"
+	baselineID                = "tnl-control-fresh-v1-services"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )

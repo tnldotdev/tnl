@@ -77,12 +77,12 @@ func (q *Queries) CleanupWorkloadCertificates(ctx context.Context, arg CleanupWo
 }
 
 const cleanupWorkloadConnectors = `-- name: CleanupWorkloadConnectors :execrows
-DELETE FROM control.private_connector_sessions WHERE id IN (
-    SELECT session.id FROM control.private_connector_sessions session
+DELETE FROM control.connector_sessions WHERE id IN (
+    SELECT session.id FROM control.connector_sessions session
     WHERE session.workload_session_id IS NOT NULL
       AND session.expires_at < $1
       AND (session.revoked_at IS NULL OR session.revoked_at < $1)
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams stream WHERE stream.connector_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams stream WHERE stream.connector_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
@@ -149,8 +149,8 @@ func (q *Queries) CleanupWorkloadIngressRequests(ctx context.Context, arg Cleanu
 }
 
 const cleanupWorkloadServiceRights = `-- name: CleanupWorkloadServiceRights :execrows
-DELETE FROM control.workload_session_services WHERE (workload_session_id, private_service_id) IN (
-    SELECT rights.workload_session_id, rights.private_service_id FROM control.workload_session_services rights
+DELETE FROM control.workload_session_services WHERE (workload_session_id, service_id) IN (
+    SELECT rights.workload_session_id, rights.service_id FROM control.workload_session_services rights
     JOIN control.workload_sessions session ON session.id = rights.workload_session_id
     WHERE session.expires_at < $1 AND session.lease_expires_at < $1
       AND (session.revoked_at IS NULL OR session.revoked_at < $1)
@@ -159,10 +159,10 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, privat
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY session.expires_at, rights.workload_session_id, rights.private_service_id LIMIT $2
+    ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT $2
     FOR UPDATE OF rights SKIP LOCKED
 )
 `
@@ -192,8 +192,8 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.private_visitor_streams child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
@@ -215,8 +215,8 @@ func (q *Queries) CleanupWorkloadSessions(ctx context.Context, arg CleanupWorklo
 
 const cleanupWorkloadStreams = `-- name: CleanupWorkloadStreams :execrows
 
-DELETE FROM control.private_visitor_streams WHERE visitor_connection_id IN (
-    SELECT stream.visitor_connection_id FROM control.private_visitor_streams stream
+DELETE FROM control.connector_visitor_streams WHERE visitor_connection_id IN (
+    SELECT stream.visitor_connection_id FROM control.connector_visitor_streams stream
     WHERE stream.workload_session_id IS NOT NULL
       AND (stream.valid_until < $1 OR stream.closed_at < $1)
     ORDER BY stream.valid_until, stream.visitor_connection_id LIMIT $2

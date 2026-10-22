@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -22,7 +22,7 @@ func TestIntegrationWebsiteIdentityDoesNotIssuePublishingCredentials(t *testing.
 	}
 	t.Cleanup(database.Close)
 	const secret = "website-secret-01234567890123456789"
-	h, err := authorityapi.NewHandler(authorityapi.Config{ManagedDomain: "routes.example.test", OIDCIssuer: "https://account.example", WebServiceSecret: secret}, database)
+	h, err := controlauthority.NewHandler(controlauthority.Config{ManagedDomain: "routes.example.test", OIDCIssuer: "https://account.example", WebServiceSecret: secret}, database)
 	if err != nil {
 		t.Fatal(err)
 	}

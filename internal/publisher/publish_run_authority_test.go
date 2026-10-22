@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func testRunAuthority(t *testing.T, client PublicURLControlClient, setup controlv1.PublishRunSetup) publicRunAuthority {
@@ -23,10 +23,10 @@ func testRunAuthority(t *testing.T, client PublicURLControlClient, setup control
 }
 
 func testRunConfig(client PublicURLControlClient, setup controlv1.PublishRunSetup) Config {
-	route := setup.PublicUrl
-	config := Config{Control: client, Hostname: route.CanonicalHostname, TeamID: route.TeamId, DomainID: route.DomainId, PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, Ephemeral: route.Ephemeral}
-	if route.MembershipId != nil {
-		config.MembershipID = *route.MembershipId
+	publicURL := setup.PublicUrl
+	config := Config{Control: client, Hostname: publicURL.CanonicalHostname, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Ephemeral: publicURL.Ephemeral}
+	if publicURL.MembershipId != nil {
+		config.MembershipID = *publicURL.MembershipId
 	}
 	return config
 }

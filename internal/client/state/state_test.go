@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"context"
@@ -9,10 +9,49 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 const testPublicURLID = "url_0123456789abcdefghijkl"
+
+func TestStateRejectsDifferentFreshBaselineWithoutReplacingIt(t *testing.T) {
+	for _, baseline := range []string{"missing", "other"} {
+		t.Run(baseline, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "state")
+			options := OpenOptions{Protection: ProtectionFile}
+			database, err := OpenWithOptions(t.Context(), root, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.db.ExecContext(t.Context(), "DROP TABLE baseline_identity"); err != nil {
+				t.Fatal(err)
+			}
+			if baseline == "other" {
+				if _, err := database.db.ExecContext(t.Context(), "CREATE TABLE baseline_identity (id INTEGER PRIMARY KEY, identity TEXT); INSERT INTO baseline_identity VALUES (1, 'another-baseline')"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(DatabasePath(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reopened, err := OpenWithOptions(t.Context(), root, options); err == nil {
+				_ = reopened.Close()
+				t.Fatal("different development baseline accepted")
+			} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ClientStateUnavailable {
+				t.Fatalf("baseline failure lost its classification: %v", err)
+			}
+			after, err := os.Stat(DatabasePath(root))
+			if err != nil || !os.SameFile(before, after) {
+				t.Fatal("baseline rejection replaced the existing database", err)
+			}
+		})
+	}
+}
 
 func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")

@@ -1,4 +1,4 @@
-package integrationurls
+package integrations
 
 import (
 	"context"

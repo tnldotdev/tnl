@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -28,7 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
@@ -53,7 +53,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	issuer := githubtest.New(t)
-	if _, err = authorityapi.Register(mux, authorityapi.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
+	if _, err = controlauthority.Register(mux, controlauthority.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
 		t.Fatal(err)
 	}
 	h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
@@ -61,13 +61,13 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux.Handle("/", h)
-	owner, err := controlclient.New(server.URL, server.Client(), human.AccessToken)
+	owner, err := clientcontrol.New(server.URL, server.Client(), human.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	group, protocol := "production", controlv1.Kubernetes
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Services: []string{"cluster"}, MaxDurationSeconds: 3600}}
-	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {Publisher: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
+	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if applied.Configuration.Services["cluster"].TargetDiscovery == nil || applied.Configuration.Services["cluster"].Target != "" {
 		t.Fatal("cloud selector did not survive apply")
 	}
-	job, err := workloadclient.New(server.URL, server.Client())
+	job, err := workload.New(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if hint == nil || hint.Provider != controlv1.KubernetesEKS || hint.Cluster != "production" || hint.Region != "us-east-1" {
 		t.Fatal("missing approved native Kubernetes auth hint")
 	}
-	humanServices, err := owner.ListAvailablePrivateServices(ctx)
+	humanServices, err := owner.ListAvailableServices(ctx)
 	if err != nil || len(humanServices) != 1 || humanServices[0].KubernetesAuth == nil || *humanServices[0].KubernetesAuth != *hint {
 		t.Fatal("human inventory lost approved auth hint", err)
 	}
@@ -131,22 +131,22 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			t.Fatalf("HTTP accepted wrong %s", bad.field)
 		}
 	}
-	workloadControl, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
+	workloadControl, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body.ExpectedRevision = applied.Revision
-	if _, err = workloadControl.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err = workloadControl.ApplyProjectConfiguration(ctx, "example", body); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload self-applied policy", err)
 	}
-	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err = workloadControl.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("workload read manager target inventory", err)
 	}
-	authority, err := authorityclient.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
+	authority, err := clientauthority.New(server.URL, server.Client(), credentials.AccessToken(session.Credential))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = authority.IdentityContext(ctx); !errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if _, err = authority.IdentityContext(ctx); !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		t.Fatal("workload became a human control session", err)
 	}
 	if _, err = workloadControl.GetPublisherGroupAssignments(ctx, session.Credential); err == nil {
@@ -209,7 +209,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			// historical verifier-produced state uses the store's explicit clock;
 			// all HTTP handlers and cleanup below run at the actual current time.
 			encoded, _ := json.Marshal(claims)
-			var g oidcauth.GitHubExecution
+			var g oidc.GitHubExecution
 			if err := json.Unmarshal(encoded, &g); err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +219,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c := oidcauth.WorkloadExecution{Provider: "github", Issuer: oidcauth.GitHubIssuer, Subject: g.Subject, GitHub: &g, IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(name))}
+			c := oidc.WorkloadExecution{Provider: "github", Issuer: oidc.GitHubIssuer, Subject: g.Subject, GitHub: &g, IssuedAt: g.IssuedAt, NotBefore: g.NotBefore, ExpiresAt: g.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(name))}
 			exchange := controlstate.ExchangeWorkloadRequest{TeamID: team, ProjectKey: "example", Workload: "test", SourceFingerprint: body.SourceFingerprint, Nonce: rand.Text(), Execution: c, PublicKey: public}
 			exchange.Signature = ed25519.Sign(key, workloadproof.Exchange(team, "example", "test", body.SourceFingerprint, exchange.Nonce, c.AssertionDigest, nil))
 			s, err := d.ExchangeWorkload(ctx, exchange, at)
@@ -230,7 +230,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 64, PrivateConnectorAddress: name + ".example.test:9443", PrivateConnectorTLSServerName: name + ".example.test", IngressPoolID: controlstate.PrimaryIngressPoolID}, at, time.Hour); err != nil {
+			if _, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: controlstate.PrimaryIngressPoolID}, at, time.Hour); err != nil {
 				t.Fatal(err)
 			}
 			handles, err := d.CreateWorkloadIngressAssignmentSet(ctx, s.Credential, service, "retention", 1, "", at)

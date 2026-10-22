@@ -1,5 +1,5 @@
 // Package routebackend defines how ingress opens a visitor stream to a publisher.
-package routebackend
+package backend
 
 import (
 	"context"

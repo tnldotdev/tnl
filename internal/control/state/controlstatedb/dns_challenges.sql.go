@@ -102,14 +102,14 @@ SELECT
     COALESCE(orders.public_url_id, '')::text AS public_url_id,
     COALESCE(orders.publish_run_id, '')::text AS publish_run_id,
     COALESCE(orders.publish_run_number, 0)::bigint AS publish_run_number,
-    COALESCE(orders.private_service_id, '')::text AS private_service_id,
-    COALESCE(orders.private_run_id, '')::text AS private_run_id,
-    COALESCE(orders.private_run_number, 0)::bigint AS private_run_number
+    COALESCE(orders.service_id, '')::text AS service_id,
+    COALESCE(orders.service_run_id, '')::text AS service_run_id,
+    COALESCE(orders.service_run_number, 0)::bigint AS service_run_number
 FROM control.acme_orders AS orders
 JOIN control.acme_authorizations AS authorizations ON authorizations.order_id = orders.id
 WHERE authorizations.id = $1
   AND authorizations.challenge_type = 'dns-01'
-  AND (orders.public_url_id = $2 OR orders.private_service_id = $2)
+  AND (orders.public_url_id = $2 OR orders.service_id = $2)
 `
 
 type GetDNSChallengeSubjectParams struct {
@@ -121,9 +121,9 @@ type GetDNSChallengeSubjectRow struct {
 	PublicURLID      string
 	PublishRunID     string
 	PublishRunNumber int64
-	PrivateServiceID string
-	PrivateRunID     string
-	PrivateRunNumber int64
+	ServiceID        string
+	ServiceRunID     string
+	ServiceRunNumber int64
 }
 
 func (q *Queries) GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error) {
@@ -133,9 +133,9 @@ func (q *Queries) GetDNSChallengeSubject(ctx context.Context, arg GetDNSChalleng
 		&i.PublicURLID,
 		&i.PublishRunID,
 		&i.PublishRunNumber,
-		&i.PrivateServiceID,
-		&i.PrivateRunID,
-		&i.PrivateRunNumber,
+		&i.ServiceID,
+		&i.ServiceRunID,
+		&i.ServiceRunNumber,
 	)
 	return i, err
 }

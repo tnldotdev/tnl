@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -39,9 +39,9 @@ type PublicURLWorkObserver interface {
 }
 
 type PublicURLDNSChallenges interface {
-	Present(context.Context, string, string) error
-	Verify(context.Context, string, string) (bool, error)
-	Cleanup(context.Context, string, string) error
+	PresentSubject(context.Context, controlstate.CertificateSubject, string) error
+	VerifySubject(context.Context, controlstate.CertificateSubject, string) (bool, error)
+	CleanupSubject(context.Context, controlstate.CertificateSubject, string) error
 }
 
 // PublicURLStore is the stored certificate work used by a PublicURLWorker.
@@ -175,15 +175,15 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 	if err != nil || work.State != stage && (work.State == "waiting_for_install" || work.State == "failed") && completedAt.Sub(work.CreatedAt) >= 30*time.Second {
 		w.logWork(ctx, work, string(stage), string(outcome), completedAt)
 	}
-	if errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+	if errors.Is(err, dns.ErrChallengesNotConfigured) {
 		return true, err
 	}
 	return true, nil
 }
 
 func certificateKind(work controlstate.ACMEOrderWork) string {
-	if work.PrivateRunID != "" {
-		return "managed_service"
+	if work.Subject.Kind == controlstate.CertificateSubjectService {
+		return "service"
 	}
 	return "public_url"
 }
@@ -198,7 +198,7 @@ func (w *PublicURLWorker) logWork(ctx context.Context, work controlstate.ACMEOrd
 	if w.config.Logger == nil {
 		return
 	}
-	w.config.Logger.InfoContext(ctx, "service certificate work", "publish_run_id", work.PublishRunID, "publish_run_number", work.PublishRunNumber, "private_run_id", work.PrivateRunID, "run_number", work.PrivateRunNumber,
+	w.config.Logger.InfoContext(ctx, "certificate work", "subject_kind", work.Subject.Kind, "subject_id", work.Subject.ID, "run_id", work.Subject.RunID, "run_number", work.Subject.RunNumber,
 		"issuance_id", work.ID, "stage", stage, "state", work.State, "outcome", outcome,
 		"attempts", work.Attempts, "age", now.Sub(work.CreatedAt).Round(time.Second), "next_available_at", work.AvailableAt)
 }
@@ -223,7 +223,7 @@ func (w *PublicURLWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, 
 func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	work.LastError = ""
 	if w.config.DNSChallenges == nil {
-		return dnscontroller.ErrChallengesNotConfigured
+		return dns.ErrChallengesNotConfigured
 	}
 	if work.ChallengeMethod != certificateidentity.ChallengeDNS01 {
 		return terminalf("certificate issuance requires DNS-01")
@@ -434,7 +434,7 @@ func (w *PublicURLWorker) applyOrderStatus(work *controlstate.ACMEOrderWork, sta
 func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operationErr error, now time.Time) {
 	work.LastError = storedFailureReason(operationErr)
 	work.AvailableAt = now.Add(5 * time.Second)
-	unconfigured := errors.Is(operationErr, dnscontroller.ErrChallengesNotConfigured)
+	unconfigured := errors.Is(operationErr, dns.ErrChallengesNotConfigured)
 	if unconfigured {
 		work.AvailableAt = now.Add(time.Minute)
 	}
@@ -443,7 +443,7 @@ func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operati
 	if work.State == "waiting_for_install" || work.State == "installed" {
 		return
 	}
-	var acmeError *acmeclient.Error
+	var acmeError *acme.Error
 	if work.State == "failed" || work.State == "canceled" {
 		for index := range work.Authorizations {
 			if work.Authorizations[index].State == "cleaning" {
@@ -479,7 +479,7 @@ func (w *PublicURLWorker) applyFailure(work *controlstate.ACMEOrderWork, operati
 	}
 }
 
-func validateRouteOrder(order acmeclient.Order, identifiers []string) error {
+func validateRouteOrder(order acme.Order, identifiers []string) error {
 	if order.URL == "" || order.Status == "" || order.Finalize == "" {
 		return errors.New("certificates: public URL ACME order is incomplete")
 	}

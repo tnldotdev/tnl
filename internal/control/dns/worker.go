@@ -1,5 +1,5 @@
 // Package dnscontroller applies persistent DNS changes requested by control.
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -157,7 +157,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
 	if w.managedNext {
 		w.managedNext = false
-		if found, err := w.processManagedEndpoint(ctx, now); found || err != nil {
+		if found, err := w.processServiceEndpoint(ctx, now); found || err != nil {
 			return found, err
 		}
 	}
@@ -190,7 +190,7 @@ func (w *Worker) processExisting(ctx context.Context, now time.Time) (bool, erro
 	if found || err != nil {
 		return found, err
 	}
-	return w.processManagedEndpoint(ctx, now)
+	return w.processServiceEndpoint(ctx, now)
 }
 
 func (w *Worker) retryAvailableAt(attempts uint64, now time.Time) time.Time {

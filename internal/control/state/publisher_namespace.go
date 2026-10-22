@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -93,7 +93,7 @@ func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstat
 }
 
 func (d *Database) PublisherMayStartRun(ctx context.Context, p PublisherIdentity, id string) (bool, error) {
-	if p.Scope.Kind == "saved_url" {
+	if p.Scope.Kind == "saved_public_url" {
 		return p.Scope.PublicURLID == id, nil
 	}
 	a, err := controlstatedb.New(d.pool).GetPublisherAllocation(ctx, id)

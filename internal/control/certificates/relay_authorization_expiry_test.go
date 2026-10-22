@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
@@ -13,16 +13,16 @@ func TestRelayWorkerRetiresExpiredAuthorizationWhileWaitingForDNS(t *testing.T) 
 	expires := start.Add(time.Minute)
 	const hostname = "relay-a.example.test"
 	api := &acmeStub{
-		order: acmeclient.Order{
+		order: acme.Order{
 			URL: "https://acme.example.test/order/1", Status: "pending", Expires: &expires,
-			Identifiers:    []acmeclient.Identifier{{Type: "dns", Value: hostname}},
+			Identifiers:    []acme.Identifier{{Type: "dns", Value: hostname}},
 			Authorizations: []string{"https://acme.example.test/authz/1"},
 			Finalize:       "https://acme.example.test/finalize/1",
 		},
-		authorization: acmeclient.Authorization{
+		authorization: acme.Authorization{
 			URL: "https://acme.example.test/authz/1", Status: "pending", Expires: &expires,
-			Identifier: acmeclient.Identifier{Type: "dns", Value: hostname},
-			Challenges: []acmeclient.Challenge{{Type: "dns-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
+			Identifier: acme.Identifier{Type: "dns", Value: hostname},
+			Challenges: []acme.Challenge{{Type: "dns-01", URL: "https://acme.example.test/challenge/1", Token: "token-1"}},
 		},
 	}
 	dns := &relayDNSChallengesStub{verified: false}

@@ -3,14 +3,14 @@ SELECT
     COALESCE(orders.public_url_id, '')::text AS public_url_id,
     COALESCE(orders.publish_run_id, '')::text AS publish_run_id,
     COALESCE(orders.publish_run_number, 0)::bigint AS publish_run_number,
-    COALESCE(orders.private_service_id, '')::text AS private_service_id,
-    COALESCE(orders.private_run_id, '')::text AS private_run_id,
-    COALESCE(orders.private_run_number, 0)::bigint AS private_run_number
+    COALESCE(orders.service_id, '')::text AS service_id,
+    COALESCE(orders.service_run_id, '')::text AS service_run_id,
+    COALESCE(orders.service_run_number, 0)::bigint AS service_run_number
 FROM control.acme_orders AS orders
 JOIN control.acme_authorizations AS authorizations ON authorizations.order_id = orders.id
 WHERE authorizations.id = sqlc.arg(authorization_id)
   AND authorizations.challenge_type = 'dns-01'
-  AND (orders.public_url_id = sqlc.arg(owner_id) OR orders.private_service_id = sqlc.arg(owner_id));
+  AND (orders.public_url_id = sqlc.arg(owner_id) OR orders.service_id = sqlc.arg(owner_id));
 
 -- name: GetDNSChallengeContext :one
 SELECT

@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"context"
@@ -74,6 +74,13 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 	}
 	if version != 1 || target != 1 {
 		return nil, errors.New("clientstate: unsupported v1 database baseline")
+	}
+	var baseline string
+	if err := db.QueryRowContext(ctx, "SELECT identity FROM baseline_identity WHERE id = 1").Scan(&baseline); err != nil {
+		return nil, fmt.Errorf("read client state baseline; select a fresh state directory: %w", err)
+	}
+	if baseline != "tnl-client-fresh-v1-services" {
+		return nil, errors.New("client state baseline does not match; select a fresh state directory")
 	}
 	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {

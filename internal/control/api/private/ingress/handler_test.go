@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import (
 	"bytes"
@@ -14,10 +14,10 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 const testIngressClusterSecret = "test-ingress-cluster-secret-0123456789"
@@ -344,7 +344,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 				direct.Detail != wire.ApplicationproblemJSONDefault.Detail {
 				t.Fatalf("direct problem differs from HTTP: %#v, %v; HTTP %#v", direct, err, wire)
 			}
-			assertIngressProblemType(t, response, problemtype.URL(test.problemType))
+			assertIngressProblemType(t, response, failureproblem.URL(test.problemType))
 		})
 	}
 }

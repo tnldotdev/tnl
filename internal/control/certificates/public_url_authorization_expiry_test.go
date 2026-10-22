@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 func TestPublicURLWorkerCleansExpiredDNSChallengeWhenOrderFetchIsUnavailable(t *testing.T) {
 	start := time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
 	api, work := dnsSafetyOrder(t, "presented", start)
-	api.getOrderErr = &acmeclient.Error{Status: http.StatusServiceUnavailable, Type: "urn:ietf:params:acme:error:serverInternal"}
+	api.getOrderErr = &acme.Error{Status: http.StatusServiceUnavailable, Type: "urn:ietf:params:acme:error:serverInternal"}
 	store := &certificateStoreStub{work: work}
 	now := work.Authorizations[0].ExpiresAt.Add(time.Second)
 	worker := &PublicURLWorker{

@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (s generatedServer) GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientSupervisor "github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -17,7 +17,7 @@ func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
 	for _, command := range [][]string{
 		{"connect", "orders", "--install"},
 		{"publish", "127.0.0.1:5432", "--protocol=postgres", "--name=orders", "--install"},
-		{"publish", "127.0.0.1:22", "--protocol=tcp", "--publisher=pub_missing", "--server=https://control.example", "--system", "--install"},
+		{"publish", "127.0.0.1:22", "--protocol=tcp", "--publisher-identity=pub_missing", "--server=https://control.example", "--system", "--install"},
 	} {
 		t.Run(command[0]+"/"+command[1], func(t *testing.T) {
 			root := t.TempDir()
@@ -25,7 +25,7 @@ func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
 			args := append([]string{"--no-config"}, command...)
 			args = append(args, "--state-dir="+state, "--system-state-dir="+supervisor)
 			err := run(t.Context(), args, io.Discard, io.Discard)
-			systemOwnerPreflight := slices.Contains(command, "--system") && os.Geteuid() != 0 && errors.Is(err, publisherjob.ErrUnsafeState)
+			systemOwnerPreflight := slices.Contains(command, "--system") && os.Geteuid() != 0 && errors.Is(err, clientSupervisor.ErrUnsafeState)
 			if reason, ok := failure.ReasonOf(err); !systemOwnerPreflight && (!ok || reason != failure.ServiceNotInstalled) {
 				t.Fatalf("preflight = %v", err)
 			}

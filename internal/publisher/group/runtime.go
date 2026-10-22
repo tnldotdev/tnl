@@ -1,4 +1,4 @@
-package grouppublisher
+package group
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
-	targetdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrAssignment = errors.New("publisher group assignment does not match the enrolled project, group or revision")
@@ -136,7 +136,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 			poll, finishPoll := observability.PublisherOperation(ctx, "group_assignments")
 			assignment, err := r.Control.Assignments(poll, lease.AccessToken)
 			finishPoll(err)
-			if errors.Is(err, controlclient.ErrUnauthenticated) {
+			if errors.Is(err, clientcontrol.ErrUnauthenticated) {
 				stop()
 				lease = controlv1.PublisherGroupLease{}
 				if err := observe(revision, false); err != nil {
@@ -161,13 +161,13 @@ func (r Runtime) Serve(ctx context.Context) error {
 				r.Member.GroupName = assignment.Member.GroupName
 				definitions := map[string]string{}
 				for _, service := range assignment.Services {
-					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || service.Configuration.Publisher == nil || *service.Configuration.Publisher != r.Member.GroupName || definitions[service.Service] != "" {
+					if service.Service == "" || service.ServiceId == "" || service.GrantId == "" || service.Configuration.PublisherGroup == nil || *service.Configuration.PublisherGroup != r.Member.GroupName || definitions[service.Service] != "" {
 						return ErrAssignment
 					}
 					// the selector is descriptive; changing it must not restart an
 					// unchanged publication or replace its certificate and connections.
 					definition := service
-					definition.Configuration.Publisher = nil
+					definition.Configuration.PublisherGroup = nil
 					data, err := json.Marshal(definition)
 					if err != nil {
 						return err
@@ -241,14 +241,14 @@ func (r Runtime) Serve(ctx context.Context) error {
 }
 
 func retryablePublication(err error) bool {
-	var discovery *targetdiscovery.Error
+	var discovery *publisherdiscovery.Error
 	if errors.As(err, &discovery) {
 		return temporary(err)
 	}
 	// an apply or namespace rename can revoke a service grant just after a
 	// successful poll. refresh assignments rather than killing the group task;
 	// revoked group membership still fails at the lease/assignment boundary.
-	if temporary(err) || errors.Is(err, privatepublisher.ErrPrivateStream) || errors.Is(err, controlclient.ErrStatusConflict) || errors.Is(err, controlclient.ErrUnauthenticated) {
+	if temporary(err) || errors.Is(err, publisherservice.ErrPrivateStream) || errors.Is(err, clientcontrol.ErrStatusConflict) || errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		return true
 	}
 	var network net.Error
@@ -256,16 +256,16 @@ func retryablePublication(err error) bool {
 }
 
 func temporary(err error) bool {
-	var discovery *targetdiscovery.Error
+	var discovery *publisherdiscovery.Error
 	if errors.As(err, &discovery) {
 		switch discovery.Kind {
-		case targetdiscovery.Unavailable, targetdiscovery.Stale, targetdiscovery.NotReady:
+		case publisherdiscovery.Unavailable, publisherdiscovery.Stale, publisherdiscovery.NotReady:
 			return true
 		default:
 			return false
 		}
 	}
-	if errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, clientcontrol.ErrUnavailable) || errors.Is(err, clientcontrol.ErrRateLimited) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	reason, _ := failure.ReasonOf(err)

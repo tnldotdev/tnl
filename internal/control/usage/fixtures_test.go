@@ -1,4 +1,4 @@
-package publicurlusageworker
+package usage
 
 import (
 	"context"

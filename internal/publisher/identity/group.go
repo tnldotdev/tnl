@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"bytes"
@@ -11,9 +11,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type GroupControl interface {
@@ -50,7 +50,7 @@ func (g *Group) leaseToken(ctx context.Context) (string, error) {
 	if g.lease.ExpiresAt.After(time.Now().Add(20 * time.Second)) {
 		return g.lease.AccessToken, nil
 	}
-	assertion, err := publisheridentity.Sign(g.member.PublisherIdentityId, g.member.KeyId, g.member.GroupId, g.server+"/v1/publisher-groups/lease", g.private, time.Now())
+	assertion, err := publisherproof.Sign(g.member.PublisherIdentityId, g.member.KeyId, g.member.GroupId, g.server+"/v1/publisher-groups/lease", g.private, time.Now())
 	if err != nil {
 		return "", err
 	}
@@ -84,7 +84,7 @@ func (g *Group) Poll(ctx context.Context) (controlv1.PublisherGroupAssignments, 
 	g.member.GroupName = assignments.Member.GroupName
 	seen := map[string]bool{}
 	for _, a := range assignments.Services {
-		if a.Service == "" || seen[a.Service] || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) || a.Configuration.Publisher == nil || *a.Configuration.Publisher != g.member.GroupName {
+		if a.Service == "" || seen[a.Service] || !opaqueid.Valid(a.GrantId, opaqueid.PublisherGrantPrefix) || a.Configuration.PublisherGroup == nil || *a.Configuration.PublisherGroup != g.member.GroupName {
 			return controlv1.PublisherGroupAssignments{}, ErrScope
 		}
 		seen[a.Service] = true
@@ -106,8 +106,8 @@ func (g *Group) Poll(ctx context.Context) (controlv1.PublisherGroupAssignments, 
 
 func groupAssignmentIdentity(m controlv1.PublisherGroupMember, a controlv1.PublisherGroupServiceAssignment) (authorityv1.PublisherEnrollmentResult, error) {
 	i := authorityv1.PublisherEnrollmentResult{ClientId: m.PublisherIdentityId, KeyId: m.KeyId, GrantId: a.GrantId, TeamId: m.TeamId}
-	if a.ServiceKind == "private_service" && opaqueid.Valid(a.ServiceId, opaqueid.PrivateServicePrefix) && a.TrustRevision > 0 {
-		i.Kind, i.PrivateServiceId = "private_service", &a.ServiceId
+	if a.ServiceKind == "service" && opaqueid.Valid(a.ServiceId, opaqueid.ServicePrefix) && a.TrustRevision > 0 {
+		i.Kind, i.ServiceId = "service", &a.ServiceId
 	} else {
 		return i, ErrScope
 	}

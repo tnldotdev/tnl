@@ -7,13 +7,13 @@ import (
 	"slices"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 )
 
 // discoverAuthorizations stores a complete set only after every CA identity is checked.
-func (w *PublicURLWorker) discoverAuthorizations(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, order acmeclient.Order, now time.Time) error {
+func (w *PublicURLWorker) discoverAuthorizations(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, order acme.Order, now time.Time) error {
 	expected := make(map[string]struct{}, len(work.CertificateIdentifiers))
 	for _, identifier := range work.CertificateIdentifiers {
 		expected[identifier] = struct{}{}
@@ -174,7 +174,7 @@ func (w *PublicURLWorker) nextAuthorizationAt(work *controlstate.ACMEOrderWork, 
 	return next
 }
 
-func authorizationChallengeProblem(authorization acmeclient.Authorization, challengeType certificateidentity.ChallengeMethod, challengeURL string) string {
+func authorizationChallengeProblem(authorization acme.Authorization, challengeType certificateidentity.ChallengeMethod, challengeURL string) string {
 	for _, challenge := range authorization.Challenges {
 		if challenge.Type != string(challengeType) || challenge.URL != challengeURL || challenge.Error == nil {
 			continue
@@ -214,7 +214,7 @@ func (w *PublicURLWorker) invalidOrder(ctx context.Context, client acmeAPI, work
 
 func authorizationWork(
 	client acmeAPI,
-	authorization acmeclient.Authorization,
+	authorization acme.Authorization,
 	challengeMethod certificateidentity.ChallengeMethod,
 	orderExpires *time.Time,
 	now time.Time,
@@ -275,7 +275,7 @@ func authorizationWork(
 	return result, nil
 }
 
-func authorizationIdentifier(authorization acmeclient.Authorization) string {
+func authorizationIdentifier(authorization acme.Authorization) string {
 	if authorization.Wildcard {
 		return "*." + authorization.Identifier.Value
 	}

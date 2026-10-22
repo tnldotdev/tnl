@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strconv"
 
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 var ErrCluster = errors.New("kubernetes cluster discovery returned an invalid HTTPS endpoint or cluster CA")
@@ -30,7 +30,7 @@ type Target struct {
 	Address string
 	TLS     *tls.Config
 	CAPEM   []byte
-	Trust   privatetrust.Snapshot
+	Trust   targettrust.Snapshot
 }
 
 // ResolveEKS is the adapter for the publisher discovery owner. authentication
@@ -63,7 +63,7 @@ func VerifyTarget(found DiscoveredCluster) (Target, error) {
 	if err != nil || len(data) == 0 || len(data) > 1<<20 {
 		return Target{}, ErrCluster
 	}
-	trust, err := privatetrust.CapturePEM(u.Hostname(), data)
+	trust, err := targettrust.CapturePEM(u.Hostname(), data)
 	if err != nil {
 		return Target{}, ErrCluster
 	}

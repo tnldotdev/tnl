@@ -1,11 +1,11 @@
-package controlapi
+package public
 
 import (
 	"fmt"
 	"net/http"
 
-	webhookcatalog "github.com/tnldotdev/tnl/internal/control/webhooks"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/control/webhooks"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) GetWebhookProviderSource(response http.ResponseWriter, request *http.Request, provider controlv1.WebhookProvider) {
@@ -30,6 +30,6 @@ func (h *handler) GetWebhookProviderSource(response http.ResponseWriter, request
 	}
 	h.config.Metrics.ObserveWebhookProviderSource(name, "served")
 	writeJSON(response, http.StatusOK, struct {
-		Source webhookcatalog.Source `json:"source"`
+		Source webhooks.Source `json:"source"`
 	}{Source: result.Source})
 }

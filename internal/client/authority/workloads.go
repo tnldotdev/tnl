@@ -1,10 +1,10 @@
-package authorityclient
+package authority
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func (c *Client) IdentifyWorkload(ctx context.Context, body authorityv1.WorkloadIdentityRequest) (authorityv1.WorkloadIdentity, error) {

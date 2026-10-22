@@ -9,7 +9,6 @@ import (
 )
 
 type subjectDNSStub struct {
-	dnsChallengesStub
 	subject controlstate.CertificateSubject
 	calls   int
 }
@@ -29,18 +28,13 @@ func (s *subjectDNSStub) CleanupSubject(ctx context.Context, subject controlstat
 }
 
 func TestCertificateDNSSubjectBoundary(t *testing.T) {
-	for _, kind := range []controlstate.CertificateSubjectKind{controlstate.CertificateSubjectPublicURL, controlstate.CertificateSubjectManagedService} {
+	for _, kind := range []controlstate.CertificateSubjectKind{controlstate.CertificateSubjectPublicURL, controlstate.CertificateSubjectService} {
 		for _, crossed := range []bool{false, true} {
 			t.Run(string(kind)+map[bool]string{false: "/current", true: "/crossed"}[crossed], func(t *testing.T) {
 				subject := controlstate.CertificateSubject{Kind: kind, ID: "opaque-service", RunID: "opaque-run", RunNumber: 7}
 				work := controlstate.ACMEOrderWork{Subject: subject}
-				if kind == controlstate.CertificateSubjectPublicURL {
-					work.PublicURLID, work.PublishRunID, work.PublishRunNumber = subject.ID, subject.RunID, subject.RunNumber
-				} else {
-					work.PrivateServiceID, work.PrivateRunID, work.PrivateRunNumber = subject.ID, subject.RunID, subject.RunNumber
-				}
 				if crossed {
-					work.Subject.RunID = "another-run"
+					work.Subject.RunID = ""
 				}
 				dns := &subjectDNSStub{}
 				worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns}}

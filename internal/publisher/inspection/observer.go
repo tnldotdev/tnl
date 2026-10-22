@@ -1,5 +1,5 @@
 // package protocolinspection observes bounded, body-free protocol summaries.
-package protocolinspection
+package inspection
 
 import (
 	"errors"

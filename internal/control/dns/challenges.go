@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -29,7 +29,7 @@ type ChallengeRecord struct {
 type ChallengeStore interface {
 	ChallengeChangeStore
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
-	GetDNSChallengeContext(context.Context, string, string) (controlstate.DNSChallengeContext, error)
+	GetDNSChallengeContextForSubject(context.Context, controlstate.CertificateSubject, string) (controlstate.DNSChallengeContext, error)
 	WithDNSRecordLock(context.Context, string, func() error) error
 }
 
@@ -71,31 +71,6 @@ func NewChallengeManager(
 	return &ChallengeManager{store: store, provider: provider, verifier: verifier, config: config}, nil
 }
 
-func (m *ChallengeManager) Present(ctx context.Context, publicURLID, authorizationID string) error {
-	started := time.Now()
-	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresenting)
-	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "provider", started, true, err)
-	return err
-}
-
-func (m *ChallengeManager) Verify(ctx context.Context, publicURLID, authorizationID string) (bool, error) {
-	started := time.Now()
-	verified, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresented)
-	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "verify", started, verified, err)
-	return verified, err
-}
-
-func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizationID string) error {
-	started := time.Now()
-	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationCleaning)
-	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "cleanup", started, true, err)
-	return err
-}
-
-type subjectChallengeStore interface {
-	GetDNSChallengeContextForSubject(context.Context, controlstate.CertificateSubject, string) (controlstate.DNSChallengeContext, error)
-}
-
 func (m *ChallengeManager) PresentSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string) error {
 	_, err := m.reconcileSubject(ctx, subject, authorizationID, controlstate.ACMEAuthorizationPresenting)
 	return err
@@ -111,13 +86,12 @@ func (m *ChallengeManager) CleanupSubject(ctx context.Context, subject controlst
 }
 
 func (m *ChallengeManager) reconcileSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string, state controlstate.ACMEAuthorizationState) (bool, error) {
-	store, ok := m.store.(subjectChallengeStore)
-	if !ok || !subject.Valid() {
+	if !subject.Valid() {
 		return false, controlstate.ErrDNSChallengeNotFound
 	}
 	started := time.Now()
 	verified, err := m.reconcileContext(ctx, func() (controlstate.DNSChallengeContext, error) {
-		challenge, err := store.GetDNSChallengeContextForSubject(ctx, subject, authorizationID)
+		challenge, err := m.store.GetDNSChallengeContextForSubject(ctx, subject, authorizationID)
 		if err == nil && challenge.Subject != subject {
 			return controlstate.DNSChallengeContext{}, controlstate.ErrDNSChallengeNotFound
 		}
@@ -131,12 +105,6 @@ func (m *ChallengeManager) reconcileSubject(ctx context.Context, subject control
 	}
 	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), stage, started, state != controlstate.ACMEAuthorizationPresented || verified, err)
 	return verified, err
-}
-
-func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authorizationID string, state controlstate.ACMEAuthorizationState) (bool, error) {
-	return m.reconcileContext(ctx, func() (controlstate.DNSChallengeContext, error) {
-		return m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
-	}, state)
 }
 
 func (m *ChallengeManager) reconcileContext(ctx context.Context, load func() (controlstate.DNSChallengeContext, error), state controlstate.ACMEAuthorizationState) (bool, error) {

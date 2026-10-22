@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -135,7 +135,7 @@ func TestEncryptedSessionCertificateIdentityAndJobRegistryReopen(t *testing.T) {
 	if err := store.SaveControlSession(t.Context(), session); err != nil {
 		t.Fatal(err)
 	}
-	certificate, err := store.Certificates("team", exactCertificateTestPlan())
+	certificate, err := store.CertificatesForPublisher("team", "pub_0123456789abcdefghijkl", exactCertificateTestPlan())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestEncryptedSessionCertificateIdentityAndJobRegistryReopen(t *testing.T) {
 	if err != nil || !found || gotSession.AccessToken != session.AccessToken {
 		t.Fatalf("session reopen: %v, %v", found, err)
 	}
-	certificate, err = store.Certificates("team", exactCertificateTestPlan())
+	certificate, err = store.CertificatesForPublisher("team", "pub_0123456789abcdefghijkl", exactCertificateTestPlan())
 	if err != nil {
 		t.Fatal(err)
 	}

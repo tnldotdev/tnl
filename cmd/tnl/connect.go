@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/connector"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type connectCommand struct {
@@ -103,7 +103,7 @@ func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job publisherjob.Job, ready func() error) error {
+func runInstalledConnector(ctx context.Context, job supervisor.Job, ready func() error) error {
 	return connectorOperations().RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {
@@ -153,7 +153,7 @@ func runConnectJobs(ctx context.Context, flags connectListCommand, name, action 
 	}
 	if name != "" {
 		if len(jobs) == 0 {
-			return publisherjob.ErrJobNotFound
+			return supervisor.ErrJobNotFound
 		}
 		return renderSystemJobs(output, "tnl connect stop", jobs, jobs[0].ID)
 	}
@@ -169,23 +169,23 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		return err
 	}
 	defer session.Close()
-	services, err := session.Authenticated().Control.ListAvailablePrivateServices(ctx)
+	services, err := session.Authenticated().Control.ListAvailableServices(ctx)
 	if err != nil {
 		return err
 	}
 	if command.Output == statusOutputJSON {
 		if services == nil {
-			services = []controlv1.PrivateService{}
+			services = []controlv1.Service{}
 		}
 		return json.NewEncoder(output).Encode(services)
 	}
 	blocks := make([]clioutput.Block, 0, len(services))
 	for _, service := range services {
 		state := "offline"
-		if service.Enabled && service.PrivateRunId != nil && service.RunNumber != nil {
+		if service.Enabled && service.ServiceRunId != nil && service.RunNumber != nil {
 			state = "ready"
 		}
-		blocks = append(blocks, clioutput.Section(service.Name, clioutput.Fields(clioutput.Field{Label: "private service ID", Value: service.Id}, clioutput.Field{Label: "team ID", Value: service.TeamId}, clioutput.Field{Label: "state", Value: state})))
+		blocks = append(blocks, clioutput.Section(service.Name, clioutput.Fields(clioutput.Field{Label: "service ID", Value: service.Id}, clioutput.Field{Label: "team ID", Value: service.TeamId}, clioutput.Field{Label: "state", Value: state})))
 	}
-	return writeHumanFrame(output, "tnl connect available", countState(len(services), "private service", "private services"), "", blocks...)
+	return writeHumanFrame(output, "tnl connect available", countState(len(services), "service", "services"), "", blocks...)
 }

@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"slices"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -45,7 +45,7 @@ type Manifest struct {
 	Services          map[string]string   `json:"services"`
 }
 
-func Generate(c config.TNL, source projectconfig.SourceIdentity) ([]byte, error) {
+func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error) {
 	m := Manifest{Schema: 1, Server: clientserver.DefaultURL, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, ProjectLabel: source.Label, Workloads: map[string]Workload{}, Services: map[string]string{}}
 	if c.Server != nil {
 		m.Server = *c.Server

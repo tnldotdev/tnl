@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 // event requests stop at explicit barriers. a race-safe logical clock advances
@@ -136,9 +136,9 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				if !ok {
 					return PublicURL{}, "not_found"
 				}
-				backends := []routebackend.Backend{before}
+				backends := []ingressbackend.Backend{before}
 				if entry.PolicyRevision > 1 {
-					backends = []routebackend.Backend{firstAttempt, after}
+					backends = []ingressbackend.Backend{firstAttempt, after}
 				}
 				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true}, ""
 			}})

@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
 func providerCertificate(t *testing.T) ([]byte, tls.Certificate) {
 	return testutil.TLSCertificate(t, []string{"db.example"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 }
-func providerSnapshot(t *testing.T, root []byte, names ...string) privatetrust.Snapshot {
+func providerSnapshot(t *testing.T, root []byte, names ...string) targettrust.Snapshot {
 	t.Helper()
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "root.pem"), root, 0600); err != nil {
@@ -25,7 +25,7 @@ func providerSnapshot(t *testing.T, root []byte, names ...string) privatetrust.S
 	if len(names) != 0 {
 		name = names[0]
 	}
-	snapshot, err := privatetrust.NewCache(nil).Capture(t.Context(), directory, "127.0.0.1:5432", config.TrustSource{CA: "root.pem", Hostname: &name})
+	snapshot, err := targettrust.NewCache(nil).Capture(t.Context(), directory, "127.0.0.1:5432", config.TrustSource{CA: "root.pem", Hostname: &name})
 	if err != nil {
 		t.Fatal(err)
 	}

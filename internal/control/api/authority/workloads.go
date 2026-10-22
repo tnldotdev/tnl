@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type WorkloadStore interface {
@@ -19,9 +19,9 @@ type WorkloadStore interface {
 	ExchangeWorkload(context.Context, controlstate.ExchangeWorkloadRequest, time.Time) (controlstate.WorkloadSession, error)
 	RenewWorkloadSession(context.Context, string, string, time.Time) (controlstate.WorkloadSession, error)
 	RevokeWorkloadSession(context.Context, string, string, time.Time) error
-	IdentifyWorkload(context.Context, string, string, string, string, oidcauth.WorkloadExecution, time.Time) (string, error)
+	IdentifyWorkload(context.Context, string, string, string, string, oidc.WorkloadExecution, time.Time) (string, error)
 	WorkloadAssertionPolicy(context.Context, string, string) (controlstate.ProjectWorkload, error)
-	AttachWorkloadAssertion(context.Context, string, string, oidcauth.WorkloadExecution, []byte, time.Time) (controlstate.WorkloadSession, error)
+	AttachWorkloadAssertion(context.Context, string, string, oidc.WorkloadExecution, []byte, time.Time) (controlstate.WorkloadSession, error)
 }
 
 func (h *handler) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +99,11 @@ func workloadProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrWorkloadExpired):
 		writeProblem(w, 410, authorityv1.Forbidden, "workload session expired; a current assertion may authorize a new session for future connections")
-	case errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, oidcauth.ErrUnauthenticated):
+	case errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, oidc.ErrUnauthenticated):
 		writeProblem(w, 403, authorityv1.Forbidden, "workload assertion or saved workload policy does not authorize this execution")
 	case errors.Is(err, controlstate.ErrWorkloadConflict):
 		writeProblem(w, 409, authorityv1.Conflict, "workload execution is already bound to another key or service scope; resume with the original ephemeral key")
-	case errors.Is(err, oidcauth.ErrUnavailable):
+	case errors.Is(err, oidc.ErrUnavailable):
 		writeProblem(w, 503, authorityv1.Unavailable, "provider signing keys are unavailable; retry this exchange")
 	default:
 		writeControlStateProblem(w, "authorize workload session", err)

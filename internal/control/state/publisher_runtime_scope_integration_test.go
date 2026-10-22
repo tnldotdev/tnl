@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ed25519"
@@ -11,17 +11,17 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 	for _, test := range []struct{ name, kind, mutation string }{
-		{"suspended-url", "saved_url", `UPDATE control.public_urls SET lifecycle_state='suspended',suspended_at=$2 WHERE id=$1`},
-		{"deleted-url", "saved_url", `UPDATE control.public_urls SET lifecycle_state='deleted',deleted_at=$2,request_digest_ciphertext=NULL,request_digest_storage_key_id=NULL WHERE id=$1`},
-		{"released-url-domain", "saved_url", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.public_urls WHERE id=$1)`},
-		{"disabled-service", "private_service", `UPDATE control.private_services SET enabled=false WHERE id=$1`},
-		{"deleted-service", "private_service", `UPDATE control.private_services SET deleted_at=$2 WHERE id=$1`},
-		{"released-service-domain", "private_service", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.private_services WHERE id=$1)`},
+		{"suspended-url", "saved_public_url", `UPDATE control.public_urls SET lifecycle_state='suspended',suspended_at=$2 WHERE id=$1`},
+		{"deleted-url", "saved_public_url", `UPDATE control.public_urls SET lifecycle_state='deleted',deleted_at=$2,request_digest_ciphertext=NULL,request_digest_storage_key_id=NULL WHERE id=$1`},
+		{"released-url-domain", "saved_public_url", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.public_urls WHERE id=$1)`},
+		{"disabled-service", "service", `UPDATE control.services SET enabled=false WHERE id=$1`},
+		{"deleted-service", "service", `UPDATE control.services SET deleted_at=$2 WHERE id=$1`},
+		{"released-service-domain", "service", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.services WHERE id=$1)`},
 		{"released-namespace-domain", "namespace", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=$1`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -30,16 +30,16 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 			scope := PublisherScope{TeamID: r.TeamID, Kind: test.kind}
 			var resource string
 			switch test.kind {
-			case "saved_url":
+			case "saved_public_url":
 				u := createTestPublicURL(t, d, r, now)
 				scope.PublicURLID, resource = u.ID, u.ID
-			case "private_service":
-				s, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", now)
+			case "service":
+				s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				scope.PrivateServiceID, resource = s.ID, s.ID
-				if _, err := d.pool.Exec(t.Context(), `UPDATE control.private_services SET domain_id=$2 WHERE id=$1`, s.ID, r.DomainID); err != nil {
+				scope.ServiceID, resource = s.ID, s.ID
+				if _, err := d.pool.Exec(t.Context(), `UPDATE control.services SET domain_id=$2 WHERE id=$1`, s.ID, r.DomainID); err != nil {
 					t.Fatal(err)
 				}
 			case "namespace":
@@ -55,7 +55,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 				t.Fatal(err)
 			}
 			request := func(action string, epoch int64) PublisherRuntimeRequest {
-				proof, err := publisheridentity.Sign(p.ID, p.KeyID, publisheridentity.RuntimeScope(p.GrantID, action, strings.Repeat("a", 32), epoch), "https://control.example/v1/publisher-runtime", key, now)
+				proof, err := publisherproof.Sign(p.ID, p.KeyID, publisherproof.RuntimeScope(p.GrantID, action, strings.Repeat("a", 32), epoch), "https://control.example/v1/publisher-runtime", key, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -98,7 +98,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "runtime_group_key")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "remote", Target: "api.internal:3000"}}}
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"remote": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "remote", Target: "api.internal:3000"}}}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	m := replica.member
 	request := func(action, run, kid string, epoch int64, key ed25519.PrivateKey) PublisherRuntimeRequest {
-		proof, err := publisheridentity.Sign(m.PublisherIdentityID, kid, publisheridentity.RuntimeScope(m.GroupID, action, run, epoch), "https://control.example/v1/publisher-runtime", key, now)
+		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.GroupID, action, run, epoch), "https://control.example/v1/publisher-runtime", key, now)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -19,12 +19,12 @@ schemas:
         items:
           type: object
           additionalProperties: false
-          required: [id, service, protocol, managed_tls]
+          required: [id, service, protocol, endpoint]
           properties:
             id: { type: string }
             service: { type: string }
-            protocol: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceProtocol" }
-            managed_tls: { $ref: "../openapi.yaml#/components/schemas/ManagedServiceTLS" }
+            protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+            endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
             kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
   WorkloadIngressAssignments:
     type: object
@@ -40,18 +40,10 @@ schemas:
           type: object
           additionalProperties: false
           required:
-            [
-              id,
-              private_service_id,
-              credential,
-              expires_at,
-              ingress_id,
-              ingress_address,
-              tls_server_name,
-            ]
+            [id, service_id, credential, expires_at, ingress_id, ingress_address, tls_server_name]
           properties:
             id: { type: string }
-            private_service_id: { type: string }
+            service_id: { type: string }
             credential: { type: string }
             expires_at: { type: string, format: date-time }
             ingress_id: { type: string }

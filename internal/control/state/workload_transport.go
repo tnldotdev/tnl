@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 
 // selection authenticates only the workload credential, never a human session.
 // the selected run still needs a new source-bound admission at ingress.
-func (d *Database) SelectWorkloadServiceRun(ctx context.Context, credential, service string, now time.Time) (PrivateServiceSelection, error) {
+func (d *Database) SelectWorkloadServiceRun(ctx context.Context, credential, service string, now time.Time) (ServiceSelection, error) {
 	auth, err := d.CheckWorkloadService(ctx, credential, service, now)
 	if err != nil {
-		return PrivateServiceSelection{}, err
+		return ServiceSelection{}, err
 	}
 	return d.SelectVisitorServiceRun(ctx, service, auth.Subject, now)
 }
@@ -32,9 +32,9 @@ func (d *Database) GetWorkloadIngressTransportTrust(ctx context.Context, credent
 	var revision int64
 	var service string
 	var expires time.Time
-	err = tx.QueryRow(ctx, `SELECT private_service_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at FROM control.private_connector_sessions WHERE id=$1 AND workload_session_id=$2 AND revoked_at IS NULL AND expires_at>$3 FOR SHARE`, session, id, now).Scan(&service, &lease.IngressID, &lease.IngressRunID, &revision, &expires)
+	err = tx.QueryRow(ctx, `SELECT service_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at FROM control.connector_sessions WHERE id=$1 AND workload_session_id=$2 AND revoked_at IS NULL AND expires_at>$3 FOR SHARE`, session, id, now).Scan(&service, &lease.IngressID, &lease.IngressRunID, &revision, &expires)
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	until, _, err := VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
 	if err != nil {
@@ -46,7 +46,7 @@ func (d *Database) GetWorkloadIngressTransportTrust(ctx context.Context, credent
 		return result, err
 	}
 	if current.Draining {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	material, err := d.ingressTransportMaterial(ctx, tx, current, now)
 	if err != nil {
@@ -75,11 +75,11 @@ func (d *Database) ReleaseWorkloadIngressAssignment(ctx context.Context, credent
 		return publisherLookupError(err, ErrWorkloadDenied)
 	}
 	var released string
-	err = tx.QueryRow(ctx, `UPDATE control.private_connector_sessions SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND workload_session_id=$2 RETURNING id`, session, id, now).Scan(&released)
+	err = tx.QueryRow(ctx, `UPDATE control.connector_sessions SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND workload_session_id=$2 RETURNING id`, session, id, now).Scan(&released)
 	if err != nil {
-		return publisherLookupError(err, ErrPrivateServiceAccess)
+		return publisherLookupError(err, ErrServiceAccess)
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.private_visitor_streams SET closed_at=COALESCE(closed_at,$2) WHERE connector_session_id=$1`, session, now); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.connector_visitor_streams SET closed_at=COALESCE(closed_at,$2) WHERE connector_session_id=$1`, session, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

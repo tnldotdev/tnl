@@ -1,4 +1,4 @@
-package devoidc_test
+package oidc_test
 
 import (
 	"context"

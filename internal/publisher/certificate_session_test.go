@@ -13,11 +13,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
@@ -103,7 +103,7 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	control.ready = func() error {
 		readyAttempts++
 		if readyAttempts == 1 {
-			return controlclient.ErrStatusConflict
+			return clientcontrol.ErrStatusConflict
 		}
 		return nil
 	}
@@ -132,9 +132,9 @@ func TestRunSessionDoesNotRetryReadyCallbackAfterControlAccepts(t *testing.T) {
 	defer cancel()
 	err := runSession(ctx, config, control.setup, func() error {
 		callbackAttempts++
-		return controlclient.ErrStatusConflict
+		return clientcontrol.ErrStatusConflict
 	})
-	if !errors.Is(err, controlclient.ErrStatusConflict) || readyAttempts != 1 || callbackAttempts != 1 {
+	if !errors.Is(err, clientcontrol.ErrStatusConflict) || readyAttempts != 1 || callbackAttempts != 1 {
 		t.Fatalf("ready calls = %d, callback calls = %d, session error = %v", readyAttempts, callbackAttempts, err)
 	}
 }
@@ -167,7 +167,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			control, route, _ := newCertificateTransactionTest(t)
 			control.setup.CertificatePlan.ChallengeMethod = controlv1.Dns01
-			state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
+			state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherIdentityID(), control.setup.CertificatePlan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 					control.store = store
 					controls[slot] = control
-					cache, err := store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
+					cache, err := store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherIdentityID(), control.setup.CertificatePlan)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -404,7 +404,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					wantSessionError = errCertificateExpired
 					time.Sleep(time.Until(original.Certificate.Leaf.NotAfter))
 					synctest.Wait()
-					cache, err := store.CertificatesForPublisher("team_1", controls[0].PublisherID(), namespaceCertificateTestPlan())
+					cache, err := store.CertificatesForPublisher("team_1", controls[0].PublisherIdentityID(), namespaceCertificateTestPlan())
 					if err != nil {
 						t.Fatal(err)
 					}

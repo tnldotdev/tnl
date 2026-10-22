@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -108,7 +108,7 @@ func TestManagedDNSOwnerAttemptPreservesPersistedProviderFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "saved", true: "save-failed"}[saveFails], func(t *testing.T) {
 			ctx, record := workerobservation.Start(t)
 			now := time.Now().UTC()
-			store := &managedDNSStoreStub{work: controlstate.ManagedEndpointDNSWork{Hostname: "api.example.test", OwnerID: "group", State: controlstate.PublicURLDNSPending, Attempts: 1, LastError: "old"}}
+			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.example.test", OwnerID: "group", State: controlstate.PublicURLDNSPending, Attempts: 1, LastError: "old"}}
 			if saveFails {
 				store.saveErr = errors.New("private-provider-cause save")
 			}
@@ -118,15 +118,15 @@ func TestManagedDNSOwnerAttemptPreservesPersistedProviderFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker.now = func() time.Time { return now }
-			found, err := worker.processManagedEndpoint(ctx, now)
+			found, err := worker.processServiceEndpoint(ctx, now)
 			if !found || (err != nil) != saveFails || store.saves != 1 || store.saved.LastError != string(failure.ServerDNSFailed) || !store.saved.AvailableAt.After(now) || store.saved.State != controlstate.PublicURLDNSPending {
 				t.Fatal("provider retry state lost", found, err, store.saved)
 			}
-			record.AssertFailure(t, "dns.managed_service.attempt", "error", string(failure.ServerDNSFailed))
+			record.AssertFailure(t, "dns.service.attempt", "error", string(failure.ServerDNSFailed))
 			if !saveFails {
 				store.work = store.saved
 				provider.err = nil
-				if _, err := worker.processManagedEndpoint(ctx, now); err != nil || store.saved.LastError != "" || store.saved.State != controlstate.PublicURLDNSPublished {
+				if _, err := worker.processServiceEndpoint(ctx, now); err != nil || store.saved.LastError != "" || store.saved.State != controlstate.PublicURLDNSPublished {
 					t.Fatal("retry did not recover", err, store.saved)
 				}
 			}

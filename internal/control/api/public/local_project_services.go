@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request, project, service string, params controlv1.GetLocalProjectServiceParams) {
@@ -90,7 +90,7 @@ func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, result)
 }
 
-func (h *handler) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.PrivateConnectorSessionID) {
+func (h *handler) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.ConnectorSessionID) {
 	principal, ok := h.authorizeRouteReads(w, r)
 	if !ok {
 		return

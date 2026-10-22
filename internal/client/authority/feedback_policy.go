@@ -1,11 +1,11 @@
-package authorityclient
+package authority
 
 import (
 	"context"
 	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func (c *Client) GetTeamFeedbackPolicy(ctx context.Context, teamID string) (authorityv1.TeamFeedbackPolicy, error) {

@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
 func InspectionRoots(ctx context.Context, project string) (string, string, error) {
-	worktree, err := projectconfig.ResolveWorktree(ctx, project)
+	worktree, err := clientproject.ResolveWorktree(ctx, project)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve inspection history checkout: %w", err)
 	}
-	return worktree.PrimaryCheckoutRoot(), projectconfig.SharedProjectIdentity(worktree, project), nil
+	return worktree.PrimaryCheckoutRoot(), clientproject.SharedProjectIdentity(worktree, project), nil
 }
 
 func NewInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, mode config.InspectionMode, settings ...*config.Inspection) (*clientstate.InspectionRecorder, error) {

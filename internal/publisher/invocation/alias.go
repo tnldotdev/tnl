@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -19,12 +19,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func prepareAliasServices(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, alias config.Alias, server, team string, authenticated *clientauth.Client) (publisherServices, error) {
+func prepareAliasServices(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, alias config.Alias, server, team string, authenticated *auth.Client) (publisherServices, error) {
 	effective, err := project.EffectiveService(alias.Service)
 	if err != nil {
 		return publisherServices{}, err
@@ -90,7 +90,7 @@ func CheckAliasHostnamePolicy(policy AliasHostnamePolicy) error {
 
 func aliasScope(project projectConfiguration, name string, services publisherServices) clientstate.AliasScope {
 	return clientstate.AliasScope{Server: services.authenticated.ServerEndpoint,
-		ProjectKey: projectconfig.SharedProjectIdentity(project.Worktree, project.Root), TeamID: services.teamID,
+		ProjectKey: clientproject.SharedProjectIdentity(project.Worktree, project.Root), TeamID: services.teamID,
 		MembershipID: services.membershipID, Namespace: services.namespace, Name: name}
 }
 
@@ -104,13 +104,13 @@ func registerProjectAlias(ctx context.Context, state *clientstate.Database, proj
 }
 
 type AliasChoice struct {
-	Project       projectconfig.Project
+	Project       clientproject.Project
 	Name          string
 	Server        string
 	Team          string
 	Use           bool
 	Force         bool
-	Authenticated *clientauth.Client
+	Authenticated *auth.Client
 }
 
 func ChooseAlias(ctx context.Context, state *clientstate.Database, flags AliasChoice) (clientstate.AliasSelection, error) {
@@ -249,29 +249,29 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 	return func() { cancel(); workers.Wait() }
 }
 
-func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, policy resolvedVisitorAccess, report func(publisher.Event, error)) integrationurls.Publisher {
+func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, policy resolvedVisitorAccess, report func(publisher.Event, error)) integrations.Publisher {
 	cfg := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
 	cfg.AccessMode, cfg.Purpose, cfg.ServiceProtocol = policy.access, controlv1.Alias, controlv1.Http
 	cfg.ControlURL = services.authenticated.ServerEndpoint
 	cfg.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	cfg.TargetOptions, cfg.TargetTLSName, cfg.ResolveTarget = base.TargetOptions, base.TargetTLSName, base.ResolveTarget
 	cfg.Mounts, cfg.ObserveResponse, cfg.AdmitRequest = base.Mounts, base.ObserveResponse, base.AdmitRequest
-	worker := integrationurls.AliasPublisher(state, services.state, selection, tunnelID, cfg, report)
+	worker := integrations.AliasPublisher(state, services.state, selection, tunnelID, cfg, report)
 	prepare := worker.Prepare
-	worker.Prepare = func(ctx context.Context) (integrationurls.Snapshot, error) {
+	worker.Prepare = func(ctx context.Context) (integrations.Snapshot, error) {
 		snapshot, err := prepare(ctx)
 		if err != nil {
-			return integrationurls.Snapshot{}, err
+			return integrations.Snapshot{}, err
 		}
 		// the elected, selected worker prepares saved state before handing the
 		// run to an exact grant. targets and app hooks remain local to this run.
 		native, err := selectNativeProjectPublisher(ctx, services, snapshot.Config)
 		if err != nil {
-			return integrationurls.Snapshot{}, err
+			return integrations.Snapshot{}, err
 		}
 		snapshot.Config.Control = nativePublicationControl(native, services.routes)
-		snapshot.Config.PublisherID = native.PublisherID()
-		snapshot.Config.PreserveSavedURLTarget = true
+		snapshot.Config.PublisherIdentityID = native.PublisherIdentityID()
+		snapshot.Config.PreserveSavedPublicURLTarget = true
 		return snapshot, nil
 	}
 	return worker

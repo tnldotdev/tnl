@@ -1,6 +1,6 @@
 //go:build unix
 
-package tnldruntime
+package daemon
 
 import (
 	"os/exec"

@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 const testOIDCIssuer = "https://identity.fixture.test"
@@ -102,25 +102,25 @@ func cleanupIntegrationHTTPServer(t *testing.T, server *httptest.Server, owner *
 	})
 }
 
-func (f *runtimeTopology) own(role tnldconfig.Role, p *integrationProcess) {
+func (f *runtimeTopology) own(role daemonconfig.Role, p *integrationProcess) {
 	switch role {
-	case tnldconfig.RoleIngress:
+	case daemonconfig.RoleIngress:
 		f.ingress = append(f.ingress, p)
-	case tnldconfig.RoleRelay:
+	case daemonconfig.RoleRelay:
 		f.relays = append(f.relays, p)
 	default:
 		f.controls = append(f.controls, p)
 	}
 }
 
-func startIntegrationProcess(t *testing.T, cfg tnldconfig.Config, acmeHTTPClient, serviceHTTPClient *http.Client) *integrationProcess {
+func startIntegrationProcess(t *testing.T, cfg daemonconfig.Config, acmeHTTPClient, serviceHTTPClient *http.Client) *integrationProcess {
 	t.Helper()
 	return startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		acmeHTTPClient: acmeHTTPClient, serviceHTTPClient: serviceHTTPClient,
 	})
 }
 
-func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, options integrationProcessOptions) *integrationProcess {
+func startIntegrationProcessWithOptions(t *testing.T, cfg daemonconfig.Config, options integrationProcessOptions) *integrationProcess {
 	t.Helper()
 	if cfg.DNSProviderEnabled() && options.dns == nil {
 		endpoint, err := url.Parse(os.Getenv("AWS_ENDPOINT_URL_ROUTE_53"))
@@ -328,8 +328,8 @@ func unusedUDPAddress(t *testing.T) string {
 	return address
 }
 
-func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
-	return tnldconfig.Config{
+func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig.Config {
+	return daemonconfig.Config{
 		Role: role, MetricsListen: metricsAddress,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		PublicURLCertificateWorkers:      4,
@@ -343,9 +343,9 @@ func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Con
 	}
 }
 
-func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) tnldconfig.Config {
+func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) daemonconfig.Config {
 	t.Helper()
-	cfg := splitTestConfig(tnldconfig.RoleRelay, unusedTCPAddress(t))
+	cfg := splitTestConfig(daemonconfig.RoleRelay, unusedTCPAddress(t))
 	cfg.ControlHostname = controlHostname
 	cfg.ClusterSecret = testClusterSecret
 	cfg.RelayServiceID = relayServiceID

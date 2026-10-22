@@ -13,14 +13,14 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func privateLifecycleHeader() tunnelv1.PrivateForwardingHeader {
-	return tunnelv1.PrivateForwardingHeader{PrivateStreamHeader: tunnelv1.PrivateStreamHeader{
-		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateForwardingStream,
-		PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 3,
+func privateLifecycleHeader() tunnelv1.ServiceForwardingHeader {
+	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
+		ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2,
 		Direct:   &tunnelv1.DirectAdmission{IngressID: "ingress", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 8443},
 		SourceIP: "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
@@ -32,13 +32,13 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 	header := privateLifecycleHeader()
 	lease := relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
 		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt}
-	connection := &privateConnection{ref: tunnel.PrivateForwardingRef(header), lease: lease}
-	registry := NewPrivateRegistry()
+	connection := &serviceConnection{ref: tunnel.ServiceForwardingRef(header), lease: lease}
+	registry := NewServiceRegistry()
 	registry.connections[header.PublisherConnectionID] = connection
 	if got, ok := registry.candidate(header, lease, time.Now()); !ok || got != connection {
 		t.Fatal("exact private assignment was not selected")
 	}
-	for _, field := range []string{"PrivateServiceID", "PrivateRunID", "RunNumber", "PublisherConnectionID", "ConnectionSlot", "ConnectionAssignmentRevision", "RelayServiceID", "RelayID", "RelayRunID", "RelayLeaseRevision"} {
+	for _, field := range []string{"ServiceID", "ServiceRunID", "RunNumber", "PublisherConnectionID", "ConnectionSlot", "ConnectionAssignmentRevision", "RelayServiceID", "RelayID", "RelayRunID", "RelayLeaseRevision"} {
 		for _, missing := range []bool{false, true} {
 			name := "substitute/"
 			if missing {
@@ -93,8 +93,8 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 }
 
 func TestPrivateClaimRejectsChangedAndMissingResponseIdentity(t *testing.T) {
-	ref := tunnel.PrivateForwardingRef(privateLifecycleHeader())
-	claimed := relayv1.PrivatePublisherConnection{PrivateServiceId: ref.PrivateServiceID, PrivateRunId: ref.PrivateRunID, RunNumber: int64(ref.RunNumber),
+	ref := tunnel.ServiceForwardingRef(privateLifecycleHeader())
+	claimed := relayv1.ServicePublisherConnection{ServiceId: ref.ServiceID, ServiceRunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber),
 		PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), RelayServiceId: ref.RelayServiceID}
 	if err := validatePrivateClaim(ref, claimed); err != nil {
 		t.Fatal(err)
@@ -124,14 +124,14 @@ func TestPrivateClaimRejectsChangedAndMissingResponseIdentity(t *testing.T) {
 	}
 }
 
-func privateLifecycleFixture(t *testing.T) (*privateConnection, *tunnel.Session, *PrivateRegistry, tunnelv1.PrivateForwardingHeader) {
+func privateLifecycleFixture(t *testing.T) (*serviceConnection, *tunnel.Session, *ServiceRegistry, tunnelv1.ServiceForwardingHeader) {
 	t.Helper()
 	header := privateLifecycleHeader()
-	ref := tunnel.PrivateForwardingRef(header)
+	ref := tunnel.ServiceForwardingRef(header)
 	publisher, relay := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
-		Role: tunnelv1.Publisher, Credential: "private-publisher", PrivateConnection: &ref})
-	c := &privateConnection{ref: ref, paths: newStreamLifetime(relay)}
-	registry := NewPrivateRegistry()
+		Role: tunnelv1.Publisher, Credential: "private-publisher", ServiceConnection: &ref})
+	c := &serviceConnection{ref: ref, paths: newStreamLifetime(relay)}
+	registry := NewServiceRegistry()
 	if err := registry.insert(c); err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +139,11 @@ func privateLifecycleFixture(t *testing.T) (*privateConnection, *tunnel.Session,
 	return c, publisher, registry, header
 }
 
-func openPrivateLifecycle(ctx context.Context, c *privateConnection, h tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
+func openPrivateLifecycle(ctx context.Context, c *serviceConnection, h tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
 	if err := c.paths.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.paths.session.OpenPrivateForwardingStream(ctx, h)
+	stream, err := c.paths.session.OpenServiceForwardingStream(ctx, h)
 	return c.paths.finishOpen(stream, err)
 }
 
@@ -164,7 +164,7 @@ func TestPrivateLifecycleCloseAndForcedDrainInterruptPendingOpen(t *testing.T) {
 				}
 				return err
 			})
-			incoming, err := publisher.AcceptPrivateForwardingStream(ctx)
+			incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,9 +205,9 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	c, publisher, registry, header := privateLifecycleFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	peer := make(chan *tunnel.IncomingPrivateForwardingStream, 1)
+	peer := make(chan *tunnel.IncomingServiceForwardingStream, 1)
 	accepted := relayWorker(t, func() { _ = publisher.Close() }, func() error {
-		incoming, err := publisher.AcceptPrivateForwardingStream(ctx)
+		incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
@@ -269,7 +269,7 @@ func TestPrivateLifecycleDrainRejectsLatePendingAcknowledgement(t *testing.T) {
 		}
 		return err
 	})
-	incoming, err := publisher.AcceptPrivateForwardingStream(ctx)
+	incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

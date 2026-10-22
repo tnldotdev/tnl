@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type EnrollmentAuthority interface {
@@ -100,11 +100,11 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 	return native, identity, nil
 }
 
-func LoadNative(ctx context.Context, state *clientstate.Store, control NativeControl, authority AssertionExchanger, publisherID string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
-	if !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
+func LoadNative(ctx context.Context, state *clientstate.Store, control NativeControl, authority AssertionExchanger, publisherIdentityID string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+	if !opaqueid.Valid(publisherIdentityID, opaqueid.PublisherIdentityPrefix) {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	saved, found, err := state.PublisherIdentity(ctx, publisherID)
+	saved, found, err := state.PublisherIdentity(ctx, publisherIdentityID)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
@@ -112,7 +112,7 @@ func LoadNative(ctx context.Context, state *clientstate.Store, control NativeCon
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != publisherID || saved.ID != publisherID {
+	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != publisherIdentityID || saved.ID != publisherIdentityID {
 		return nil, identity, ErrScope
 	}
 	native, err := NewNative(control, authority, identity, saved.SigningKey)

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ecdsa"
@@ -17,7 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, applied AppliedProjectConfiguration, run PrivateRunState, now time.Time) {
+func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigurationRequest, applied AppliedProjectConfiguration, run ServiceRunState, now time.Time) {
 	t.Helper()
 	ctx := t.Context()
 	id := func(prefix string) string {
@@ -43,15 +43,15 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	admit := func() (DirectVisitorAdmission, error) {
 		return d.AdmitDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, source, now)
 	}
-	if _, err = admit(); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = admit(); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private endpoint admitted direct traffic", err)
 	}
 	setPublic := func(public bool) {
 		t.Helper()
 		r.DNSAutomation = true
-		group := r.Configuration.Publishers["production"]
+		group := r.Configuration.PublisherGroups["production"]
 		group.Public = public
-		r.Configuration.Publishers["production"] = group
+		r.Configuration.PublisherGroups["production"] = group
 		r.ExpectedRevision = applied.Revision
 		applied, err = d.ApplyProjectConfiguration(ctx, r)
 		if err != nil {
@@ -62,7 +62,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_ports='{}' WHERE ingress_id=$1`, lease.IngressID); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := d.ClaimManagedEndpointDNSWork(ctx, "before-exposure", now, time.Minute); err != nil || found {
+	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "before-exposure", now, time.Minute); err != nil || found {
 		t.Fatalf("public DNS preceded an exposed port: found=%t error=%v", found, err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_ports=ARRAY[$2::int] WHERE ingress_id=$1`, lease.IngressID, port); err != nil {
@@ -72,17 +72,17 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := d.ClaimManagedEndpointDNSWork(ctx, "partial-pool", now, time.Minute); err != nil || found {
+	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "partial-pool", now, time.Minute); err != nil || found {
 		t.Fatalf("public DNS preceded complete pool exposure: found=%t error=%v", found, err)
 	}
 	if _, err := d.BeginIngressDrain(ctx, other.IngressLeaseIdentity, now, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	publicDNS, found, err := d.ClaimManagedEndpointDNSWork(ctx, "after-exposure", now, time.Minute)
+	publicDNS, found, err := d.ClaimServiceEndpointDNSWork(ctx, "after-exposure", now, time.Minute)
 	if err != nil || !found || publicDNS.ServiceID != run.ServiceID || !publicDNS.Public {
 		t.Fatalf("ready native service DNS was not claimable: found=%t error=%v", found, err)
 	}
-	if err := d.ValidateManagedEndpointDNSWork(ctx, publicDNS, now); err != nil {
+	if err := d.ValidateServiceEndpointDNSWork(ctx, publicDNS, now); err != nil {
 		t.Fatal(err)
 	}
 	admitted, err := admit()
@@ -93,7 +93,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if err != nil || retry.ServiceID != admitted.ServiceID || retry.RunID != admitted.RunID || retry.RunNumber != admitted.RunNumber || retry.ConnectionID != admitted.ConnectionID || !retry.ExpiresAt.Equal(admitted.ExpiresAt) || !reflect.DeepEqual(retry.Relays, admitted.Relays) {
 		t.Fatal("lost admission response changed its reservation", retry, err)
 	}
-	if err = d.PromoteDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, visitor, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if err = d.PromoteDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, visitor, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("promoted before visitor authentication", err)
 	}
 	deviceKey, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -108,10 +108,10 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		t.Fatal(err)
 	}
 	block, _ := pem.Decode([]byte(credential.CertificatePEM))
-	authorize := func(ip netip.Addr) (PrivateVisitorValidity, error) {
+	authorize := func(ip netip.Addr) (ServiceVisitorValidity, error) {
 		return d.AuthorizeServiceClientCertificate(ctx, run.ServiceID, run.RunID, run.Token, visitor, run.RunNumber, ip, block.Bytes, now)
 	}
-	if _, err = authorize(netip.MustParseAddr("192.0.2.45")); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = authorize(netip.MustParseAddr("192.0.2.45")); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("certificate moved to another source", err)
 	}
 	decision, err := authorize(source)
@@ -124,7 +124,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	}
 	wrong := lease.IngressLeaseIdentity
 	wrong.IngressRunID = id(opaqueid.IngressRunPrefix)
-	if err = d.PromoteDirectServiceVisitor(ctx, wrong, visitor, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if err = d.PromoteDirectServiceVisitor(ctx, wrong, visitor, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("another ingress promoted the visitor", err)
 	}
 	for range 2 {
@@ -139,7 +139,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if err = d.RevokeVisitorDevice(ctx, r.ActorID, device.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = authorize(source); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = authorize(source); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked certificate retained access", err)
 	}
 	status, err = d.DirectServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, now)
@@ -147,10 +147,10 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		t.Fatal("ingress did not observe revocation", status, err)
 	}
 	setPublic(false)
-	if err := d.ValidateManagedEndpointDNSWork(ctx, publicDNS, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
+	if err := d.ValidateServiceEndpointDNSWork(ctx, publicDNS, now); !errors.Is(err, ErrDNSPublicURLWorkStale) {
 		t.Fatalf("public DNS worker survived private transition: %v", err)
 	}
-	if _, err = admit(); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = admit(); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("stale direct endpoint remained admitted", err)
 	}
 	if err = d.CloseDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, visitor, now); err != nil {

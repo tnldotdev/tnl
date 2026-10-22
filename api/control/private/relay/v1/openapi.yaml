@@ -46,16 +46,16 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
-    PrivateServiceID:
-      $ref: "./schemas/private-connections.yaml#/schemas/PrivateServiceID"
-    PrivateRunID:
-      $ref: "./schemas/private-connections.yaml#/schemas/PrivateRunID"
-    PrivatePublisherConnectionClaim:
-      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnectionClaim"
-    PrivatePublisherConnection:
-      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnection"
-    PrivatePublisherConnectionTransition:
-      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnectionTransition"
+    ServiceID:
+      $ref: "./schemas/private-connections.yaml#/schemas/ServiceID"
+    ServiceRunID:
+      $ref: "./schemas/private-connections.yaml#/schemas/ServiceRunID"
+    ServicePublisherConnectionClaim:
+      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnectionClaim"
+    ServicePublisherConnection:
+      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnection"
+    ServicePublisherConnectionTransition:
+      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnectionTransition"
     Identifier:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     RelayRegistration:

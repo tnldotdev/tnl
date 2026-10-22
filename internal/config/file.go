@@ -184,23 +184,23 @@ func ValidateTNL(config TNL) error {
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
 	}
-	if len(config.Publishers) > 32 {
+	if len(config.PublisherGroups) > 32 {
 		return errors.New("publishers may contain at most 32 entries")
 	}
-	for name, group := range config.Publishers {
+	for name, group := range config.PublisherGroups {
 		if group.AWS != nil && (group.AWS.ReplicaCount() < 1 || group.AWS.ReplicaCount() > MaxPublisherReplicas) {
-			return fmt.Errorf("publishers.%s.aws.replicas must be between 1 and %d", name, MaxPublisherReplicas)
+			return fmt.Errorf("publisher_groups.%s.aws.replicas must be between 1 and %d", name, MaxPublisherReplicas)
 		}
 		if name == "local" || !naming.ValidServiceName(name) {
 			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
 		}
 		if group.Description != nil && (len(*group.Description) > 1024 || !utf8.ValidString(*group.Description)) {
-			return fmt.Errorf("publishers.%s.description must be valid UTF-8 of at most 1024 bytes", name)
+			return fmt.Errorf("publisher_groups.%s.description must be valid UTF-8 of at most 1024 bytes", name)
 		}
 		if group.Domain != nil {
 			domain, err := naming.CanonicalizeHostname(*group.Domain)
 			if err != nil || domain != *group.Domain {
-				return fmt.Errorf("publishers.%s.domain must be a canonical team domain", name)
+				return fmt.Errorf("publisher_groups.%s.domain must be a canonical team domain", name)
 			}
 		}
 	}
@@ -228,19 +228,24 @@ func ValidateTNL(config TNL) error {
 		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if group := PublisherName(service); group != "local" {
-			if _, found := config.Publishers[group]; !found {
-				return fmt.Errorf("services.%s.publisher: group %q is not configured", name, group)
+		if group := PublisherGroupName(service); group != "local" {
+			if _, found := config.PublisherGroups[group]; !found {
+				return fmt.Errorf("services.%s.publisher_group: group %q is not configured", name, group)
 			}
 			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
 				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
 			}
-			if service.HTTP != nil {
-				return fmt.Errorf("services.%s.http: remote publisher assignments do not support HTTP settings; use a local service", name)
+			if service.Tunnel != nil {
+				return fmt.Errorf("services.%s.public_url: named groups use http settings and the group's reachability", name)
 			}
+			if _, err := ResolveGroupHTTP(config.Tunnel, service.HTTP); err != nil {
+				return fmt.Errorf("services.%s.http: %w", name, err)
+			}
+		} else if service.HTTP != nil && (service.HTTP.Access != nil || service.HTTP.Limits != nil) {
+			return fmt.Errorf("services.%s.http: access and limits require a named publisher group; use public_url for local HTTPS", name)
 		}
-		if service.Publisher != nil && *service.Publisher == "" {
-			return fmt.Errorf("services.%s.publisher must not be empty", name)
+		if service.PublisherGroup != nil && *service.PublisherGroup == "" {
+			return fmt.Errorf("services.%s.publisher_group must not be empty", name)
 		}
 		savedName := ServiceName(name, service)
 		if !naming.ValidServiceName(savedName) {
@@ -255,7 +260,7 @@ func ValidateTNL(config TNL) error {
 		}
 		if Protocol(service) != "http" {
 			if service.Tunnel != nil {
-				return fmt.Errorf("services.%s: private services cannot use public_url settings", name)
+				return fmt.Errorf("services.%s: services cannot use public_url settings", name)
 			}
 		}
 		if service.HTTP != nil && Protocol(service) != "http" {
@@ -305,12 +310,55 @@ func ValidateTNL(config TNL) error {
 			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
 				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured HTTP service", name, prefix, mount.Service)
 			}
-			if PublisherName(config.Services[mount.Service]) != "local" {
+			if PublisherGroupName(config.Services[mount.Service]) != "local" {
 				return fmt.Errorf("services.%s.http.paths[%q]: mounted service must use the local publisher", name, prefix)
 			}
 		}
 	}
 	return nil
+}
+
+// ValidateGroupHTTP keeps group reachability separate from HTTP access and limits.
+func ValidateGroupHTTP(value *HTTPService) error {
+	if value == nil {
+		return nil
+	}
+	if value.Readiness != nil || len(value.Paths) != 0 || value.Open != nil {
+		return errors.New("named groups do not support readiness, path mounts, or browser opening")
+	}
+	if value.Access != nil {
+		if err := value.Access.Validate(); err != nil {
+			return err
+		}
+		if value.Access.VisitorMode() != "restricted" {
+			return errors.New("named groups require restricted HTTP access")
+		}
+	}
+	return validateLimits(&Limits{HTTP: value.Limits}, nil, "http")
+}
+
+// ResolveGroupHTTP applies explicit HTTP defaults without changing reachability.
+func ResolveGroupHTTP(defaults *Tunnel, value *HTTPService) (*HTTPService, error) {
+	if value == nil {
+		return nil, nil
+	}
+	result := *value
+	if defaults != nil {
+		if result.Access == nil {
+			result.Access = defaults.Access
+		}
+		limits := MergeLimits(defaults.Limits, &Limits{HTTP: result.Limits})
+		if limits != nil {
+			if limits.Traffic != nil {
+				return nil, errors.New("named groups do not support traffic-limit overrides")
+			}
+			result.Limits = limits.HTTP
+		}
+	}
+	if err := ValidateGroupHTTP(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func validateReadiness(value *Readiness) error {

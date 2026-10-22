@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
@@ -76,29 +76,29 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	}))
 	targetCA := newTestCertificateAuthority(t)
 	const targetHostname = "workload.private.integration.test"
-	target.TLS = privateRuntimeTLS(t, targetCA, targetHostname)
+	target.TLS = serviceRuntimeTLS(t, targetCA, targetHostname)
 	target.StartTLS()
 	t.Cleanup(target.Close)
-	targetTrust := managedHTTPTestTargetTrust(targetHostname, string(targetCA.certificatePEM))
-	group, private, protocol := "public", "private", controlv1.PrivateHttp
+	targetTrust := serviceHTTPTestTargetTrust(targetHostname, string(targetCA.certificatePEM))
+	group, private, protocol := "public", "private", controlv1.ServiceProtocolHTTP
 	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "other", "private"}, MaxDurationSeconds: 120}
 	policies := map[string]controlv1.ProjectWorkload{"test": policy, "provider": policy, "narrow": policy, "short": policy}
 	short := policy
 	short.MaxDurationSeconds = 8
 	policies["short"] = short
-	configuration := controlv1.ProjectConfiguration{Workloads: &policies, Publishers: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}, private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
-		"api":     {Publisher: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"other":   {Publisher: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
-		"private": {Publisher: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+	configuration := controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}, private: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{
+		"api":     {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+		"other":   {PublisherGroup: &group, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
+		"private": {PublisherGroup: &private, Protocol: &protocol, Target: target.URL, TargetTls: &targetTrust},
 	}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: configuration})
 	if err != nil {
 		t.Fatal(err)
 	}
 	startWorkloadPublishers(t, f, group, "tls-tcp")
-	newJob := func(name, execution string) *workloadclient.Client {
+	newJob := func(name, execution string) *workload.Client {
 		t.Helper()
-		job, err := workloadclient.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
+		job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,15 +115,15 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids := map[string]string{}
-	endpoints := map[string]controlv1.ManagedServiceTLS{}
+	endpoints := map[string]controlv1.ServiceEndpoint{}
 	for _, s := range inventory.Services {
-		ids[s.Service], endpoints[s.Service] = s.Id, s.ManagedTls
+		ids[s.Service], endpoints[s.Service] = s.Id, s.Endpoint
 	}
 	endpoint := func(name string) string {
 		e := endpoints[name]
 		return "https://" + net.JoinHostPort(e.Hostname, strconv.Itoa(e.Port))
 	}
-	newClient := func(name string, job *workloadclient.Client) *http.Client {
+	newClient := func(name string, job *workload.Client) *http.Client {
 		t.Helper()
 		verification := f.visitorRoots.Clone()
 		verification.ServerName = endpoints[name].Hostname
@@ -179,11 +179,11 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	_, _ = io.Copy(io.Discard, response.Body)
 	response.Body.Close()
 	session, _ := job.Session()
-	httpAsHuman, err := controlclient.New(f.controlConfig.ControlOrigin(), f.publicHTTP, credentials.AccessToken(session.Credential))
+	httpAsHuman, err := clientcontrol.New(f.controlConfig.ControlOrigin(), f.publicHTTP, credentials.AccessToken(session.Credential))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := httpAsHuman.GetProjectConfiguration(t.Context(), f.identity.teamID, "workload"); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err := httpAsHuman.GetProjectConfiguration(t.Context(), f.identity.teamID, "workload"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("HTTP credential gained management rights", err)
 	}
 	// an application response loss cannot cause arbitrary POST-body replay.
@@ -192,7 +192,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if once.Load() != 1 {
 		t.Fatal("application body was retried")
 	}
-	openStream := func(job *workloadclient.Client) <-chan error {
+	openStream := func(job *workload.Client) <-chan error {
 		t.Helper()
 		streamClient := newClient("api", job)
 		streamClient.Timeout = 0

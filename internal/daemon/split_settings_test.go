@@ -1,13 +1,13 @@
-package tnldruntime
+package daemon
 
 import (
 	"testing"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func TestSplitProcessSettingsPreserveControlTLSIdentityAndDialAddress(t *testing.T) {
-	config := tnldconfig.Config{
+	config := daemonconfig.Config{
 		ControlHostname:       "control.example.com",
 		PrivateControlAddress: "control.internal:9443",
 	}

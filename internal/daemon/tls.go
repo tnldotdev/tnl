@@ -1,11 +1,11 @@
-package tnldruntime
+package daemon
 
 import (
 	"crypto/tls"
 	"crypto/x509"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func staticServerTLS(certificateFile, privateKeyFile string) (*tls.Config, error) {
@@ -16,7 +16,7 @@ func staticServerTLS(certificateFile, privateKeyFile string) (*tls.Config, error
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, nil
 }
 
-func relayTLSConfig(cfg tnldconfig.Config, fallback *tls.Config) (*tls.Config, error) {
+func relayTLSConfig(cfg daemonconfig.Config, fallback *tls.Config) (*tls.Config, error) {
 	if cfg.RelayTLSCertificateFile != "" {
 		return staticServerTLS(cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile)
 	}

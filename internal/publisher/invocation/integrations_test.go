@@ -11,8 +11,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationURLUsesTheSelectedPublicURLScope(t *testing.T) {
@@ -75,7 +75,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	}
 	defer tunnel.Finish(context.Background(), nil)
 	definition := config.Webhook{Service: "api", Path: "/hooks/event", Provider: "slack", Delivery: "selected"}
-	encoded, digest, err := integrationurls.DefinitionBytes(definition)
+	encoded, digest, err := integrations.DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 		t.Fatal(err)
 	}
 	fanout := config.Webhook{Service: "api", Path: "/hooks/fanout", Provider: "custom"}
-	fanoutBytes, _, err := integrationurls.DefinitionBytes(fanout)
+	fanoutBytes, _, err := integrations.DefinitionBytes(fanout)
 	if err != nil {
 		t.Fatal(err)
 	}

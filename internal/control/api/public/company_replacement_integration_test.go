@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"crypto/ed25519"
@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type companyMembershipSnapshot struct {
@@ -116,7 +116,7 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	// the unattended publishers belong to the team; their admin creator will
 	// remain bound to A and lose membership access until explicitly rebound.
 	publicTeam, publicMember, privateTeam, privateMember := replacementPublications(t, f, team, founder.company, admin.company, admin.before)
-	client, err := authorityclient.New(f.server.URL, f.server.Client(), "")
+	client, err := clientauthority.New(f.server.URL, f.server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	if _, err = d.HeartbeatPublishRun(ctx, publicTeam.auth(), time.Now().UTC(), time.Hour, time.Hour); err != nil {
 		t.Fatal("team public run lost continuity after member rebind", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team private run lost continuity after member rebind", err)
 	}
 }
@@ -327,8 +327,8 @@ func (p replacementPublicPublication) auth() controlstate.PublishRunAuthenticati
 
 type replacementPrivatePublication struct {
 	publisher controlstate.PublisherIdentity
-	service   controlstate.PrivateServiceRecord
-	run       controlstate.PrivateRunState
+	service   controlstate.ServiceRecord
+	run       controlstate.ServiceRunState
 }
 
 func replacementPublicRun(t *testing.T, f *companyHTTPFixture, p controlstate.PublisherIdentity, key ed25519.PrivateKey, url controlstate.PublicURL, attempt string) controlstate.PublishRunSetup {
@@ -337,7 +337,7 @@ func replacementPublicRun(t *testing.T, f *companyHTTPFixture, p controlstate.Pu
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := publisheridentity.SignRun(key, url.ID, attempt)
+	proof, err := publisherproof.SignRun(key, url.ID, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,36 +418,36 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, key := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "saved_url", PublicURLID: u.ID}, ownership, "public-"+ownership)
+		p, key := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "saved_public_url", PublicURLID: u.ID}, ownership, "public-"+ownership)
 		return replacementPublicPublication{publisher: p, key: key, url: u, run: replacementPublicRun(t, f, p, key, u, "before-replacement")}
 	}
 	teamPublic, memberPublic := public("team"), public("member")
-	service, err := d.CreatePrivateService(actorCtx, team.ID, actor.IdentityID, "replacement-private", "replacement-private", time.Now().UTC(), controlstate.PrivateServiceMetadata{Protocol: "tcp", PublisherPool: true})
+	service, err := d.CreateServiceAt(actorCtx, team.ID, actor.IdentityID, "replacement-private", "replacement-private", controlstate.ServicePlacement{}, time.Now().UTC(), controlstate.ServiceMetadata{Protocol: "tcp", PublisherPool: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	private := func(ownership string) replacementPrivatePublication {
 		t.Helper()
-		p, _ := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "private_service", PrivateServiceID: service.ID}, ownership, "private-"+ownership)
-		prepared, err := d.PreparePrivateServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), service.PrivateServiceMetadata)
+		p, _ := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, ownership, "private-"+ownership)
+		prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), service.ServiceMetadata)
 		if err != nil {
 			t.Fatal(err)
 		}
-		run, err := d.StartManagedServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, p, time.Now().UTC())
+		run, err := d.StartServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, p, time.Now().UTC())
 		if err != nil {
 			t.Fatal(err)
 		}
 		managedcert.Install(t, d, prepared, run, time.Now().UTC())
 		for _, slot := range run.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err = d.ClaimPrivatePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, time.Now().UTC()); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, time.Now().UTC()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = d.ReadyPrivatePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, time.Now().UTC()); err != nil {
+			if _, err = d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, time.Now().UTC()); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if current, err := d.HeartbeatPrivateServiceRun(ctx, service.ID, run.RunID, run.Token, time.Now().UTC(), controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || current.State != "ready" {
+		if current, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || current.State != "ready" {
 			t.Fatal("private publication not ready", current, err)
 		}
 		return replacementPrivatePublication{publisher: p, service: service, run: run}
@@ -465,7 +465,7 @@ func checkReplacementPublications(t *testing.T, f *companyHTTPFixture, team, mem
 	if _, err := d.HeartbeatPublishRun(ctx, team.auth(), time.Now().UTC(), time.Hour, time.Hour); err != nil {
 		t.Fatal("team-owned public run depended on offboarded creator", err)
 	}
-	if _, err := d.HeartbeatPrivateServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team-owned private run depended on offboarded creator", err)
 	}
 	for _, run := range []struct {
@@ -475,20 +475,20 @@ func checkReplacementPublications(t *testing.T, f *companyHTTPFixture, team, mem
 		var closed bool
 		query := `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1`
 		if run.private {
-			query = `SELECT closed_at IS NOT NULL FROM control.private_service_runs WHERE id=$1`
+			query = `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`
 		}
 		if err := f.sql.QueryRow(ctx, query, run.id).Scan(&closed); err != nil || !closed {
 			t.Fatal("member-owned run survived replacement", run.id, closed, err)
 		}
 	}
-	assertion, err := publisheridentity.Sign(member.publisher.ID, member.publisher.KeyID, member.publisher.GrantID, "https://control.example/v1/publisher-token", member.key, time.Now().UTC())
+	assertion, err := publisherproof.Sign(member.publisher.ID, member.publisher.KeyID, member.publisher.GrantID, "https://control.example/v1/publisher-token", member.key, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.ExchangePublisherAssertion(ctx, member.publisher.ID, member.publisher.GrantID, "https://control.example/v1/publisher-token", assertion, "", time.Now().UTC()); !errors.Is(err, controlstate.ErrPublisherIdentity) {
 		t.Fatal("member-owned credential survived old-source suspension", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(ctx, privateMember.service.ID, privateMember.run.RunID, privateMember.run.Token, time.Now().UTC(), controlstate.PrivateRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(ctx, privateMember.service.ID, privateMember.run.RunID, privateMember.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatal("closed member-owned private run renewed", err)
 	}
 }

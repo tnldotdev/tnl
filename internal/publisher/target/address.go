@@ -8,10 +8,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func NormalizePrivateAddress(address string, protocol controlv1.PrivateServiceProtocol) (string, error) {
+func NormalizePrivateAddress(address string, protocol controlv1.ServiceProtocol) (string, error) {
 	if protocol == "http" {
 		return config.NormalizeHTTPServiceTarget(config.Service{}, address)
 	}
@@ -33,21 +33,21 @@ func NormalizePublicAddress(address string, protocol controlv1.PublicURLServiceP
 	return canonical, nil
 }
 
-func EnrolledAddress(route controlv1.PublicURL, selected string) (string, error) {
-	if route.ServiceProtocol != controlv1.Http {
-		if route.Target != "" {
+func EnrolledAddress(publicURL controlv1.PublicURL, selected string) (string, error) {
+	if publicURL.ServiceProtocol != controlv1.Http {
+		if publicURL.Target != "" {
 			return "", failure.Wrap("read enrolled URL target", failure.ServerResponseInvalid, errors.New("control returned a private TCP target"))
 		}
-		return NormalizePublicAddress(selected, route.ServiceProtocol)
+		return NormalizePublicAddress(selected, publicURL.ServiceProtocol)
 	}
 	if selected == "" {
-		selected = route.Target
+		selected = publicURL.Target
 	}
 	address, err := NormalizePublicAddress(selected, controlv1.Http)
 	if err != nil {
 		return "", err
 	}
-	if route.Target != "" && route.Target != address {
+	if publicURL.Target != "" && publicURL.Target != address {
 		return "", failure.Wrap("select enrolled target", failure.PublisherGrantMismatch, errors.New("HTTP target differs from saved URL"))
 	}
 	return address, nil

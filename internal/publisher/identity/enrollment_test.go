@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type lostEnrollmentResponse struct {
@@ -39,7 +39,7 @@ func TestEnrollmentResumesRecordedResultBeforePromotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := clientstate.PendingPublisherEnrollment{EnrollmentID: id, SelectionKind: "project", SelectionKey: "project-publisher:private:" + control.service.Id, PublicKey: fixture.private.Public().(ed25519.PublicKey), SigningKey: fixture.private, EnrollmentSecret: []byte(secret), ExpiresAt: time.Now().Add(time.Minute)}
+	pending := clientstate.PendingPublisherEnrollment{EnrollmentID: id, SelectionKind: "project", SelectionKey: "project-publisher:service:" + control.service.Id, PublicKey: fixture.private.Public().(ed25519.PublicKey), SigningKey: fixture.private, EnrollmentSecret: []byte(secret), ExpiresAt: time.Now().Add(time.Minute)}
 	if err := state.SavePendingPublisherEnrollment(t.Context(), pending); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +51,8 @@ func TestEnrollmentResumesRecordedResultBeforePromotion(t *testing.T) {
 	if err != nil || authority.calls != 0 || n == nil {
 		t.Fatal("recorded redemption was sent to the authority again", err)
 	}
-	*returned.PrivateServiceId = "changed-result"
-	if n.identity.privateServiceID != control.service.Id {
+	*returned.ServiceId = "changed-result"
+	if n.identity.serviceID != control.service.Id {
 		t.Fatal("returned enrollment result changed native grant scope")
 	}
 	selected, found, err := state.SelectedPublisherIdentity(t.Context(), pending.SelectionKind, pending.SelectionKey)
@@ -117,21 +117,21 @@ func TestEnsureOwnerRecoversPendingEnrollmentWithoutIssuingAnotherGrant(t *testi
 	url, _ := opaqueid.New(opaqueid.PublicURLPrefix)
 	enrollment, _ := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
 	secret := enrollment + ".one-use-secret"
-	control := &ownerEnrollmentControl{enrollment: controlv1.PublisherEnrollment{Id: enrollment, TeamId: "team", Kind: "saved_url", PublicUrlId: &url, EnrollmentKey: secret}}
-	authority := &lostEnrollmentResponse{result: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: "team", Kind: "saved_url", PublicUrlId: &url}}
-	route := controlv1.PublicURL{Id: url, TeamId: "team", CanonicalHostname: "oauth.example", Purpose: controlv1.Oauth, LifecycleState: controlv1.Enabled}
-	if _, _, err := EnsureOwner(t.Context(), state, control, authority, route); err == nil {
+	control := &ownerEnrollmentControl{enrollment: controlv1.PublisherEnrollment{Id: enrollment, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url, EnrollmentKey: secret}}
+	authority := &lostEnrollmentResponse{result: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
+	publicURL := controlv1.PublicURL{Id: url, TeamId: "team", CanonicalHostname: "oauth.example", Purpose: controlv1.Oauth, LifecycleState: controlv1.Enabled}
+	if _, _, err := EnsureOwner(t.Context(), state, control, authority, publicURL); err == nil {
 		t.Fatal("lost redemption response succeeded")
 	}
 	stored, found, err := state.PendingPublisherEnrollmentForSelection(t.Context(), "project", "owner-url:"+url)
 	if err != nil || !found || len(stored.ResultJSON) != 0 || string(stored.EnrollmentSecret) != secret {
 		t.Fatalf("pending enrollment entered public metadata: %v", err)
 	}
-	adapter, identity, err := EnsureOwner(t.Context(), state, control, authority, route)
+	adapter, identity, err := EnsureOwner(t.Context(), state, control, authority, publicURL)
 	if err != nil || adapter == nil || identity.GrantId != grant || control.calls != 1 || authority.calls != 2 {
 		t.Fatalf("pending owner enrollment did not reuse its key and one-use secret: %v", err)
 	}
-	if _, _, err := EnsureOwner(t.Context(), state, control, authority, route); err != nil || control.calls != 1 || authority.calls != 2 {
+	if _, _, err := EnsureOwner(t.Context(), state, control, authority, publicURL); err != nil || control.calls != 1 || authority.calls != 2 {
 		t.Fatalf("saved owner identity was reenrolled: %v", err)
 	}
 }
@@ -168,7 +168,7 @@ func TestEnrollmentPersistsKeyBeforeOneUseRedemption(t *testing.T) {
 	grant, _ := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	url, _ := opaqueid.New(opaqueid.PublicURLPrefix)
 	enrollment, _ := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
-	a := &lostEnrollmentResponse{result: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: "team", Kind: "saved_url", PublicUrlId: &url}}
+	a := &lostEnrollmentResponse{result: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
 	if _, _, err := EnrollNative(t.Context(), state, &unusedControl{}, a, enrollment+".secret"); err == nil {
 		t.Fatal("lost enrollment response succeeded")
 	}

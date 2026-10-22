@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type enrollment struct {
@@ -40,7 +40,7 @@ type Fixture struct {
 	VisitorDecisions                          atomic.Int32
 	mu                                        sync.Mutex
 	backend                                   *testutil.PublishingFixture
-	seed                                      *controlclient.Client
+	seed                                      *clientcontrol.Client
 	routes                                    map[string]controlv1.PublicURL
 	enrollments                               map[string]*enrollment
 	grants                                    map[string]*enrollment
@@ -60,7 +60,7 @@ type Fixture struct {
 func New(t *testing.T, hooks testutil.PublishingHooks) *Fixture {
 	t.Helper()
 	backend := testutil.NewPublishingFixture(t, testutil.PublishingHooks{Close: hooks.Close})
-	seed, err := controlclient.New(backend.URL, http.DefaultClient, credentials.AccessToken(backend.AccessToken))
+	seed, err := clientcontrol.New(backend.URL, http.DefaultClient, credentials.AccessToken(backend.AccessToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,22 +71,22 @@ func New(t *testing.T, hooks testutil.PublishingHooks) *Fixture {
 	return f
 }
 
-func (f *Fixture) Owner() (*controlclient.Client, error) {
-	return controlclient.New(f.URL, f.HTTP, credentials.AccessToken(f.OwnerToken))
+func (f *Fixture) Owner() (*clientcontrol.Client, error) {
+	return clientcontrol.New(f.URL, f.HTTP, credentials.AccessToken(f.OwnerToken))
 }
 
-func (f *Fixture) SavedURL(ctx context.Context, purpose controlv1.PublicURLPurpose, target string) (controlv1.PublicURL, error) {
+func (f *Fixture) SavedPublicURL(ctx context.Context, purpose controlv1.PublicURLPurpose, target string) (controlv1.PublicURL, error) {
 	protocol := controlv1.Http
 	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-	route, err := f.seed.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: "tm_0000000000000000000001", DomainId: f.DomainID, CanonicalHostname: string(purpose) + "." + f.Namespace, Target: target, Purpose: purpose, PublicUrlScope: controlv1.Member, ServiceProtocol: &protocol}, key)
+	publicURL, err := f.seed.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: "tm_0000000000000000000001", DomainId: f.DomainID, CanonicalHostname: string(purpose) + "." + f.Namespace, Target: target, Purpose: purpose, PublicUrlScope: controlv1.Member, ServiceProtocol: &protocol}, key)
 	if err != nil {
-		return route, err
+		return publicURL, err
 	}
-	route.ServiceProtocol = controlv1.Http
+	publicURL.ServiceProtocol = controlv1.Http
 	f.mu.Lock()
-	f.routes[route.Id] = route
+	f.routes[publicURL.Id] = publicURL
 	f.mu.Unlock()
-	return route, nil
+	return publicURL, nil
 }
 
 func (f *Fixture) NamespaceEnrollment(ctx context.Context) (string, error) {
@@ -136,7 +136,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		token := id + "." + base64.RawURLEncoding.EncodeToString(secret[:])
 		result := authorityv1.PublisherEnrollmentResult{ClientId: client, KeyId: key, GrantId: grant, TeamId: b.TeamId}
 		if b.PublicUrlId != nil {
-			result.Kind, result.PublicUrlId = "saved_url", b.PublicUrlId
+			result.Kind, result.PublicUrlId = "saved_public_url", b.PublicUrlId
 		} else if b.DomainId != nil {
 			namespace := f.Namespace
 			result.Kind, result.DomainId, result.Namespace = "namespace", b.DomainId, &namespace
@@ -183,7 +183,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			denied(w)
 			return
 		}
-		proof, err := publisheridentity.Verify(b.ClientAssertion, b.ClientId, e.result.KeyId, b.GrantId, f.URL+"/v1/publisher-token", e.public, time.Now())
+		proof, err := publisherproof.Verify(b.ClientAssertion, b.ClientId, e.result.KeyId, b.GrantId, f.URL+"/v1/publisher-token", e.public, time.Now())
 		if err != nil || f.replays[proof.ID] {
 			denied(w)
 			return
@@ -259,14 +259,14 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/publisher/public-url" {
-		if e.result.Kind != "saved_url" {
+		if e.result.Kind != "saved_public_url" {
 			denied(w)
 			return
 		}
 		f.mu.Lock()
-		route := f.routes[*e.result.PublicUrlId]
+		publicURL := f.routes[*e.result.PublicUrlId]
 		f.mu.Unlock()
-		write(w, route)
+		write(w, publicURL)
 		return
 	}
 	if r.Method == "POST" && r.URL.Path == "/v1/publisher/public-urls" {
@@ -280,24 +280,24 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		protocol, ephemeral := controlv1.Http, true
-		route, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: "eph-" + strings.ToLower(strings.TrimPrefix(b.InvocationId, opaqueid.InvocationPrefix)) + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
+		publicURL, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: "eph-" + strings.ToLower(strings.TrimPrefix(b.InvocationId, opaqueid.InvocationPrefix)) + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
 		if err != nil {
 			w.WriteHeader(502)
 			return
 		}
-		route.Ephemeral, route.ServiceProtocol = true, controlv1.Http
+		publicURL.Ephemeral, publicURL.ServiceProtocol = true, controlv1.Http
 		f.mu.Lock()
-		f.routes[route.Id] = route
+		f.routes[publicURL.Id] = publicURL
 		f.mu.Unlock()
 		f.Allocations.Add(1)
-		writeStatus(w, 201, route)
+		writeStatus(w, 201, publicURL)
 		return
 	}
 	if r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/v1/publisher/public-urls/") {
 		id := strings.TrimPrefix(r.URL.Path, "/v1/publisher/public-urls/")
 		f.mu.Lock()
-		route, found := f.routes[id]
-		if !found || e.result.Kind != "namespace" || !route.Ephemeral || !strings.HasSuffix(route.CanonicalHostname, "."+*e.result.Namespace) {
+		publicURL, found := f.routes[id]
+		if !found || e.result.Kind != "namespace" || !publicURL.Ephemeral || !strings.HasSuffix(publicURL.CanonicalHostname, "."+*e.result.Namespace) {
 			f.mu.Unlock()
 			denied(w)
 			return
@@ -311,13 +311,13 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/public-urls/") && strings.HasSuffix(r.URL.Path, "/publish-runs") {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/public-urls/"), "/publish-runs")
 		f.mu.Lock()
-		route, found := f.routes[id]
+		publicURL, found := f.routes[id]
 		f.mu.Unlock()
-		if !found || e.result.Kind == "saved_url" && id != *e.result.PublicUrlId || e.result.Kind == "namespace" && (!route.Ephemeral || !strings.HasSuffix(route.CanonicalHostname, "."+*e.result.Namespace)) {
+		if !found || e.result.Kind == "saved_public_url" && id != *e.result.PublicUrlId || e.result.Kind == "namespace" && (!publicURL.Ephemeral || !strings.HasSuffix(publicURL.CanonicalHostname, "."+*e.result.Namespace)) {
 			denied(w)
 			return
 		}
-		if _, err := publisheridentity.VerifyRun(e.public, r.Header.Get("Publisher-Run-Proof"), id, r.Header.Get("Idempotency-Key")); err != nil {
+		if _, err := publisherproof.VerifyRun(e.public, r.Header.Get("Publisher-Run-Proof"), id, r.Header.Get("Idempotency-Key")); err != nil {
 			denied(w)
 			return
 		}

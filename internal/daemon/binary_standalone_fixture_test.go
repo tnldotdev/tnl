@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
@@ -135,7 +135,7 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		serveEnvironment = append(serveEnvironment, "TNLD_MANAGED_URL_MODE="+modes[0])
 	}
 	owner := newBinaryTopology(t)
-	server := owner.start(t, tnldconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")
+	server := owner.start(t, daemonconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, server, metricsAddress, databaseURL)
 	stateDirectory := binaryStateDirectory(t)
 	clientEnvironment := integrationBinaryEnvironment(map[string]string{

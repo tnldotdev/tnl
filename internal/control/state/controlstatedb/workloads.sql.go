@@ -46,12 +46,12 @@ func (q *Queries) GetWorkloadSession(ctx context.Context, id string) (ControlWor
 }
 
 const listWorkloadSessionServices = `-- name: ListWorkloadSessionServices :many
-SELECT private_service_id,service FROM control.workload_session_services WHERE workload_session_id=$1 ORDER BY service
+SELECT service_id,service FROM control.workload_session_services WHERE workload_session_id=$1 ORDER BY service
 `
 
 type ListWorkloadSessionServicesRow struct {
-	PrivateServiceID string
-	Service          string
+	ServiceID string
+	Service   string
 }
 
 func (q *Queries) ListWorkloadSessionServices(ctx context.Context, workloadSessionID string) ([]ListWorkloadSessionServicesRow, error) {
@@ -63,7 +63,7 @@ func (q *Queries) ListWorkloadSessionServices(ctx context.Context, workloadSessi
 	var items []ListWorkloadSessionServicesRow
 	for rows.Next() {
 		var i ListWorkloadSessionServicesRow
-		if err := rows.Scan(&i.PrivateServiceID, &i.Service); err != nil {
+		if err := rows.Scan(&i.ServiceID, &i.Service); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -78,7 +78,7 @@ const visitorServiceConfiguration = `-- name: VisitorServiceConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service
 FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
-WHERE service.private_service_id=$1
+WHERE service.service_id=$1
 `
 
 type VisitorServiceConfigurationRow struct {
@@ -89,8 +89,8 @@ type VisitorServiceConfigurationRow struct {
 	Service                 string
 }
 
-func (q *Queries) VisitorServiceConfiguration(ctx context.Context, privateServiceID pgtype.Text) (VisitorServiceConfigurationRow, error) {
-	row := q.db.QueryRow(ctx, visitorServiceConfiguration, privateServiceID)
+func (q *Queries) VisitorServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (VisitorServiceConfigurationRow, error) {
+	row := q.db.QueryRow(ctx, visitorServiceConfiguration, serviceID)
 	var i VisitorServiceConfigurationRow
 	err := row.Scan(
 		&i.TeamID,

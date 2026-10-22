@@ -12,20 +12,20 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *http.Request, authorityv1.WorkloadSession)) *nativeConnectionBackend {
 	t.Helper()
 	id := "wls_" + strings.Repeat("s", 22)
 	team := "tm_" + strings.Repeat("t", 22)
-	ids := []string{"psvc_" + strings.Repeat("a", 22), "psvc_" + strings.Repeat("b", 22)}
+	ids := []string{"svc_" + strings.Repeat("a", 22), "svc_" + strings.Repeat("b", 22)}
 	now := time.Now()
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,19 +38,19 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 		}
 	}))
 	t.Cleanup(server.Close)
-	client, err := workloadclient.New(server.URL, server.Client())
+	client, err := workload.New(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "assertion", []string{"api", "db"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: connectionruntime.Context{Services: []string{"api", "db"}}, nativeConnectionSession: nativeConnectionSession{workload: client, deadline: session.ExpiresAt}, prepared: map[string]*preparedConnection{}, services: map[string]controlv1.PrivateService{}, metadata: projectmeta.PublicMetadata{Services: map[string]projectmeta.Service{}}, project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
+	b := &nativeConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, nativeConnectionSession: nativeConnectionSession{workload: client, deadline: session.ExpiresAt}, prepared: map[string]*preparedConnection{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
 	for i, name := range []string{"api", "db"} {
-		protocol := []controlv1.PrivateServiceProtocol{"http", "postgres"}[i]
-		b.services[name] = controlv1.PrivateService{Id: ids[i], Protocol: protocol, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: name + ".example.test", Port: 15443 + i}}
+		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
+		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}}
 	}
-	b.prepared["api"] = &preparedConnection{service: b.services["api"], ready: true, sessionID: id, connection: connectionruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443}}
+	b.prepared["api"] = &preparedConnection{service: b.services["api"], ready: true, sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443}}
 	return b
 }
 
@@ -90,7 +90,7 @@ func TestConnectionBackendPreparedReadSurvivesStalledSibling(t *testing.T) {
 }
 
 func TestConnectionApprovedMetadataRefreshRetainsExactServiceScope(t *testing.T) {
-	var endpoint controlv1.ManagedServiceTLS
+	var endpoint controlv1.ServiceEndpoint
 	var replacementID string
 	b := connectionBackendFixture(t, func(w http.ResponseWriter, r *http.Request, session authorityv1.WorkloadSession) {
 		if r.URL.Path != "/v1/workload/services" {
@@ -102,19 +102,19 @@ func TestConnectionApprovedMetadataRefreshRetainsExactServiceScope(t *testing.T)
 		if replacementID != "" {
 			id = replacementID
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": id, "service": "api", "protocol": "http", "managed_tls": endpoint}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": id, "service": "api", "protocol": "http", "endpoint": endpoint}}})
 	})
 	approved := b.services["api"]
-	endpoint = *approved.ManagedTls
+	endpoint = *approved.Endpoint
 	endpoint.Hostname, endpoint.Port = "updated.example.test", 25443
 	fresh, err := b.refreshService(t.Context(), "api", approved, b.workload)
-	if err != nil || fresh.Id != approved.Id || fresh.ManagedTls.Hostname != endpoint.Hostname || b.PublicRuntime().Services["api"].Hostname != endpoint.Hostname {
+	if err != nil || fresh.Id != approved.Id || fresh.Endpoint.Hostname != endpoint.Hostname || b.ProjectRuntime().Services["api"].Hostname != endpoint.Hostname {
 		t.Fatal("approved endpoint stayed stale", err)
 	}
-	if _, err := b.Prepared("api"); !errors.Is(err, connectionruntime.ErrUnprepared) {
+	if _, err := b.Prepared("api"); !errors.Is(err, connectorruntime.ErrUnprepared) {
 		t.Fatal("new metadata was paired with an old transport", err)
 	}
-	replacementID = "psvc_" + strings.Repeat("c", 22)
+	replacementID = "svc_" + strings.Repeat("c", 22)
 	if _, err := b.refreshService(t.Context(), "api", fresh, b.workload); err == nil {
 		t.Fatal("metadata refresh broadened the session's service IDs")
 	}
@@ -139,7 +139,7 @@ func TestConnectionCleanupRevokesSessionWhileFailedReleasesUseOneBudget(t *testi
 			<-b.lifetime.Done()
 			// use the production workload HTTP release, including a second failed
 			// release that must inherit the same exhausted caller budget.
-			for _, id := range []string{"pcs_" + strings.Repeat("a", 22), "pcs_" + strings.Repeat("b", 22)} {
+			for _, id := range []string{"cns_" + strings.Repeat("a", 22), "cns_" + strings.Repeat("b", 22)} {
 				err := b.workload.ReleaseIngressAssignment(b.cleanup(), id)
 				b.mu.Lock()
 				b.cleanupErr = errors.Join(b.cleanupErr, err)

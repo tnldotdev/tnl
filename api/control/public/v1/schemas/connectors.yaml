@@ -40,9 +40,9 @@ schemas:
       public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
       created_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-  PrivateConnectorSessionID:
+  ConnectorSessionID:
     type: string
-    pattern: "^pcs_[A-Za-z0-9]{22}$"
+    pattern: "^cns_[A-Za-z0-9]{22}$"
   IssueServiceClientCertificateRequest:
     type: object
     additionalProperties: false
@@ -53,9 +53,9 @@ schemas:
   ServiceClientCertificate:
     type: object
     additionalProperties: false
-    required: [private_service_id, certificate_pem, issuer_pem, expires_at]
+    required: [service_id, certificate_pem, issuer_pem, expires_at]
     properties:
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       certificate_pem: { type: string, maxLength: 16384 }
       issuer_pem: { type: string, maxLength: 16384 }
       expires_at: { type: string, format: date-time }
@@ -71,13 +71,13 @@ schemas:
           description: Ingress has reserved ordinary capacity. The publisher must wait for this before sending application bytes to the target.,
         }
       valid_until: { type: string, format: date-time }
-  PrivateConnectorSessionSetup:
+  ConnectorSessionSetup:
     type: object
     additionalProperties: false
     required:
       [
         connector_session_id,
-        private_service_id,
+        service_id,
         session_credential,
         ingress_id,
         ingress_address,
@@ -86,9 +86,8 @@ schemas:
         expires_at,
       ]
     properties:
-      connector_session_id:
-        { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       session_credential: { type: string, minLength: 32, maxLength: 512 }
       ingress_address:
         {

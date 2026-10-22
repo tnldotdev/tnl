@@ -10,6 +10,8 @@
   "org_id": "orgId",
   "project_id": "projectId",
   "public_url": "publicURL",
+  "publisher_group": "publisherGroup",
+  "publisher_groups": "publisherGroups",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
   "reusable_workflow": "reusableWorkflow",

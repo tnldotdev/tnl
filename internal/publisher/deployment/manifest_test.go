@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"go.yaml.in/yaml/v3"
 )
@@ -23,10 +23,10 @@ func testBundle(t *testing.T, count int) Bundle {
 	return b
 }
 func testConfig(count int) config.TNL {
-	return config.TNL{Publishers: map[string]config.Publisher{"production": {AWS: &config.PublisherAWS{Replicas: &count}}}}
+	return config.TNL{PublisherGroups: map[string]config.PublisherGroup{"production": {AWS: &config.PublisherGroupAWS{Replicas: &count}}}}
 }
-func testSource() projectconfig.SourceIdentity {
-	return projectconfig.SourceIdentity{Key: "project-example", Fingerprint: strings.Repeat("a", 64)}
+func testSource() clientproject.SourceIdentity {
+	return clientproject.SourceIdentity{Key: "project-example", Fingerprint: strings.Repeat("a", 64)}
 }
 func testDirectory(t *testing.T) string {
 	t.Helper()
@@ -55,7 +55,7 @@ func TestGoldenAndReplicaStability(t *testing.T) {
 		}
 	}
 	one, eight := testBundle(t, 1), testBundle(t, config.MaxPublisherReplicas)
-	if !reflect.DeepEqual(one.Manifest.Publishers[0].Replicas, two.Manifest.Publishers[0].Replicas[:1]) {
+	if !reflect.DeepEqual(one.Manifest.PublisherGroups[0].Replicas, two.Manifest.PublisherGroups[0].Replicas[:1]) {
 		t.Fatal("scaling changed surviving replica contract")
 	}
 	var first, second awsTemplate
@@ -74,7 +74,7 @@ func TestGoldenAndReplicaStability(t *testing.T) {
 		t.Fatal("maximum stack exceeds quotas")
 	}
 	t.Logf("eight replicas: %d bytes, %d parameters, %d resources, %d outputs", len(eight.Files["aws/production.yaml"]), len(second.Parameters), len(second.Resources), len(second.Outputs))
-	p := two.Manifest.Publishers[0]
+	p := two.Manifest.PublisherGroups[0]
 	p.Name = "renamed"
 	renamed, _, err := RenderAWS(p, "project-example")
 	if err != nil {
@@ -102,7 +102,7 @@ func TestReadValidateAndReadOnlyCheck(t *testing.T) {
 	modified := append(bytes.Clone(b.Files["aws/production.yaml"]), []byte("# edited\n")...)
 	put(t, filepath.Join(dir, "aws/production.yaml"), modified)
 	changed := testBundle(t, 2).Manifest
-	changed.Publishers[0].TemplateSHA256 = digest(modified)
+	changed.PublisherGroups[0].TemplateSHA256 = digest(modified)
 	changedData, err := encode(changed)
 	if err != nil {
 		t.Fatal(err)
@@ -177,12 +177,12 @@ func TestReadValidateAndReadOnlyCheck(t *testing.T) {
 func TestManifestRejectsUnsafeAndUnboundedInputs(t *testing.T) {
 	for _, change := range []func(*Publisher){func(p *Publisher) { p.StoragePolicyPath = "" }, func(p *Publisher) { p.StoragePolicySHA256 = "" }} {
 		b := testBundle(t, 2)
-		change(&b.Manifest.Publishers[0])
+		change(&b.Manifest.PublisherGroups[0])
 		if b.Manifest.Validate() == nil {
 			t.Fatal("required storage policy metadata was omitted")
 		}
 	}
-	for _, change := range []func(*Manifest){func(m *Manifest) { m.SchemaVersion = 2 }, func(m *Manifest) { m.Publishers[0].TemplatePath = "../customer.yaml" }, func(m *Manifest) { m.Publishers[0].Replicas[0].Key = "other" }, func(m *Manifest) { m.Publishers = append(m.Publishers, m.Publishers[0]) }, func(m *Manifest) { m.Publishers[0].TemplateSHA256 = "invalid" }} {
+	for _, change := range []func(*Manifest){func(m *Manifest) { m.SchemaVersion = 2 }, func(m *Manifest) { m.PublisherGroups[0].TemplatePath = "../customer.yaml" }, func(m *Manifest) { m.PublisherGroups[0].Replicas[0].Key = "other" }, func(m *Manifest) { m.PublisherGroups = append(m.PublisherGroups, m.PublisherGroups[0]) }, func(m *Manifest) { m.PublisherGroups[0].TemplateSHA256 = "invalid" }} {
 		b := testBundle(t, 2)
 		change(&b.Manifest)
 		if b.Manifest.Validate() == nil {
@@ -204,9 +204,9 @@ func TestManifestRejectsUnsafeAndUnboundedInputs(t *testing.T) {
 		}
 	}
 	defaultConfig := testConfig(1)
-	defaultConfig.Publishers["production"] = config.Publisher{AWS: &config.PublisherAWS{}}
+	defaultConfig.PublisherGroups["production"] = config.PublisherGroup{AWS: &config.PublisherGroupAWS{}}
 	defaultBundle, err := Generate(defaultConfig, testSource())
-	if err != nil || len(defaultBundle.Manifest.Publishers[0].Replicas) != 1 {
+	if err != nil || len(defaultBundle.Manifest.PublisherGroups[0].Replicas) != 1 {
 		t.Fatal("default replica count", err)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/tnldotdev/tnl/internal/connector"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -93,7 +93,7 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections attach":
 		return write(connector.Attach(ctx, flags.Attach.Handle, os.Stdin))
 	case "runtime connections recover":
-		return stopped(connectionruntime.OwnerStopped(flags.Recover.Handle))
+		return stopped(connectorruntime.OwnerStopped(flags.Recover.Handle))
 	case "runtime connections capabilities":
 		return write(map[string]any{"schema": 1, "capabilities": []string{"context", "identity", "start", "attach", "status", "stop", "recover", "connect", "prepare", "read", "kube-credential"}, "workload_private": true, "workload_manifest": true, "opaque_private_preflight": true, "team_names": "saved_policy"}, nil)
 	case "runtime connections context":
@@ -113,5 +113,5 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections kube-credential":
 		return write(connector.KubeCredential(ctx, flags.KubeCredential.Handle, flags.KubeCredential.Service))
 	}
-	return connectionruntime.ErrInvalid
+	return connectorruntime.ErrInvalid
 }

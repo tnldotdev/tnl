@@ -229,7 +229,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			}
 			label := url
 			if label == "" {
-				label = "private service"
+				label = "service"
 			}
 			blocks := []clioutput.Block{clioutput.Flow(
 				clioutput.FlowNode{Label: label},

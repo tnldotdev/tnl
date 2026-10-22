@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -106,8 +106,8 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	}
 	f.mu.Lock()
 	var selected relaySession
-	for id, route := range f.routes {
-		if route.CanonicalHostname == u.Hostname() {
+	for id, publicURL := range f.routes {
+		if publicURL.CanonicalHostname == u.Hostname() {
 			selected = f.sessions[id]
 			break
 		}

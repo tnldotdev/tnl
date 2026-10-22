@@ -27,7 +27,7 @@ tasks:
 
   test:public-api:
     dir: "{{.ROOT_DIR}}"
-    desc: Compile an external consumer against the existing public Go API
+    desc: Compile an application using the public Go SDK
     cmds:
       - go test ./pkg/tnl/testdata/publicapi
 
@@ -65,7 +65,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check public HTTP decision caching and live request authorization
     vars:
-      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ManagedHTTPGuard)" .RUN}}'
+      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ServiceHTTPGuard)" .RUN}}'
     cmds:
       - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
 
@@ -91,21 +91,21 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check bounded publisher discovery, signed local AWS HTTPS, regional roots and target TLS without cloud access
     cmds:
-      - go test ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/service ./internal/publisher/target ./internal/publisher/managed ./internal/transport/targettransport ./internal/observability
+      - go test ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/supervisor ./internal/publisher/target ./internal/publisher/service ./internal/transport/targettransport ./internal/observability
       - go test ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
 
   test:target-discovery:race:
     dir: "{{.ROOT_DIR}}"
     desc: Check publisher discovery and target preparation with the race detector
     cmds:
-      - go test -race ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/service ./internal/publisher/target ./internal/publisher/managed ./internal/transport/targettransport ./internal/observability
+      - go test -race ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/supervisor ./internal/publisher/target ./internal/publisher/service ./internal/transport/targettransport ./internal/observability
       - go test -race ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
 
   test:kubernetes:
     dir: "{{.ROOT_DIR}}"
     desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries
     cmds:
-      - go test -race ./internal/connector/kubeconfig ./internal/publisher/target/kubernetes ./internal/publisher ./internal/transport/targettransport ./internal/connector/... ./internal/publisher/managed ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
+      - go test -race ./internal/connector/kubeconfig ./internal/publisher/target/kubernetes ./internal/publisher ./internal/transport/targettransport ./internal/connector/... ./internal/publisher/service ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
 
   test:connections:
     dir: "{{.ROOT_DIR}}"
@@ -149,7 +149,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
     cmds:
-      - go test -race ./internal/observability ./internal/connector/runtime ./internal/publisher/localapi/protocol ./internal/publisher/localapi ./internal/publisher/app ./internal/publisher/group ./internal/client/service ./internal/connector/... -count=1 -timeout=3m
+      - go test -race ./internal/observability ./internal/connector/runtime ./internal/publisher/localapi/protocol ./internal/publisher/localapi ./internal/publisher/app ./internal/publisher/group ./internal/client/supervisor ./internal/connector/... -count=1 -timeout=3m
       - go test -race ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='^Test(Observability|VersionBypasses|ClientTracing|Connection|PublisherGroupDiscovery)' -count=1 -timeout=3m
 
   test:publisher-provenance:
@@ -190,7 +190,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check publisher measurements, readiness, wire traces, and native data-path invariants with races
     cmds:
-      - go test -race ./internal/observability ./internal/publisher ./internal/publisher/managed ./internal/publisher/runtime ./internal/publisher/group ./internal/transport/httpstream ./internal/publisher/proxy ./internal/transport/targettransport ./internal/transport/tunnel ./internal/ingress/... ./internal/relay ./internal/connector/... ./pkg/protocol/tunnelv1
+      - go test -race ./internal/observability ./internal/publisher ./internal/publisher/service ./internal/publisher/runtime ./internal/publisher/group ./internal/transport/httpstream ./internal/publisher/proxy ./internal/transport/targettransport ./internal/transport/tunnel ./internal/ingress/... ./internal/relay ./internal/connector/... ./pkg/protocol/tunnelv1
 
   test:harness:
     dir: "{{.ROOT_DIR}}"
@@ -222,7 +222,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check scoped group dependencies, ownership, retries, and joined shutdown
     cmds:
-      - go test -race ./internal/client/service ./internal/publisher/identity/credentialfile ./internal/publisher/group -count=1
+      - go test -race ./internal/client/supervisor ./internal/publisher/identity/credentialfile ./internal/publisher/group -count=1
       - go test -race ./cmd/tnl -run='^Test(FixedGroups|PublisherGroupDiscovery|GroupIdentity)' -count=1
 
   test:publisher-state:
@@ -231,7 +231,7 @@ tasks:
     cmds:
       - go test -race ./internal/client/state -run='^Test(Certificate|Publisher|PendingPublisher|InstallPublisher|PromotePublisher|DurablePublisher|PrivateDirectory)' -count=1
       - go test -race ./internal/publisher/identity/credentialfile -count=1
-      - go test -race ./internal/client/service -run='^TestInstalledGroup' -count=1
+      - go test -race ./internal/client/supervisor -run='^TestInstalledGroup' -count=1
 
   test:fuzz:
     dir: "{{.ROOT_DIR}}"

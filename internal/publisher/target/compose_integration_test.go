@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -91,7 +91,7 @@ func TestComposeIntegrationHostTargets(t *testing.T) {
 	})
 	compose("up", "--detach", "--wait")
 	web, db, protocol, relativeFile, webPort, dbPort := "web", "db", "tcp", "compose.yaml", 3000, 6379
-	project := projectconfig.Project{Root: root, Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: label}}, Config: config.TNL{Services: config.Services{
+	project := clientproject.Project{Root: root, Worktree: clientproject.Worktree{Label: clientproject.WorktreeLabel{FullLabel: label}}, Config: config.TNL{Services: config.Services{
 		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &projectName, File: &relativeFile, Service: &web, Port: &webPort}, Tunnel: &config.Tunnel{}},
 		"db":  {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Project: &projectName, File: &relativeFile, Service: &db, Port: &dbPort}},
 	}}}

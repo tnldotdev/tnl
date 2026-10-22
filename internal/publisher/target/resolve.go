@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -23,13 +23,13 @@ func (r Resolver) DockerCLI() Runner {
 	return CLI{}
 }
 
-func (r Resolver) ResolveTarget(ctx context.Context, project projectconfig.Project, name string) (string, error) {
+func (r Resolver) ResolveTarget(ctx context.Context, project clientproject.Project, name string) (string, error) {
 	address, _, err := r.ResolveTargetIdentity(ctx, project, name)
 	return address, err
 }
 
 // ResolveTargetIdentity fences readiness if a new container reuses an address.
-func (r Resolver) ResolveTargetIdentity(ctx context.Context, project projectconfig.Project, name string) (string, string, error) {
+func (r Resolver) ResolveTargetIdentity(ctx context.Context, project clientproject.Project, name string) (string, string, error) {
 	c, port, err := r.targetContainer(ctx, project, name)
 	if err != nil {
 		return "", "", err
@@ -41,7 +41,7 @@ func (r Resolver) ResolveTargetIdentity(ctx context.Context, project projectconf
 	return address, c.ID + "/" + strconv.Itoa(port) + "/" + address, nil
 }
 
-func (r Resolver) targetContainer(ctx context.Context, project projectconfig.Project, name string) (Container, int, error) {
+func (r Resolver) targetContainer(ctx context.Context, project clientproject.Project, name string) (Container, int, error) {
 	service, found := project.Config.Services[name]
 	if !found || service.Target == nil {
 		return Container{}, 0, errors.New("select a configured container target")

@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type companyAccessStore interface {
@@ -42,18 +42,18 @@ func companyError(w http.ResponseWriter, operation string, err error) {
 		writeProblem(w, 404, authorityv1.NotFound, "OIDC account identity not found")
 		return
 	}
-	if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) || errors.Is(err, oidcauth.ErrUnauthenticated) {
+	if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) || errors.Is(err, oidc.ErrUnauthenticated) {
 		writeBearerProblem(w)
 		return
 	}
-	if errors.Is(err, oidcauth.ErrUnavailable) {
+	if errors.Is(err, oidc.ErrUnavailable) {
 		writeAuthenticationUnavailable(w, operation, err)
 		return
 	}
 	writeControlStateProblem(w, operation, err)
 }
 
-func companyOIDCIdentity(i oidcauth.Identity) controlstate.OIDCIdentity {
+func companyOIDCIdentity(i oidc.Identity) controlstate.OIDCIdentity {
 	return controlstate.OIDCIdentity{Issuer: i.Issuer, Subject: i.Subject, DisplayName: i.DisplayName, NormalizedEmail: i.NormalizedEmail, EmailVerified: i.EmailVerified, AssertionDigest: i.AssertionDigest, AssertionID: i.AssertionID, AssertionExpiry: i.ExpiresAt, TeamContexts: i.TeamContexts, Nonce: i.Nonce, ClientID: i.ClientID, IssuedAt: i.IssuedAt, AuthenticatedAt: i.AuthenticatedAt, TenantID: i.TenantID, HostedDomain: i.HostedDomain, Groups: i.Groups}
 }
 

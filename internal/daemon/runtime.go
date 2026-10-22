@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 )
@@ -47,7 +47,7 @@ type daemon struct {
 }
 
 // Serve runs one configured tnld process until its context is canceled.
-func Serve(ctx context.Context, cfg tnldconfig.Config) error {
+func Serve(ctx context.Context, cfg daemonconfig.Config) error {
 	ctx, metrics, err := observability.StartProcess(ctx, string(cfg.Role))
 	if err != nil {
 		return err
@@ -75,12 +75,12 @@ type runtimeOptions struct {
 	listeners         runtimeListeners
 }
 
-func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOptions) (retErr error) {
+func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeOptions) (retErr error) {
 	if options.acmeHTTPClient == nil || options.serviceHTTPClient == nil {
 		return errors.New("ACME and service HTTP clients are required")
 	}
 	clusterSecret := cfg.ClusterSecret
-	if cfg.Role == tnldconfig.RoleStandalone {
+	if cfg.Role == daemonconfig.RoleStandalone {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
 			return fmt.Errorf("generate standalone cluster secret: %w", err)
@@ -122,13 +122,13 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 	}
 	if cfg.Role.RunsRelay() {
 		relayCount := int64(1)
-		if cfg.Role == tnldconfig.RoleStandalone {
+		if cfg.Role == daemonconfig.RoleStandalone {
 			relayCount = 2
 		}
 		metrics.SetCapacityLimit("publisher_connections", cfg.PublisherConnectionLimit*relayCount)
 		metrics.SetCapacityLimit("relay_streams", cfg.RelayStreamCapacity*relayCount)
 	}
-	if cfg.Role == tnldconfig.RoleStandalone {
+	if cfg.Role == daemonconfig.RoleStandalone {
 		metrics.SetCapacityLimit("control_connections", int64(cfg.StandaloneControlConnectionLimit))
 		metrics.SetCapacityLimit("relay_tcp_connections", int64(cfg.StandaloneRelayConnectionLimit))
 	}
@@ -170,7 +170,7 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 	}
 
 	switch cfg.Role {
-	case tnldconfig.RoleRelay:
+	case daemonconfig.RoleRelay:
 		settings := relayProcessSettingsFrom(cfg)
 		settings.internalListener = options.listeners.relayInternal
 		settings.tcpListener = options.listeners.relayTCP
@@ -181,13 +181,13 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 		if err := d.startRelay(lifetime, settings, metrics); err != nil {
 			return err
 		}
-	case tnldconfig.RoleIngress:
+	case daemonconfig.RoleIngress:
 		settings := ingressProcessSettingsFrom(cfg)
 		settings.listener = options.listeners.ingress
 		if err := d.startIngress(lifetime, settings, metrics); err != nil {
 			return err
 		}
-	case tnldconfig.RoleStandalone:
+	case daemonconfig.RoleStandalone:
 		settings := standaloneSettingsFrom(cfg)
 		settings.control.listener = options.listeners.control
 		settings.publicListener = options.listeners.ingress
@@ -198,7 +198,7 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 		if err := d.startStandalone(lifetime, settings, metrics, controlHandler); err != nil {
 			return err
 		}
-	case tnldconfig.RoleControl:
+	case daemonconfig.RoleControl:
 		settings := controlSettingsFrom(cfg)
 		settings.listener = options.listeners.control
 		if err := d.startControl(settings, controlHandler); err != nil {

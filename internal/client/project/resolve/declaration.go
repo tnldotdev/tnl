@@ -9,24 +9,24 @@ import (
 	"net/http"
 	"slices"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // Declaration sends evaluated declarations, never executable TypeScript or local
 // paths that a remote publisher would need to reopen. discover is needed only
 // when capturing target trust for a local Docker or Compose target.
-func Declaration(ctx context.Context, project projectconfig.Project, current team.Context, discover func(context.Context, string) (string, error), selected ...string) (controlv1.ProjectConfiguration, error) {
-	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, Publishers: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
+func Declaration(ctx context.Context, project clientproject.Project, current team.Context, discover func(context.Context, string) (string, error), selected ...string) (controlv1.ProjectConfiguration, error) {
+	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
 	if err := config.ValidateTNL(project.Config); err != nil {
 		return declaration, err
 	}
-	for name, group := range project.Config.Publishers {
+	for name, group := range project.Config.PublisherGroups {
 		entry := controlv1.ProjectPublisherGroup{Description: group.Description, Public: &group.Public}
 		if group.Domain != nil {
 			domain, err := current.ReadyDomain(*group.Domain)
@@ -35,7 +35,7 @@ func Declaration(ctx context.Context, project projectconfig.Project, current tea
 			}
 			entry.DomainId = &domain.Id
 		}
-		declaration.Publishers[name] = entry
+		declaration.PublisherGroups[name] = entry
 	}
 	for name, webhook := range project.Config.Webhooks {
 		delivery := webhook.DeliveryMode()
@@ -52,17 +52,25 @@ func Declaration(ctx context.Context, project projectconfig.Project, current tea
 		}
 		declaration.Webhooks[name] = entry
 	}
-	cache := privatetrust.NewCache(nil)
+	cache := targettrust.NewCache(nil)
 	names := slices.Sorted(maps.Keys(project.Config.Services))
 	if len(selected) != 0 {
 		names = selected
 	}
 	for _, name := range names {
 		service := project.Config.Services[name]
-		publisher, savedName, protocol := config.PublisherName(service), config.ServiceName(name, service), controlv1.PrivateServiceProtocol(config.Protocol(service))
-		entry := controlv1.ProjectServiceConfiguration{Publisher: &publisher, Name: &savedName, Protocol: &protocol}
-		if service.HTTP != nil {
-			encoded, err := json.Marshal(service.HTTP)
+		publisher, savedName, protocol := config.PublisherGroupName(service), config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
+		entry := controlv1.ProjectServiceConfiguration{PublisherGroup: &publisher, Name: &savedName, Protocol: &protocol}
+		httpSettings := service.HTTP
+		if publisher != "local" {
+			resolved, err := config.ResolveGroupHTTP(project.Config.Tunnel, service.HTTP)
+			if err != nil {
+				return declaration, err
+			}
+			httpSettings = resolved
+		}
+		if httpSettings != nil {
+			encoded, err := json.Marshal(httpSettings)
 			if err != nil {
 				return declaration, err
 			}
@@ -151,10 +159,6 @@ func Declaration(ctx context.Context, project projectconfig.Project, current tea
 						return declaration, err
 					}
 					entry.PublicUrl.DomainId = &domain.Id
-				}
-			} else {
-				if effective.Tunnel.PublicURL != nil || effective.Tunnel.Domain != nil || effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral || entry.PublicUrl.Limits != nil && entry.PublicUrl.Limits.Traffic != nil || entry.PublicUrl.Access != nil && entry.PublicUrl.Access.Mode != nil && *entry.PublicUrl.Access.Mode != "restricted" {
-					return declaration, failure.Wrap("select publisher identity", failure.InvalidTunnelFlags, errors.New("named publisher HTTP uses the group's domain and public setting; select restricted access and remove endpoint, ephemeral, and traffic-limit overrides"))
 				}
 			}
 		}

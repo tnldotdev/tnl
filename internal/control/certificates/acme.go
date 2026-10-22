@@ -9,16 +9,16 @@ import (
 	"net/http"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 type acmeAPI interface {
-	NewOrder(context.Context, []string, string) (acmeclient.Order, error)
-	GetOrder(context.Context, string) (acmeclient.Order, error)
-	GetAuthorization(context.Context, string) (acmeclient.Authorization, error)
+	NewOrder(context.Context, []string, string) (acme.Order, error)
+	GetOrder(context.Context, string) (acme.Order, error)
+	GetAuthorization(context.Context, string) (acme.Authorization, error)
 	AcceptChallenge(context.Context, string) (time.Time, error)
-	FinalizeOrder(context.Context, string, string, []byte) (acmeclient.Order, error)
+	FinalizeOrder(context.Context, string, string, []byte) (acme.Order, error)
 	DownloadCertificate(context.Context, string) ([]byte, error)
 	KeyAuthorization(string) (string, error)
 }
@@ -31,12 +31,12 @@ func newACMEClientFactory(httpClient *http.Client) acmeClientFactory {
 	}
 }
 
-func newACMEClient(httpClient *http.Client, account controlstate.ACMEAccount) (*acmeclient.Client, error) {
+func newACMEClient(httpClient *http.Client, account controlstate.ACMEAccount) (*acme.Client, error) {
 	key, err := parseACMEAccountKey(account.AccountKeyDER)
 	if err != nil {
 		return nil, err
 	}
-	return acmeclient.New(httpClient, account.DirectoryURL, key, account.AccountURL)
+	return acme.New(httpClient, account.DirectoryURL, key, account.AccountURL)
 }
 
 func parseACMEAccountKey(keyDER []byte) (*ecdsa.PrivateKey, error) {

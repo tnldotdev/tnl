@@ -3,7 +3,7 @@ package connector
 import (
 	"testing"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestConnectListenRejectsNonLoopbackAndInvalidPorts(t *testing.T) {
@@ -20,7 +20,7 @@ func TestConnectListenRejectsNonLoopbackAndInvalidPorts(t *testing.T) {
 }
 
 func TestConnectSelectionRequiresExactIdentityInventoryAndTeam(t *testing.T) {
-	services := []controlv1.PrivateService{{Id: "first", Name: "orders", TeamId: "one"}, {Id: "second", Name: "orders", TeamId: "two"}}
+	services := []controlv1.Service{{Id: "first", Name: "orders", TeamId: "one"}, {Id: "second", Name: "orders", TeamId: "two"}}
 	if _, err := SelectService(services, "orders", ""); err == nil {
 		t.Fatal("ambiguous name accepted")
 	}

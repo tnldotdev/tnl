@@ -23,13 +23,13 @@ func retainedPublishFlags(ctx context.Context, flags publishCommand) (publishCom
 	if err := validatePublisherImage(os.LookupEnv); err != nil {
 		return flags, err
 	}
-	if flags.Install || flags.Detach || flags.Service != "" || flags.PublisherID != "" || flags.PublisherFile != "" || flags.Name != "" || flags.PublicURL != "" || flags.Team != "" || flags.AccessToken != "" || flags.Anonymous || flags.access != nil || len(flags.IP) != 0 || flags.Ephemeral || flags.Demo || flags.ServerURL == "" {
+	if flags.Install || flags.Detach || flags.Service != "" || flags.PublisherIdentityID != "" || flags.PublisherCredentialFile != "" || flags.Name != "" || flags.PublicURL != "" || flags.Team != "" || flags.AccessToken != "" || flags.Anonymous || flags.access != nil || len(flags.IP) != 0 || flags.Ephemeral || flags.Demo || flags.ServerURL == "" {
 		return flags, publisherCLIError("--enrolled requires an explicit server and HTTP target; the saved grant owns policy and scope")
 	}
 	selected, err := invocation.SelectRetained(ctx, invocation.RetainedOptions{StateDir: flags.StateDir, Server: flags.ServerURL, Target: flags.Target, EnrollmentKey: flags.EnrollmentKey})
 	if err != nil {
 		return flags, err
 	}
-	flags.Target, flags.EnrollmentKey, flags.PublisherID = selected.Target, selected.EnrollmentKey, selected.PublisherID
+	flags.Target, flags.EnrollmentKey, flags.PublisherIdentityID = selected.Target, selected.EnrollmentKey, selected.PublisherIdentityID
 	return flags, nil
 }

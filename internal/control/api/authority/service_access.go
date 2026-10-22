@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -8,24 +8,24 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceAccessStore interface {
 	ResolveCompanyAccount(context.Context, string, string) (string, error)
-	ListPrivateServices(context.Context, string, string, string) ([]controlstate.PrivateServiceRecord, string, error)
-	GetPrivateService(context.Context, string, string) (controlstate.PrivateServiceRecord, error)
-	ListPrivateServiceGrants(context.Context, string, string, string) ([]controlstate.PrivateServiceGrant, string, error)
-	ListPrivateServiceInvitations(context.Context, string, string, string) ([]controlstate.PrivateServiceInvitation, string, error)
-	InvitePrivateServiceVisitor(context.Context, string, string, string, string, time.Time, time.Time) (controlstate.PrivateServiceInvitation, error)
-	PreviewPrivateServiceInvitation(context.Context, string, string, time.Time) (controlstate.PrivateServiceInvitationPreview, error)
-	AcceptPrivateServiceInvitation(context.Context, string, string, time.Time) (controlstate.PrivateServiceGrant, error)
-	RevokePrivateServiceGrant(context.Context, string, string, string, time.Time) error
-	RevokePrivateServiceInvitation(context.Context, string, string, string, time.Time) error
-	CreateManagedHTTPGrant(context.Context, string, string, controlv1.CreateManagedHTTPGrantRequest, time.Time) (controlv1.ManagedHTTPGrant, error)
-	ListManagedHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ManagedHTTPGrantSummary, error)
-	RevokeManagedHTTPGrant(context.Context, string, string, string, time.Time) error
+	ListServices(context.Context, string, string, string) ([]controlstate.ServiceRecord, string, error)
+	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
+	ListServiceGrants(context.Context, string, string, string) ([]controlstate.ServiceGrant, string, error)
+	ListServiceInvitations(context.Context, string, string, string) ([]controlstate.ServiceInvitation, string, error)
+	InviteServiceVisitor(context.Context, string, string, string, string, time.Time, time.Time) (controlstate.ServiceInvitation, error)
+	PreviewServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceInvitationPreview, error)
+	AcceptServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceGrant, error)
+	RevokeServiceGrant(context.Context, string, string, string, time.Time) error
+	RevokeServiceInvitation(context.Context, string, string, string, time.Time) error
+	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateServiceHTTPGrantRequest, time.Time) (controlv1.ServiceHTTPGrant, error)
+	ListServiceHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ServiceHTTPGrantSummary, error)
+	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
 
 func serviceAccessError(w http.ResponseWriter, operation string, err error) {
@@ -36,9 +36,9 @@ func serviceAccessError(w http.ResponseWriter, operation string, err error) {
 		writeProblem(w, 403, authorityv1.SourceSignInRequired, "sign in through the current company source")
 	case errors.Is(err, controlstate.ErrServiceVerifiedEmailRequired):
 		writeProblem(w, 403, authorityv1.VerifiedEmailRequired, "sign in with a verified email")
-	case errors.Is(err, controlstate.ErrPrivateServiceAccess):
+	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 403, authorityv1.Forbidden, "service access denied")
-	case errors.Is(err, controlstate.ErrPrivateServiceConflict):
+	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, authorityv1.Conflict, "service access state or idempotency key conflicts")
 	default:
 		companyError(w, operation, err)
@@ -68,7 +68,7 @@ func (h *handler) serviceHuman(w http.ResponseWriter, r *http.Request, body any)
 	return s, actor, true
 }
 
-func (h *handler) ListWebsitePrivateServices(w http.ResponseWriter, r *http.Request, team authorityv1.TeamID, p authorityv1.ListWebsitePrivateServicesParams) {
+func (h *handler) ListWebsiteServices(w http.ResponseWriter, r *http.Request, team authorityv1.TeamID, p authorityv1.ListWebsiteServicesParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
@@ -77,12 +77,12 @@ func (h *handler) ListWebsitePrivateServices(w http.ResponseWriter, r *http.Requ
 	if p.Cursor != nil {
 		cursor = *p.Cursor
 	}
-	rows, next, err := s.ListPrivateServices(r.Context(), team, actor, cursor)
+	rows, next, err := s.ListServices(r.Context(), team, actor, cursor)
 	if err != nil {
 		serviceAccessError(w, "list website services", err)
 		return
 	}
-	page := controlv1.PrivateServicePage{Services: make([]controlv1.PrivateService, 0, len(rows))}
+	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
 	for _, row := range rows {
 		page.Services = append(page.Services, serviceaccess.Summary(row))
 	}
@@ -92,12 +92,12 @@ func (h *handler) ListWebsitePrivateServices(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 200, page)
 }
 
-func (h *handler) GetWebsitePrivateService(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ authorityv1.GetWebsitePrivateServiceParams) {
+func (h *handler) GetWebsiteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.GetWebsiteServiceParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	row, err := s.GetPrivateService(r.Context(), id, actor)
+	row, err := s.GetService(r.Context(), id, actor)
 	if err != nil {
 		serviceAccessError(w, "get website service", err)
 		return
@@ -105,7 +105,7 @@ func (h *handler) GetWebsitePrivateService(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, serviceaccess.Service(row))
 }
 
-func (h *handler) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, p authorityv1.ListWebsitePrivateServiceGrantsParams) {
+func (h *handler) ListWebsiteServiceGrants(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, p authorityv1.ListWebsiteServiceGrantsParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
@@ -114,12 +114,12 @@ func (h *handler) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http
 	if p.Cursor != nil {
 		cursor = *p.Cursor
 	}
-	rows, next, err := s.ListPrivateServiceGrants(r.Context(), id, actor, cursor)
+	rows, next, err := s.ListServiceGrants(r.Context(), id, actor, cursor)
 	if err != nil {
 		serviceAccessError(w, "list website service grants", err)
 		return
 	}
-	result := controlv1.PrivateServiceGrantPage{Grants: make([]controlv1.PrivateServiceGrant, 0, len(rows))}
+	result := controlv1.ServiceGrantPage{Grants: make([]controlv1.ServiceGrant, 0, len(rows))}
 	for _, row := range rows {
 		result.Grants = append(result.Grants, serviceaccess.Grant(row))
 	}
@@ -129,7 +129,7 @@ func (h *handler) ListWebsitePrivateServiceGrants(w http.ResponseWriter, r *http
 	writeJSON(w, 200, result)
 }
 
-func (h *handler) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, p authorityv1.ListWebsitePrivateServiceInvitationsParams) {
+func (h *handler) ListWebsiteServiceInvitations(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, p authorityv1.ListWebsiteServiceInvitationsParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
@@ -138,12 +138,12 @@ func (h *handler) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r 
 	if p.Cursor != nil {
 		cursor = *p.Cursor
 	}
-	rows, next, err := s.ListPrivateServiceInvitations(r.Context(), id, actor, cursor)
+	rows, next, err := s.ListServiceInvitations(r.Context(), id, actor, cursor)
 	if err != nil {
 		serviceAccessError(w, "list website service invitations", err)
 		return
 	}
-	result := controlv1.PrivateServiceInvitationPage{Invitations: make([]controlv1.PrivateServiceInvitation, 0, len(rows))}
+	result := controlv1.ServiceInvitationPage{Invitations: make([]controlv1.ServiceInvitation, 0, len(rows))}
 	for _, row := range rows {
 		result.Invitations = append(result.Invitations, serviceaccess.Invitation(row))
 	}
@@ -153,13 +153,13 @@ func (h *handler) ListWebsitePrivateServiceInvitations(w http.ResponseWriter, r 
 	writeJSON(w, 200, result)
 }
 
-func (h *handler) InviteWebsitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, p authorityv1.InviteWebsitePrivateServiceVisitorParams) {
-	var body controlv1.CreatePrivateServiceInvitationRequest
+func (h *handler) InviteWebsiteServiceVisitor(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, p authorityv1.InviteWebsiteServiceVisitorParams) {
+	var body controlv1.CreateServiceInvitationRequest
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return
 	}
-	row, err := s.InvitePrivateServiceVisitor(r.Context(), id, actor, p.IdempotencyKey, string(body.Email), body.ExpiresAt, time.Now())
+	row, err := s.InviteServiceVisitor(r.Context(), id, actor, p.IdempotencyKey, string(body.Email), body.ExpiresAt, time.Now())
 	if err != nil {
 		serviceAccessError(w, "invite website service visitor", err)
 		return
@@ -171,13 +171,13 @@ func (h *handler) InviteWebsitePrivateServiceVisitor(w http.ResponseWriter, r *h
 	writeJSON(w, status, serviceaccess.Invitation(row))
 }
 
-func (h *handler) PreviewWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.PreviewWebsitePrivateServiceInvitationParams) {
-	var body authorityv1.PrivateServiceInvitationCredential
+func (h *handler) PreviewWebsiteServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.PreviewWebsiteServiceInvitationParams) {
+	var body authorityv1.ServiceInvitationCredential
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return
 	}
-	row, err := s.PreviewPrivateServiceInvitation(r.Context(), actor, body.Secret, time.Now())
+	row, err := s.PreviewServiceInvitation(r.Context(), actor, body.Secret, time.Now())
 	if err != nil {
 		serviceAccessError(w, "preview website service invitation", err)
 		return
@@ -185,13 +185,13 @@ func (h *handler) PreviewWebsitePrivateServiceInvitation(w http.ResponseWriter, 
 	writeJSON(w, 200, row)
 }
 
-func (h *handler) AcceptWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.AcceptWebsitePrivateServiceInvitationParams) {
-	var body authorityv1.PrivateServiceInvitationCredential
+func (h *handler) AcceptWebsiteServiceInvitation(w http.ResponseWriter, r *http.Request, _ authorityv1.AcceptWebsiteServiceInvitationParams) {
+	var body authorityv1.ServiceInvitationCredential
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return
 	}
-	row, err := s.AcceptPrivateServiceInvitation(r.Context(), actor, body.Secret, time.Now())
+	row, err := s.AcceptServiceInvitation(r.Context(), actor, body.Secret, time.Now())
 	if err != nil {
 		serviceAccessError(w, "accept website service invitation", err)
 		return
@@ -199,36 +199,36 @@ func (h *handler) AcceptWebsitePrivateServiceInvitation(w http.ResponseWriter, r
 	writeJSON(w, 200, serviceaccess.Grant(row))
 }
 
-func (h *handler) RevokeWebsitePrivateServiceGrant(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, grant controlv1.PrivateServiceGrantID, _ authorityv1.RevokeWebsitePrivateServiceGrantParams) {
+func (h *handler) RevokeWebsiteServiceGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, grant controlv1.ServiceGrantID, _ authorityv1.RevokeWebsiteServiceGrantParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	if err := s.RevokePrivateServiceGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
+	if err := s.RevokeServiceGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
 		serviceAccessError(w, "revoke website service grant", err)
 		return
 	}
 	w.WriteHeader(204)
 }
 
-func (h *handler) RevokeWebsitePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, invitation controlv1.PrivateServiceInvitationID, _ authorityv1.RevokeWebsitePrivateServiceInvitationParams) {
+func (h *handler) RevokeWebsiteServiceInvitation(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, invitation controlv1.ServiceInvitationID, _ authorityv1.RevokeWebsiteServiceInvitationParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	if err := s.RevokePrivateServiceInvitation(r.Context(), id, actor, invitation, time.Now()); err != nil {
+	if err := s.RevokeServiceInvitation(r.Context(), id, actor, invitation, time.Now()); err != nil {
 		serviceAccessError(w, "revoke website service invitation", err)
 		return
 	}
 	w.WriteHeader(204)
 }
 
-func (h *handler) ListWebsiteManagedHTTPGrants(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ authorityv1.ListWebsiteManagedHTTPGrantsParams) {
+func (h *handler) ListWebsiteServiceHTTPGrants(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.ListWebsiteServiceHTTPGrantsParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	rows, err := s.ListManagedHTTPGrants(r.Context(), id, actor, time.Now())
+	rows, err := s.ListServiceHTTPGrants(r.Context(), id, actor, time.Now())
 	if err != nil {
 		serviceAccessError(w, "list website HTTP grants", err)
 		return
@@ -236,13 +236,13 @@ func (h *handler) ListWebsiteManagedHTTPGrants(w http.ResponseWriter, r *http.Re
 	writeJSON(w, 200, rows)
 }
 
-func (h *handler) CreateWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, _ authorityv1.CreateWebsiteManagedHTTPGrantParams) {
-	var body controlv1.CreateManagedHTTPGrantRequest
+func (h *handler) CreateWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.CreateWebsiteServiceHTTPGrantParams) {
+	var body controlv1.CreateServiceHTTPGrantRequest
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return
 	}
-	row, err := s.CreateManagedHTTPGrant(r.Context(), id, actor, body, time.Now())
+	row, err := s.CreateServiceHTTPGrant(r.Context(), id, actor, body, time.Now())
 	if err != nil {
 		serviceAccessError(w, "create website HTTP grant", err)
 		return
@@ -250,12 +250,12 @@ func (h *handler) CreateWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.R
 	writeJSON(w, 201, row)
 }
 
-func (h *handler) RevokeWebsiteManagedHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID, grant string, _ authorityv1.RevokeWebsiteManagedHTTPGrantParams) {
+func (h *handler) RevokeWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, grant string, _ authorityv1.RevokeWebsiteServiceHTTPGrantParams) {
 	s, actor, ok := h.serviceHuman(w, r, nil)
 	if !ok {
 		return
 	}
-	if err := s.RevokeManagedHTTPGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
+	if err := s.RevokeServiceHTTPGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
 		serviceAccessError(w, "revoke website HTTP grant", err)
 		return
 	}

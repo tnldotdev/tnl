@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
@@ -26,7 +26,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
 	}
-	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publishers":{"production":{}},"services":{"database":{"protocol":"postgres","publisher":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher":"production","public_url":{},"target":{"type":"address","address":"http://unused.invalid:3001"}}},"workloads":{"migrate":{"provider":"github","github":{"workflow":".github/workflows/migrate.yml","ref":"refs/heads/main","events":["push"]},"services":["database"]}}}}`
+	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publisher_groups":{"production":{}},"services":{"database":{"protocol":"postgres","publisher_group":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher_group":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher_group":"production","target":{"type":"address","address":"http://unused.invalid:3001"},"http":{}}},"workloads":{"migrate":{"provider":"github","github":{"workflow":".github/workflows/migrate.yml","ref":"refs/heads/main","events":["push"]},"services":["database"]}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 		t.Fatal("context confused managed policy with public URL declarations", implicit.Services, err)
 	}
 	all.Service = []string{"web"}
-	if _, _, err := connectionProject(t.Context(), all); !errors.Is(err, connectionruntime.ErrInvalid) {
+	if _, _, err := connectionProject(t.Context(), all); !errors.Is(err, connectorruntime.ErrInvalid) {
 		t.Fatal("native context selected a public URL declaration", err)
 	}
 	options.Workload = "migrate"
@@ -53,7 +53,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 		t.Fatal("team selector was not retained for saved-policy exchange", err)
 	}
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
-	if err := connectionruntime.WriteBinding(root, connectionruntime.Binding{Schema: 1, Server: local.Server, Team: "acme", TeamID: team, ProjectKey: local.ProjectKey, SourceID: local.SourceID}); err != nil {
+	if err := connectorruntime.WriteBinding(root, connectorruntime.Binding{Schema: 1, Server: local.Server, Team: "acme", TeamID: team, ProjectKey: local.ProjectKey, SourceID: local.SourceID}); err != nil {
 		t.Fatal(err)
 	}
 	_, scope, err := connectionProject(t.Context(), options)
@@ -80,11 +80,11 @@ func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
 		t.Fatal(err)
 	}
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
-	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
+	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	localCluster, localRegion := "unapplied-local", "us-west-2"
-	b := nativeConnectionBackend{directory: directory, executable: "/absolute/tnl", nativeConnectionSession: nativeConnectionSession{teamID: team}, scope: connectionruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
+	b := nativeConnectionBackend{directory: directory, executable: "/absolute/tnl", nativeConnectionSession: nativeConnectionSession{teamID: team}, scope: connectorruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
 	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
-	p := preparedConnection{service: controlv1.PrivateService{Id: service, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}, connection: connectionruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"}}
+	p := preparedConnection{service: controlv1.Service{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}, connection: connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"}}
 	if err := b.prepareKube(t.Context(), "cluster", &p); err != nil {
 		t.Fatal(err)
 	}

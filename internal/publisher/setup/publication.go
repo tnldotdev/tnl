@@ -1,19 +1,19 @@
-package publisherprovision
+package setup
 
 import (
 	"context"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // EnsurePublication uses an isolated setup store, not the operator's profile.
 // the native owner journal retains a pending secret before redemption and the
 // resulting exact-URL signing identity before any privileged installation.
-func EnsurePublication(ctx context.Context, store *clientstate.Store, operator nativeauth.OwnerControl, control nativeauth.NativeControl, authority nativeauth.EnrollmentAuthority, server string, route controlv1.PublicURL) (credentialfile.File, error) {
-	_, identity, err := nativeauth.EnsureOwner(ctx, store, operator, authority, route)
+func EnsurePublication(ctx context.Context, store *clientstate.Store, operator publisheridentity.OwnerControl, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority, server string, publicURL controlv1.PublicURL) (credentialfile.File, error) {
+	_, identity, err := publisheridentity.EnsureOwner(ctx, store, operator, authority, publicURL)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
@@ -22,18 +22,18 @@ func EnsurePublication(ctx context.Context, store *clientstate.Store, operator n
 		return credentialfile.File{}, err
 	}
 	if !found {
-		return credentialfile.File{}, nativeauth.ErrScope
+		return credentialfile.File{}, publisheridentity.ErrScope
 	}
-	native, err := nativeauth.NewNative(control, authority, identity, saved.SigningKey)
+	native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
-	current, err := native.SavedURL(ctx)
+	current, err := native.SavedPublicURL(ctx)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
-	if current.Id != route.Id || current.TeamId != route.TeamId {
-		return credentialfile.File{}, nativeauth.ErrScope
+	if current.Id != publicURL.Id || current.TeamId != publicURL.TeamId {
+		return credentialfile.File{}, publisheridentity.ErrScope
 	}
 	return credentialfile.New(server, identity, saved.SigningKey)
 }

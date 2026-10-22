@@ -19,8 +19,8 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	localpublisher "github.com/tnldotdev/tnl/internal/publisher/localapi"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/publisher/localapi"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 func gate(ctx context.Context, root, name string) error {
@@ -81,35 +81,35 @@ func serveInvocations() error {
 		return err
 	}
 	defer listener.Close()
-	caps, err := privateprotocol.NewCapabilities("http://" + listener.Addr().String())
+	caps, err := publisherprotocol.NewCapabilities("http://" + listener.Addr().String())
 	if err != nil {
 		return err
 	}
 	endpoint := caps.Owner()
 	var preparation sync.Mutex
-	requests := map[string]privateprotocol.Invocation{}
-	boundary := (&localpublisher.Server{Capabilities: caps, Manager: manager, Database: database, Project: root, Invocation: func(requestContext context.Context, request privateprotocol.Invocation) (privateprotocol.Registration, error) {
+	requests := map[string]publisherprotocol.Invocation{}
+	boundary := (&localapi.Server{Capabilities: caps, Manager: manager, Database: database, Project: root, Invocation: func(requestContext context.Context, request publisherprotocol.Invocation) (publisherprotocol.Registration, error) {
 		preparation.Lock()
 		defer preparation.Unlock()
 		for _, service := range manager.Snapshot().Services {
 			if service.Name == request.InvocationId && service.RegistrationID != "" {
 				if !reflect.DeepEqual(requests[service.Name], request) {
-					return privateprotocol.Registration{}, clientruntime.ErrOwnerConflict
+					return publisherprotocol.Registration{}, clientruntime.ErrOwnerConflict
 				}
 				err := manager.RenewTarget(service.RegistrationID, request.Owner, request.Target)
-				return privateprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, err
+				return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, err
 			}
 		}
 		if err := manager.AddService(clientruntime.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http"}); err != nil {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
 		id, err := manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://ephemeral.member.example.test")
 		if err != nil {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
 		err = manager.RegisterContext(requestContext, id, request.Owner, request.Target, "python")
 		requests[request.InvocationId] = request
-		return privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, err
+		return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, err
 	}}).Handler()
 	var first sync.Once
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

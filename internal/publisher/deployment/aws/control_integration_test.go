@@ -1,4 +1,4 @@
-package awsbootstrap
+package aws
 
 import (
 	"net/http"
@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/awsfixture"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationAWSBootstrapAppliedGroup(t *testing.T) {
@@ -41,7 +41,7 @@ func TestIntegrationAWSBootstrapAppliedGroup(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	handler, err := controlapi.NewHandler(controlapi.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,17 +64,17 @@ func TestIntegrationAWSBootstrapAppliedGroup(t *testing.T) {
 		}
 		handler.ServeHTTP(w, r)
 	}))
-	owner, err := controlclient.New(server.URL, server.Client(), session.AccessToken)
+	owner, err := clientcontrol.New(server.URL, server.Client(), session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	group := "production"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "shop", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Publishers: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: &group, Target: "http://not-yet-created.internal:3000"}}}})
+	applied, err := owner.ApplyProjectConfiguration(ctx, "shop", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "http://not-yet-created.internal:3000"}}}})
 	if err != nil || applied.Groups == nil || len(*applied.Groups) != 1 {
 		t.Fatal("real apply", err)
 	}
 	groupID := (*applied.Groups)[0].Id
-	client, err := grouppublisher.NewClient(server.URL, server.Client())
+	client, err := publishergroup.NewClient(server.URL, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

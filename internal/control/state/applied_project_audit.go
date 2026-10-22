@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -27,8 +27,8 @@ func recordPublisherGroupMemberRevocation(ctx context.Context, tx pgx.Tx, publis
 
 func recordAppliedGroupChange(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor, publisher, request string, revision int64, now time.Time) error {
 	id, kind := s.PublicURLID.String, "public_url"
-	if s.PrivateServiceID.Valid {
-		id, kind = s.PrivateServiceID.String, "private_service"
+	if s.ServiceID.Valid {
+		id, kind = s.ServiceID.String, "service"
 	}
 	if id == "" {
 		return nil
@@ -63,7 +63,7 @@ func recordAppliedGroupConfiguration(ctx context.Context, tx pgx.Tx, oldServices
 			if !changed[s.GroupID.String] {
 				continue
 			}
-			key := s.GroupID.String + "/" + s.PrivateServiceID.String + "/" + s.PublicURLID.String
+			key := s.GroupID.String + "/" + s.ServiceID.String + "/" + s.PublicURLID.String
 			if seen[key] {
 				continue
 			}

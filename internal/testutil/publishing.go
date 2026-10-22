@@ -27,8 +27,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -156,10 +156,10 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		mu.Lock()
 		id := fmt.Sprintf("%s%022x", opaqueid.PublicURLPrefix, len(routes)+1)
 		membership := membershipID
-		route := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(request.Purpose), LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
-		routes[id] = route
+		publicURL := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(request.Purpose), LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
+		routes[id] = publicURL
 		mu.Unlock()
-		writeJSON(w, route)
+		writeJSON(w, publicURL)
 	})
 	mux.HandleFunc("POST /v1/public-urls/{route}/publish-runs", func(w http.ResponseWriter, r *http.Request) {
 		token, _, _, err := credentials.NewPublishRunToken()
@@ -169,12 +169,12 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		route := routes[r.PathValue("route")]
+		publicURL := routes[r.PathValue("route")]
 		id := fmt.Sprintf("%s%022x", opaqueid.PublishRunPrefix, len(sessions)+1)
 		setup := controlv1.PublishRunSetup{
-			PublicUrl: route, PublishRunToken: token.String(),
-			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: route.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
-			CertificatePlan: controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.Dns01},
+			PublicUrl: publicURL, PublishRunToken: token.String(),
+			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: publicURL.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
+			CertificatePlan: controlv1.CertificatePlan{CacheKey: publicURL.CanonicalHostname, Scope: publicURL.CanonicalHostname, Identifiers: []string{publicURL.CanonicalHostname}, ChallengeMethod: controlv1.Dns01},
 		}
 		for slot := range 2 {
 			setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{

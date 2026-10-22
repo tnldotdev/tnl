@@ -24,7 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -37,19 +37,19 @@ type privateClaimControlStub struct {
 	disconnect func()
 }
 
-func (c *privateClaimControlStub) ClaimPrivatePublisherConnection(_ context.Context, id string, body relayv1.PrivatePublisherConnectionClaim) (relayv1.PrivatePublisherConnection, error) {
+func (c *privateClaimControlStub) ClaimServicePublisherConnection(_ context.Context, id string, body relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {
 	if c.claims.Add(1) == 1 && c.claim != nil {
 		c.claim()
 	}
-	return relayv1.PrivatePublisherConnection{PrivateServiceId: body.PrivateServiceId, PrivateRunId: body.PrivateRunId, RunNumber: body.RunNumber,
+	return relayv1.ServicePublisherConnection{ServiceId: body.ServiceId, ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber,
 		PublisherConnectionId: id, ConnectionAssignmentRevision: body.ConnectionAssignmentRevision, RelayServiceId: "relay-a"}, nil
 }
 
-func (*privateClaimControlStub) ReadyPrivatePublisherConnection(context.Context, string, relayv1.PrivatePublisherConnectionTransition) (relayv1.PrivatePublisherConnection, error) {
-	return relayv1.PrivatePublisherConnection{}, nil
+func (*privateClaimControlStub) ReadyServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error) {
+	return relayv1.ServicePublisherConnection{}, nil
 }
 
-func (c *privateClaimControlStub) DisconnectPrivatePublisherConnection(context.Context, string, relayv1.PrivatePublisherConnectionTransition) error {
+func (c *privateClaimControlStub) DisconnectServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) error {
 	if c.disconnect != nil {
 		c.disconnect()
 	}
@@ -62,13 +62,13 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	t.Cleanup(unblock)
 	client := &privateClaimControlStub{claim: func() { close(entered); <-release }}
 	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
-	registry := NewPrivateRegistry()
-	acceptor := &PrivatePublisherAcceptor{Select: func(string) (PrivatePublisherTarget, bool) {
-		return PrivatePublisherTarget{Control: controller, Registry: registry}, true
+	registry := NewServiceRegistry()
+	acceptor := &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+		return ServicePublisherTarget{Control: controller, Registry: registry}, true
 	}}
-	ref := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 1,
+	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
-	message := tunnelv1.Message{Role: tunnelv1.Publisher, PrivateConnection: &ref, Credential: "credential"}
+	message := tunnelv1.Message{Role: tunnelv1.Publisher, ServiceConnection: &ref, Credential: "credential"}
 	type result struct {
 		claim *privateClaim
 		err   error
@@ -176,15 +176,15 @@ func privateRelayPair(t *testing.T, hello tunnelv1.Message) (*tunnel.Session, *t
 }
 
 func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.T) {
-	ref := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 3,
+	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 2, RelayServiceID: "relay-a"}
-	publisher, relayPublisher := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "assigned-publisher", PrivateConnection: &ref})
+	publisher, relayPublisher := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "assigned-publisher", ServiceConnection: &ref})
 	paths := newStreamLifetime(relayPublisher)
 	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
-	registry := NewPrivateRegistry()
+	registry := NewServiceRegistry()
 	metrics := observability.New("relay")
 	registry.Instrument(metrics)
-	connection := &privateConnection{ref: ref, lease: lease, paths: paths}
+	connection := &serviceConnection{ref: ref, lease: lease, paths: paths}
 	if err := registry.insert(connection); err != nil {
 		t.Fatal(err)
 	}
@@ -193,14 +193,14 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: NewRegistry(), PrivateRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2, Observer: metrics, StreamsDelta: metrics.AddRelayStreams, StreamRejected: metrics.ObserveRelayStreamRejection})
+	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: NewRegistry(), ServiceRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2, Observer: metrics, StreamsDelta: metrics.AddRelayStreams, StreamRejected: metrics.ObserveRelayStreamRejection})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ingress, relayIngress := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress, Credential: strings.Repeat("s", 32)})
-	header := tunnelv1.PrivateForwardingHeader{PrivateStreamHeader: tunnelv1.PrivateStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateForwardingStream,
-		PrivateServiceID: ref.PrivateServiceID, PrivateRunID: ref.PrivateRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: privateRelayID(opaqueid.PrivateConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: privateRelayID(opaqueid.IdentityPrefix), DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa"}, GrantRevision: 7},
+	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
+		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+		Connector: &tunnelv1.ConnectorAdmission{SessionID: privateRelayID(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: privateRelayID(opaqueid.IdentityPrefix), DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa"}, GrantRevision: 7},
 		SourceIP:  "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
 		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -213,7 +213,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		return forwarder.forward(ctx, incoming)
 	})
 	publisherDone := relayWorker(t, func() { _ = publisher.Close() }, func() error {
-		incoming, err := publisher.AcceptPrivateForwardingStream(ctx)
+		incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
@@ -227,7 +227,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		_, err = io.Copy(incoming.Stream, incoming.Stream)
 		return err
 	})
-	stream, err := ingress.OpenPrivateForwardingStream(ctx, header)
+	stream, err := ingress.OpenServiceForwardingStream(ctx, header)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		}
 		return forwarder.forward(ctx, incoming)
 	})
-	if _, err := ingress.OpenPrivateForwardingStream(ctx, header); err == nil {
+	if _, err := ingress.OpenServiceForwardingStream(ctx, header); err == nil {
 		t.Fatal("stale private assignment admitted")
 	}
 	_ = relayAwait(t, denied)

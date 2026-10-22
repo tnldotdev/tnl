@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 type synchronizedBuffer struct {
@@ -75,14 +75,14 @@ func startOwnedBinaryProcess(t *testing.T, own func(*integrationBinaryProcess), 
 }
 
 type binaryTopology struct {
-	processes map[tnldconfig.Role][]*integrationBinaryProcess
+	processes map[daemonconfig.Role][]*integrationBinaryProcess
 }
 
 func newBinaryTopology(t *testing.T) *binaryTopology {
 	t.Helper()
-	f := &binaryTopology{processes: make(map[tnldconfig.Role][]*integrationBinaryProcess)}
+	f := &binaryTopology{processes: make(map[daemonconfig.Role][]*integrationBinaryProcess)}
 	t.Cleanup(func() {
-		for _, role := range []tnldconfig.Role{tnldconfig.RoleIngress, tnldconfig.RoleRelay, tnldconfig.RoleControl, tnldconfig.RoleStandalone} {
+		for _, role := range []daemonconfig.Role{daemonconfig.RoleIngress, daemonconfig.RoleRelay, daemonconfig.RoleControl, daemonconfig.RoleStandalone} {
 			for _, process := range f.processes[role] {
 				stopIntegrationBinaryProcess(t, process)
 			}
@@ -91,7 +91,7 @@ func newBinaryTopology(t *testing.T) *binaryTopology {
 	return f
 }
 
-func (f *binaryTopology) start(t *testing.T, role tnldconfig.Role, directory string, environment []string, name string, arguments ...string) *integrationBinaryProcess {
+func (f *binaryTopology) start(t *testing.T, role daemonconfig.Role, directory string, environment []string, name string, arguments ...string) *integrationBinaryProcess {
 	t.Helper()
 	return startOwnedBinaryProcess(t, func(p *integrationBinaryProcess) { f.processes[role] = append(f.processes[role], p) }, directory, environment, name, arguments...)
 }

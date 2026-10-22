@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
@@ -25,7 +25,7 @@ func observedProxyAddress(t *testing.T, kind, backend string, m *observability.M
 	ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), m))
 	t.Cleanup(cancel)
 	if kind == "localproxy" {
-		handler, err := localproxy.NewWithMounts(backend, "proxy.example.test", 1, nil)
+		handler, err := publisherproxy.NewWithMounts(backend, "proxy.example.test", 1, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

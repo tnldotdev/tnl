@@ -14,15 +14,15 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // TransportChoice selects a benchmark publisher cohort or production fallback.
@@ -115,7 +115,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			retErr = errors.Join(retErr, database.Close())
 		}
 	}()
-	authConfig := clientauth.Config{
+	authConfig := auth.Config{
 		ServerEndpoint: config.Server, State: database, HTTPClient: config.HTTPClient,
 		Diagnostics: io.Discard,
 	}
@@ -130,13 +130,13 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			return nil, fmt.Errorf("no usable saved login for %s; run tnl auth login --server=%s", config.Server, config.Server)
 		}
 	}
-	authenticate := clientauth.Authenticate
-	var auth *clientauth.Client
+	authenticate := auth.Authenticate
+	var auth *auth.Client
 	authCtx, cancelAuth := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelAuth()
 	for {
 		auth, err = authenticate(authCtx, authConfig)
-		if !errors.Is(err, controlclient.ErrUnavailable) {
+		if !errors.Is(err, clientcontrol.ErrUnavailable) {
 			break
 		}
 		if waitErr := WaitUntil(authCtx, time.Now().Add(time.Second)); waitErr != nil {
@@ -193,7 +193,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	var publicationControl publisher.PublicURLControlClient = auth.Control
 	if config.Ephemeral {
 		namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
-		native, _, err := nativeauth.EnsureNamespace(ctx, store, auth.Control, auth.Authority, team.Id, domain.Id, namespace)
+		native, _, err := publisheridentity.EnsureNamespace(ctx, store, auth.Control, auth.Authority, team.Id, domain.Id, namespace)
 		if err != nil {
 			return nil, err
 		}
@@ -213,40 +213,40 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 				prefixes := slices.Clone(cfg.AllowedIPPrefixes)
 				request.Ip = &prefixes
 			}
-			route, err := worker.Allocate(ctx, request)
+			publicURL, err := worker.Allocate(ctx, request)
 			if err != nil {
 				return cfg, nil, err
 			}
-			cfg.Control, cfg.AllocatedPublicURL = worker, &route
-			cfg.Hostname, cfg.TeamID, cfg.DomainID = route.CanonicalHostname, route.TeamId, route.DomainId
-			cfg.Purpose, cfg.PublicURLScope, cfg.PolicyRevision = route.Purpose, route.PublicUrlScope, uint64(route.PolicyRevision)
-			if route.MembershipId != nil {
-				cfg.MembershipID = *route.MembershipId
+			cfg.Control, cfg.AssignedPublicURL = worker, &publicURL
+			cfg.Hostname, cfg.TeamID, cfg.DomainID = publicURL.CanonicalHostname, publicURL.TeamId, publicURL.DomainId
+			cfg.Purpose, cfg.PublicURLScope, cfg.PolicyRevision = publicURL.Purpose, publicURL.PublicUrlScope, uint64(publicURL.PolicyRevision)
+			if publicURL.MembershipId != nil {
+				cfg.MembershipID = *publicURL.MembershipId
 			}
-			if route.AllowedIpPrefixes != nil {
-				cfg.AllowedIPPrefixes = slices.Clone(*route.AllowedIpPrefixes)
+			if publicURL.AllowedIpPrefixes != nil {
+				cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 			}
-			return cfg, func(ctx context.Context) error { return worker.DeletePublicURL(ctx, route.Id) }, nil
+			return cfg, func(ctx context.Context) error { return worker.DeletePublicURL(ctx, publicURL.Id) }, nil
 		}
 		publicationControl = native
 	} else {
 		// enroll the exact saved URL before publisher.Run acquires identity and
 		// certificate locks. certificate keys remain publisher-scoped.
 		prepare = func(ctx context.Context, cfg publisher.Config) (publisher.Config, func(context.Context) error, error) {
-			route, err := auth.Control.GetPublicURLByHostname(ctx, cfg.TeamID, cfg.Hostname)
-			if errors.Is(err, controlclient.ErrNotFound) {
+			publicURL, err := auth.Control.GetPublicURLByHostname(ctx, cfg.TeamID, cfg.Hostname)
+			if errors.Is(err, clientcontrol.ErrNotFound) {
 				mode := cfg.AccessMode
 				key := sha256.Sum256([]byte(cfg.Hostname))
-				route, err = auth.Control.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: cfg.TeamID, DomainId: cfg.DomainID, MembershipId: &cfg.MembershipID, CanonicalHostname: cfg.Hostname, PublicUrlScope: cfg.PublicURLScope, Purpose: cfg.Purpose, Target: cfg.Target, AccessMode: &mode, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}, fmt.Sprintf("benchmark-%x", key))
+				publicURL, err = auth.Control.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: cfg.TeamID, DomainId: cfg.DomainID, MembershipId: &cfg.MembershipID, CanonicalHostname: cfg.Hostname, PublicUrlScope: cfg.PublicURLScope, Purpose: cfg.Purpose, Target: cfg.Target, AccessMode: &mode, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}, fmt.Sprintf("benchmark-%x", key))
 			}
 			if err != nil {
 				return cfg, nil, err
 			}
-			native, identity, err := nativeauth.EnsureOwner(ctx, store, auth.Control, auth.Authority, route)
+			native, identity, err := publisheridentity.EnsureOwner(ctx, store, auth.Control, auth.Authority, publicURL)
 			if err != nil {
 				return cfg, nil, err
 			}
-			cfg.Control, cfg.PublisherID = native, identity.ClientId
+			cfg.Control, cfg.PublisherIdentityID = native, identity.ClientId
 			return cfg, nil, nil
 		}
 	}

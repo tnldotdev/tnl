@@ -1,9 +1,9 @@
-package tnldconfig
+package config
 
 import (
 	"net"
 
-	controlproxy "github.com/tnldotdev/tnl/internal/control/proxy"
+	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 )
 
 func (c Config) ACMEEnabled() bool { return c.Role.RunsControl() }
@@ -71,7 +71,7 @@ func (c Config) ControlOrigin() string {
 	return ""
 }
 
-func (c Config) ControlProxy() controlproxy.Config {
+func (c Config) ControlProxy() controlProxy.Config {
 	peers, header := c.ControlTrustedProxies, c.ControlClientIPHeader
 	if peers == nil {
 		peers = []string{"127.0.0.1/32", "::1/128"}
@@ -79,5 +79,5 @@ func (c Config) ControlProxy() controlproxy.Config {
 	if header == "" {
 		header = "X-Forwarded-For"
 	}
-	return controlproxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, ClientIPHeader: header}
+	return controlProxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, ClientIPHeader: header}
 }

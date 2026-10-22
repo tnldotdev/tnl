@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 var ErrTargetTLS = errors.New("target TLS negotiation failed")
@@ -27,7 +27,7 @@ type Transport struct {
 
 // FromTrust selects the publisher's approved target trust. Kubernetes pins an
 // explicit cluster CA; other protocols retain the target.tls extension semantics.
-func FromTrust(protocol config.ProtocolName, trust *privatetrust.Snapshot) (Transport, error) {
+func FromTrust(protocol config.ProtocolName, trust *targettrust.Snapshot) (Transport, error) {
 	transport := Transport{Protocol: protocol}
 	if trust != nil {
 		var err error

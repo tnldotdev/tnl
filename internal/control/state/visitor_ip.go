@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -324,10 +324,10 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 	if err := q.CleanupVisitorLogins(ctx, timestamptz(now)); err != nil {
 		return err
 	}
-	if err := q.CleanupManagedHTTPLogins(ctx, timestamptz(now)); err != nil {
+	if err := q.CleanupServiceHTTPLogins(ctx, timestamptz(now)); err != nil {
 		return err
 	}
-	if err := q.CleanupManagedHTTPSessions(ctx, timestamptz(now)); err != nil {
+	if err := q.CleanupServiceHTTPSessions(ctx, timestamptz(now)); err != nil {
 		return err
 	}
 	// workload assertion replay fences and history belong to CleanupWorkloads.

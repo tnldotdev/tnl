@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bufio"
@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
@@ -69,7 +69,7 @@ func TestIntegrationRelayDrainPreservesActiveVisitorStream(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("read control session: found %t, error %v", found, err)
 	}
-	admin, err := controlclient.New(
+	admin, err := clientcontrol.New(
 		fixture.identity.controlOrigin, fixture.controlHTTP, credentials.AccessToken(stored.AccessToken),
 	)
 	if err != nil {

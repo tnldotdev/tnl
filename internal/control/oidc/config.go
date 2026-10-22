@@ -1,5 +1,5 @@
 // package oidcauth implements control-owned standard OIDC authentication.
-package oidcauth
+package oidc
 
 import "strings"
 

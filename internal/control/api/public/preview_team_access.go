@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
@@ -42,7 +42,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 		}
 		token, _ := requestBearerToken(request)
 		for _, id := range preview.PublicURLIDs {
-			route, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
+			publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
 			if errors.Is(err, controlstate.ErrPublicURLNotFound) {
 				writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 				return
@@ -51,20 +51,20 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 				writeControlStateProblem(response, "read team preview public URL", err)
 				return
 			}
-			if route.TeamID != preview.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+			if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
 				writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled for team access")
 				return
 			}
-			prefixes := make([]string, len(route.AllowedIPPrefixes))
-			for index, prefix := range route.AllowedIPPrefixes {
+			prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
+			for index, prefix := range publicURL.AllowedIPPrefixes {
 				prefixes[index] = prefix.String()
 			}
 			decision, err := h.authorizer.Authorize(request.Context(), authorization.Request{
 				AccessToken: token, Operation: authorization.OperationShareCreate,
-				TeamID: route.TeamID, PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-				CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-				Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
-				PublicURLID: route.ID, PublicURLMutationRevision: route.MutationRevision,
+				TeamID: publicURL.TeamID, PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
+				CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
+				Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
+				PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
 			})
 			if err != nil {
 				feedbackOwnerFailure(response, err)
@@ -77,7 +77,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 			}
 			write.PolicyRevision = decision.PolicyRevision
 			write.PublicURLs = append(write.PublicURLs, controlstate.AuthorizedSharePublicURL{
-				PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
+				PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision,
 			})
 		}
 	}

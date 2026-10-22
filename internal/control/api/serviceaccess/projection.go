@@ -5,15 +5,15 @@ package serviceaccess
 import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func Service(record controlstate.PrivateServiceRecord) controlv1.PrivateService {
-	result := controlv1.PrivateService{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
-		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.PrivateServiceProtocol(record.Protocol),
+func Service(record controlstate.ServiceRecord) controlv1.Service {
+	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
+		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
 		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision}
-	if t := record.ManagedTLS; t != nil {
-		result.ManagedTls = &controlv1.ManagedServiceTLS{Hostname: t.Hostname, Port: t.Port, Public: t.Public}
+	if t := record.Endpoint; t != nil {
+		result.Endpoint = &controlv1.ServiceEndpoint{Hostname: t.Hostname, Port: t.Port, Public: t.Public}
 	}
 	if h := record.HTTPLimits; h != nil {
 		result.HttpLimits = &controlv1.ProjectHTTPApplicationLimits{Total: h.Total, Concurrency: h.Concurrency}
@@ -25,7 +25,7 @@ func Service(record controlstate.PrivateServiceRecord) controlv1.PrivateService 
 		result.DomainId = &record.DomainID
 	}
 	if p := record.Placement; p != nil {
-		result.Placement = &controlv1.PrivateServicePlacement{}
+		result.Placement = &controlv1.ServicePlacement{}
 		if p.DomainID != "" {
 			result.Placement.DomainId = &p.DomainID
 		}
@@ -40,7 +40,7 @@ func Service(record controlstate.PrivateServiceRecord) controlv1.PrivateService 
 		result.Source = &controlv1.LocalServiceSource{ProjectKey: s.ProjectKey, SourceFingerprint: s.SourceFingerprint, Service: s.Service, WorktreeKey: s.WorktreeKey}
 	}
 	if t := record.TLS; t != nil {
-		result.TargetTls = &controlv1.PrivateServiceTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest}
+		result.TargetTls = &controlv1.ServiceTargetTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest}
 		if t.PEM != "" {
 			result.TargetTls.Pem = &t.PEM
 		}
@@ -50,14 +50,14 @@ func Service(record controlstate.PrivateServiceRecord) controlv1.PrivateService 
 
 // Summary preserves service identity and selection fields without publisher-only
 // target trust or HTTP limits. callers needing approved trust fetch one service.
-func Summary(record controlstate.PrivateServiceRecord) controlv1.PrivateService {
+func Summary(record controlstate.ServiceRecord) controlv1.Service {
 	record.TLS, record.HTTPLimits = nil, nil
 	return Service(record)
 }
 
-func Grant(grant controlstate.PrivateServiceGrant) controlv1.PrivateServiceGrant {
-	result := controlv1.PrivateServiceGrant{Id: grant.ID, PrivateServiceId: grant.PrivateServiceID,
-		Kind: controlv1.PrivateServiceGrantKind(grant.Kind), CreatedAt: grant.CreatedAt,
+func Grant(grant controlstate.ServiceGrant) controlv1.ServiceGrant {
+	result := controlv1.ServiceGrant{Id: grant.ID, ServiceId: grant.ServiceID,
+		Kind: controlv1.ServiceGrantKind(grant.Kind), CreatedAt: grant.CreatedAt,
 		ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
 	if grant.IdentityID != "" {
 		result.IdentityId = &grant.IdentityID
@@ -68,8 +68,8 @@ func Grant(grant controlstate.PrivateServiceGrant) controlv1.PrivateServiceGrant
 	return result
 }
 
-func Invitation(invitation controlstate.PrivateServiceInvitation) controlv1.PrivateServiceInvitation {
-	result := controlv1.PrivateServiceInvitation{Id: invitation.ID, PrivateServiceId: invitation.PrivateServiceID,
+func Invitation(invitation controlstate.ServiceInvitation) controlv1.ServiceInvitation {
+	result := controlv1.ServiceInvitation{Id: invitation.ID, ServiceId: invitation.ServiceID,
 		Email: openapi_types.Email(invitation.Email), ExpiresAt: invitation.ExpiresAt,
 		AcceptedAt: invitation.AcceptedAt, RevokedAt: invitation.RevokedAt}
 	if invitation.Secret != "" {

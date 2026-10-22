@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -12,15 +12,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-func privateClaimRun(t *testing.T, f publishRunFixture) PrivateRunState {
+func privateClaimRun(t *testing.T, f publishRunFixture) ServiceRunState {
 	t.Helper()
 	d, now := f.database, f.now
 	actor := oidcRouteRequest(t, d, now)
-	s, err := d.CreatePrivateService(t.Context(), actor.TeamID, actor.ActingIdentityID, "claims", "claims", now)
+	s, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "claims", "claims", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "private_service", PrivateServiceID: s.ID}, now)
+	enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: s.ID}, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -29,11 +29,11 @@ func privateClaimRun(t *testing.T, f publishRunFixture) PrivateRunState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PreparePrivateServiceRun(t.Context(), s.ID, publisher, "claims", now)
+	prepared, err := d.PrepareServiceRun(t.Context(), s.ID, publisher, "claims", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.StartManagedServiceRun(t.Context(), s.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+	run, err := d.StartServiceRun(t.Context(), s.ID, prepared.RunID, prepared.RunNumber, publisher, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestIntegrationPrivateMixedProcessClaimCapacity(t *testing.T) {
 			d, now := f.database, f.now
 			run := privateClaimRun(t, f)
 			public := sessionClaim(t, f)
-			var slot PrivateRunAssignment
+			var slot ServiceRunAssignment
 			for _, candidate := range run.Connections {
 				if candidate.RelayServiceID == public.ConnectionAssignmentIdentity.RelayServiceID {
 					slot = candidate
@@ -71,7 +71,7 @@ func TestIntegrationPrivateMixedProcessClaimCapacity(t *testing.T) {
 				t.Fatal(err)
 			}
 			claimPrivate := func(ctx context.Context, lease RelayLeaseIdentity) error {
-				_, err := d.ClaimPrivatePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now)
+				_, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now)
 				return err
 			}
 			claimPublic := func(ctx context.Context, lease RelayLeaseIdentity) error {
@@ -125,11 +125,11 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 	run := privateClaimRun(t, f)
 	for index, slot := range run.Connections {
 		lease := f.leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimPrivatePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if index == 1 {
-			if _, err := d.ReadyPrivatePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
+			if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -139,12 +139,12 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 	// credential expires too, but it still owns its existing tunnel.
 	lost, sibling := run.Connections[0], run.Connections[1]
 	for at := now.Add(30 * time.Second); at.Before(lost.CredentialExpiresAt); at = at.Add(30 * time.Second) {
-		if _, err := d.HeartbeatPrivateServiceRun(ctx, run.ServiceID, run.RunID, run.Token, at); err != nil {
+		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, at); err != nil {
 			t.Fatal(err)
 		}
 	}
 	later := lost.CredentialExpiresAt.Add(time.Second)
-	recovered, err := d.HeartbeatPrivateServiceRun(ctx, run.ServiceID, run.RunID, run.Token, later)
+	recovered, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, later)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,20 +156,20 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 		t.Fatal("expired connected claim recovery replaced the ready sibling")
 	}
 	lease := f.leases[replacement.RelayServiceID].RelayLeaseIdentity
-	if _, err := d.ClaimPrivatePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, lost.Credential, lease, later); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, lost.Credential, lease, later); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("old credential claimed replacement: %v", err)
 	}
-	if _, err := d.ClaimPrivatePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, replacement.Credential, lease, later); err != nil {
+	if _, err := d.ClaimServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, replacement.Revision, replacement.Credential, lease, later); err != nil {
 		t.Fatal(err)
 	}
 	oldLease := f.leases[lost.RelayServiceID].RelayLeaseIdentity
-	if _, err := d.ReadyPrivatePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.ReadyServicePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("late old handshake became ready after replacement: %v", err)
 	}
-	if _, err := d.DisconnectPrivatePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.DisconnectServicePublisherConnection(ctx, lost.PublisherConnectionID, run.RunID, run.RunNumber, lost.Revision, oldLease, later); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("late old disconnect modified replacement: %v", err)
 	}
-	if _, err := d.ReadyPrivatePublisherConnection(ctx, replacement.PublisherConnectionID, run.RunID, run.RunNumber, replacement.Revision, lease, later); err != nil {
+	if _, err := d.ReadyServicePublisherConnection(ctx, replacement.PublisherConnectionID, run.RunID, run.RunNumber, replacement.Revision, lease, later); err != nil {
 		t.Fatal(err)
 	}
 }

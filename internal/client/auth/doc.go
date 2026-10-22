@@ -12,4 +12,4 @@
 // response or process exit during those steps, the operation requires a new
 // login instead of replaying a potentially consumed credential. an assertion or
 // issued session already checkpointed can resume without another redemption.
-package clientauth
+package auth

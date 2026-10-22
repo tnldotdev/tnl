@@ -3,7 +3,7 @@ paths:
     post:
       operationId: renamePublisherNamespace
       security: [{ bearerAuth: [] }]
-      description: Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+      description: Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
       parameters:
         - { name: project_key, in: path, required: true, schema: { type: string } }
         - { name: group_name, in: path, required: true, schema: { type: string } }
@@ -14,7 +14,7 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/RenamePublisherNamespaceRequest" }
       responses:
         "200":
-          description: Applied descriptors with the new managed service hostnames
+          description: Applied descriptors with the new service hostnames
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }

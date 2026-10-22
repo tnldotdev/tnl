@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bufio"
@@ -17,22 +17,22 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.PrivateService, target string, overrides ...privatepublisher.RunControl) {
+func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, target string, overrides ...publisherservice.RunControl) {
 	t.Helper()
-	enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-http"})
+	enrollment, err := f.identity.routes.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "private-http"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := nativeauth.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +43,14 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	if f.defaultTiming {
 		heartbeat = 0
 	}
-	var control privatepublisher.RunControl = f.identity.routes
+	var control publisherservice.RunControl = f.identity.routes
 	if len(overrides) == 1 {
 		control = overrides[0]
 	}
 	go func() {
-		done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target,
-			Metadata: controlv1.PrivateServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
+			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
+			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
 				return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 			}})
 	}()
@@ -78,9 +78,9 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
-		for _, managedTLS := range []bool{false, true} {
-			t.Run(fmt.Sprintf("standalone=%t/tnl-tls=%t", standalone, managedTLS), func(t *testing.T) {
-				f := newPrivateRuntimeFixture(t, standalone, nil)
+		for _, endpoint := range []bool{false, true} {
+			t.Run(fmt.Sprintf("standalone=%t/tnl-tls=%t", standalone, endpoint), func(t *testing.T) {
+				f := newServiceRuntimeFixture(t, standalone, nil)
 				if !standalone {
 					startSeparatedPrivateIngress(t, f, 0, "quic", nil)
 					startSeparatedPrivateIngress(t, f, 1, "quic", nil)
@@ -89,7 +89,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				const hostname = "target.private.integration.test"
 				var posts atomic.Int64
 				target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if managedTLS && r.TLS == nil {
+					if endpoint && r.TLS == nil {
 						t.Errorf("approved HTTPS Host was not used: %s", r.Host)
 					}
 					switch r.URL.Path {
@@ -113,9 +113,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 						_, _ = io.Copy(connection, buffer)
 					}
 				}))
-				target.TLS = privateRuntimeTLS(t, ca, hostname)
+				target.TLS = serviceRuntimeTLS(t, ca, hostname)
 				target.Config.ErrorLog = log.New(io.Discard, "", 0)
-				if managedTLS {
+				if endpoint {
 					target.StartTLS()
 				} else {
 					target.Start()
@@ -126,17 +126,17 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 					t.Fatal(err)
 				}
 				name := hostname
-				trust, err := privatetrust.NewCache(nil).Capture(t.Context(), directory, target.Listener.Addr().String(), config.TrustSource{CA: "ca.pem", Hostname: &name})
+				trust, err := targettrust.NewCache(nil).Capture(t.Context(), directory, target.Listener.Addr().String(), config.TrustSource{CA: "ca.pem", Hostname: &name})
 				if err != nil {
 					t.Fatal(err)
 				}
-				metadata := controlv1.PrivateServiceMetadata{Protocol: controlv1.PrivateServiceProtocol("http"), TrustRevision: 1}
-				if managedTLS {
+				metadata := controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("http"), TrustRevision: 1}
+				if endpoint {
 					pem := string(trust.PEM)
-					metadata.TargetTls = &controlv1.PrivateServiceTLS{Hostname: trust.Hostname, Digest: trust.Digest, Pem: &pem}
+					metadata.TargetTls = &controlv1.ServiceTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, Pem: &pem}
 				}
 				key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-				service, err := f.identity.routes.CreatePrivateService(t.Context(), f.identity.teamID, "private-http", key, metadata)
+				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "private-http", key, metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -145,7 +145,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				production, err := tcpconnect.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+				production, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -160,8 +160,8 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				ready, done := make(chan struct{}), make(chan error, 1)
 				go func() {
-					done <- tcpconnect.Serve(ctx, listener, tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: person.Identity.Id,
-						Protocol: "http", TrustRevision: service.TrustRevision, ManagedTLS: service.ManagedTls, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
+					done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id,
+						Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
 				}()
 				t.Cleanup(func() {
 					cancel()
@@ -180,7 +180,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 					t.Fatal("private HTTP connector did not become ready")
 				}
 				verification := f.visitorRoots.Clone()
-				verification.ServerName = service.ManagedTls.Hostname
+				verification.ServerName = service.Endpoint.Hostname
 				transport := &http.Transport{Proxy: nil, TLSClientConfig: verification}
 				scheme := "https"
 				t.Cleanup(transport.CloseIdleConnections)
@@ -220,7 +220,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if line, err := reader.ReadString('\n'); err != nil || line != "data: ready\n" {
 					t.Fatalf("private SSE was buffered: %q %v", line, err)
 				}
-				device, err := control.PrivateConnectorSigner(t.Context(), person.Identity.Id)
+				device, err := control.ConnectorSigner(t.Context(), person.Identity.Id)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.route.ID); err != nil {
+	if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.publicURL.ID); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
@@ -167,7 +167,7 @@ func TestIntegrationAuthorityMutationProgressesDuringSessionRetries(t *testing.T
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.route.ID); err != nil {
+			if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, f.publicURL.ID); err != nil {
 				t.Fatal(err)
 			}
 			workers := newIntegrationWorkers(t, cancel)
@@ -291,13 +291,13 @@ func siblingSessionRequest(t *testing.T, f transactionAuthorityFixture) PublishR
 	request.IdempotencyKey = "sibling"
 	request.RequestDigest = sha256.Sum256([]byte("sibling"))
 	request.CanonicalHostname = "sibling.member." + f.domain.CanonicalDomain
-	route, err := f.database.CreatePublicURL(t.Context(), request, f.now)
+	publicURL, err := f.database.CreatePublicURL(t.Context(), request, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session := f.sessionRequest
-	session.PublicURLID, session.ExpectedMutationRevision = route.ID, route.MutationRevision
-	session.CertificateCacheKey, session.CertificateScope = route.CanonicalHostname, route.CanonicalHostname
-	session.CertificateIdentifiers = []string{route.CanonicalHostname}
+	session.PublicURLID, session.ExpectedMutationRevision = publicURL.ID, publicURL.MutationRevision
+	session.CertificateCacheKey, session.CertificateScope = publicURL.CanonicalHostname, publicURL.CanonicalHostname
+	session.CertificateIdentifiers = []string{publicURL.CanonicalHostname}
 	return session
 }

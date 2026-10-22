@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"encoding/base64"
@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstate.FeedbackActor, error) {
@@ -54,7 +54,7 @@ func (h *handler) feedbackBrowserActor(request *http.Request, auth controlstate.
 	token := base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
 	session, principal, teamMember, err := h.browserSessionAccess(request, auth, token)
 	if err != nil {
-		if errors.Is(err, controlstate.ErrPreviewAccess) || errors.Is(err, authorization.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+		if errors.Is(err, controlstate.ErrPreviewAccess) || errors.Is(err, authorization.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrUnauthenticated) {
 			return actor, controlstate.ErrVisitorSignIn
 		}
 		return actor, err

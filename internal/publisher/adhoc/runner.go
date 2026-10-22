@@ -10,31 +10,31 @@ import (
 	"slices"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type Options struct {
-	ControlURL    string
-	HTTPClient    *http.Client
-	State         *clientstate.Store
-	EnrollmentKey string
-	PublisherID   string
-	Publisher     *nativeauth.Native
-	InvocationID  string
-	Target        string
-	AccessMode    controlv1.VisitorAccessMode
-	IP            []string
-	Limits        publisher.ApplicationLimits
-	OnAllocated   func(controlv1.PublicURL) error
-	Observe       func(publisher.Event) error
+	ControlURL          string
+	HTTPClient          *http.Client
+	State               *clientstate.Store
+	EnrollmentKey       string
+	PublisherIdentityID string
+	Publisher           *publisheridentity.Native
+	InvocationID        string
+	Target              string
+	AccessMode          controlv1.VisitorAccessMode
+	IP                  []string
+	Limits              publisher.ApplicationLimits
+	OnAllocated         func(controlv1.PublicURL) error
+	Observe             func(publisher.Event) error
 }
 
 // Run allocates one ad-hoc URL, publishes its local target, then removes the URL.
@@ -50,15 +50,15 @@ func Run(ctx context.Context, options Options) (result error) {
 	if err != nil || target != options.Target {
 		return errors.New("ad-hoc target must be an HTTP or HTTPS address with a host and port")
 	}
-	client, err := controlclient.New(options.ControlURL, options.HTTPClient, "")
+	client, err := clientcontrol.New(options.ControlURL, options.HTTPClient, "")
 	if err != nil {
 		return err
 	}
-	authority, err := authorityclient.New(options.ControlURL, options.HTTPClient, "")
+	authority, err := clientauthority.New(options.ControlURL, options.HTTPClient, "")
 	if err != nil {
 		return err
 	}
-	native, err := nativeauth.Resolve(ctx, options.State, client, authority, options.EnrollmentKey, options.PublisherID, options.Publisher)
+	native, err := publisheridentity.Resolve(ctx, options.State, client, authority, options.EnrollmentKey, options.PublisherIdentityID, options.Publisher)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func Run(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	if native.ControlURL() != options.ControlURL {
-		return nativeauth.ErrScope
+		return publisheridentity.ErrScope
 	}
 	body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: options.InvocationID, Target: target}
 	if options.AccessMode != "" {
@@ -93,43 +93,43 @@ func Run(ctx context.Context, options Options) (result error) {
 		}
 		body.Limits = limits
 	}
-	route, err := native.Allocate(ctx, body)
+	publicURL, err := native.Allocate(ctx, body)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := native.DeletePublicURL(cleanupCtx, route.Id); err != nil && !errors.Is(err, controlclient.ErrNotFound) {
+		if err := native.DeletePublicURL(cleanupCtx, publicURL.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 			result = errors.Join(result, fmt.Errorf("remove ad-hoc public URL: %w", err))
 		}
 	}()
-	if route.Target != target || !route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
-		route.Purpose != controlv1.App || route.PolicyRevision < 1 {
+	if publicURL.Target != target || !publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled ||
+		publicURL.Purpose != controlv1.App || publicURL.PolicyRevision < 1 {
 		return errors.New("control returned an invalid ad-hoc public URL")
 	}
 	if options.OnAllocated != nil {
-		if err := options.OnAllocated(route); err != nil {
+		if err := options.OnAllocated(publicURL); err != nil {
 			return err
 		}
 	}
 	allowed := []string{}
-	if route.AllowedIpPrefixes != nil {
-		allowed = slices.Clone(*route.AllowedIpPrefixes)
+	if publicURL.AllowedIpPrefixes != nil {
+		allowed = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
 	membershipID := ""
-	if route.MembershipId != nil {
-		membershipID = *route.MembershipId
+	if publicURL.MembershipId != nil {
+		membershipID = *publicURL.MembershipId
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	publication := publisher.Config{
 		Control:        native,
 		VisitorControl: client,
 		ControlURL:     options.ControlURL, State: options.State,
-		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
-		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope,
-		Purpose: controlv1.App, Hostname: route.CanonicalHostname, Target: target, ServiceProtocol: controlv1.Http,
-		AllowedIPPrefixes: allowed, Limits: options.Limits, Ephemeral: true, AllocatedPublicURL: &route,
+		TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membershipID,
+		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope,
+		Purpose: controlv1.App, Hostname: publicURL.CanonicalHostname, Target: target, ServiceProtocol: controlv1.Http,
+		AllowedIPPrefixes: allowed, Limits: options.Limits, Ephemeral: true, AssignedPublicURL: &publicURL,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: tlsConfig},
 		Observe:       options.Observe,

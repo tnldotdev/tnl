@@ -1,4 +1,4 @@
-package targetdiscovery_test
+package discovery_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	targetdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
+	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 )
 
 func TestCloudSelectorBoundaryParity(t *testing.T) {
@@ -50,9 +50,9 @@ func TestCloudSelectorBoundaryParity(t *testing.T) {
 			source := config.ServiceTarget{Type: test.kind, Region: new("us-east-1"), Cluster: optional(test.cluster), Instance: optional(test.instance), Endpoint: optional(test.endpoint)}
 			descriptor := controlstate.ProjectTargetDiscovery{Type: source.Type, Region: *source.Region, Cluster: source.Cluster, Instance: source.Instance, Endpoint: source.Endpoint}
 			before, _ := json.Marshal(descriptor)
-			request := targetdiscovery.Request{Type: test.kind, Region: "us-east-1", Cluster: test.cluster, Instance: test.instance, Endpoint: test.endpoint, Protocol: test.protocol}
+			request := publisherdiscovery.Request{Type: test.kind, Region: "us-east-1", Cluster: test.cluster, Instance: test.instance, Endpoint: test.endpoint, Protocol: test.protocol}
 			normalized, discoveryErr := request.Normalize()
-			adapted, adapterErr := targetdiscovery.FromServiceTarget(source, config.ProtocolName(test.protocol))
+			adapted, adapterErr := publisherdiscovery.FromServiceTarget(source, config.ProtocolName(test.protocol))
 			for boundary, err := range map[string]error{"source": config.ValidateCloudTarget(test.protocol, source), "control": descriptor.Validate(test.protocol), "discovery": discoveryErr, "source adapter": adapterErr} {
 				if (err == nil) != test.valid {
 					t.Errorf("%s valid=%t: %v", boundary, test.valid, err)
@@ -79,11 +79,11 @@ func TestCloudSelectorBoundaryParity(t *testing.T) {
 }
 
 func TestCloudSelectorNormalizedJSONAndHash(t *testing.T) {
-	const expected = `{"publishers":{"production":{}},"services":{"db":{"target_discovery":{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"},"publisher":"production","name":"db","protocol":"postgres","target":""}},"oauth":false,"webhooks":{}}`
+	const expected = `{"publisher_groups":{"production":{}},"services":{"db":{"target_discovery":{"type":"rds","region":"us-east-1","instance":"orders","endpoint":"writer"},"publisher_group":"production","name":"db","protocol":"postgres","target":""}},"oauth":false,"webhooks":{}}`
 	digest := sha256.Sum256([]byte(expected))
 	for _, endpoint := range []*string{nil, new("writer")} {
 		descriptor := &controlstate.ProjectTargetDiscovery{Type: "rds", Region: "us-east-1", Instance: new("orders"), Endpoint: endpoint}
-		input := controlstate.ProjectConfiguration{Publishers: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"db": {Publisher: "production", Protocol: "postgres", TargetDiscovery: descriptor}}}
+		input := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"db": {PublisherGroup: "production", Protocol: "postgres", TargetDiscovery: descriptor}}}
 		before, _ := json.Marshal(input)
 		normalized, hash, err := controlstate.NormalizeProjectConfiguration(input)
 		if err != nil {
@@ -121,7 +121,7 @@ func TestCloudSelectorPresenceAndRegion(t *testing.T) {
 		if config.ValidateCloudTarget("postgres", source) == nil {
 			t.Fatal("invalid source selector accepted")
 		}
-		if _, err := targetdiscovery.FromServiceTarget(source, config.ProtocolPostgres); targetdiscovery.ErrorKind(err) != targetdiscovery.Invalid {
+		if _, err := publisherdiscovery.FromServiceTarget(source, config.ProtocolPostgres); publisherdiscovery.ErrorKind(err) != publisherdiscovery.Invalid {
 			t.Fatal("invalid adapter selector", err)
 		}
 		if source.Region != nil && source.TLS == nil && source.Address == nil {
@@ -131,8 +131,8 @@ func TestCloudSelectorPresenceAndRegion(t *testing.T) {
 			}
 		}
 	}
-	request := targetdiscovery.Request{Type: "rds", Region: "us-east-1", Instance: "orders", Protocol: "postgres", Account: "*"}
-	if _, err := request.Normalize(); targetdiscovery.ErrorKind(err) != targetdiscovery.Invalid {
+	request := publisherdiscovery.Request{Type: "rds", Region: "us-east-1", Instance: "orders", Protocol: "postgres", Account: "*"}
+	if _, err := request.Normalize(); publisherdiscovery.ErrorKind(err) != publisherdiscovery.Invalid {
 		t.Fatal("provider account check was lost", err)
 	}
 	request.Account = "123456789012"

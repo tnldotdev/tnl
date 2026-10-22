@@ -12,16 +12,16 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 )
 
 // this stub shares ACME behavior only. public URL and relay rules stay in their tests.
 type acmeStub struct {
-	order, finalizedOrder acmeclient.Order
-	authorization         acmeclient.Authorization
-	authorizations        map[string]acmeclient.Authorization
-	getOrder              func(string) (acmeclient.Order, error)
-	getAuthorization      func(string) (acmeclient.Authorization, error)
+	order, finalizedOrder acme.Order
+	authorization         acme.Authorization
+	authorizations        map[string]acme.Authorization
+	getOrder              func(string) (acme.Order, error)
+	getAuthorization      func(string) (acme.Authorization, error)
 	certificatePEM        []byte
 	challengeRetryAt      time.Time
 
@@ -54,13 +54,13 @@ type finalizeCall struct {
 	csr                   []byte
 }
 
-func (s *acmeStub) NewOrder(_ context.Context, identifiers []string, profile string) (acmeclient.Order, error) {
+func (s *acmeStub) NewOrder(_ context.Context, identifiers []string, profile string) (acme.Order, error) {
 	s.newOrderCalls++
 	s.newOrders = append(s.newOrders, newOrderCall{append([]string(nil), identifiers...), profile})
 	return s.order, s.newOrderErr
 }
 
-func (s *acmeStub) GetOrder(_ context.Context, url string) (acmeclient.Order, error) {
+func (s *acmeStub) GetOrder(_ context.Context, url string) (acme.Order, error) {
 	s.orderURLs = append(s.orderURLs, url)
 	if s.getOrder != nil {
 		return s.getOrder(url)
@@ -68,7 +68,7 @@ func (s *acmeStub) GetOrder(_ context.Context, url string) (acmeclient.Order, er
 	return s.order, s.getOrderErr
 }
 
-func (s *acmeStub) GetAuthorization(_ context.Context, url string) (acmeclient.Authorization, error) {
+func (s *acmeStub) GetAuthorization(_ context.Context, url string) (acme.Authorization, error) {
 	s.authorizationURLs = append(s.authorizationURLs, url)
 	if s.getAuthorization != nil {
 		return s.getAuthorization(url)
@@ -86,7 +86,7 @@ func (s *acmeStub) AcceptChallenge(_ context.Context, url string) (time.Time, er
 	return s.challengeRetryAt, s.acceptErr
 }
 
-func (s *acmeStub) FinalizeOrder(_ context.Context, orderURL, finalizeURL string, csr []byte) (acmeclient.Order, error) {
+func (s *acmeStub) FinalizeOrder(_ context.Context, orderURL, finalizeURL string, csr []byte) (acme.Order, error) {
 	s.finalizedCSR = append([]byte(nil), csr...)
 	s.finalizations = append(s.finalizations, finalizeCall{orderURL, finalizeURL, append([]byte(nil), csr...)})
 	return s.finalizedOrder, s.finalizeErr

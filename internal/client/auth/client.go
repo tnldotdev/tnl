@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const (
@@ -44,15 +44,15 @@ type Config struct {
 type Client struct {
 	ServerEndpoint string
 	Discovery      controlv1.ControlDiscovery
-	Control        *controlclient.Client
-	Authority      *authorityclient.Client
+	Control        *clientcontrol.Client
+	Authority      *clientauthority.Client
 }
 
 type control struct {
 	serverEndpoint string
 	discovery      controlv1.ControlDiscovery
 	rawHTTP        *http.Client
-	rawAuthority   *authorityclient.Client
+	rawAuthority   *clientauthority.Client
 }
 
 func Authenticate(ctx context.Context, config Config) (*Client, error) {
@@ -85,11 +85,11 @@ func authenticatedResult(resolved control, source *tokenSource) (*Client, error)
 	authenticatedHTTP := authenticatedClient(resolved.rawHTTP, source)
 	result := &Client{ServerEndpoint: resolved.serverEndpoint, Discovery: resolved.discovery}
 	var err error
-	result.Control, err = controlclient.NewExternallyAuthenticated(resolved.serverEndpoint, authenticatedHTTP)
+	result.Control, err = clientcontrol.NewExternallyAuthenticated(resolved.serverEndpoint, authenticatedHTTP)
 	if err != nil {
 		return nil, err
 	}
-	result.Authority, err = authorityclient.New(resolved.serverEndpoint, authenticatedHTTP, "")
+	result.Authority, err = clientauthority.New(resolved.serverEndpoint, authenticatedHTTP, "")
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func Logout(ctx context.Context, config Config) error {
 		return errors.Join(err, cleanupErr)
 	}
 	if err := revokeSession(ctx, resolved, stored, nil); err != nil &&
-		!errors.Is(err, controlclient.ErrUnauthenticated) && !errors.Is(err, authorityclient.ErrUnauthenticated) {
+		!errors.Is(err, clientcontrol.ErrUnauthenticated) && !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		return errors.Join(err, cleanupErr)
 	}
 	return cleanupErr
@@ -145,7 +145,7 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
-	controlClient, err := controlclient.New(serverEndpoint, httpClient, "")
+	controlClient, err := clientcontrol.New(serverEndpoint, httpClient, "")
 	if err != nil {
 		return control{}, err
 	}
@@ -153,7 +153,7 @@ func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http
 	if err != nil {
 		return control{}, fmt.Errorf("read control discovery: %w", err)
 	}
-	authority, err := authorityclient.New(serverEndpoint, httpClient, "")
+	authority, err := clientauthority.New(serverEndpoint, httpClient, "")
 	if err != nil {
 		return control{}, err
 	}
@@ -215,7 +215,7 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		}
 		return "", failure.Wrap("refresh control session", failure.Authentication, refreshErr)
 	}
-	return "", failure.Wrap("read control session", failure.Authentication, authorityclient.ErrUnauthenticated)
+	return "", failure.Wrap("read control session", failure.Authentication, clientauthority.ErrUnauthenticated)
 }
 
 // protectedRefresh checkpoints the single-use refresh credential before sending
@@ -240,9 +240,9 @@ func protectedRefresh(ctx context.Context, resolved control, stored clientstate.
 }
 
 func definiteRefreshFailure(err error) bool {
-	var problem *authorityclient.ProblemError
-	var limited *authorityclient.RateLimitError
-	return errors.As(err, &problem) || err == authorityclient.ErrUnauthenticated || err == authorityclient.ErrUnavailable || errors.As(err, &limited)
+	var problem *clientauthority.ProblemError
+	var limited *clientauthority.RateLimitError
+	return errors.As(err, &problem) || err == clientauthority.ErrUnauthenticated || err == clientauthority.ErrUnavailable || errors.As(err, &limited)
 }
 
 func (s *tokenSource) lock(ctx context.Context) error {
@@ -289,7 +289,7 @@ func revokeSession(
 	store *clientstate.Store,
 ) error {
 	err := resolved.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
-	if !errors.Is(err, authorityclient.ErrUnauthenticated) || stored.RefreshPending || !refreshUsable(stored, time.Now()) {
+	if !errors.Is(err, clientauthority.ErrUnauthenticated) || stored.RefreshPending || !refreshUsable(stored, time.Now()) {
 		return err
 	}
 	var refreshed clientstate.ControlSession
@@ -314,7 +314,7 @@ func cleanupIssuedSession(ctx context.Context, resolved control, issued clientst
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
 	defer cancel()
 	err := revokeSession(cleanupCtx, resolved, issued, nil)
-	if err == nil || errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if err == nil || errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrUnauthenticated) {
 		return nil
 	}
 	return fmt.Errorf("revoke newly issued control session: %w", err)
@@ -325,7 +325,7 @@ func authoritySession(
 	expectedSessionID string,
 	expectedRefreshExpiry time.Time,
 ) (clientstate.ControlSession, error) {
-	stored, err := authorityclient.ValidateControlSessionResponse(response, expectedSessionID, expectedRefreshExpiry)
+	stored, err := clientauthority.ValidateControlSessionResponse(response, expectedSessionID, expectedRefreshExpiry)
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
@@ -337,10 +337,10 @@ func refreshUsable(session clientstate.ControlSession, now time.Time) bool {
 }
 
 func refreshRejected(err error) bool {
-	if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrUnauthenticated) {
 		return true
 	}
-	var problem *authorityclient.ProblemError
+	var problem *clientauthority.ProblemError
 	return errors.As(err, &problem) && (problem.Status == http.StatusBadRequest || problem.Status == http.StatusUnauthorized)
 }
 

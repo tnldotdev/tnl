@@ -29,8 +29,8 @@ func TestNewAndValid(t *testing.T) {
 
 func TestPrivateIdentifiersAreDistinctFromPublicURLsAndEachOther(t *testing.T) {
 	private := []string{
-		PrivateServicePrefix, PrivateRunPrefix, PrivateConnectorSessionPrefix,
-		PrivateServiceInvitationPrefix, PrivateServiceGrantPrefix,
+		ServicePrefix, ServiceRunPrefix, ConnectorSessionPrefix,
+		ServiceInvitationPrefix, ServiceGrantPrefix,
 	}
 	for _, prefix := range private {
 		t.Run(prefix, func(t *testing.T) {

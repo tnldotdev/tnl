@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"net/http"

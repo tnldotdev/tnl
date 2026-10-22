@@ -56,7 +56,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				defer peer.Close()
 				wrote := tunnelWorker(t, func() { _ = client.Close() }, func() error {
 					if private {
-						return tunnelv1.WritePrivateForwardingHeader(peer, maximumPrivateHeader("relay", true))
+						return tunnelv1.WriteServiceForwardingHeader(peer, maximumServiceHeader("relay", true))
 					}
 					return tunnelv1.WriteInternalForwardingHeader(peer, maximumPublicHeader("relay"))
 				})
@@ -79,7 +79,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 					}
 					copy := *value
 					copiedAccept, copiedReject = copy.Accept, copy.Reject
-				case *IncomingPrivateForwardingStream:
+				case *IncomingServiceForwardingStream:
 					if !private {
 						t.Fatal("public request dispatched as private")
 					}
@@ -155,8 +155,8 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 	}
 }
 
-func TestPrivateForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) {
-	for _, field := range []string{"private_service_id", "private_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "lease_expires_at", "expires_at"} {
+func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) {
+	for _, field := range []string{"service_id", "service_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "lease_expires_at", "expires_at"} {
 		t.Run(field, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			ctx := tunnelContext(t)
@@ -165,7 +165,7 @@ func TestPrivateForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) 
 				t.Fatal(err)
 			}
 			defer peer.Close()
-			encoded, err := json.Marshal(maximumPrivateHeader("relay", true))
+			encoded, err := json.Marshal(maximumServiceHeader("relay", true))
 			if err != nil {
 				t.Fatal(err)
 			}

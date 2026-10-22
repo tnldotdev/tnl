@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 // PublicURLPurpose is the immutable, client-declared use of a saved public URL.
 type PublicURLPurpose string

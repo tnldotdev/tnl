@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 // only admission settings belong in this evidence; never serialize the full
@@ -44,14 +44,14 @@ func init() {
 	flag.IntVar(&runtimeLoadAdmission.PublisherConcurrency, "tnl-runtime-load-publisher-concurrency", 500, "maximum concurrent requests handled by each publisher route")
 }
 
-func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
+func (limits separatedAdmissionLimits) apply(cfg *daemonconfig.Config) {
 	cfg.ClientHelloConnectionLimit = limits.ClientHelloConnectionLimit
 	cfg.VisitorConnectionLimit = limits.VisitorConnectionLimit
 	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = limits.PublisherConnectionLimit, limits.RelayStreamCapacity
 	cfg.QUICMaxIncomingStreams = limits.QUICMaxIncomingStreams
 }
 
-func separatedAdmissionFrom(cfg tnldconfig.Config) separatedAdmissionLimits {
+func separatedAdmissionFrom(cfg daemonconfig.Config) separatedAdmissionLimits {
 	return separatedAdmissionLimits{
 		ClientHelloConnectionLimit: cfg.ClientHelloConnectionLimit,
 		VisitorConnectionLimit:     cfg.VisitorConnectionLimit,

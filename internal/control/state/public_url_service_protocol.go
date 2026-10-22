@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import "github.com/tnldotdev/tnl/internal/policy/authorization"
 

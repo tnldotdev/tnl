@@ -13,11 +13,11 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/publisher"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -89,7 +89,7 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	}
 	var application atomic.Int32
 	startSeparatedPublisher(t, f, publisher.PublicURLServerConfig{Certificate: testCertificate(t, "route.example"), ReadinessProof: proof, Purpose: controlv1.Oauth, AccessMode: controlv1.Anonymous, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(localproxy.ReadinessProbeHeader) != "" {
+		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
 			t.Error("proof reached application")
 		}
 		application.Add(1)
@@ -111,7 +111,7 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		}
 		_, err := fmt.Fprintf(c, "GET /health HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n%s\r\n", func() string {
 			if test.proof != "" {
-				return localproxy.ReadinessProbeHeader + ": " + test.proof + "\r\n"
+				return publisherproxy.ReadinessProbeHeader + ": " + test.proof + "\r\n"
 			}
 			return ""
 		}())

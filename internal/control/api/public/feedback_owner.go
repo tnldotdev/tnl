@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -10,27 +10,27 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, principal publicURLReadPrincipal, thread controlstate.FeedbackThread) (authorization.Decision, uint64, error) {
 	if _, member := principal.teamIDs[thread.TeamID]; !member {
 		return authorization.Decision{}, 0, authorization.ErrForbidden
 	}
-	route, err := h.store.GetPublicURLForFeedbackAuthorization(ctx, thread.PublicURLID)
-	if err != nil || route.TeamID != thread.TeamID {
+	publicURL, err := h.store.GetPublicURLForFeedbackAuthorization(ctx, thread.PublicURLID)
+	if err != nil || publicURL.TeamID != thread.TeamID {
 		return authorization.Decision{}, 0, authorization.ErrForbidden
 	}
-	prefixes := make([]string, len(route.AllowedIPPrefixes))
-	for index, prefix := range route.AllowedIPPrefixes {
+	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
+	for index, prefix := range publicURL.AllowedIPPrefixes {
 		prefixes[index] = prefix.String()
 	}
 	decision, err := h.authorizer.Authorize(ctx, authorization.Request{
 		AccessToken: token, Operation: authorization.OperationFeedbackManage,
-		TeamID: route.TeamID, PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-		Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
-		PublicURLID: route.ID, PublicURLMutationRevision: route.MutationRevision,
+		TeamID: publicURL.TeamID, PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
+		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
+		Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
+		PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
 	})
 	if err != nil || decision.IdentityID != principal.identityID || decision.TeamID != thread.TeamID {
 		if err != nil {
@@ -38,7 +38,7 @@ func (h *handler) ownerFeedbackDecision(ctx context.Context, token string, princ
 		}
 		return authorization.Decision{}, 0, authorization.ErrUnavailable
 	}
-	return decision, route.MutationRevision, nil
+	return decision, publicURL.MutationRevision, nil
 }
 
 func feedbackOwnerFailure(response http.ResponseWriter, err error) {

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
-func reviewPublisher(t *testing.T, d *Database, route PublicURL, editor string, now time.Time) (PublisherIdentity, ed25519.PrivateKey) {
+func reviewPublisher(t *testing.T, d *Database, publicURL PublicURL, editor string, now time.Time) (PublisherIdentity, ed25519.PrivateKey) {
 	t.Helper()
-	e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: route.TeamID, ActingIdentityID: editor}, PublisherScope{TeamID: route.TeamID, Kind: "saved_url", PublicURLID: route.ID}, now)
+	e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: publicURL.TeamID, ActingIdentityID: editor}, PublisherScope{TeamID: publicURL.TeamID, Kind: "saved_public_url", PublicURLID: publicURL.ID}, now)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -28,17 +28,17 @@ func reviewPublisher(t *testing.T, d *Database, route PublicURL, editor string, 
 	return p, private
 }
 
-func reviewRunRequest(t *testing.T, d *Database, p PublisherIdentity, private ed25519.PrivateKey, route PublicURL, retry string) PublishRunRequest {
+func reviewRunRequest(t *testing.T, d *Database, p PublisherIdentity, private ed25519.PrivateKey, publicURL PublicURL, retry string) PublishRunRequest {
 	t.Helper()
-	plan, err := d.PublisherRunPlan(t.Context(), p, route, false)
+	plan, err := d.PublisherRunPlan(t.Context(), p, publicURL, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := publisheridentity.SignRun(private, route.ID, retry)
+	proof, err := publisherproof.SignRun(private, publicURL.ID, retry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return PublishRunRequest{PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: retry, RequestDigest: sha256.Sum256([]byte(retry)), PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision, CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, PublisherRunProof: proof}
+	return PublishRunRequest{PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: retry, RequestDigest: sha256.Sum256([]byte(retry)), PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision, CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, PublisherRunProof: proof}
 }
 
 func reviewSharedURL(t *testing.T, f transactionAuthorityFixture) PublicURL {
@@ -122,15 +122,15 @@ func TestIntegrationPublisherRevocationRechecksWaitingEditor(t *testing.T) {
 func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 	f := newTransactionAuthorityFixture(t)
 	d := f.database
-	route := reviewSharedURL(t, f)
+	publicURL := reviewSharedURL(t, f)
 	registerCertificatePlanRelays(t, d, f.now)
-	p, private := reviewPublisher(t, d, route, f.owner, f.now)
-	r := reviewRunRequest(t, d, p, private, route, "release-race")
+	p, private := reviewPublisher(t, d, publicURL, f.owner, f.now)
+	r := reviewRunRequest(t, d, p, private, publicURL, "release-race")
 	setup, err := d.CreatePublishRun(t.Context(), r, f.now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	gate, err := d.pool.Begin(ctx)
@@ -150,7 +150,7 @@ func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 	})
 	heartbeatPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
 	workers.Go(func() {
-		release <- d.ReleaseTeamDomain(ctx, f.owner, route.TeamID, route.DomainID, f.now.Add(2*time.Second))
+		release <- d.ReleaseTeamDomain(ctx, f.owner, publicURL.TeamID, publicURL.DomainID, f.now.Add(2*time.Second))
 	})
 	// release now holds team/domain locks and waits for heartbeat's URL lock.
 	// heartbeat must not acquire either earlier lock after the publisher gate.
@@ -173,11 +173,11 @@ func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "retired_publisher_key")
 	request := oidcRouteRequest(t, d, now)
-	route := createTestPublicURL(t, d, request, now)
+	publicURL := createTestPublicURL(t, d, request, now)
 	registerCertificatePlanRelays(t, d, now)
-	p, private := reviewPublisher(t, d, route, request.ActingIdentityID, now)
+	p, private := reviewPublisher(t, d, publicURL, request.ActingIdentityID, now)
 	access := publisherAccess(t, d, p, private, "", now)
-	r := reviewRunRequest(t, d, p, private, route, "original")
+	r := reviewRunRequest(t, d, p, private, publicURL, "original")
 	setup, err := d.CreatePublishRun(t.Context(), r, now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -185,8 +185,8 @@ func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
 	public, replacement, _ := ed25519.GenerateKey(rand.Reader)
 	keyID, _ := opaqueid.New(opaqueid.PublisherIdentityKeyPrefix)
 	audience := "https://control.example/v1/publisher-keys/rotate"
-	proof, _ := publisheridentity.Sign(p.ID, keyID, p.GrantID, audience, replacement, now)
-	currentProof, _ := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisheridentity.RotationAudience(audience, keyID, public), private, now)
+	proof, _ := publisherproof.Sign(p.ID, keyID, p.GrantID, audience, replacement, now)
+	currentProof, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherproof.RotationAudience(audience, keyID, public), private, now)
 	if err := d.RotatePublisherKey(t.Context(), access.Token, "", keyID, audience, public, proof, currentProof, now); err != nil {
 		t.Fatal(err)
 	}
@@ -205,16 +205,16 @@ func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
 	if err := d.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	route, err = d.GetPublicURLForAuthorization(t.Context(), route.ID)
+	publicURL, err = d.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	newRun := reviewRunRequest(t, d, p, private, route, "new-attempt")
+	newRun := reviewRunRequest(t, d, p, private, publicURL, "new-attempt")
 	if _, err := d.CreatePublishRun(t.Context(), newRun, now.Add(2*time.Second), time.Hour, time.Hour); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("retired key started a new run: %v", err)
 	}
 	p.KeyID = keyID
-	newRun = reviewRunRequest(t, d, p, replacement, route, "new-attempt")
+	newRun = reviewRunRequest(t, d, p, replacement, publicURL, "new-attempt")
 	if _, err := d.CreatePublishRun(t.Context(), newRun, now.Add(2*time.Second), time.Hour, time.Hour); err != nil {
 		t.Fatalf("current key could not start a new run: %v", err)
 	}
@@ -227,16 +227,16 @@ func TestIntegrationPublisherSavedPurposesHaveExactGrants(t *testing.T) {
 	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, PublicURLPurposeAlias, PublicURLPurposeDemo} {
 		r := base
 		r.Purpose, r.CanonicalHostname, r.IdempotencyKey = purpose, string(purpose)+"."+base.CanonicalHostname, string(purpose)
-		route := createTestPublicURL(t, d, r, now)
-		p, private := reviewPublisher(t, d, route, r.ActingIdentityID, now)
+		publicURL := createTestPublicURL(t, d, r, now)
+		p, private := reviewPublisher(t, d, publicURL, r.ActingIdentityID, now)
 		a := publisherAccess(t, d, p, private, "", now)
-		if got, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "", now); err != nil || got.Scope.PublicURLID != route.ID {
+		if got, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "", now); err != nil || got.Scope.PublicURLID != publicURL.ID {
 			t.Fatalf("%s grant unavailable: %+v, %v", purpose, got, err)
 		}
 		if owns, err := d.PublisherMayStartRun(t.Context(), p, "another-url"); err != nil || owns {
 			t.Fatalf("%s grant expanded beyond exact URL", purpose)
 		}
-		setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, route, "purpose-"+string(purpose)), now, time.Minute, time.Minute)
+		setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, publicURL, "purpose-"+string(purpose)), now, time.Minute, time.Minute)
 		if err != nil {
 			t.Fatalf("%s publisher run: %v", purpose, err)
 		}
@@ -249,24 +249,24 @@ func TestIntegrationPublisherSavedPurposesHaveExactGrants(t *testing.T) {
 func TestIntegrationPublisherSharedGrantSurvivesIssuerRemoval(t *testing.T) {
 	f := newTransactionAuthorityFixture(t)
 	d := f.database
-	route := reviewSharedURL(t, f)
+	publicURL := reviewSharedURL(t, f)
 	registerCertificatePlanRelays(t, d, f.now)
-	p, private := reviewPublisher(t, d, route, f.member.IdentityID, f.now)
-	setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, route, "durable-shared"), f.now, time.Hour, time.Hour)
+	p, private := reviewPublisher(t, d, publicURL, f.member.IdentityID, f.now)
+	setup, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, p, private, publicURL, "durable-shared"), f.now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RemoveMembership(t.Context(), f.owner, route.TeamID, f.member.ID, f.now.Add(time.Second)); err != nil {
+	if err := d.RemoveMembership(t.Context(), f.owner, publicURL.TeamID, f.member.ID, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 	if _, err := d.HeartbeatPublishRun(t.Context(), auth, f.now.Add(2*time.Second), time.Hour, time.Hour); err != nil {
 		t.Fatalf("issuer departure erased its explicitly issued shared grant: %v", err)
 	}
-	if err := d.RevokePublisherGrant(t.Context(), route.TeamID, p.ID, p.GrantID, f.member.IdentityID, f.now.Add(3*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
+	if err := d.RevokePublisherGrant(t.Context(), publicURL.TeamID, p.ID, p.GrantID, f.member.IdentityID, f.now.Add(3*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("departed issuer retained grant management: %v", err)
 	}
-	if err := d.RevokePublisherGrant(t.Context(), route.TeamID, p.ID, p.GrantID, f.owner, f.now.Add(3*time.Second)); err != nil {
+	if err := d.RevokePublisherGrant(t.Context(), publicURL.TeamID, p.ID, p.GrantID, f.owner, f.now.Add(3*time.Second)); err != nil {
 		t.Fatalf("current owner could not revoke durable grant: %v", err)
 	}
 	if _, err := d.HeartbeatPublishRun(t.Context(), auth, f.now.Add(4*time.Second), time.Hour, time.Hour); !errors.Is(err, ErrPublisherIdentity) {

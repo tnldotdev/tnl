@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -114,7 +114,7 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	plan := CertificatePlan{CacheKey: "entry.example.test", Scope: "entry.example.test", Identifiers: []string{"entry.example.test"}, ChallengeMethod: "dns-01"}
-	route, authentication := newExternalPlanSession(t, database, now, "team_entry", "entry.example.test", "managed:example.test", plan)
+	publicURL, authentication := newExternalPlanSession(t, database, now, "team_entry", "entry.example.test", "managed:example.test", plan)
 	first, err := database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	}
 	defer rollbackTestTransaction(t, second)
 	firstQueries := controlstatedb.New(first)
-	storedPublicURL, err := firstQueries.LockPublicURLForRun(ctx, route.ID)
+	storedPublicURL, err := firstQueries.LockPublicURLForRun(ctx, publicURL.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	var secondPublished *publishedIngressRoutingTableEvent
 	workers.Go(func() {
 		secondQueries := controlstatedb.New(second)
-		storedPublicURL, err := secondQueries.LockPublicURLForRun(ctx, route.ID)
+		storedPublicURL, err := secondQueries.LockPublicURLForRun(ctx, publicURL.ID)
 		if err == nil {
 			storedSession, sessionErr := secondQueries.GetPublishRun(ctx, authentication.PublishRunID)
 			err = sessionErr
@@ -393,7 +393,7 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer rollbackTestTransaction(t, gate)
-				if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, fixture.route.ID); err != nil {
+				if _, err := controlstatedb.New(gate).LockPublicURLForRun(ctx, fixture.publicURL.ID); err != nil {
 					t.Fatal(err)
 				}
 				workers := newIntegrationWorkers(t, cancel)
@@ -425,12 +425,12 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 						_, err = database.CreatePublishRun(ctx, fixture.sessionRequest, now, time.Hour, time.Hour)
 					case "update":
 						_, err = database.UpdateAuthorizedPublicURL(ctx, AuthorizedPublicURLUpdateRequest{
-							PublicURLID: fixture.route.ID, TeamID: fixture.route.TeamID, ActingIdentityID: fixture.member.IdentityID,
+							PublicURLID: fixture.publicURL.ID, TeamID: fixture.publicURL.TeamID, ActingIdentityID: fixture.member.IdentityID,
 							Target: "http://127.0.0.1:3001", AllowedIPPrefixes: []string{},
-							PolicyRevision: uint64(fixture.route.PolicyRevision), ExpectedMutationRevision: fixture.route.MutationRevision,
+							PolicyRevision: uint64(fixture.publicURL.PolicyRevision), ExpectedMutationRevision: fixture.publicURL.MutationRevision,
 						}, now)
 					case "delete":
-						err = database.DeletePublicURL(ctx, fixture.member.IdentityID, fixture.route.ID, now)
+						err = database.DeletePublicURL(ctx, fixture.member.IdentityID, fixture.publicURL.ID, now)
 					}
 					operationDone <- err
 				})
@@ -482,8 +482,8 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 			authentication := PublishRunAuthentication{
 				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
 			}
-			plan := CertificatePlan{CacheKey: fixture.route.CanonicalHostname, Scope: fixture.route.CanonicalHostname,
-				Identifiers: []string{fixture.route.CanonicalHostname}, ChallengeMethod: "dns-01"}
+			plan := CertificatePlan{CacheKey: fixture.publicURL.CanonicalHostname, Scope: fixture.publicURL.CanonicalHostname,
+				Identifiers: []string{fixture.publicURL.CanonicalHostname}, ChallengeMethod: "dns-01"}
 			work := createPlanIssuanceWork(t, database, now, authentication, plan, true, nil)
 			if certificateState == "installed" {
 				if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now); err != nil {
@@ -493,7 +493,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 			if err := database.ReleaseTeamDomain(t.Context(), fixture.owner, fixture.member.TeamID, fixture.domain.ID, now); err != nil {
 				t.Fatal(err)
 			}
-			if err := database.DeletePublicURL(t.Context(), fixture.owner, fixture.route.ID, now); err != nil {
+			if err := database.DeletePublicURL(t.Context(), fixture.owner, fixture.publicURL.ID, now); err != nil {
 				t.Fatalf("delete suspended public_url: %v", err)
 			}
 			var state string
@@ -521,7 +521,7 @@ func TestIntegrationTransactionDomainReleaseCertificateExpiry(t *testing.T) {
 				t.Fatalf("pending public URL DNS must block release even after certificate expiry: %t, %v", ready, err)
 			}
 			dnsWork, found, err := database.ClaimDNSPublicURLWork(t.Context(), "cleanup", now, time.Minute)
-			if err != nil || !found || dnsWork.PublicURLID != fixture.route.ID || dnsWork.State != PublicURLDNSRemoving {
+			if err != nil || !found || dnsWork.PublicURLID != fixture.publicURL.ID || dnsWork.State != PublicURLDNSRemoving {
 				t.Fatalf("claim route cleanup: %#v, %t, %v", dnsWork, found, err)
 			}
 			dnsWork.State, dnsWork.AvailableAt = PublicURLDNSRemoved, time.Time{}
@@ -662,13 +662,13 @@ func TestIntegrationTransactionMixedEphemeralDeletion(t *testing.T) {
 		request.IdempotencyKey = fmt.Sprintf("ephemeral-%t", suspended)
 		request.CanonicalHostname = request.IdempotencyKey + ".member." + fixture.domain.CanonicalDomain
 		request.Ephemeral = true
-		route, err := database.CreatePublicURL(t.Context(), request, now)
+		publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if suspended {
 			if _, err := controlstatedb.New(database.pool).SuspendAuthorityPublicURL(t.Context(), controlstatedb.SuspendAuthorityPublicURLParams{
-				PublicURLID: route.ID, SuspensionReason: text("test"), SuspendedAt: timestamptz(now),
+				PublicURLID: publicURL.ID, SuspensionReason: text("test"), SuspendedAt: timestamptz(now),
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -697,7 +697,7 @@ type transactionAuthorityFixture struct {
 	owner          string
 	member         Membership
 	domain         Domain
-	route          PublicURL
+	publicURL      PublicURL
 	createRequest  CreatePublicURLRequest
 	sessionRequest PublishRunRequest
 }
@@ -749,18 +749,18 @@ func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 		IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")), CanonicalHostname: "api.member." + domain.CanonicalDomain,
 		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference,
 	}
-	route, err := database.CreatePublicURL(t.Context(), request, now)
+	publicURL, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return transactionAuthorityFixture{
-		database: database, now: now, owner: owner, member: member, domain: domain, route: route, createRequest: request,
+		database: database, now: now, owner: owner, member: member, domain: domain, publicURL: publicURL, createRequest: request,
 		sessionRequest: PublishRunRequest{
-			PublicURLID: route.ID, TeamID: team.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
+			PublicURLID: publicURL.ID, TeamID: team.ID, MembershipID: member.ID, ActingIdentityID: memberIdentity,
 			RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
-			PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
-			CertificateCacheKey: route.CanonicalHostname, CertificateScope: route.CanonicalHostname,
-			CertificateIdentifiers: []string{route.CanonicalHostname}, CertificateChallenge: "dns-01",
+			PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
+			CertificateCacheKey: publicURL.CanonicalHostname, CertificateScope: publicURL.CanonicalHostname,
+			CertificateIdentifiers: []string{publicURL.CanonicalHostname}, CertificateChallenge: "dns-01",
 		},
 	}
 }

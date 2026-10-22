@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
@@ -17,12 +17,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	publishertarget "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var composeHostAddress = flag.String("tnl-test-compose-host-address", "host-gateway", "address of the disposable binary test's ingress on the Docker host")
@@ -70,11 +70,11 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	if err != nil || closeErr != nil {
 		t.Fatalf("resolve host worktree identity: %v, close: %v", err, closeErr)
 	}
-	selection, err := projectconfig.SelectProjectConfig(ctx, root, "", "", false)
+	selection, err := clientproject.SelectProjectConfig(ctx, root, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := projectconfig.Resolve(ctx, selection, root, salt)
+	project, err := clientproject.Resolve(ctx, selection, root, salt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,24 +172,24 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	available := startIntegrationBinaryProcess(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
 		"--no-config", "connect", "available", "--output=json")
 	if err := waitForDoneWithin(available.done, 15*time.Second); err != nil {
-		t.Fatal("private service discovery did not finish")
+		t.Fatal("service discovery did not finish")
 	}
 	assertIntegrationBinaryProcessResult(t, available)
-	var services []controlv1.PrivateService
+	var services []controlv1.Service
 	if err := json.Unmarshal([]byte(available.output.String()), &services); err != nil {
-		t.Fatalf("decode available private services: %v", err)
+		t.Fatalf("decode available services: %v", err)
 	}
 	var databaseServiceID, databaseHostname string
 	for _, service := range services {
-		if strings.HasPrefix(service.Name, "compose-db-") && service.Protocol == controlv1.Postgres && service.PrivateRunId != nil {
+		if strings.HasPrefix(service.Name, "compose-db-") && service.Protocol == controlv1.Postgres && service.ServiceRunId != nil {
 			if databaseServiceID != "" {
 				t.Fatal("private database discovery returned multiple services")
 			}
 			databaseServiceID = service.Id
-			if service.ManagedTls == nil {
+			if service.Endpoint == nil {
 				t.Fatal("private database has no managed TLS endpoint")
 			}
-			databaseHostname = service.ManagedTls.Hostname
+			databaseHostname = service.Endpoint.Hostname
 		}
 	}
 	if databaseServiceID == "" {

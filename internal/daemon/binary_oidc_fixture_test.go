@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	devoidc "github.com/tnldotdev/tnl/internal/development/oidc"
+	"github.com/tnldotdev/tnl/internal/development/oidc"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
@@ -31,7 +31,7 @@ func binaryOIDCProvider(t *testing.T, certificate integrationCertificate, contro
 	t.Cleanup(server.Close)
 	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
 	issuer := "https://localhost:" + port
-	p, err := devoidc.New(devoidc.Config{Issuer: issuer, ClientID: "server", ClientSecret: "fixture-secret", Subject: "developer", RedirectURLs: []string{control + "/v1/auth/device/callback", control + "/v1/browser/callback"}})
+	p, err := oidc.New(oidc.Config{Issuer: issuer, ClientID: "server", ClientSecret: "fixture-secret", Subject: "developer", RedirectURLs: []string{control + "/v1/auth/device/callback", control + "/v1/browser/callback"}})
 	if err != nil {
 		t.Fatal(err)
 	}

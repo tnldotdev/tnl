@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/visitorcert"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type ServiceClientMaterial struct {
@@ -41,7 +41,7 @@ func (ServiceClientMaterial) GoString() string { return "service client credenti
 // session. the successful CSR is immutable until renewal; replaying it does not
 // issue a new certificate or extend the old session's company proof.
 func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, service, device string, issue func(context.Context, []byte) (controlv1.ServiceClientCertificate, error)) (result ServiceClientMaterial, retErr error) {
-	if s == nil || issue == nil || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) {
+	if s == nil || issue == nil || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(service, opaqueid.ServicePrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) {
 		return result, ErrPublisherStateConflict
 	}
 	encoded, _ := json.Marshal([]string{s.controlEndpoint, identity, service, device})
@@ -54,7 +54,7 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 	defer lock.Close()
 	var encrypted, csr, issuedCSR, certificate, issuerPEM []byte
 	var csrCreated int64
-	err = s.database.db.QueryRowContext(ctx, `SELECT private_key_ciphertext,csr_der,issued_csr_der,certificate_pem,issuer_pem,csr_created_at FROM service_client_certificates WHERE server_origin=? AND identity_id=? AND private_service_id=? AND device_id=?`, s.controlEndpoint, identity, service, device).Scan(&encrypted, &csr, &issuedCSR, &certificate, &issuerPEM, &csrCreated)
+	err = s.database.db.QueryRowContext(ctx, `SELECT private_key_ciphertext,csr_der,issued_csr_der,certificate_pem,issuer_pem,csr_created_at FROM service_client_certificates WHERE server_origin=? AND identity_id=? AND service_id=? AND device_id=?`, s.controlEndpoint, identity, service, device).Scan(&encrypted, &csr, &issuedCSR, &certificate, &issuerPEM, &csrCreated)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return result, err
 	}
@@ -103,7 +103,7 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 			if err != nil {
 				return result, err
 			}
-			if _, err = s.database.db.ExecContext(ctx, `INSERT INTO service_client_certificates(server_origin,identity_id,private_service_id,device_id,private_key_ciphertext,csr_der,certificate_pem,issuer_pem,csr_created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(server_origin,identity_id,private_service_id,device_id) DO UPDATE SET csr_der=excluded.csr_der,csr_created_at=excluded.csr_created_at`, s.controlEndpoint, identity, service, device, encrypted, csr, certificate, issuerPEM, time.Now().UnixNano()); err != nil {
+			if _, err = s.database.db.ExecContext(ctx, `INSERT INTO service_client_certificates(server_origin,identity_id,service_id,device_id,private_key_ciphertext,csr_der,certificate_pem,issuer_pem,csr_created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(server_origin,identity_id,service_id,device_id) DO UPDATE SET csr_der=excluded.csr_der,csr_created_at=excluded.csr_created_at`, s.controlEndpoint, identity, service, device, encrypted, csr, certificate, issuerPEM, time.Now().UnixNano()); err != nil {
 				return result, err
 			}
 		}
@@ -114,7 +114,7 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 	if err != nil {
 		return result, err
 	}
-	if issued.PrivateServiceId != service || !refresh && (issued.CertificatePem != string(certificate) || issued.IssuerPem != string(issuerPEM)) {
+	if issued.ServiceId != service || !refresh && (issued.CertificatePem != string(certificate) || issued.IssuerPem != string(issuerPEM)) {
 		return result, ErrPublisherStateConflict
 	}
 	certificate, issuerPEM = []byte(issued.CertificatePem), []byte(issued.IssuerPem)
@@ -123,7 +123,7 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 		return result, errors.Join(visitorcert.ErrInvalidCertificate, err)
 	}
 	if refresh {
-		if _, err = s.database.db.ExecContext(ctx, `UPDATE service_client_certificates SET csr_der=NULL,issued_csr_der=?,certificate_pem=?,issuer_pem=? WHERE server_origin=? AND identity_id=? AND private_service_id=? AND device_id=?`, csr, certificate, issuerPEM, s.controlEndpoint, identity, service, device); err != nil {
+		if _, err = s.database.db.ExecContext(ctx, `UPDATE service_client_certificates SET csr_der=NULL,issued_csr_der=?,certificate_pem=?,issuer_pem=? WHERE server_origin=? AND identity_id=? AND service_id=? AND device_id=?`, csr, certificate, issuerPEM, s.controlEndpoint, identity, service, device); err != nil {
 			return result, err
 		}
 	}

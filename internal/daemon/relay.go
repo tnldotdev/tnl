@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -12,14 +12,14 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -30,7 +30,7 @@ type relayRuntime struct {
 	processRunID       string
 	controller         *relay.Controller
 	registry           *relay.Registry
-	privateRegistry    *relay.PrivateRegistry
+	serviceRegistry    *relay.ServiceRegistry
 	publisher          *relay.PublisherAcceptor
 	transportTLS       *tls.Config
 	tcpListener        net.Listener
@@ -59,7 +59,7 @@ type relayProcessSettings struct {
 	runtime                relaySettings
 }
 
-func relayProcessSettingsFrom(cfg tnldconfig.Config) relayProcessSettings {
+func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
 	tlsServerName, _, _ := net.SplitHostPort(cfg.RelayAddress)
 	return relayProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
@@ -169,7 +169,7 @@ type relaySettings struct {
 	controlRetryInterval     time.Duration
 }
 
-func relaySettingsFrom(cfg tnldconfig.Config) relaySettings {
+func relaySettingsFrom(cfg daemonconfig.Config) relaySettings {
 	return relaySettings{
 		publisherConnectionLimit: cfg.PublisherConnectionLimit,
 		streamCapacity:           cfg.RelayStreamCapacity,
@@ -213,11 +213,11 @@ func (d *daemon) startRelayRuntime(
 	}
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.relayID, runID
 	registry := relay.NewRegistry()
-	privateRegistry := relay.NewPrivateRegistry()
-	privateRegistry.Instrument(runtimeConfig.metrics)
+	serviceRegistry := relay.NewServiceRegistry()
+	serviceRegistry.Instrument(runtimeConfig.metrics)
 	registry.Instrument(runtimeConfig.metrics)
 	runtime.registry = registry
-	runtime.privateRegistry = privateRegistry
+	runtime.serviceRegistry = serviceRegistry
 	controller, err := relay.NewController(relay.ControllerConfig{
 		Observer: runtimeConfig.metrics,
 		Client:   runtimeConfig.client,
@@ -235,8 +235,8 @@ func (d *daemon) startRelayRuntime(
 		CertificateChanged: runtimeConfig.certificateChanged,
 		Load: func() (int64, int64) {
 			publicConnections, publicStreams := registry.Load()
-			privateConnections, privateStreams := privateRegistry.Load()
-			return publicConnections + privateConnections, publicStreams + privateStreams
+			serviceConnections, privateStreams := serviceRegistry.Load()
+			return publicConnections + serviceConnections, publicStreams + privateStreams
 		}, LeaseChanged: func(previous, current relayv1.RelayLease) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
@@ -251,8 +251,8 @@ func (d *daemon) startRelayRuntime(
 						defer cancel()
 						_ = runtime.registry.Drain(ctx)
 						_ = runtime.registry.Close()
-						_ = runtime.privateRegistry.Drain(ctx)
-						_ = runtime.privateRegistry.Close()
+						_ = runtime.serviceRegistry.Drain(ctx)
+						_ = runtime.serviceRegistry.Close()
 					})
 				})
 			}
@@ -275,8 +275,8 @@ func (d *daemon) startRelayRuntime(
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Control:  controller, Registry: registry,
-		Private: &relay.PrivatePublisherAcceptor{Select: func(id string) (relay.PrivatePublisherTarget, bool) {
-			return relay.PrivatePublisherTarget{Control: controller, Registry: privateRegistry}, id == runtimeConfig.relayServiceID
+		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
+			return relay.ServicePublisherTarget{Control: controller, Registry: serviceRegistry}, id == runtimeConfig.relayServiceID
 		}},
 		ReadyConnectionsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
@@ -308,7 +308,7 @@ func (d *daemon) startRelayRuntime(
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Registry: registry, CurrentLease: controller.Lease,
-		PrivateRegistry: privateRegistry,
+		ServiceRegistry: serviceRegistry,
 		ClusterSecrets:  runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
 		StreamsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
@@ -353,7 +353,7 @@ func relayLeaseMetricState(lease relayv1.RelayLease) string {
 }
 
 func newRelayControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (relay.ControlClient, error) {
-	client, err := newPrivateServiceHTTPClient(base, clusterSecret, dialAddress)
+	client, err := newServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err
 	}

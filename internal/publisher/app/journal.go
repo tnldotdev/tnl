@@ -34,7 +34,7 @@ type Service struct {
 	Registered        bool         `json:"registered"`
 	Routable          bool         `json:"routable"`
 	Ready             bool         `json:"ready"`
-	PublishRunNumber  uint64       `json:"publish_run_number,omitempty"`
+	RunNumber         uint64       `json:"run_number,omitempty"`
 	ProvisioningStage string       `json:"provisioning_stage,omitempty"`
 	Readiness         Readiness    `json:"readiness"`
 	Observation       *Observation `json:"observation,omitempty"`

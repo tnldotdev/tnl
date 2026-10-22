@@ -9,14 +9,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func privatePublishProtocol(value string) (controlv1.PrivateServiceProtocol, error) {
+func privatePublishProtocol(value string) (controlv1.ServiceProtocol, error) {
 	if value == "" {
 		value = "http"
 	}
-	protocol := controlv1.PrivateServiceProtocol(value)
+	protocol := controlv1.ServiceProtocol(value)
 	if !protocol.Valid() {
 		return "", publisherCLIError("private protocol must be http, tcp, mysql, or postgres")
 	}
@@ -39,11 +39,11 @@ func EnrollmentKeyInput(value string, input io.Reader) (string, error) {
 
 func randomIdempotencyKey() (string, error) { return opaqueid.New(opaqueid.IdempotencyPrefix) }
 
-func validateProfileService(service controlv1.PrivateService) error {
-	if !opaqueid.Valid(service.Id, opaqueid.PrivateServicePrefix) || !config.ProtocolName(service.Protocol).Valid() || service.ManagedTls == nil || !service.Enabled {
+func validateProfileService(service controlv1.Service) error {
+	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || !config.ProtocolName(service.Protocol).Valid() || service.Endpoint == nil || !service.Enabled {
 		return publisherCLIError("service has no managed TLS endpoint; refresh its applied configuration")
 	}
-	endpoint := service.ManagedTls
+	endpoint := service.Endpoint
 	hostname, err := naming.CanonicalizeHostname(endpoint.Hostname)
 	if err != nil || hostname != endpoint.Hostname || endpoint.Port < 1024 || endpoint.Port > 65535 {
 		return publisherCLIError("service returned an invalid managed TLS endpoint")

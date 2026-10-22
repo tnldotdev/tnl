@@ -342,12 +342,12 @@ function parseAssignment(value: unknown): Assignment {
     )
       throw new TnlError("sdk.response_invalid");
     const project = parseProjectRuntime(object.project, "app project");
-    const privateService = object.hostname === "" && object.public_url === "";
-    const hostname = privateService ? undefined : requiredHostname(object.hostname, "app hostname");
+    const service = object.hostname === "" && object.public_url === "";
+    const hostname = service ? undefined : requiredHostname(object.hostname, "app hostname");
     const publicURL = hostname === undefined ? undefined : (`https://${hostname}` as const);
     if (
       !project.dev ||
-      (privateService
+      (service
         ? project.services[object.service] !== undefined
         : object.public_url !== publicURL ||
           project.services[object.service]?.hostname !== hostname ||

@@ -96,7 +96,7 @@ func validID(id string) bool {
 }
 
 func ValidService(id, kind string) bool {
-	return kind == "public_url" && opaqueid.Valid(id, opaqueid.PublicURLPrefix) || kind == "private_service" && opaqueid.Valid(id, opaqueid.PrivateServicePrefix)
+	return kind == "public_url" && opaqueid.Valid(id, opaqueid.PublicURLPrefix) || kind == "service" && opaqueid.Valid(id, opaqueid.ServicePrefix)
 }
 
 // ValidReference accepts native and authority-issued identifiers. stored scope
@@ -126,16 +126,16 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.ConnectorSessionID != "" && !opaqueid.Valid(o.ConnectorSessionID, opaqueid.PrivateConnectorSessionPrefix) {
+	if o.ConnectorSessionID != "" && !opaqueid.Valid(o.ConnectorSessionID, opaqueid.ConnectorSessionPrefix) {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
 		(o.Outcome == "denied" || o.ServiceKind == "public_url" && o.Outcome == "failed")
 	if !serviceDenial && (o.RunNumber < 1 || o.ServiceKind == "public_url" && !opaqueid.Valid(o.RunID, opaqueid.PublishRunPrefix) ||
-		o.ServiceKind == "private_service" && !opaqueid.Valid(o.RunID, opaqueid.PrivateRunPrefix)) {
+		o.ServiceKind == "service" && !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
 		return ErrInvalid
 	}
-	if o.ServiceKind == "private_service" && (o.ConnectorSessionID == "" && o.RunID == "" || o.SourceIP == "") ||
+	if o.ServiceKind == "service" && (o.ConnectorSessionID == "" && o.RunID == "" || o.SourceIP == "") ||
 		o.ServiceKind == "public_url" && o.ConnectorSessionID != "" {
 		return ErrInvalid
 	}

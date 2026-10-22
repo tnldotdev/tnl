@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 type DirectControl interface {

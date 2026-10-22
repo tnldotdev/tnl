@@ -1,4 +1,4 @@
-package webhookips
+package webhooksource
 
 import (
 	"context"

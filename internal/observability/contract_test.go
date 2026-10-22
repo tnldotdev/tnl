@@ -30,7 +30,7 @@ func TestIdentityScopesDoNotCrossAuthenticationBoundaries(t *testing.T) {
 	}
 	other := NarrowIdentity(child, Identity{TeamID: "team-b", ServiceID: "service-b"})
 	id = IdentityFromContext(other)
-	if id.PublisherGroupID != "" || id.DeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.PublicURLID != "" || id.ServiceKind != ManagedService {
+	if id.PublisherGroupID != "" || id.DeploymentID != "" || id.ReplicaKey != "" || id.PublisherIdentityID != "" || id.PublicURLID != "" || id.ServiceKind != Service {
 		t.Fatal("cross-team scope inherited", id)
 	}
 	for _, invalid := range []Identity{{ServiceID: "service", PublicURLID: "url"}, {ServiceID: "service", ServiceKind: PublicURL}, {TeamID: strings.Repeat("x", 129)}} {

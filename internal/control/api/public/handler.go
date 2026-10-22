@@ -1,5 +1,5 @@
 // Package controlapi serves the control API and authorizes public URL operations.
-package controlapi
+package public
 
 import (
 	"context"
@@ -8,16 +8,16 @@ import (
 	"net/netip"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	webhookcatalog "github.com/tnldotdev/tnl/internal/control/webhooks"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/control/webhooks"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 type Config struct {
 	TrafficDefaults                   trafficlimits.Limits
 	TrafficCeiling                    trafficlimits.Limits
-	Role                              tnldconfig.Role
+	Role                              daemonconfig.Role
 	StartedAt                         time.Time
 	ManagedDomain                     string
 	ManagedURLMode                    naming.ManagedURLMode
@@ -46,7 +46,7 @@ type Config struct {
 	ACMEDirectoryURL                  string
 	ServerDomain                      string
 	HTTPClient                        *http.Client
-	WebhookCatalog                    *webhookcatalog.Catalog
+	WebhookCatalog                    *webhooks.Catalog
 	DNSAutomation                     bool
 	GuestDemoEnabled                  bool
 	Metrics                           *observability.Metrics
@@ -164,8 +164,8 @@ type handler struct {
 	previews          PreviewStore
 	previewTeamAccess PreviewTeamAccessStore
 	browserAccess     BrowserAccessStore
-	browserOIDC       *oidcauth.Server
-	browserAuthority  *authorityclient.Client
+	browserOIDC       *oidc.Server
+	browserAuthority  *clientauthority.Client
 	shares            ShareStore
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
@@ -179,7 +179,7 @@ type handler struct {
 	}
 	readiness      func(context.Context) error
 	authorizer     publicURLAuthorizer
-	webhookCatalog *webhookcatalog.Catalog
+	webhookCatalog *webhooks.Catalog
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -197,7 +197,7 @@ func NewHandler(
 	if cfg.TrafficCeiling == (trafficlimits.Limits{}) {
 		cfg.TrafficCeiling = trafficlimits.Ceiling()
 	}
-	if err := tnldconfig.ValidateTraffic(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
+	if err := daemonconfig.ValidateTraffic(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
 		return nil, err
 	}
 	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
@@ -208,7 +208,7 @@ func NewHandler(
 	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
-		h.webhookCatalog = webhookcatalog.New(cfg.HTTPClient)
+		h.webhookCatalog = webhooks.New(cfg.HTTPClient)
 	}
 	if previews, ok := store.(PreviewStore); ok {
 		h.previews = previews
@@ -249,7 +249,7 @@ func NewHandler(
 	}
 	if cfg.OIDCClientID != "" {
 		var err error
-		h.browserOIDC, err = oidcauth.NewServer(oidcauth.ServerConfig{
+		h.browserOIDC, err = oidc.NewServer(oidc.ServerConfig{
 			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scopes: cfg.OIDCScopes, RedirectURL: cfg.ControlURL + browserCallbackPath, HTTPClient: cfg.HTTPClient,
 		})
 		if err != nil {
@@ -258,7 +258,7 @@ func NewHandler(
 	}
 	if cfg.ControlURL != "" {
 		var err error
-		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
+		h.browserAuthority, err = clientauthority.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
 			return nil, err
 		}

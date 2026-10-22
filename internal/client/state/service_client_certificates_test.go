@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	visitorissuer "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
+	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/visitorcert"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T) {
@@ -35,12 +35,12 @@ func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T
 		}
 		return value
 	}
-	identity, service, device := id(opaqueid.IdentityPrefix), id(opaqueid.PrivateServicePrefix), id(opaqueid.VisitorDevicePrefix)
+	identity, service, device := id(opaqueid.IdentityPrefix), id(opaqueid.ServicePrefix), id(opaqueid.VisitorDevicePrefix)
 	seed := make([]byte, ed25519.SeedSize)
 	if _, err = rand.Read(seed); err != nil {
 		t.Fatal(err)
 	}
-	issuer, err := visitorissuer.New(seed)
+	issuer, err := controlvisitor.New(seed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T
 		if err != nil {
 			return controlv1.ServiceClientCertificate{}, err
 		}
-		issued = controlv1.ServiceClientCertificate{PrivateServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}
+		issued = controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}
 		csr = bytes.Clone(request)
 		if calls == 1 {
 			return controlv1.ServiceClientCertificate{}, lost
@@ -138,9 +138,9 @@ func TestServiceClientCertificateRejectsUndurableAndMismatchedReplies(t *testing
 				t.Fatal(err)
 			}
 			identity, _ := opaqueid.New(opaqueid.IdentityPrefix)
-			service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
+			service, _ := opaqueid.New(opaqueid.ServicePrefix)
 			device, _ := opaqueid.New(opaqueid.VisitorDevicePrefix)
-			issuer, err := visitorissuer.New(make([]byte, ed25519.SeedSize))
+			issuer, err := controlvisitor.New(make([]byte, ed25519.SeedSize))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestServiceClientCertificateRejectsUndurableAndMismatchedReplies(t *testing
 				now := time.Now().UTC().Truncate(time.Second)
 				expires := now.Add(visitorcert.MaxLifetime)
 				certificate, err := issuer.Issue(csr, service, identity, device, expires, now)
-				return controlv1.ServiceClientCertificate{PrivateServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
+				return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
 			}
 			if rejection == "revalidation-changed" {
 				old, err = store.EnsureServiceClientCertificate(t.Context(), identity, service, device, valid)
@@ -186,7 +186,7 @@ func TestServiceClientCertificateRejectsUndurableAndMismatchedReplies(t *testing
 					now := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Hour)
 					expires := now.Add(time.Hour)
 					certificate, err := issuer.Issue(csr, service, identity, device, expires, now)
-					return controlv1.ServiceClientCertificate{PrivateServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
+					return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
 				}
 				// issuing the same CSR again here deliberately returns another leaf,
 				// unlike control's idempotent response. revalidation must reject it.
@@ -218,9 +218,9 @@ func TestExpiredServiceClientCertificateRenewsWithStableKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity, _ := opaqueid.New(opaqueid.IdentityPrefix)
-	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
+	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	device, _ := opaqueid.New(opaqueid.VisitorDevicePrefix)
-	issuer, err := visitorissuer.New(make([]byte, ed25519.SeedSize))
+	issuer, err := controlvisitor.New(make([]byte, ed25519.SeedSize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestExpiredServiceClientCertificateRenewsWithStableKey(t *testing.T) {
 		} else if bytes.Equal(original, csr) {
 			t.Fatal("expired leaf reused its old issuance request")
 		}
-		return controlv1.ServiceClientCertificate{PrivateServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: now.Add(visitorcert.MaxLifetime)}, err
+		return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: now.Add(visitorcert.MaxLifetime)}, err
 	}
 	before, err := store.EnsureServiceClientCertificate(t.Context(), identity, service, device, issue)
 	if err != nil {

@@ -17,7 +17,7 @@ schemas:
     properties:
       event_id: { type: string, pattern: "^sae_([A-Za-z0-9]{22}|[A-Za-z0-9]{64})$" }
       service_id: { type: string, maxLength: 128 }
-      service_kind: { type: string, enum: [public_url, private_service] }
+      service_kind: { type: string, enum: [public_url, service] }
       event_type:
         type: string
         enum: [connection.open, connection.close, http.decision]

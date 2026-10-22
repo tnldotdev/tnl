@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type PublisherIdentityStore interface {
@@ -49,8 +49,8 @@ func PublisherEnrollmentResponse(p controlstate.PublisherIdentity) authorityv1.P
 	if p.Scope.PublicURLID != "" {
 		r.PublicUrlId = &p.Scope.PublicURLID
 	}
-	if p.Scope.PrivateServiceID != "" {
-		r.PrivateServiceId = &p.Scope.PrivateServiceID
+	if p.Scope.ServiceID != "" {
+		r.ServiceId = &p.Scope.ServiceID
 	}
 	if p.Scope.DomainID != "" {
 		r.DomainId = &p.Scope.DomainID
@@ -102,7 +102,7 @@ func (h *handler) ExchangePublisherAssertion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var b authorityv1.PublisherTokenRequest
-	if decodeJSON(w, r, &b) != nil || string(b.GrantType) != publisheridentity.GrantType || string(b.ClientAssertionType) != publisheridentity.AssertionType {
+	if decodeJSON(w, r, &b) != nil || string(b.GrantType) != publisherproof.GrantType || string(b.ClientAssertionType) != publisherproof.AssertionType {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid publisher token request")
 		return
 	}

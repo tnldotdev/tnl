@@ -14,14 +14,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
-	awsbootstrap "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
-	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisheraws "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type bootstrapCommand struct {
 	scopedTeamFlags `embed:""`
-	Publisher       string           `arg:"" name:"publisher" help:"Configured publisher group to prepare, such as production."`
+	PublisherGroup  string           `arg:"" name:"publisher-group" help:"Configured publisher group to prepare, such as production."`
 	DeploymentFile  string           `name:"deployment-file" default:"deploy/publisher/fargate/aws.json" help:"Customer deployment file, relative to the project root."`
 	Deployment      string           `name:"deployment" help:"Stable deployment name from the customer file; required when the group has multiple deployments."`
 	Profile         string           `name:"profile" help:"AWS shared configuration profile; otherwise use the standard credentials chain."`
@@ -41,15 +41,15 @@ type bootstrapResult struct {
 	TemplateSHA256  string                                 `json:"template_sha256"`
 	TemplateVersion string                                 `json:"template_version"`
 	Parameters      []publisherdeployment.Parameter        `json:"parameters"`
-	Replicas        []awsbootstrap.Reference               `json:"replicas"`
+	Replicas        []publisheraws.Reference               `json:"replicas"`
 	ObservedMembers []controlv1.PublisherGroupMemberStatus `json:"observed_members"`
 	Instructions    []string                               `json:"instructions"`
 }
 
-type bootstrapLoader func(context.Context, string, string) (awsbootstrap.Secrets, awsbootstrap.Caller, error)
+type bootstrapLoader func(context.Context, string, string) (publisheraws.Secrets, publisheraws.Caller, error)
 
 func runBootstrap(ctx context.Context, flags bootstrapCommand, project projectConfiguration, output, diagnostics io.Writer) error {
-	return runBootstrapUsing(ctx, flags, project, output, diagnostics, awsbootstrap.Load)
+	return runBootstrapUsing(ctx, flags, project, output, diagnostics, publisheraws.Load)
 }
 
 func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project projectConfiguration, output, diagnostics io.Writer, load bootstrapLoader) error {
@@ -76,11 +76,11 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if err != nil {
 		return bad(err)
 	}
-	publisher, err := manifest.FindPublisher(flags.Publisher)
+	publisher, err := manifest.FindPublisher(flags.PublisherGroup)
 	if err != nil || publisher.Provider != "aws" {
 		return bad(errors.New("select a generated AWS publisher"))
 	}
-	deployment, err := awsbootstrap.ReadDeployment(rootPath(flags.DeploymentFile), flags.Publisher, flags.Deployment)
+	deployment, err := publisheraws.ReadDeployment(rootPath(flags.DeploymentFile), flags.PublisherGroup, flags.Deployment)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	}
 	var group *controlv1.AppliedPublisherGroup
 	for _, candidate := range *applied.Groups {
-		if slices.Contains(candidate.GroupNames, flags.Publisher) {
+		if slices.Contains(candidate.GroupNames, flags.PublisherGroup) {
 			if group != nil || !opaqueid.Valid(candidate.Id, "pgrp_") {
 				return scopeError()
 			}
@@ -120,7 +120,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if group == nil {
 		return scopeError()
 	}
-	binding := awsbootstrap.Binding{ControlOrigin: session.Authenticated().ServerEndpoint, TeamID: current.Team().Id, ProjectKey: source.Key, GroupID: group.Id, SourceFingerprint: source.Fingerprint, AccountID: deployment.AccountID, Region: deployment.Region, DeploymentName: deployment.Name}
+	binding := publisheraws.Binding{ControlOrigin: session.Authenticated().ServerEndpoint, TeamID: current.Team().Id, ProjectKey: source.Key, GroupID: group.Id, SourceFingerprint: source.Fingerprint, AccountID: deployment.AccountID, Region: deployment.Region, DeploymentName: deployment.Name}
 	deploymentID := "aws-" + binding.ID()[:40]
 	parameters := publisherdeployment.Parameters{
 		publisherdeployment.ControlURLParameter:       binding.ControlOrigin,
@@ -147,10 +147,10 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if err != nil {
 		return err
 	}
-	if err := awsbootstrap.CheckAccount(ctx, caller, deployment.AccountID); err != nil {
+	if err := publisheraws.CheckAccount(ctx, caller, deployment.AccountID); err != nil {
 		return err
 	}
-	client, err := grouppublisher.NewClient(binding.ControlOrigin, nil)
+	client, err := publishergroup.NewClient(binding.ControlOrigin, nil)
 	if err != nil {
 		return err
 	}
@@ -158,8 +158,8 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if err != nil {
 		return err
 	}
-	preparer := awsbootstrap.Preparer{Store: session.Store(), Secrets: secrets, Control: session.Authenticated().Control, Client: client, Receipts: receipts}
-	result := bootstrapResult{State: "prepared", Deployment: deployment.Name, DeploymentID: deploymentID, ProjectKey: source.Key, GroupID: group.Id, AppliedRevision: applied.Revision, TemplatePath: filepath.Join(flags.GeneratedDir, publisher.TemplatePath), TemplateSHA256: publisher.TemplateSHA256, Replicas: []awsbootstrap.Reference{}, ObservedMembers: []controlv1.PublisherGroupMemberStatus{}, Instructions: []string{
+	preparer := publisheraws.Preparer{Store: session.Store(), Secrets: secrets, Control: session.Authenticated().Control, Client: client, Receipts: receipts}
+	result := bootstrapResult{State: "prepared", Deployment: deployment.Name, DeploymentID: deploymentID, ProjectKey: source.Key, GroupID: group.Id, AppliedRevision: applied.Revision, TemplatePath: filepath.Join(flags.GeneratedDir, publisher.TemplatePath), TemplateSHA256: publisher.TemplateSHA256, Replicas: []publisheraws.Reference{}, ObservedMembers: []controlv1.PublisherGroupMemberStatus{}, Instructions: []string{
 		"merge these identity parameter bindings with the selected customer deployment's parameters",
 		"supply PublisherImage by digest, VpcId and Subnets before deploying the generated template with your infrastructure tool",
 		"preserve deployment name, replica slots, secret versions and durable replica storage on later updates",
@@ -167,7 +167,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	}}
 	for _, replica := range publisher.Replicas {
 		binding.ReplicaSlot = replica.Key
-		ref, err := preparer.Prepare(ctx, awsbootstrap.Request{Binding: binding, Group: flags.Publisher, Secret: deployment.Secrets[replica.Key]})
+		ref, err := preparer.Prepare(ctx, publisheraws.Request{Binding: binding, Group: flags.PublisherGroup, Secret: deployment.Secrets[replica.Key]})
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	// these observations came from control at the start of this finite command;
 	// bootstrap does not start tasks or claim fresh egress on their behalf.
 	for _, member := range applied.Members {
-		if member.Runtime != nil && slices.ContainsFunc(result.Replicas, func(ref awsbootstrap.Reference) bool { return ref.PublisherIdentityID == member.PublisherIdentityId }) {
+		if member.Runtime != nil && slices.ContainsFunc(result.Replicas, func(ref publisheraws.Reference) bool { return ref.PublisherIdentityID == member.PublisherIdentityId }) {
 			result.ObservedMembers = append(result.ObservedMembers, member)
 		}
 	}

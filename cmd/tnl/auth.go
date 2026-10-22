@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"golang.org/x/term"
@@ -56,8 +56,8 @@ type logoutCommand struct {
 	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
-func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) (clientauth.Config, error) {
-	config := clientauth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
+func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) (auth.Config, error) {
+	config := auth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
 		Team:                 flags.Team,
 		LoginTimeout:         flags.Timeout,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
@@ -80,15 +80,15 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 	if err != nil {
 		return err
 	}
-	_, err = clientauth.Login(ctx, config)
+	_, err = auth.Login(ctx, config)
 	if err != nil {
 		return err
 	}
 	return writeLoginResult(ctx, config, output, flags.Output)
 }
 
-func writeLoginResult(ctx context.Context, config clientauth.Config, output io.Writer, mode statusOutputMode) error {
-	status, err := clientauth.Status(ctx, config, false)
+func writeLoginResult(ctx context.Context, config auth.Config, output io.Writer, mode statusOutputMode) error {
+	status, err := auth.Status(ctx, config, false)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader,
 	if err != nil {
 		return err
 	}
-	op, err := clientauth.StartLogin(ctx, config)
+	op, err := auth.StartLogin(ctx, config)
 	if err != nil {
 		return err
 	}
@@ -121,12 +121,12 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 		return err
 	}
 	defer state.Close()
-	config := clientauth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics}
+	config := auth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics}
 	var op clientstate.AuthOperation
 	switch action {
 	case "wait":
 		if flags.Output != statusOutputJSON {
-			pending, inspectErr := clientauth.InspectLogin(ctx, config, id)
+			pending, inspectErr := auth.InspectLogin(ctx, config, id)
 			if inspectErr != nil {
 				return inspectErr
 			}
@@ -141,11 +141,11 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 				}
 			}
 		}
-		op, err = clientauth.WaitLogin(ctx, config, id, flags.Timeout)
+		op, err = auth.WaitLogin(ctx, config, id, flags.Timeout)
 	case "inspect":
-		op, err = clientauth.InspectLogin(ctx, config, id)
+		op, err = auth.InspectLogin(ctx, config, id)
 	case "cancel":
-		op, err = clientauth.CancelLogin(ctx, config, id)
+		op, err = auth.CancelLogin(ctx, config, id)
 	}
 	if err != nil {
 		return err
@@ -159,14 +159,14 @@ func runAuthStatus(ctx context.Context, flags authStatusCommand, output, diagnos
 		return err
 	}
 	defer state.Close()
-	status, err := clientauth.Status(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: flags.AccessToken, Diagnostics: diagnostics}, flags.Check)
+	status, err := auth.Status(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: flags.AccessToken, Diagnostics: diagnostics}, flags.Check)
 	if err != nil {
 		return err
 	}
 	return writeAuthStatus(output, "tnl auth status", status, flags.Output)
 }
 
-func writeAuthStatus(output io.Writer, command string, status clientauth.StatusResult, mode statusOutputMode) error {
+func writeAuthStatus(output io.Writer, command string, status auth.StatusResult, mode statusOutputMode) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(status)
 	}
@@ -217,7 +217,7 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 	if len(diagnostics) != 0 && diagnostics[0] != nil {
 		diagnostic = diagnostics[0]
 	}
-	if err := clientauth.Logout(ctx, clientauth.Config{
+	if err := auth.Logout(ctx, auth.Config{
 		ServerEndpoint: serverURL, State: state, Diagnostics: diagnostic,
 	}); err != nil {
 		return err

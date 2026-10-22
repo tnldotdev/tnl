@@ -27,7 +27,7 @@ export const contextSchema = z.strictObject({
     .refine((values) => new Set(values).size === values.length),
 });
 const origin = z.strictObject({ hostname: text, url: text });
-const publicRuntime = z.strictObject({
+const projectRuntime = z.strictObject({
   namespace: text,
   dev: z.boolean(),
   worktree: z
@@ -66,8 +66,8 @@ export const readySchema = z.object({
   pid: z.number().int().positive(),
   expires_at: text,
   executable: absolute,
-  private_handle: absolute,
-  public_runtime: publicRuntime,
+  connection_handle: absolute,
+  project_runtime: projectRuntime,
   kubeconfig: absolute.optional(),
 });
 export const cleanupSchema = z.strictObject({

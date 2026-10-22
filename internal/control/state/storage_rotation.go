@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -61,14 +61,14 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.public_urls WHERE allowed_ip_policy_storage_key_id = $1) +
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
-			(SELECT count(*) FROM control.private_service_runs WHERE assignment_seed_storage_key_id = $1) +
-			(SELECT count(*) FROM control.private_ingress_assignment_requests WHERE storage_key_id = $1) +
+			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
+			(SELECT count(*) FROM control.connector_ingress_assignment_requests WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.workload_ingress_requests WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_transport_issuers WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
-			(SELECT count(*) FROM control.managed_http_browser_logins WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_handoffs WHERE storage_key_id=$1) +
@@ -334,9 +334,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 				session, key, _ := strings.Cut(id, "/")
 				return workloadRequestScope(session, key)
 			}},
-		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.managed_http_browser_logins
+		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.service_http_browser_logins
 		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"verifier_ciphertext", "storage_key_id", "control.managed_http_browser_logins", func(id string) string { return "browser-access:" + id }},
+			"verifier_ciphertext", "storage_key_id", "control.service_http_browser_logins", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},
@@ -352,12 +352,12 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, id, request_digest_ciphertext FROM control.publish_runs
 		  WHERE request_digest_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"request_digest_ciphertext", "request_digest_storage_key_id", "control.publish_runs", publishRunRequestDigestContext},
-		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.private_service_runs
+		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.service_runs
 		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.private_service_runs", privateAssignmentSeedContext},
-		{`SELECT ctid::text, identity_id || '/' || idempotency_key, result_ciphertext FROM control.private_ingress_assignment_requests
+			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.service_runs", serviceAssignmentSeedContext},
+		{`SELECT ctid::text, identity_id || '/' || idempotency_key, result_ciphertext FROM control.connector_ingress_assignment_requests
 		  WHERE storage_key_id=$1 ORDER BY identity_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"result_ciphertext", "storage_key_id", "control.private_ingress_assignment_requests", privateIngressAssignmentContext},
+			"result_ciphertext", "storage_key_id", "control.connector_ingress_assignment_requests", connectorIngressAssignmentContext},
 		{`SELECT ctid::text, revision::text, private_key_ciphertext FROM control.ingress_transport_issuers WHERE storage_key_id=$1 ORDER BY revision FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"private_key_ciphertext", "storage_key_id", "control.ingress_transport_issuers", func(id string) string { return "ingress-transport-issuer:" + id }},
 		{`SELECT ctid::text, public_url_id, policy_ciphertext FROM control.ingress_routing_table_events

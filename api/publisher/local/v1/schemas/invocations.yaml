@@ -31,8 +31,9 @@ schemas:
       pid: { type: integer, minimum: 1 }
       target: { type: string, maxLength: 4096 }
       server_url: { type: string, maxLength: 4096 }
-      publisher_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
-      publisher_file: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+      publisher_identity_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
+      publisher_credential_file:
+        { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
       access_mode: { type: string, enum: [restricted, anonymous] }
       ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
       limits:

@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"encoding/hex"
@@ -11,7 +11,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) CreateShare(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID, _ controlv1.CreateShareParams) {
@@ -76,7 +76,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	authorized := make([]controlstate.AuthorizedSharePublicURL, 0, len(ids))
 	var revision uint64
 	for _, id := range ids {
-		route, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
+		publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), id)
 		if errors.Is(err, controlstate.ErrPublicURLNotFound) {
 			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 			return
@@ -86,24 +86,24 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		if previewID == "" && preview.TeamID == "" {
-			preview.TeamID = route.TeamID
+			preview.TeamID = publicURL.TeamID
 		}
-		if route.TeamID != preview.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled ||
-			route.ServiceProtocol != controlstate.PublicURLServiceHTTP ||
-			(route.Purpose != controlstate.PublicURLPurposeApp && (previewID != "" || route.Purpose != controlstate.PublicURLPurposeAlias && route.Purpose != controlstate.PublicURLPurposeDemo)) {
+		if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled ||
+			publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP ||
+			(publicURL.Purpose != controlstate.PublicURLPurposeApp && (previewID != "" || publicURL.Purpose != controlstate.PublicURLPurposeAlias && publicURL.Purpose != controlstate.PublicURLPurposeDemo)) {
 			writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled for sharing")
 			return
 		}
-		prefixes := make([]string, len(route.AllowedIPPrefixes))
-		for index, prefix := range route.AllowedIPPrefixes {
+		prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
+		for index, prefix := range publicURL.AllowedIPPrefixes {
 			prefixes[index] = prefix.String()
 		}
 		decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-			Operation: authorization.OperationShareCreate, TeamID: route.TeamID,
-			PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-			CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-			Target: route.Target, AllowedIPPrefixes: prefixes, Ephemeral: route.Ephemeral,
-			PublicURLID: route.ID, PublicURLMutationRevision: route.MutationRevision,
+			Operation: authorization.OperationShareCreate, TeamID: publicURL.TeamID,
+			PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
+			CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
+			Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
+			PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
 		})
 		if !ok {
 			return
@@ -115,7 +115,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		}
 		revision = decision.PolicyRevision
 		authorized = append(authorized, controlstate.AuthorizedSharePublicURL{
-			PublicURLID: id, ExpectedMutationRevision: route.MutationRevision,
+			PublicURLID: id, ExpectedMutationRevision: publicURL.MutationRevision,
 		})
 	}
 	share, err := h.shares.CreateShare(request.Context(), controlstate.CreateShareRequest{

@@ -2,9 +2,9 @@ schemas:
   VisitorConnectionID:
     type: string
     pattern: "^vc_[A-Za-z0-9]{22}$"
-  PrivateRunID:
+  ServiceRunID:
     type: string
-    pattern: "^psrun_[A-Za-z0-9]{22}$"
+    pattern: "^srun_[A-Za-z0-9]{22}$"
   AuthorizeServiceConnectorRequest:
     type: object
     additionalProperties: false
@@ -14,7 +14,7 @@ schemas:
       run_number: { type: integer, format: int64, minimum: 1 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       source_ip: { type: string, maxLength: 64 }
-      connector_session_id: { type: string, pattern: "^pcs_[A-Za-z0-9]{22}$" }
+      connector_session_id: { type: string, pattern: "^cns_[A-Za-z0-9]{22}$" }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       grant_revision: { type: integer, format: int64, minimum: 1 }
   AuthorizeServiceClientCertificateRequest:
@@ -26,14 +26,14 @@ schemas:
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
       source_ip: { type: string, maxLength: 64 }
       certificate: { type: string, format: byte, maxLength: 21848 }
-  CreatePrivateCertificateIssuanceRequest:
+  CreateServiceCertificateIssuanceRequest:
     type: object
     additionalProperties: false
     required: [run_number, csr]
     properties:
       run_number: { type: integer, format: int64, minimum: 1 }
       csr: { type: string, format: byte, maxLength: 87384 }
-  PrivateCertificateInstalledRequest:
+  ServiceCertificateInstalledRequest:
     type: object
     additionalProperties: false
     required: [run_number, issuance_id, not_after]
@@ -41,23 +41,15 @@ schemas:
       run_number: { type: integer, format: int64, minimum: 1 }
       issuance_id: { $ref: "../openapi.yaml#/components/schemas/IssuanceID" }
       not_after: { type: string, format: date-time }
-  PrivateCertificateIssuance:
+  ServiceCertificateIssuance:
     type: object
     additionalProperties: false
     required:
-      [
-        id,
-        private_service_id,
-        private_run_id,
-        run_number,
-        publisher_identity_id,
-        certificate_plan,
-        state,
-      ]
+      [id, service_id, service_run_id, run_number, publisher_identity_id, certificate_plan, state]
     properties:
       id: { $ref: "../openapi.yaml#/components/schemas/IssuanceID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
-      private_run_id: { $ref: "../openapi.yaml#/components/schemas/PrivateRunID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }

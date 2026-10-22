@@ -1,4 +1,4 @@
-package controlstate_test
+package state_test
 
 import (
 	"context"
@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func TestLoadCadence(t *testing.T) {
 	controlstate.RunCadenceLoad(t, func(database *controlstate.Database, now func() time.Time, resnapshot <-chan struct{}, retention bool) (ingress.ControlClient, error) {
-		client, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{
+		client, err := controlingress.NewDirectClient(controlingress.DirectConfig{
 			Store: database, LeaseDuration: 30 * time.Second, Now: now,
 		})
 		if err != nil {

@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -20,32 +20,34 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type integrationGuestPublisherControl struct {
-	*controlclient.Client
-	native   *nativeauth.Native
+	*clientcontrol.Client
+	native   *publisheridentity.Native
 	assigned controlv1.PublicURL
 }
 
-func (c integrationGuestPublisherControl) PublisherID() string { return c.native.PublisherID() }
+func (c integrationGuestPublisherControl) PublisherIdentityID() string {
+	return c.native.PublisherIdentityID()
+}
 
 func (c integrationGuestPublisherControl) CreatePublicURL(_ context.Context, body controlv1.CreatePublicURLRequest, _ string) (controlv1.PublicURL, error) {
 	if body.Purpose != controlv1.Demo || body.CanonicalHostname != c.assigned.CanonicalHostname || body.Target != c.assigned.Target || body.Ephemeral == nil || !*body.Ephemeral {
-		return controlv1.PublicURL{}, nativeauth.ErrScope
+		return controlv1.PublicURL{}, publisheridentity.ErrScope
 	}
 	return c.assigned, nil
 }
@@ -61,7 +63,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		t.Fatal(err)
 	}
 	defer state.Close()
-	h, err := controlapi.NewHandler(controlapi.Config{
+	h, err := controlpublic.NewHandler(controlpublic.Config{
 		ManagedDomain:    "tnl.wtf",
 		GuestDemoEnabled: true, DNSAutomation: true,
 	}, state, state, state.Readiness)
@@ -118,8 +120,8 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	if allowed.Code != http.StatusCreated {
 		t.Fatalf("guest demo URL = %d, %s", allowed.Code, allowed.Body.String())
 	}
-	var route controlv1.PublicURL
-	if err := json.Unmarshal(allowed.Body.Bytes(), &route); err != nil {
+	var publicURL controlv1.PublicURL
+	if err := json.Unmarshal(allowed.Body.Bytes(), &publicURL); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"guest-relay-a", "guest-relay-b"} {
@@ -136,7 +138,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollmentBody, err := json.Marshal(controlv1.EnrollGuestPublisherRequest{PublicUrlId: route.Id, PublicKey: base64.RawURLEncoding.EncodeToString(public)})
+	enrollmentBody, err := json.Marshal(controlv1.EnrollGuestPublisherRequest{PublicUrlId: publicURL.Id, PublicKey: base64.RawURLEncoding.EncodeToString(public)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,11 +152,11 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		t.Fatalf("guest identity enrollment = %d, %s", enrolled.Code, enrolled.Body.String())
 	}
 	var identity controlv1.GuestPublisherIdentity
-	if err := json.Unmarshal(enrolled.Body.Bytes(), &identity); err != nil || identity.PublicUrlId != route.Id {
+	if err := json.Unmarshal(enrolled.Body.Bytes(), &identity); err != nil || identity.PublicUrlId != publicURL.Id {
 		t.Fatalf("guest identity = %+v: %v", identity, err)
 	}
 	const audience = "https://control.example.test/v1/publisher-token"
-	assertion, err := publisheridentity.Sign(identity.ClientId, identity.KeyId, identity.GrantId, audience, private, time.Now())
+	assertion, err := publisherproof.Sign(identity.ClientId, identity.KeyId, identity.GrantId, audience, private, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +166,12 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	}
 	startRun := func(key string) *httptest.ResponseRecorder {
 		t.Helper()
-		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/"+route.Id+"/publish-runs", strings.NewReader("{}"))
+		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/"+publicURL.Id+"/publish-runs", strings.NewReader("{}"))
 		request.RemoteAddr = "192.0.2.7:49155"
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Authorization", "Bearer "+access.Token)
 		request.Header.Set("Idempotency-Key", key)
-		proof, err := publisheridentity.SignRun(private, route.Id, key)
+		proof, err := publisherproof.SignRun(private, publicURL.Id, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,8 +186,8 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	}
 	var setup controlv1.PublishRunSetup
 	if err := json.Unmarshal(started.Body.Bytes(), &setup); err != nil ||
-		setup.CertificatePlan.Scope != route.CanonicalHostname || len(setup.CertificatePlan.Identifiers) != 1 ||
-		setup.CertificatePlan.Identifiers[0] != route.CanonicalHostname {
+		setup.CertificatePlan.Scope != publicURL.CanonicalHostname || len(setup.CertificatePlan.Identifiers) != 1 ||
+		setup.CertificatePlan.Identifiers[0] != publicURL.CanonicalHostname {
 		t.Fatalf("guest certificate plan = %+v, error = %v", setup.CertificatePlan, err)
 	}
 	if repeated := startRun("guest-second-run"); repeated.Code != http.StatusConflict {
@@ -207,7 +209,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicListener := privateRuntimeListener(t)
+	publicListener := serviceRuntimeListener(t)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
@@ -233,7 +235,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	serverURL := "https://" + cfg.ServerHostname()
-	control, err := controlclient.New(serverURL, controlHTTP, "")
+	control, err := clientcontrol.New(serverURL, controlHTTP, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,13 +243,13 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("guest credential without sign-in: %v", err)
 	}
-	clientState, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	clientstate, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientState.Close()
-	authenticated, err := clientauth.Authenticate(t.Context(), clientauth.Config{
-		ServerEndpoint: serverURL, State: clientState, AccessToken: issued.AccessToken,
+	defer clientstate.Close()
+	authenticated, err := auth.Authenticate(t.Context(), auth.Config{
+		ServerEndpoint: serverURL, State: clientstate, AccessToken: issued.AccessToken,
 		HTTPClient: controlHTTP, Diagnostics: io.Discard,
 	})
 	if err != nil {
@@ -257,7 +259,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err != nil || allocated.Number != 1 {
 		t.Fatalf("guest demo number = %+v, %v", allocated, err)
 	}
-	store, err := clientState.Server(t.Context(), serverURL)
+	store, err := clientstate.Server(t.Context(), serverURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +289,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	hostname := "demo-1." + issued.Namespace
 	prefixes := []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()}
 	ephemeral, protocol := true, controlv1.Http
-	route, err := authenticated.Control.CreatePublicURL(t.Context(), controlv1.CreatePublicURLRequest{
+	publicURL, err := authenticated.Control.CreatePublicURL(t.Context(), controlv1.CreatePublicURLRequest{
 		TeamId: issued.TeamId, MembershipId: &issued.MembershipId, DomainId: issued.DomainId,
 		CanonicalHostname: hostname, Purpose: controlv1.Demo, PublicUrlScope: controlv1.Member,
 		ServiceProtocol: &protocol, Target: localDemo.Target(), AllowedIpPrefixes: &prefixes, Ephemeral: &ephemeral,
@@ -299,28 +301,28 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuedPublisher, err := authenticated.Control.EnrollGuestPublisher(t.Context(), route.Id, public)
+	issuedPublisher, err := authenticated.Control.EnrollGuestPublisher(t.Context(), publicURL.Id, public)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(serverURL, controlHTTP, "")
+	authority, err := clientauthority.New(serverURL, controlHTTP, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := controlclient.New(serverURL, controlHTTP, "")
+	scoped, err := clientcontrol.New(serverURL, controlHTTP, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := authorityv1.PublisherEnrollmentResult{ClientId: issuedPublisher.ClientId, KeyId: issuedPublisher.KeyId, GrantId: issuedPublisher.GrantId, TeamId: issuedPublisher.TeamId, PublicUrlId: &route.Id, Kind: authorityv1.SavedUrl}
-	native, err := nativeauth.NewNative(scoped, authority, identity, private)
+	identity := authorityv1.PublisherEnrollmentResult{ClientId: issuedPublisher.ClientId, KeyId: issuedPublisher.KeyId, GrantId: issuedPublisher.GrantId, TeamId: issuedPublisher.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
+	native, err := publisheridentity.NewNative(scoped, authority, identity, private)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := native.SelectRoute(route); err != nil {
+	if err := native.SelectPublicURL(publicURL); err != nil {
 		t.Fatal(err)
 	}
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
-		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: route}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
+		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
 		ControlURL: serverURL,
 		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
@@ -405,7 +407,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		t.Fatalf("guest feedback = %d, %+v, %v", reported.StatusCode, thread, decodeErr)
 	}
 	stopIntegrationPublisher(t, handle)
-	if err := authenticated.Control.DeletePublicURL(t.Context(), route.Id); err != nil && !errors.Is(err, controlclient.ErrNotFound) {
+	if err := authenticated.Control.DeletePublicURL(t.Context(), publicURL.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("remove guest demo URL after publication drains: %v", err)
 	}
 	var demoComments int

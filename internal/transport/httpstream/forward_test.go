@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
@@ -38,7 +38,7 @@ func (c *observedLocal) CloseWrite() error {
 	return errors.ErrUnsupported
 }
 
-func privateHTTPFixture(t *testing.T, handler http.Handler) (*httptest.Server, privatetrust.Snapshot) {
+func privateHTTPFixture(t *testing.T, handler http.Handler) (*httptest.Server, targettrust.Snapshot) {
 	t.Helper()
 	root, certificate := providerCertificate(t)
 	target := httptest.NewUnstartedServer(handler)
@@ -49,7 +49,7 @@ func privateHTTPFixture(t *testing.T, handler http.Handler) (*httptest.Server, p
 	return target, providerSnapshot(t, root)
 }
 
-func httpVisitor(t *testing.T, address string, trust *privatetrust.Snapshot) (string, *atomic.Int64, <-chan error) {
+func httpVisitor(t *testing.T, address string, trust *targettrust.Snapshot) (string, *atomic.Int64, <-chan error) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -371,7 +371,7 @@ func TestPrivateHTTPIdleCancellationJoins(t *testing.T) {
 
 // this fixture supplies an already-verified target to the shared HTTP stream
 // boundary. serving code owns mandatory visitor TLS and admission separately.
-func forwardVerifiedTarget(ctx context.Context, local, target net.Conn, trust *privatetrust.Snapshot) error {
+func forwardVerifiedTarget(ctx context.Context, local, target net.Conn, trust *targettrust.Snapshot) error {
 	stop := context.AfterFunc(ctx, func() { _ = local.Close(); _ = target.Close() })
 	defer stop()
 	if trust == nil {

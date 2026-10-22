@@ -1,4 +1,4 @@
-package publisherruntime
+package runtime
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type lostStartControl struct {
@@ -54,11 +54,11 @@ func TestInvalidRuntimeReplyCannotStartOrRenew(t *testing.T) {
 
 func (c *lostStartControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
 	c.requests = append(c.requests, r)
-	if _, err := publisheridentity.Verify(r.Assertion, "publisher", "key", publisheridentity.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+	if _, err := publisherproof.Verify(r.Assertion, "publisher", "key", publisherproof.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	if c.replaced {
-		return controlv1.PublisherRuntimeResponse{}, controlclient.ErrStatusConflict
+		return controlv1.PublisherRuntimeResponse{}, clientcontrol.ErrStatusConflict
 	}
 	epoch := int64(7)
 	if r.Action != controlv1.RuntimeInspect {
@@ -66,7 +66,7 @@ func (c *lostStartControl) PublisherRuntime(_ context.Context, r controlv1.Publi
 	}
 	if r.Action == controlv1.RuntimeStart && !c.startLost {
 		c.startLost = true
-		return controlv1.PublisherRuntimeResponse{}, controlclient.ErrUnavailable
+		return controlv1.PublisherRuntimeResponse{}, clientcontrol.ErrUnavailable
 	}
 	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(time.Minute))}, nil
 }
@@ -84,7 +84,7 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	report.Image = "changed after construction"
-	if _, err := owner.Renew(t.Context()); !errors.Is(err, controlclient.ErrUnavailable) {
+	if _, err := owner.Renew(t.Context()); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal(err)
 	}
 	if id := observability.IdentityFromContext(owner.ObservabilityContext(t.Context(), "team", "scope")); id != (observability.Identity{}) {
@@ -131,7 +131,7 @@ func TestLostStartRetainsProcessAndExpectedEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = o.Renew(t.Context()); !errors.Is(err, controlclient.ErrUnavailable) {
+	if _, err = o.Renew(t.Context()); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal(err)
 	}
 	if _, err = o.Renew(t.Context()); err != nil {
@@ -149,7 +149,7 @@ func TestLostStartRetainsProcessAndExpectedEpoch(t *testing.T) {
 	c.replaced = true
 	for range 2 {
 		_, err = o.Renew(t.Context())
-		if !errors.Is(err, controlclient.ErrStatusConflict) {
+		if !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			t.Fatal(err)
 		}
 		reason, _ := failure.ReasonOf(err)

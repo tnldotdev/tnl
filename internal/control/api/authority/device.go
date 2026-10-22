@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 	"net/url"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	"golang.org/x/oauth2"
 )
 
@@ -56,11 +56,11 @@ func (h *handler) deviceError(w http.ResponseWriter, err error) {
 		writeProblem(w, 403, authorityv1.Forbidden, "company sign-in is unavailable for this team")
 		return
 	}
-	if errors.Is(err, controlstate.ErrDeviceLogin) || errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) || errors.Is(err, oidcauth.ErrUnauthenticated) {
+	if errors.Is(err, controlstate.ErrDeviceLogin) || errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) || errors.Is(err, oidc.ErrUnauthenticated) {
 		writeProblem(w, http.StatusUnauthorized, authorityv1.Unauthenticated, "login is invalid, cancelled, or expired; start again")
 		return
 	}
-	if errors.Is(err, oidcauth.ErrUnavailable) {
+	if errors.Is(err, oidc.ErrUnavailable) {
 		requestID := writeProblem(w, http.StatusServiceUnavailable, authorityv1.Unavailable, "identity provider is unavailable; reopen the approval URL to retry")
 		operatorlog.ReportContext(observability.ResponseContext(w), "authenticate device browser", failure.ServerIdentityProviderUnavailable, requestID, err)
 		return
@@ -249,12 +249,12 @@ func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, 
 			h.deviceError(w, err)
 			return
 		}
-		h.deviceError(w, oidcauth.ErrUnauthenticated)
+		h.deviceError(w, oidc.ErrUnauthenticated)
 		return
 	}
 	identity, err := h.oidc.Redeem(r.Context(), r.URL.Query().Get("code"), l.Nonce, l.Verifier)
 	if err != nil {
-		if errors.Is(err, oidcauth.ErrUnauthenticated) {
+		if errors.Is(err, oidc.ErrUnauthenticated) {
 			if denyErr := h.devices.DenyDeviceBrowser(r.Context(), l.UserCode, binding, time.Now()); denyErr != nil {
 				h.deviceError(w, denyErr)
 				return

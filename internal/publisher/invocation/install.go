@@ -3,32 +3,32 @@ package invocation
 import (
 	"context"
 
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
-	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type InstallationOptions struct {
 	PublicOptions
-	Installation  publisherjob.ServiceOptions
+	Installation  supervisor.ServiceOptions
 	ServiceName   string
 	ReadinessPath string
 	ServerCAFile  string
 }
 
-func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation publisherprovision.Presentation) error {
+func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation setup.Presentation) error {
 	address, err := target.NormalizePublicAddress(flags.Target, controlv1.Http)
 	if err != nil {
 		return err
 	}
-	options, err := localproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+	options, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
 	if err != nil {
 		return err
 	}
 	options.ServerName = flags.TargetTLSName
-	if err := localproxy.PreflightWithOptions(ctx, address, options); err != nil {
+	if err := publisherproxy.PreflightWithOptions(ctx, address, options); err != nil {
 		return err
 	}
 	server, database, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
@@ -56,7 +56,7 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation pu
 	if policy.explicit {
 		cfg.AccessMode = policy.access
 	}
-	route, err := reserveConfiguredURL(ctx, services, cfg)
+	publicURL, err := reserveConfiguredURL(ctx, services, cfg)
 	if err != nil {
 		return err
 	}
@@ -64,6 +64,6 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation pu
 	if name == "" {
 		name = flags.Name
 	}
-	job := publisherjob.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
-	return publisherprovision.InstallPublication(ctx, publisherprovision.Publication{Database: database, Server: server, Route: route, Control: authenticated.Control, Options: flags.Installation, Job: job, TargetCAFile: flags.TargetCAFile, ServerCAFile: flags.ServerCAFile, ProjectRoot: flags.ProjectRoot}, presentation)
+	job := supervisor.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
+	return setup.InstallPublication(ctx, setup.Publication{Database: database, Server: server, Route: publicURL, Control: authenticated.Control, Options: flags.Installation, Job: job, TargetCAFile: flags.TargetCAFile, ServerCAFile: flags.ServerCAFile, ProjectRoot: flags.ProjectRoot}, presentation)
 }

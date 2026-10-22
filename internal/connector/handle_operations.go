@@ -8,21 +8,21 @@ import (
 	"os"
 	"time"
 
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-func ReadPrepared(ctx context.Context, path, service string) (connectionruntime.Prepared, error) {
+func ReadPrepared(ctx context.Context, path, service string) (connectorruntime.Prepared, error) {
 	return connectionSnapshot(ctx, path, service, "prepared")
 }
 
-func Prepare(ctx context.Context, path, service string) (connectionruntime.Prepared, error) {
+func Prepare(ctx context.Context, path, service string) (connectorruntime.Prepared, error) {
 	return connectionSnapshot(ctx, path, service, "prepare")
 }
 
-func connectionSnapshot(ctx context.Context, path, service, operation string) (connectionruntime.Prepared, error) {
+func connectionSnapshot(ctx context.Context, path, service, operation string) (connectorruntime.Prepared, error) {
 	if !naming.ValidServiceName(service) {
-		return connectionruntime.Prepared{}, connectionruntime.ErrInvalid
+		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
 	}
 	timeout := 5 * time.Second
 	if operation == "prepare" {
@@ -30,25 +30,25 @@ func connectionSnapshot(ctx context.Context, path, service, operation string) (c
 	}
 	bounded, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	handle, err := connectionruntime.ReadHandle(path)
+	handle, err := connectorruntime.ReadHandle(path)
 	if err != nil {
-		return connectionruntime.Prepared{}, err
+		return connectorruntime.Prepared{}, err
 	}
-	var prepared connectionruntime.Prepared
-	if err := connectionruntime.Call(bounded, path, operation, connectionruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
-		return connectionruntime.Prepared{}, err
+	var prepared connectorruntime.Prepared
+	if err := connectorruntime.Call(bounded, path, operation, connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
+		return connectorruntime.Prepared{}, err
 	}
-	if prepared.Schema != connectionruntime.Schema || prepared.Connection.Schema != connectionruntime.Schema {
-		return connectionruntime.Prepared{}, connectionruntime.ErrInvalid
+	if prepared.Schema != connectorruntime.Schema || prepared.Connection.Schema != connectorruntime.Schema {
+		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
 	}
 	if !prepared.Connection.ExpiresAt.After(time.Now()) {
-		return connectionruntime.Prepared{}, connectionruntime.ErrExpired
+		return connectorruntime.Prepared{}, connectorruntime.ErrExpired
 	}
 	return prepared, nil
 }
 
 func Attach(ctx context.Context, path string, input io.Reader) (json.RawMessage, error) {
-	h, err := connectionruntime.ReadHandle(path)
+	h, err := connectorruntime.ReadHandle(path)
 	if err != nil {
 		return nil, err
 	}
@@ -56,29 +56,29 @@ func Attach(ctx context.Context, path string, input io.Reader) (json.RawMessage,
 		Schema    int    `json:"schema"`
 		Assertion string `json:"assertion"`
 	}
-	if connectionruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
-		return nil, connectionruntime.ErrInvalid
+	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
+		return nil, connectorruntime.ErrInvalid
 	}
 	var attached json.RawMessage
-	err = connectionruntime.Call(ctx, path, "attach", connectionruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest, Assertion: request.Assertion}, &attached)
+	err = connectorruntime.Call(ctx, path, "attach", connectorruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest, Assertion: request.Assertion}, &attached)
 	return attached, err
 }
 
 func Status(ctx context.Context, path string) (json.RawMessage, error) {
-	h, err := connectionruntime.ReadHandle(path)
+	h, err := connectorruntime.ReadHandle(path)
 	if err != nil {
 		return nil, err
 	}
 	var status json.RawMessage
-	err = connectionruntime.Call(ctx, path, "status", connectionruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest}, &status)
+	err = connectorruntime.Call(ctx, path, "status", connectorruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest}, &status)
 	return status, err
 }
 
 func Stop(ctx context.Context, path string) error {
-	h, err := connectionruntime.ReadHandle(path)
+	h, err := connectorruntime.ReadHandle(path)
 	if err != nil {
-		if _, missing := os.Lstat(path); errors.Is(missing, os.ErrNotExist) || errors.Is(err, connectionruntime.ErrExpired) {
-			if connectionruntime.OwnerStopped(path) == nil {
+		if _, missing := os.Lstat(path); errors.Is(missing, os.ErrNotExist) || errors.Is(err, connectorruntime.ErrExpired) {
+			if connectorruntime.OwnerStopped(path) == nil {
 				return nil
 			}
 			return waitConnectionsStopped(ctx, path)
@@ -86,9 +86,9 @@ func Stop(ctx context.Context, path string) error {
 		return err
 	}
 	var result json.RawMessage
-	err = connectionruntime.Call(ctx, path, "stop", connectionruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest}, &result)
+	err = connectorruntime.Call(ctx, path, "stop", connectorruntime.Request{Schema: 1, Directory: h.Directory, ConfigDigest: h.ConfigDigest}, &result)
 	if err != nil {
-		if connectionruntime.OwnerStopped(path) == nil {
+		if connectorruntime.OwnerStopped(path) == nil {
 			return nil
 		}
 		return err
@@ -104,13 +104,13 @@ func waitConnectionsStopped(ctx context.Context, path string) error {
 	defer tick.Stop()
 	for {
 		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-			return connectionruntime.ReadStopResult(path)
+			return connectorruntime.ReadStopResult(path)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return connectionruntime.ErrUnavailable
+			return connectorruntime.ErrUnavailable
 		case <-tick.C:
 		}
 	}

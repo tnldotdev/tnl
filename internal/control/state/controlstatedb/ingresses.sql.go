@@ -21,7 +21,7 @@ WHERE ingress_id = $3
   AND ingress_run_id = $4
   AND ingress_lease_revision = $5
   AND lease_expires_at > $2
-RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, private_connector_address, private_connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 `
 
 type BeginIngressDrainParams struct {
@@ -50,8 +50,8 @@ func (q *Queries) BeginIngressDrain(ctx context.Context, arg BeginIngressDrainPa
 		&i.ConnectionCapacity,
 		&i.IngressPoolID,
 		&i.ServicePorts,
-		&i.PrivateConnectorAddress,
-		&i.PrivateConnectorTlsServerName,
+		&i.ConnectorAddress,
+		&i.ConnectorTlsServerName,
 		&i.ReportedConnections,
 		&i.RoutingTableRevision,
 		&i.Draining,
@@ -64,7 +64,7 @@ func (q *Queries) BeginIngressDrain(ctx context.Context, arg BeginIngressDrainPa
 }
 
 const getIngressLease = `-- name: GetIngressLease :one
-SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, private_connector_address, private_connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 FROM control.ingress_leases
 WHERE ingress_id = $1
   AND ingress_run_id = $2
@@ -96,8 +96,8 @@ func (q *Queries) GetIngressLease(ctx context.Context, arg GetIngressLeaseParams
 		&i.ConnectionCapacity,
 		&i.IngressPoolID,
 		&i.ServicePorts,
-		&i.PrivateConnectorAddress,
-		&i.PrivateConnectorTlsServerName,
+		&i.ConnectorAddress,
+		&i.ConnectorTlsServerName,
 		&i.ReportedConnections,
 		&i.RoutingTableRevision,
 		&i.Draining,
@@ -110,7 +110,7 @@ func (q *Queries) GetIngressLease(ctx context.Context, arg GetIngressLeaseParams
 }
 
 const lockIngressLease = `-- name: LockIngressLease :one
-SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, private_connector_address, private_connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 FROM control.ingress_leases
 WHERE ingress_id = $1
   AND ingress_run_id = $2
@@ -143,8 +143,8 @@ func (q *Queries) LockIngressLease(ctx context.Context, arg LockIngressLeasePara
 		&i.ConnectionCapacity,
 		&i.IngressPoolID,
 		&i.ServicePorts,
-		&i.PrivateConnectorAddress,
-		&i.PrivateConnectorTlsServerName,
+		&i.ConnectorAddress,
+		&i.ConnectorTlsServerName,
 		&i.ReportedConnections,
 		&i.RoutingTableRevision,
 		&i.Draining,
@@ -165,8 +165,8 @@ INSERT INTO control.ingress_leases (
     connection_capacity,
     ingress_pool_id,
     service_ports,
-    private_connector_address,
-    private_connector_tls_server_name,
+    connector_address,
+    connector_tls_server_name,
     registered_at,
     renewed_at,
     lease_expires_at
@@ -196,8 +196,8 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     connection_capacity = EXCLUDED.connection_capacity,
     ingress_pool_id = EXCLUDED.ingress_pool_id,
     service_ports = EXCLUDED.service_ports,
-    private_connector_address = EXCLUDED.private_connector_address,
-    private_connector_tls_server_name = EXCLUDED.private_connector_tls_server_name,
+    connector_address = EXCLUDED.connector_address,
+    connector_tls_server_name = EXCLUDED.connector_tls_server_name,
     reported_connections = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
          AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
@@ -239,24 +239,24 @@ ON CONFLICT (ingress_id) DO UPDATE SET
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports
-    AND control.ingress_leases.private_connector_address=EXCLUDED.private_connector_address
-    AND control.ingress_leases.private_connector_tls_server_name=EXCLUDED.private_connector_tls_server_name)
+    AND control.ingress_leases.connector_address=EXCLUDED.connector_address
+    AND control.ingress_leases.connector_tls_server_name=EXCLUDED.connector_tls_server_name)
    OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
-RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, private_connector_address, private_connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 `
 
 type RegisterIngressParams struct {
-	IngressID                     string
-	IngressRunID                  string
-	ProtocolVersion               int64
-	ConnectionCapacity            int64
-	IngressPoolID                 string
-	ServicePorts                  []int32
-	PrivateConnectorAddress       string
-	PrivateConnectorTlsServerName string
-	RegisteredAt                  pgtype.Timestamptz
-	RenewedAt                     pgtype.Timestamptz
-	LeaseExpiresAt                pgtype.Timestamptz
+	IngressID              string
+	IngressRunID           string
+	ProtocolVersion        int64
+	ConnectionCapacity     int64
+	IngressPoolID          string
+	ServicePorts           []int32
+	ConnectorAddress       string
+	ConnectorTlsServerName string
+	RegisteredAt           pgtype.Timestamptz
+	RenewedAt              pgtype.Timestamptz
+	LeaseExpiresAt         pgtype.Timestamptz
 }
 
 func (q *Queries) RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error) {
@@ -267,8 +267,8 @@ func (q *Queries) RegisterIngress(ctx context.Context, arg RegisterIngressParams
 		arg.ConnectionCapacity,
 		arg.IngressPoolID,
 		arg.ServicePorts,
-		arg.PrivateConnectorAddress,
-		arg.PrivateConnectorTlsServerName,
+		arg.ConnectorAddress,
+		arg.ConnectorTlsServerName,
 		arg.RegisteredAt,
 		arg.RenewedAt,
 		arg.LeaseExpiresAt,
@@ -283,8 +283,8 @@ func (q *Queries) RegisterIngress(ctx context.Context, arg RegisterIngressParams
 		&i.ConnectionCapacity,
 		&i.IngressPoolID,
 		&i.ServicePorts,
-		&i.PrivateConnectorAddress,
-		&i.PrivateConnectorTlsServerName,
+		&i.ConnectorAddress,
+		&i.ConnectorTlsServerName,
 		&i.ReportedConnections,
 		&i.RoutingTableRevision,
 		&i.Draining,
@@ -309,7 +309,7 @@ WHERE ingress_id = $5
   AND ingress_run_id = $6
   AND ingress_lease_revision = $7
   AND lease_expires_at > $3
-RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, private_connector_address, private_connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+RETURNING id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 `
 
 type RenewIngressParams struct {
@@ -342,8 +342,8 @@ func (q *Queries) RenewIngress(ctx context.Context, arg RenewIngressParams) (Con
 		&i.ConnectionCapacity,
 		&i.IngressPoolID,
 		&i.ServicePorts,
-		&i.PrivateConnectorAddress,
-		&i.PrivateConnectorTlsServerName,
+		&i.ConnectorAddress,
+		&i.ConnectorTlsServerName,
 		&i.ReportedConnections,
 		&i.RoutingTableRevision,
 		&i.Draining,

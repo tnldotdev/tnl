@@ -1,4 +1,4 @@
-package awsbootstrap
+package aws
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
+	publishersetup "github.com/tnldotdev/tnl/internal/publisher/setup"
 )
 
 type Request struct {
@@ -37,8 +37,8 @@ type Reference struct {
 type Preparer struct {
 	Store     *clientstate.Store
 	Secrets   Secrets
-	Control   publisherprovision.Control
-	Client    publisherprovision.Client
+	Control   publishersetup.Control
+	Client    publishersetup.Client
 	Receipts  *clientstate.PrivateDirectory
 	afterSave func(string) error
 }
@@ -63,9 +63,9 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(data[:]), err
 }
 
-func scopeOf(r Request) publisherprovision.Scope {
+func scopeOf(r Request) publishersetup.Scope {
 	b := r.Binding
-	return publisherprovision.Scope{Server: b.ControlOrigin, Team: b.TeamID, Project: b.ProjectKey, GroupID: b.GroupID, Group: r.Group, Instance: b.Instance()}
+	return publishersetup.Scope{Server: b.ControlOrigin, Team: b.TeamID, Project: b.ProjectKey, GroupID: b.GroupID, Group: r.Group, Instance: b.Instance()}
 }
 
 func conflict(reason failure.Reason) error {
@@ -80,7 +80,7 @@ func (p Preparer) Prepare(ctx context.Context, r Request) (Reference, error) {
 	if err := b.validate(); err != nil {
 		return Reference{}, err
 	}
-	if err := (Deployment{Name: b.DeploymentName, Publisher: r.Group, AccountID: b.AccountID, Region: b.Region, Secrets: map[string]Secret{b.ReplicaSlot: r.Secret}}).Validate(); err != nil {
+	if err := (Deployment{Name: b.DeploymentName, PublisherGroup: r.Group, AccountID: b.AccountID, Region: b.Region, Secrets: map[string]Secret{b.ReplicaSlot: r.Secret}}).Validate(); err != nil {
 		return Reference{}, err
 	}
 	if p.Store == nil || p.Secrets == nil || p.Control == nil || p.Client == nil || p.Receipts == nil {
@@ -234,7 +234,7 @@ func (p Preparer) Prepare(ctx context.Context, r Request) (Reference, error) {
 				return Reference{}, conflict(failure.AWSBootstrapSecretConflict)
 			}
 		}
-		identity, err := publisherprovision.Ensure(ctx, p.Store, p.Control, p.Client, scopeOf(r), func() error { return p.save(ctx, &j, &revision, "enrolling") })
+		identity, err := publishersetup.Ensure(ctx, p.Store, p.Control, p.Client, scopeOf(r), func() error { return p.save(ctx, &j, &revision, "enrolling") })
 		if err != nil {
 			return Reference{}, err
 		}
@@ -447,7 +447,7 @@ func (p Preparer) existing(ctx context.Context, r Request, j *operation, revisio
 		return Reference{}, err
 	}
 	defer lock.Close()
-	if _, err := publisherprovision.Import(ctx, p.Store, p.Client, identity, scope); err != nil {
+	if _, err := publishersetup.Import(ctx, p.Store, p.Client, identity, scope); err != nil {
 		return Reference{}, err
 	}
 	j.Identity = &identity

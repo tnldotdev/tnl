@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 // an ordinary app keeps its own listener. the local tnl runtime publishes it
@@ -84,7 +84,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		t.Fatal("local publisher did not start")
 	}
 	assertIntegrationBinaryProcessResult(t, started)
-	var endpoint privateprotocol.Endpoint
+	var endpoint publisherprotocol.Endpoint
 	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Scope != "app" || endpoint.Service == nil || *endpoint.Service != "api" || endpoint.Capability == "" {
 		t.Fatalf("runtime did not return the scoped api app endpoint: %v", err)
 	}
@@ -123,11 +123,11 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	for index := 1; index <= 2; index++ {
 		owner := fmt.Sprintf("%032x", index)
-		var assigned privateprotocol.Assignment
-		if status := request("prepare", privateprotocol.Prepare{Version: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
+		var assigned publisherprotocol.Assignment
+		if status := request("prepare", publisherprotocol.Prepare{Version: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
 			t.Fatalf("prepare status %d", status)
 		}
-		registration := privateprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner, Target: app.URL}
+		registration := publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner, Target: app.URL}
 		if status := request("register", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("register status %d", status)
 		}
@@ -149,7 +149,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 				case <-stopRenewal:
 					return
 				case <-ticker.C:
-					payload, _ := json.Marshal(privateprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
+					payload, _ := json.Marshal(publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
 					call, err := http.NewRequest(http.MethodPost, endpoint.Url+"/v1/renew", bytes.NewReader(payload))
 					if err != nil {
 						return

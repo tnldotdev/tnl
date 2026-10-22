@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
@@ -50,7 +50,7 @@ func runCertificateRenewals(
 				material = replacement
 			}
 			if renewalErr != nil {
-				if errors.Is(renewalErr, controlclient.ErrStatusConflict) || errors.Is(renewalErr, controlclient.ErrUnauthenticated) {
+				if errors.Is(renewalErr, clientcontrol.ErrStatusConflict) || errors.Is(renewalErr, clientcontrol.ErrUnauthenticated) {
 					return renewalErr
 				}
 				if ctx.Err() != nil {

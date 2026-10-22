@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/config"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
@@ -26,7 +26,7 @@ var (
 
 type ProjectWorkload struct {
 	Provider           string                 `json:"provider"`
-	Trust              oidcauth.WorkloadTrust `json:"trust"`
+	Trust              oidc.WorkloadTrust     `json:"trust"`
 	GitHub             *ProjectWorkloadGitHub `json:"github,omitempty"`
 	Services           []string               `json:"services"`
 	MaxDurationSeconds int                    `json:"max_duration_seconds"`
@@ -42,7 +42,7 @@ type ProjectWorkloadGitHub struct {
 	JobWorkflowRef    string   `json:"job_workflow_ref,omitempty"`
 }
 
-func (p ProjectWorkloadGitHub) matches(c oidcauth.GitHubExecution) bool {
+func (p ProjectWorkloadGitHub) matches(c oidc.GitHubExecution) bool {
 	return p.Repository == c.Repository && p.RepositoryID == c.RepositoryID && p.RepositoryOwnerID == c.RepositoryOwnerID && p.WorkflowRef == c.WorkflowRef && p.Ref == c.Ref && slices.Contains(p.Events, c.Event) && (p.Environment == "" || p.Environment == c.Environment) && (p.JobWorkflowRef == "" || p.JobWorkflowRef == c.JobWorkflowRef)
 }
 
@@ -61,13 +61,13 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			if p.MaxDurationSeconds == 0 {
 				p.MaxDurationSeconds = 3600
 			}
-			if !privateServiceName.MatchString(name) || p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 21600 || len(p.Services) == 0 || len(p.Services) > 32 {
+			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 21600 || len(p.Services) == 0 || len(p.Services) > 32 {
 				return ErrProjectConfigurationInvalid
 			}
 			seen := map[string]bool{}
 			for _, key := range p.Services {
 				s, ok := c.Services[key]
-				if !ok || s.Publisher == "local" || seen[key] {
+				if !ok || s.PublisherGroup == "local" || seen[key] {
 					return ErrProjectConfigurationInvalid
 				}
 				seen[key] = true
@@ -87,8 +87,8 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		}
 		services := map[string]config.Service{}
 		for key, s := range c.Services {
-			if s.Publisher != "local" {
-				services[key] = config.Service{Publisher: new(s.Publisher)}
+			if s.PublisherGroup != "local" {
+				services[key] = config.Service{PublisherGroup: new(s.PublisherGroup)}
 			}
 		}
 		policy := config.Workload{Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Ref: g.Ref, Events: g.Events}, Services: p.Services}
@@ -109,7 +109,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		}
 		slices.Sort(p.Services)
 		slices.Sort(p.GitHub.Events)
-		p.Trust = oidcauth.WorkloadTrust{Provider: "github", Issuer: oidcauth.GitHubIssuer, JWKSURL: oidcauth.GitHubIssuer + "/.well-known/jwks", Claims: map[string]string{}}
+		p.Trust = oidc.WorkloadTrust{Provider: "github", Issuer: oidc.GitHubIssuer, JWKSURL: oidc.GitHubIssuer + "/.well-known/jwks", Claims: map[string]string{}}
 		c.Workloads[name] = p
 	}
 	return nil
@@ -142,7 +142,7 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 	}
 	for _, s := range sessions {
 		p, found := c.Workloads[s.name]
-		var claims oidcauth.WorkloadExecution
+		var claims oidc.WorkloadExecution
 		if err = json.Unmarshal(s.claims, &claims); err != nil {
 			return err
 		}
@@ -152,7 +152,7 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 			}
 			continue
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.private_service_id=right_.private_service_id)`, s.id, r.TeamID, r.ProjectKey, p.Services); err != nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id)`, s.id, r.TeamID, r.ProjectKey, p.Services); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET expires_at=LEAST(expires_at,created_at+($2::bigint*interval '1 second')),lease_expires_at=LEAST(lease_expires_at,created_at+($2::bigint*interval '1 second')) WHERE id=$1`, s.id, p.MaxDurationSeconds); err != nil {
@@ -162,7 +162,7 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 	return nil
 }
 
-func (p ProjectWorkload) matches(c oidcauth.WorkloadExecution) bool {
+func (p ProjectWorkload) matches(c oidc.WorkloadExecution) bool {
 	if p.Provider != c.Provider {
 		return false
 	}

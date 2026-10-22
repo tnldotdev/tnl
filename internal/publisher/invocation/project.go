@@ -3,8 +3,8 @@ package invocation
 import (
 	"context"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -14,7 +14,7 @@ import (
 )
 
 type projectConfiguration struct {
-	projectconfig.Project
+	clientproject.Project
 	targetResolver target.TargetResolver
 }
 
@@ -28,11 +28,11 @@ type ProjectRuntime struct {
 	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
 }
 
-func NewProjectRuntime(project projectconfig.Project, state *clientstate.Database, manager *clientruntime.Manager, resolver target.TargetResolver) *ProjectRuntime {
+func NewProjectRuntime(project clientproject.Project, state *clientstate.Database, manager *clientruntime.Manager, resolver target.TargetResolver) *ProjectRuntime {
 	return &ProjectRuntime{project: projectConfiguration{Project: project, targetResolver: resolver}, state: state, manager: manager, TargetResolver: resolver}
 }
 
-func (a *ProjectRuntime) Metadata(ctx context.Context) (projectmeta.Metadata, error) {
+func (a *ProjectRuntime) Metadata(ctx context.Context) (meta.Metadata, error) {
 	r := resolve.NewMetadataResolver(a.state, a.project.Project, authenticateRuntime)
 	return r.Generate(ctx)
 }

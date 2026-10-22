@@ -1,4 +1,4 @@
-package connectionruntime
+package runtime
 
 import (
 	"bufio"

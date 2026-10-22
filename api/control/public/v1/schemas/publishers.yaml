@@ -141,11 +141,11 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       kind:
         type: string
-        enum: [saved_url, namespace, private_service]
+        enum: [saved_public_url, namespace, service]
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/PublicURLID"
-      private_service_id:
-        $ref: "../openapi.yaml#/components/schemas/PrivateServiceID"
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
       domain_id:
@@ -196,7 +196,7 @@ schemas:
   CreatePublisherGrantRequest:
     type: object
     additionalProperties: false
-    description: Select exactly one saved public URL, HTTP namespace, or private service ID within the team.
+    description: Select exactly one saved public URL, HTTP namespace, or service ID within the team.
     required: [team_id]
     properties:
       team_id:
@@ -204,12 +204,12 @@ schemas:
       domain_id:
         $ref: "../openapi.yaml#/components/schemas/DomainID"
       public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       expires_at: { type: string, format: date-time }
   CreatePublisherEnrollmentRequest:
     type: object
     additionalProperties: false
-    description: Enroll with one exact saved public URL, HTTP namespace, or private service ID.
+    description: Enroll with one exact saved public URL, HTTP namespace, or service ID.
     required: [team_id, name, kind]
     properties:
       team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
@@ -219,9 +219,9 @@ schemas:
         type: string
         enum: [member, team]
         x-enum-varnames: [EnrollmentOwnerMember, EnrollmentOwnerTeam]
-        description: Member-owned publishers stop with that membership. Team ownership requires a shared URL or private service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and private services.
+        description: Member-owned publishers stop with that membership. Team ownership requires a shared URL or service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and services.
       public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
   PublisherApplicationLimits:
     type: object
@@ -252,7 +252,7 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       kind:
         type: string
-        enum: [saved_url, namespace, private_service]
+        enum: [saved_public_url, namespace, service]
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
       domain_id:
@@ -260,7 +260,7 @@ schemas:
       namespace:
         type: string
       public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
-      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       expires_at:
         type: string
         format: date-time

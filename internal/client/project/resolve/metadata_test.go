@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -23,9 +23,9 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 		}
 	}
 	group := "cloud"
-	project := projectconfig.Project{Root: root, Selection: projectconfig.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: projectconfig.Worktree{Root: root, IsGit: true}, Config: config.TNL{Publishers: map[string]config.Publisher{group: {Public: true}}, Services: config.Services{
+	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {Public: true}}, Services: config.Services{
 		"api": {},
-		"web": {Publisher: &group, Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: testTarget("http://production.internal:3000")}},
+		"web": {PublisherGroup: &group, HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: testTarget("http://production.internal:3000")}},
 	}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -37,7 +37,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	status := http.StatusOK
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/projects/"+source.Key+"/private-services/web" || r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("source_fingerprint") != source.Fingerprint {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/projects/"+source.Key+"/services/web" || r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("source_fingerprint") != source.Fingerprint {
 			t.Errorf("ordinary metadata requested a manager API: %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -52,16 +52,16 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": "service unavailable"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "psvc_web", "team_id": "team_1", "name": "web", "protocol": protocol, "enabled": true, "managed_tls": map[string]any{"hostname": hostname, "port": 20001, "public": public}, "target_tls": map[string]any{"hostname": "private.internal", "pem": "private-target-trust-must-not-leak"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "svc_web", "team_id": "team_1", "name": "web", "protocol": protocol, "enabled": true, "endpoint": map[string]any{"hostname": hostname, "port": 20001, "public": public}, "target_tls": map[string]any{"hostname": "private.internal", "pem": "private-target-trust-must-not-leak"}})
 	}))
 	defer server.Close()
 	project.Config.Server = &server.URL
-	control, err := controlclient.New(server.URL, server.Client(), "visitor-session")
+	control, err := clientcontrol.New(server.URL, server.Client(), "visitor-session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolver := NewMetadataResolver(nil, project, nil)
-	resolver.Seed(server.URL, &clientauth.Client{ServerEndpoint: server.URL, Control: control})
+	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
 	resolver.contexts[server.URL+"\x00"] = appliedTestContext()
 	metadata, err := resolver.Generate(t.Context())
 	if err != nil {
@@ -74,6 +74,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	protocol, public = "postgres", true
 	service := resolver.project.Config.Services["web"]
 	service.Protocol, service.Tunnel = &protocol, nil
+	service.HTTP = nil
 	service.Target.Address = testTarget("db.internal:5432")
 	resolver.project.Config.Services["web"] = service
 	metadata, err = resolver.Generate(t.Context())

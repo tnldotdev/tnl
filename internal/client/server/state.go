@@ -1,4 +1,4 @@
-package clientserver
+package server
 
 import (
 	"context"

@@ -69,11 +69,11 @@ type PublisherConnectionRef struct {
 	RelayServiceID               string `json:"relay_service_id"`
 }
 
-// PrivatePublisherConnectionRef identifies one private run assignment without
+// ServicePublisherConnectionRef identifies one private run assignment without
 // creating or referring to a public URL.
-type PrivatePublisherConnectionRef struct {
-	PrivateServiceID             string `json:"private_service_id"`
-	PrivateRunID                 string `json:"private_run_id"`
+type ServicePublisherConnectionRef struct {
+	ServiceID                    string `json:"service_id"`
+	ServiceRunID                 string `json:"service_run_id"`
 	RunNumber                    uint64 `json:"run_number"`
 	PublisherConnectionID        string `json:"publisher_connection_id"`
 	ConnectionSlot               uint8  `json:"connection_slot"`
@@ -81,9 +81,9 @@ type PrivatePublisherConnectionRef struct {
 	RelayServiceID               string `json:"relay_service_id"`
 }
 
-func (r PrivatePublisherConnectionRef) Validate() error {
-	if !opaqueid.Valid(r.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
-		!opaqueid.Valid(r.PrivateRunID, opaqueid.PrivateRunPrefix) || r.RunNumber == 0 ||
+func (r ServicePublisherConnectionRef) Validate() error {
+	if !opaqueid.Valid(r.ServiceID, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(r.ServiceRunID, opaqueid.ServiceRunPrefix) || r.RunNumber == 0 ||
 		!opaqueid.Valid(r.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || r.ConnectionSlot > 1 ||
 		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
 		return errors.New("tunnelv1: invalid private publisher connection reference")
@@ -99,7 +99,7 @@ type Message struct {
 	Role                PeerRole                       `json:"role,omitempty"`
 	Credential          string                         `json:"credential,omitempty"`
 	PublisherConnection *PublisherConnectionRef        `json:"publisher_connection,omitempty"`
-	PrivateConnection   *PrivatePublisherConnectionRef `json:"private_connection,omitempty"`
+	ServiceConnection   *ServicePublisherConnectionRef `json:"service_connection,omitempty"`
 	Code                ErrorCode                      `json:"code,omitempty"`
 }
 
@@ -110,8 +110,8 @@ const (
 	InternalForwardingStream StreamKind = "internal_forward"
 	PublisherAdmissionStream StreamKind = "publisher_admission"
 	IngressAdmissionStream   StreamKind = "ingress_admission"
-	PrivateVisitorStream     StreamKind = "private_visitor"
-	PrivateForwardingStream  StreamKind = "private_forward"
+	ConnectorVisitorStream   StreamKind = "connector_visitor"
+	ServiceForwardingStream  StreamKind = "service_forward"
 )
 
 // VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
@@ -245,8 +245,8 @@ func (m Message) Validate() error {
 			return err
 		}
 	}
-	if m.PrivateConnection != nil {
-		if err := m.PrivateConnection.Validate(); err != nil {
+	if m.ServiceConnection != nil {
+		if err := m.ServiceConnection.Validate(); err != nil {
 			return err
 		}
 	}
@@ -255,25 +255,25 @@ func (m Message) Validate() error {
 	}
 	switch m.Type {
 	case Hello:
-		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.PrivateConnection != nil)
-		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.PrivateConnection == nil
+		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.ServiceConnection != nil)
+		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.ServiceConnection == nil
 		if (!publisherHello && !ingressHello) || m.RequestID != "" || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello")
 		}
 	case HelloAccepted:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || m.Code != "" {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello_accepted")
 		}
 	case Ping, Pong, Drain, Draining, Drained:
-		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || m.Code != "" {
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.Code != "" {
 			return fmt.Errorf("tunnelv1: invalid %s", m.Type)
 		}
 	case GoAway:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || !validErrorCode(m.Code) {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid goaway")
 		}
 	case Error:
-		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.PrivateConnection != nil || !validErrorCode(m.Code) {
+		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid error")
 		}
 	default:

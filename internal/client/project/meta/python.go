@@ -1,4 +1,4 @@
-package projectmeta
+package meta
 
 import (
 	"bytes"

@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 var cliWorkflowPersonalTeam = flag.Bool("tnl-cli-workflow-personal-team", false, "qualify direct managed-domain local public URL realization")
@@ -129,12 +129,12 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		"web": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
 	}
 	if !*cliWorkflowNoGit {
-		services["db"] = map[string]any{"publisher": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": "127.0.0.1:9"}}
+		services["db"] = map[string]any{"publisher_group": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": "127.0.0.1:9"}}
 	} else {
 		services["sdk"] = map[string]any{"access": map[string]any{"team": true}}
 	}
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
-		"server": "https://unselected.example.test", "team": "unselected", "publishers": map[string]any{"production": map[string]any{}},
+		"server": "https://unselected.example.test", "team": "unselected", "publisher_groups": map[string]any{"production": map[string]any{}},
 		"services": services,
 	}})
 	if err != nil {
@@ -166,7 +166,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close(context.Background())
-	var endpoint privateprotocol.Endpoint
+	var endpoint publisherprotocol.Endpoint
 	start := func(name string) func() {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
@@ -204,16 +204,16 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 				t.Fatalf("named CLI exited before ready: %v\n%s\n%s", err, stdout.String(), stderr.String())
 			default:
 			}
-			descriptor, err := privateprotocol.DescriptorPath(person, root)
+			descriptor, err := publisherprotocol.DescriptorPath(person, root)
 			if err != nil {
 				return false
 			}
-			endpoint, err = privateprotocol.ReadEndpoint(descriptor)
+			endpoint, err = publisherprotocol.ReadEndpoint(descriptor)
 			if err != nil {
 				return false
 			}
 			var snapshot clientruntime.Snapshot
-			if err := privateprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
+			if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
 				return false
 			}
 			for _, service := range snapshot.Services {
@@ -226,7 +226,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		return stop
 	}
 	firstAPI, firstWeb := start("api"), start("web")
-	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, controlclient.ErrNotFound) {
+	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("local startup implicitly applied production configuration: %v", err)
 	}
 	assertRealized := func() {
@@ -259,17 +259,17 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			if err := command.Run(); err != nil {
 				t.Fatalf("built app endpoint: %v\n%s", err, &stderr)
 			}
-			var app privateprotocol.Endpoint
+			var app publisherprotocol.Endpoint
 			if err := json.Unmarshal(stdout.Bytes(), &app); err != nil {
 				t.Fatal(err)
 			}
 			owner := "0123456789abcdef0123456789abcdef"
-			var assignment privateprotocol.Assignment
-			if err := privateprotocol.Call(t.Context(), app, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: root, Service: "sdk", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment); err != nil {
+			var assignment publisherprotocol.Assignment
+			if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: root, Service: "sdk", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment); err != nil {
 				t.Fatal(err)
 			}
-			registration := privateprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: target.URL}
-			if err := privateprotocol.Call(t.Context(), app, "POST", "/v1/register", registration, nil); err != nil {
+			registration := publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: target.URL}
+			if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/register", registration, nil); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -283,7 +283,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						_ = privateprotocol.Call(ctx, app, "POST", "/v1/renew", registration, nil)
+						_ = publisherprotocol.Call(ctx, app, "POST", "/v1/renew", registration, nil)
 					}
 				}
 			}()
@@ -295,13 +295,13 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 				stopped = true
 				cancel()
 				<-done
-				_ = privateprotocol.Call(context.Background(), app, "POST", "/v1/unregister", registration, nil)
+				_ = publisherprotocol.Call(context.Background(), app, "POST", "/v1/unregister", registration, nil)
 			}
 			t.Cleanup(stop)
 			workflowWait(t, 20*time.Second, func() bool {
 				var snapshot clientruntime.Snapshot
 				names := []string{"sdk"}
-				if err := privateprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", privateprotocol.Check{Services: &names}, &snapshot); err != nil {
+				if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &names}, &snapshot); err != nil {
 					return false
 				}
 				for _, service := range snapshot.Services {
@@ -318,7 +318,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		var originalIDs string
 		readIDs := func() string {
 			var ids string
-			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(private_service_id, public_url_id), ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
+			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(service_id, public_url_id), ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
 				t.Fatal(err)
 			}
 			return ids
@@ -353,7 +353,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		firstAPI()
 		firstWeb()
 		firstSDK()
-		t.Log("built CLI reused the same private service and public URL before Git, after git init without origin, and across origin changes")
+		t.Log("built CLI reused the same service and public URL before Git, after git init without origin, and across origin changes")
 		return
 	}
 	assertRealized()

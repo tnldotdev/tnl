@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
@@ -45,7 +45,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	root := filepath.Join(t.TempDir(), "state")
-	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
+	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PublisherSelectionInvalid {
 		t.Fatalf("mixed enrollment selection = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 
 func TestConfiguredAppPublicationDoesNotRequireAnAddress(t *testing.T) {
 	root := t.TempDir()
-	project := projectConfiguration{Project: projectconfig.Project{Root: root, Worktree: namedTestWorktree(root, "shop"), Config: config.TNL{Services: config.Services{"web": {Target: &config.ServiceTarget{Type: "app"}}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Worktree: namedTestWorktree(root, "shop"), Config: config.TNL{Services: config.Services{"web": {Target: &config.ServiceTarget{Type: "app"}}}}}}
 	flags := publishCommand{Target: "web"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)

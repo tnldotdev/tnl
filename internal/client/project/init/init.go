@@ -1,7 +1,7 @@
 // package projectinit owns project initialization planning, safe edits, and
 // project-local dependency installation. callers provide artifact generation
 // and diagnostic presentation without exposing command or publisher state.
-package projectinit
+package init
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 )
 
 type Options struct {
@@ -39,7 +39,7 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 	result := Result{
 		Root:              plan.Root,
 		ConfigurationPath: plan.ConfigurationPath,
-		DeclarationsPath:  filepath.Join(plan.Root, projectmeta.GeneratedDirectoryName, projectmeta.DeclarationsName),
+		DeclarationsPath:  filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.DeclarationsName),
 		Actions:           slices.Clone(plan.Actions),
 	}
 	if len(plan.MissingPackages) != 0 && !plan.InstallBlocked {
@@ -90,7 +90,7 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 	}
 	result.Actions = append(result.Actions, pythonActions...)
 	if pythonUpdated || len(pythonActions) != 0 {
-		result.PythonPackagePath = filepath.Join(plan.Root, projectmeta.GeneratedDirectoryName, projectmeta.PythonDirectoryName)
+		result.PythonPackagePath = filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.PythonDirectoryName)
 	}
 	if plan.GeneratedAppService || packageTypeConfigExists(plan.Root) {
 		types, err := wireProjectTypeIncludes(plan.Root)

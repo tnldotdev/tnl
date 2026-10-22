@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -13,15 +13,15 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
-	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 const standaloneIngressID = "standalone-ingress"
@@ -50,10 +50,10 @@ type standaloneSettings struct {
 	ingress                ingressSettings
 	relay                  relaySettings
 	privateHostnames       [2]string
-	configurePrivate       func(string, *ingress.PrivateConnectorConfig)
+	configurePrivate       func(string, *ingress.ConnectorConfig)
 }
 
-func standaloneSettingsFrom(cfg tnldconfig.Config) standaloneSettings {
+func standaloneSettingsFrom(cfg daemonconfig.Config) standaloneSettings {
 	return standaloneSettings{
 		control:                controlSettingsFrom(cfg),
 		publicListen:           cfg.IngressListen,
@@ -115,7 +115,7 @@ func (d *daemon) startStandalone(
 		return err
 	}
 	targets := make(map[string]*relayRuntime, len(standaloneRelays))
-	relayClient, err := relayapi.NewDirectClient(relayapi.DirectConfig{
+	relayClient, err := controlrelay.NewDirectClient(controlrelay.DirectConfig{
 		Store: d.database, LeaseDuration: settings.relayLeaseDuration,
 	})
 	if err != nil {
@@ -140,12 +140,12 @@ func (d *daemon) startStandalone(
 	}
 	publisher, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: metrics,
-		Private: &relay.PrivatePublisherAcceptor{Select: func(id string) (relay.PrivatePublisherTarget, bool) {
+		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			runtime, ok := targets[id]
 			if !ok {
-				return relay.PrivatePublisherTarget{}, false
+				return relay.ServicePublisherTarget{}, false
 			}
-			return relay.PrivatePublisherTarget{Control: runtime.controller, Registry: runtime.privateRegistry}, true
+			return relay.ServicePublisherTarget{Control: runtime.controller, Registry: runtime.serviceRegistry}, true
 		}},
 		Select: func(relayServiceID string) (relay.PublisherConnectionController, *relay.Registry, bool) {
 			runtime, ok := targets[relayServiceID]
@@ -170,7 +170,7 @@ func (d *daemon) startStandalone(
 			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, publisher.Accept)
 	})
 
-	ingressClient, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{
+	ingressClient, err := controlingress.NewDirectClient(controlingress.DirectConfig{
 		Store: d.database, LeaseDuration: settings.ingressLeaseDuration,
 	})
 	if err != nil {
@@ -181,9 +181,9 @@ func (d *daemon) startStandalone(
 		settings.privateHostnames = [2]string{"ingress-a." + domain, "ingress-b." + domain}
 	}
 	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
-		client: ingressClient, ingressID: standalonePrivateIngressID, clusterSecret: d.clusterSecret, privateOnly: true, disablePrivateQUIC: true,
+		client: ingressClient, ingressID: standalonePrivateIngressID, clusterSecret: d.clusterSecret, privateOnly: true, disableConnectorQUIC: true,
 		privateHostname: settings.privateHostnames[1], privateAddress: net.JoinHostPort(settings.privateHostnames[1], "443"),
-		configurePrivate: func(config *ingress.PrivateConnectorConfig) {
+		configurePrivate: func(config *ingress.ConnectorConfig) {
 			if settings.configurePrivate != nil {
 				settings.configurePrivate(standalonePrivateIngressID, config)
 			}
@@ -195,8 +195,8 @@ func (d *daemon) startStandalone(
 	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
 		client: ingressClient, ingressID: standaloneIngressID, listener: publicListener,
 		clusterSecret:   d.clusterSecret,
-		privateHostname: settings.privateHostnames[0], privateAddress: net.JoinHostPort(settings.privateHostnames[0], "443"), disablePrivateQUIC: true,
-		configurePrivate: func(config *ingress.PrivateConnectorConfig) {
+		privateHostname: settings.privateHostnames[0], privateAddress: net.JoinHostPort(settings.privateHostnames[0], "443"), disableConnectorQUIC: true,
+		configurePrivate: func(config *ingress.ConnectorConfig) {
 			if settings.configurePrivate != nil {
 				settings.configurePrivate(standaloneIngressID, config)
 			}
@@ -205,13 +205,13 @@ func (d *daemon) startStandalone(
 			// only publisher transport is handed off from raw visitor ingress.
 			ingressConfig.RelayHostname = settings.relayHostname
 			ingressConfig.HandleRelay = relayListener.Enqueue
-			ingressConfig.PrivateConnectors = map[string]*ingress.PrivateConnector{settings.privateHostnames[1]: secondary.private}
+			ingressConfig.Connectors = map[string]*ingress.Connector{settings.privateHostnames[1]: secondary.private}
 		},
 	}); err != nil {
 		return err
 	}
 	primary := d.ingresses[len(d.ingresses)-1]
-	connectors := map[string]*ingress.PrivateConnector{settings.privateHostnames[0]: primary.private, settings.privateHostnames[1]: secondary.private}
+	connectors := map[string]*ingress.Connector{settings.privateHostnames[0]: primary.private, settings.privateHostnames[1]: secondary.private}
 	sharedTLS := &tls.Config{MinVersion: tls.VersionTLS13, GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		var selected *tls.Config
 		if hello.ServerName == settings.relayHostname {
@@ -219,7 +219,7 @@ func (d *daemon) startStandalone(
 			selected.NextProtos = []string{muxsession.ALPN}
 		} else if connector := connectors[hello.ServerName]; connector != nil {
 			selected = connector.TransportTLSConfig()
-			selected.NextProtos = []string{muxsession.PrivateALPN}
+			selected.NextProtos = []string{muxsession.ConnectorALPN}
 		} else {
 			return nil, errors.New("standalone QUIC infrastructure hostname is not configured")
 		}
@@ -242,7 +242,7 @@ func (d *daemon) startStandalone(
 				return errors.New("standalone QUIC handshake identity is unavailable")
 			}
 			state := peer.TLSConnectionState()
-			if state.NegotiatedProtocol == muxsession.PrivateALPN {
+			if state.NegotiatedProtocol == muxsession.ConnectorALPN {
 				if connector := connectors[state.ServerName]; connector != nil {
 					return connector.AcceptQUIC(ctx, session)
 				}

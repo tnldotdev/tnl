@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"context"
@@ -7,17 +7,17 @@ import (
 	"sync"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type workloadControl struct {
-	client  *workloadclient.Client
+	client  *workload.Client
 	subject tunnelv1.VisitorSubject
 	mu      sync.Mutex
 	pairs   map[string]*workloadAssignmentPair
@@ -37,9 +37,9 @@ type workloadAssignmentPair struct {
 // NewWorkloadControl uses the exchanged workload's in-memory key. pass the
 // result to Serve with Config.IdentityID empty. the caller owns Renew/Revoke;
 // closing one service connector releases only that connector's assignments.
-func NewWorkloadControl(client *workloadclient.Client) (Control, error) {
+func NewWorkloadControl(client *workload.Client) (Control, error) {
 	if client == nil {
-		return nil, ErrPrivateConnection
+		return nil, ErrServiceConnection
 	}
 	subject, err := client.Subject()
 	if err != nil {
@@ -55,19 +55,19 @@ func (c *workloadControl) signer(_ context.Context, identity string) (Signer, er
 		return Signer{}, err
 	}
 	if identity != "" || s != c.subject {
-		return Signer{}, ErrPrivateConnection
+		return Signer{}, ErrServiceConnection
 	}
 	return Signer{Subject: s, PublicKey: c.client.PublicKey(), Sign: c.client.Sign}, nil
 }
 
 func (c *workloadControl) assignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
-	if slot > 1 || subject != c.subject || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) {
-		return Assignment{}, ErrPrivateConnection
+	if slot > 1 || subject != c.subject || !opaqueid.Valid(service, opaqueid.ServicePrefix) {
+		return Assignment{}, ErrServiceConnection
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return Assignment{}, ErrPrivateConnection
+		return Assignment{}, ErrServiceConnection
 	}
 	for id, abandoned := range c.owned {
 		if abandoned {
@@ -92,7 +92,7 @@ func (c *workloadControl) assignment(ctx context.Context, service string, subjec
 		}
 		response, err = c.client.CreateIngressAssignments(ctx, service, p.initialKey)
 		if err != nil {
-			if errors.Is(err, controlclient.ErrStatusConflict) {
+			if errors.Is(err, clientcontrol.ErrStatusConflict) {
 				p.initialKey = ""
 			}
 			return Assignment{}, err
@@ -119,7 +119,7 @@ func (c *workloadControl) assignment(ctx context.Context, service string, subjec
 		}
 		response, err = c.client.CreateIngressAssignment(ctx, service, retry.key, retry.exclude)
 		if err != nil {
-			if errors.Is(err, controlclient.ErrStatusConflict) {
+			if errors.Is(err, clientcontrol.ErrStatusConflict) {
 				*retry = assignmentRetry{}
 			}
 			return Assignment{}, err
@@ -137,10 +137,10 @@ func (c *workloadControl) assignment(ctx context.Context, service string, subjec
 	c.owned[a.SessionID] = true
 	trust, err := c.client.IngressTransportTrust(ctx, a.SessionID)
 	if err == nil && (trust.IngressId != a.IngressID || trust.TlsServerName != a.Endpoint.ServerName) {
-		err = ErrPrivateConnection
+		err = ErrServiceConnection
 	}
 	if err == nil {
-		a.TransportTLS, err = controlclient.IngressTransportTLSConfig(trust)
+		a.TransportTLS, err = clientcontrol.IngressTransportTLSConfig(trust)
 	}
 	if err != nil {
 		return Assignment{}, errors.Join(err, c.releaseLocked(ctx, a.SessionID))
@@ -160,17 +160,17 @@ func (c *workloadControl) adopt(ctx context.Context, service string, response co
 	seen := make(map[string]bool)
 	for _, a := range response.Assignments {
 		_, exists := c.owned[a.Id]
-		if !exists && opaqueid.Valid(a.Id, opaqueid.PrivateConnectorSessionPrefix) {
+		if !exists && opaqueid.Valid(a.Id, opaqueid.ConnectorSessionPrefix) {
 			c.owned[a.Id] = true
 		}
-		if exists || seen[a.IngressId] || a.IngressId == "" || a.IngressId == exclude || a.PrivateServiceId != service || !opaqueid.Valid(a.Id, opaqueid.PrivateConnectorSessionPrefix) || a.IngressAddress == "" || a.TlsServerName == "" || len(a.Credential) != 43 || !a.ExpiresAt.After(time.Now()) || a.ExpiresAt.After(session.ExpiresAt) {
+		if exists || seen[a.IngressId] || a.IngressId == "" || a.IngressId == exclude || a.ServiceId != service || !opaqueid.Valid(a.Id, opaqueid.ConnectorSessionPrefix) || a.IngressAddress == "" || a.TlsServerName == "" || len(a.Credential) != 43 || !a.ExpiresAt.After(time.Now()) || a.ExpiresAt.After(session.ExpiresAt) {
 			valid = false
 		}
 		seen[a.IngressId] = true
-		set = append(set, Assignment{SessionID: a.Id, PrivateServiceID: service, Subject: c.subject, IngressID: a.IngressId, Endpoint: muxsession.Endpoint{Address: a.IngressAddress, ServerName: a.TlsServerName}, Credential: a.Credential, ExpiresAt: a.ExpiresAt})
+		set = append(set, Assignment{SessionID: a.Id, ServiceID: service, Subject: c.subject, IngressID: a.IngressId, Endpoint: muxsession.Endpoint{Address: a.IngressAddress, ServerName: a.TlsServerName}, Credential: a.Credential, ExpiresAt: a.ExpiresAt})
 	}
 	if !valid {
-		err := ErrPrivateConnection
+		err := ErrServiceConnection
 		for id, abandoned := range c.owned {
 			if abandoned {
 				err = errors.Join(err, c.releaseLocked(ctx, id))
@@ -232,8 +232,8 @@ func (c *workloadControl) resolve(ctx context.Context, service string) (Run, err
 	if err != nil {
 		return Run{}, err
 	}
-	if r.PrivateServiceId != service || !visitorsubject.Equal(r.Subject, c.subject) || !opaqueid.Valid(r.PrivateRunId, opaqueid.PrivateRunPrefix) || r.RunNumber < 1 || r.TrustRevision < 1 || !validProtocol(string(r.Protocol)) || !r.ExpiresAt.After(time.Now()) || r.ManagedTls == nil {
-		return Run{}, ErrPrivateConnection
+	if r.ServiceId != service || !visitorsubject.Equal(r.Subject, c.subject) || !opaqueid.Valid(r.ServiceRunId, opaqueid.ServiceRunPrefix) || r.RunNumber < 1 || r.TrustRevision < 1 || !validProtocol(string(r.Protocol)) || !r.ExpiresAt.After(time.Now()) || r.Endpoint == nil {
+		return Run{}, ErrServiceConnection
 	}
-	return Run{PrivateServiceID: service, PrivateRunID: r.PrivateRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, ManagedTLS: r.ManagedTls}, nil
+	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint}, nil
 }

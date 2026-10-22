@@ -23,18 +23,18 @@ paths:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
   /internal/v1/ingresses/{ingress_id}/transport-certificate:
     $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1transport-certificate"
-  /internal/v1/ingresses/{ingress_id}/private-services/streams/{visitor_connection_id}:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1streams~1{visitor_connection_id}"
-  /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-connector-sessions~1claim"
-  /internal/v1/ingresses/{ingress_id}/private-services/snapshot:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1snapshot"
-  /internal/v1/ingresses/{ingress_id}/private-services/events:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1events"
-  /internal/v1/ingresses/{ingress_id}/private-services/claim:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1claim"
-  /internal/v1/ingresses/{ingress_id}/private-services/recheck:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1recheck"
+  /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id}:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1streams~1{visitor_connection_id}"
+  /internal/v1/ingresses/{ingress_id}/connector-sessions/claim:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1connector-sessions~1claim"
+  /internal/v1/ingresses/{ingress_id}/services/snapshot:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1snapshot"
+  /internal/v1/ingresses/{ingress_id}/services/events:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1events"
+  /internal/v1/ingresses/{ingress_id}/services/claim:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1claim"
+  /internal/v1/ingresses/{ingress_id}/services/recheck:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1recheck"
   /internal/v1/ingresses/register:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1register"
   /internal/v1/ingresses/{ingress_id}/renew:
@@ -66,18 +66,18 @@ components:
   schemas:
     IngressTransportCertificate:
       $ref: "./schemas/certs.yaml#/schemas/IngressTransportCertificate"
-    PrivateServiceID:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceID"
-    PrivateRunID:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateRunID"
-    PrivateConnectorSessionID:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionID"
+    ServiceID:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceID"
+    ServiceRunID:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceRunID"
+    ConnectorSessionID:
+      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionID"
     VisitorConnectionID:
       $ref: "./schemas/admission.yaml#/schemas/VisitorConnectionID"
-    PrivateConnectorSessionClaim:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionClaim"
-    PrivateConnectorSessionResult:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionResult"
+    ConnectorSessionClaim:
+      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionClaim"
+    ConnectorSessionResult:
+      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionResult"
     DirectServiceVisitorClaim:
       $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorClaim"
     DirectServiceVisitorLookup:
@@ -86,20 +86,20 @@ components:
       $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorAdmission"
     DirectServiceVisitorStatus:
       $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorStatus"
-    PrivateServiceProjection:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceProjection"
-    PrivateServiceRelay:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceRelay"
-    PrivateServiceSnapshot:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceSnapshot"
-    PrivateServiceStreamClaim:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceStreamClaim"
-    PrivateServiceStreamResult:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceStreamResult"
-    PrivateServiceVisitorRecheck:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceVisitorRecheck"
-    PrivateServiceVisitorRecheckResult:
-      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceVisitorRecheckResult"
+    ServiceProjection:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceProjection"
+    ServiceRelay:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceRelay"
+    ServiceSnapshot:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceSnapshot"
+    ServiceStreamClaim:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamClaim"
+    ServiceStreamResult:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamResult"
+    ServiceVisitorRecheck:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheck"
+    ServiceVisitorRecheckResult:
+      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheckResult"
     Identifier:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     IngressRegistration:

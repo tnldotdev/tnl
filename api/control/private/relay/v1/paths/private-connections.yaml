@@ -1,7 +1,7 @@
 paths:
   /internal/v1/private-publisher-connections/{publisher_connection_id}/claim:
     post:
-      operationId: claimPrivatePublisherConnection
+      operationId: claimServicePublisherConnection
       description: Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
       parameters:
         - name: publisher_connection_id
@@ -16,7 +16,7 @@ paths:
               application/json:
                 {
                   schema:
-                    { $ref: "../openapi.yaml#/components/schemas/PrivatePublisherConnectionClaim" },
+                    { $ref: "../openapi.yaml#/components/schemas/ServicePublisherConnectionClaim" },
                 },
             },
         }
@@ -29,14 +29,14 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "../openapi.yaml#/components/schemas/PrivatePublisherConnection" },
+                      { $ref: "../openapi.yaml#/components/schemas/ServicePublisherConnection" },
                   },
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /internal/v1/private-publisher-connections/{publisher_connection_id}/ready:
     post:
-      operationId: readyPrivatePublisherConnection
+      operationId: readyServicePublisherConnection
       description: Mark the private slot ready only while its assignment and relay lease are current.
       parameters:
         - name: publisher_connection_id
@@ -48,17 +48,17 @@ paths:
         content:
           application/json:
             schema:
-              { $ref: "../openapi.yaml#/components/schemas/PrivatePublisherConnectionTransition" }
+              { $ref: "../openapi.yaml#/components/schemas/ServicePublisherConnectionTransition" }
       responses:
         "200":
           description: Ready private slot
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivatePublisherConnection" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServicePublisherConnection" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect:
     post:
-      operationId: disconnectPrivatePublisherConnection
+      operationId: disconnectServicePublisherConnection
       description: Invalidate this exact assignment and remove it from ingress projections.
       parameters:
         - name: publisher_connection_id
@@ -70,7 +70,7 @@ paths:
         content:
           application/json:
             schema:
-              { $ref: "../openapi.yaml#/components/schemas/PrivatePublisherConnectionTransition" }
+              { $ref: "../openapi.yaml#/components/schemas/ServicePublisherConnectionTransition" }
       responses:
         "204": { description: Private slot disconnected }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

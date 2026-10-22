@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 )
 
-const ProbeHeader = localproxy.ReadinessProbeHeader
+const ProbeHeader = publisherproxy.ReadinessProbeHeader
 const DiagnosticHeader = "Tnl-Error-Code"
 
 type Readiness struct {
@@ -18,14 +18,14 @@ type Readiness struct {
 }
 
 type Observation struct {
-	Target           string    `json:"-"`
-	RegistrationID   string    `json:"registration_id"`
-	PublishRunNumber uint64    `json:"publish_run_number"`
-	CheckedAt        time.Time `json:"checked_at"`
-	Status           int       `json:"status,omitempty"`
-	Ready            bool      `json:"ready"`
-	Reason           string    `json:"reason,omitempty"`
-	Readiness        Readiness `json:"readiness"`
+	Target         string    `json:"-"`
+	RegistrationID string    `json:"registration_id"`
+	RunNumber      uint64    `json:"run_number"`
+	CheckedAt      time.Time `json:"checked_at"`
+	Status         int       `json:"status,omitempty"`
+	Ready          bool      `json:"ready"`
+	Reason         string    `json:"reason,omitempty"`
+	Readiness      Readiness `json:"readiness"`
 }
 
 // probe reads headers only; redirects, streaming bodies, and app credentials are
@@ -52,7 +52,7 @@ func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTr
 		finish(err)
 		observability.PublisherReadiness(ctx, observation.Ready)
 	}()
-	observation = Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
+	observation = Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
 	path := service.Readiness.Path
 	if path == "" {
 		path = "/"

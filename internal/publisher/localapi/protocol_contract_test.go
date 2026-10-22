@@ -1,4 +1,4 @@
-package localpublisher
+package localapi
 
 import (
 	"net/http/httptest"
@@ -7,8 +7,8 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
-	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	localpublisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 func TestStatusProtocolsMatchContract(t *testing.T) {
@@ -32,7 +32,7 @@ func TestStatusProtocolsMatchContract(t *testing.T) {
 	}
 	defer manager.Close()
 	server := httptest.NewUnstartedServer(nil)
-	caps, err := privateprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
+	caps, err := publisherprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestStatusProtocolsMatchContract(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	var snapshot localpublisherv1.Snapshot
-	if err := privateprotocol.Call(t.Context(), caps.Owner(), "GET", "/v1/status", nil, &snapshot); err != nil {
+	if err := publisherprotocol.Call(t.Context(), caps.Owner(), "GET", "/v1/status", nil, &snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if len(snapshot.Services) != len(protocols) {

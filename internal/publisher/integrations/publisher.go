@@ -1,5 +1,5 @@
 // package integrationurls maintains project integration URLs on the publisher's machine.
-package integrationurls
+package integrations
 
 import (
 	"context"

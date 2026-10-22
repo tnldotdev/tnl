@@ -34,61 +34,61 @@ func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, ar
 	return err
 }
 
-const getLocalProjectPrivateService = `-- name: GetLocalProjectPrivateService :one
+const getLocalProjectService = `-- name: GetLocalProjectService :one
 SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
 FROM control.local_project_services local
-JOIN control.private_services s ON s.id=local.private_service_id AND s.team_id=local.team_id
+JOIN control.services s ON s.id=local.service_id AND s.team_id=local.team_id
 WHERE local.team_id=$1 AND local.project_key=$2
     AND local.service=$3 AND local.worktree_key=$4
 `
 
-type GetLocalProjectPrivateServiceParams struct {
+type GetLocalProjectServiceParams struct {
 	TeamID      string
 	ProjectKey  string
 	Service     string
 	WorktreeKey string
 }
 
-type GetLocalProjectPrivateServiceRow struct {
-	SourceFingerprint     string
-	ControlPrivateService ControlPrivateService
+type GetLocalProjectServiceRow struct {
+	SourceFingerprint string
+	ControlService    ControlService
 }
 
-func (q *Queries) GetLocalProjectPrivateService(ctx context.Context, arg GetLocalProjectPrivateServiceParams) (GetLocalProjectPrivateServiceRow, error) {
-	row := q.db.QueryRow(ctx, getLocalProjectPrivateService,
+func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjectServiceParams) (GetLocalProjectServiceRow, error) {
+	row := q.db.QueryRow(ctx, getLocalProjectService,
 		arg.TeamID,
 		arg.ProjectKey,
 		arg.Service,
 		arg.WorktreeKey,
 	)
-	var i GetLocalProjectPrivateServiceRow
+	var i GetLocalProjectServiceRow
 	err := row.Scan(
 		&i.SourceFingerprint,
-		&i.ControlPrivateService.ID,
-		&i.ControlPrivateService.TeamID,
-		&i.ControlPrivateService.Name,
-		&i.ControlPrivateService.NameScope,
-		&i.ControlPrivateService.PlacementWorktreeKey,
-		&i.ControlPrivateService.PlacementWorktreeLabel,
-		&i.ControlPrivateService.Protocol,
-		&i.ControlPrivateService.TlsMetadata,
-		&i.ControlPrivateService.TrustRevision,
-		&i.ControlPrivateService.VisitorRevision,
-		&i.ControlPrivateService.PublisherPool,
-		&i.ControlPrivateService.DomainID,
-		&i.ControlPrivateService.CertificateHostname,
-		&i.ControlPrivateService.CertificateScope,
-		&i.ControlPrivateService.ServicePort,
-		&i.ControlPrivateService.IngressPoolID,
-		&i.ControlPrivateService.Public,
-		&i.ControlPrivateService.CreatedByIdentityID,
-		&i.ControlPrivateService.IdempotencyKey,
-		&i.ControlPrivateService.RequestDigest,
-		&i.ControlPrivateService.Enabled,
-		&i.ControlPrivateService.NextRunNumber,
-		&i.ControlPrivateService.CreatedAt,
-		&i.ControlPrivateService.UpdatedAt,
-		&i.ControlPrivateService.DeletedAt,
+		&i.ControlService.ID,
+		&i.ControlService.TeamID,
+		&i.ControlService.Name,
+		&i.ControlService.NameScope,
+		&i.ControlService.PlacementWorktreeKey,
+		&i.ControlService.PlacementWorktreeLabel,
+		&i.ControlService.Protocol,
+		&i.ControlService.TlsMetadata,
+		&i.ControlService.TrustRevision,
+		&i.ControlService.VisitorRevision,
+		&i.ControlService.PublisherPool,
+		&i.ControlService.DomainID,
+		&i.ControlService.CertificateHostname,
+		&i.ControlService.CertificateScope,
+		&i.ControlService.ServicePort,
+		&i.ControlService.IngressPoolID,
+		&i.ControlService.Public,
+		&i.ControlService.CreatedByIdentityID,
+		&i.ControlService.IdempotencyKey,
+		&i.ControlService.RequestDigest,
+		&i.ControlService.Enabled,
+		&i.ControlService.NextRunNumber,
+		&i.ControlService.CreatedAt,
+		&i.ControlService.UpdatedAt,
+		&i.ControlService.DeletedAt,
 	)
 	return i, err
 }
@@ -105,7 +105,7 @@ func (q *Queries) InvalidatePublisherGroupRuntimeHealth(ctx context.Context, pub
 }
 
 const listAppliedProjectServices = `-- name: ListAppliedProjectServices :many
-SELECT team_id, project_key, service, group_id, private_service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service
+SELECT team_id, project_key, service, group_id, service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service
 `
 
 type ListAppliedProjectServicesParams struct {
@@ -127,7 +127,7 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 			&i.ProjectKey,
 			&i.Service,
 			&i.GroupID,
-			&i.PrivateServiceID,
+			&i.ServiceID,
 			&i.PublicURLID,
 			&i.VisitorGrantID,
 			&i.DesiredRevision,
@@ -301,14 +301,14 @@ func (q *Queries) LockAppliedProject(ctx context.Context, arg LockAppliedProject
 	return i, err
 }
 
-const managedNamespaceOwnsHostname = `-- name: ManagedNamespaceOwnsHostname :one
-SELECT (EXISTS(SELECT 1 FROM control.managed_namespace_claims
+const serviceNamespaceOwnsHostname = `-- name: ServiceNamespaceOwnsHostname :one
+SELECT (EXISTS(SELECT 1 FROM control.service_namespace_claims
     WHERE $1::text=namespace OR right($1::text,length(namespace)+1)='.'||namespace)
-    OR EXISTS(SELECT 1 FROM control.managed_service_endpoints WHERE hostname=$1))::boolean
+    OR EXISTS(SELECT 1 FROM control.service_endpoints WHERE hostname=$1))::boolean
 `
 
-func (q *Queries) ManagedNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error) {
-	row := q.db.QueryRow(ctx, managedNamespaceOwnsHostname, hostname)
+func (q *Queries) ServiceNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error) {
+	row := q.db.QueryRow(ctx, serviceNamespaceOwnsHostname, hostname)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

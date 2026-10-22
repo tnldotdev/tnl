@@ -1,9 +1,9 @@
-package authorityapi
+package authority
 
 import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func controlSessionResponse(session controlstate.ControlSession) authorityv1.ControlSessionResponse {

@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
@@ -235,7 +235,7 @@ func TestControlDiscoveryAdvertisesAuthenticationFacts(t *testing.T) {
 
 func TestControlDiscoveryUsesControlOwnedDeviceLogin(t *testing.T) {
 	result := controlDiscovery(Config{
-		Role: tnldconfig.RoleControl, OIDCIssuer: "https://issuer.example.test",
+		Role: daemonconfig.RoleControl, OIDCIssuer: "https://issuer.example.test",
 		OIDCClientID: "client_1",
 	})
 	if result.Authentication.Oidc == nil ||

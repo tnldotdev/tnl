@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
@@ -15,8 +15,8 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 		t.Run(ordering, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "group_health_"+ordering)
 			r := appliedProjectRequest(t, d, now)
-			r.Configuration.Publishers = map[string]ProjectPublisherGroup{"remote": {}}
-			r.Configuration.Services["web"] = ProjectServiceConfiguration{Publisher: "remote", Target: "http://localhost:3000"}
+			r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"remote": {}}
+			r.Configuration.Services["web"] = ProjectServiceConfiguration{PublisherGroup: "remote", Target: "http://localhost:3000"}
 			applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 			if err != nil {
 				t.Fatal(err)
@@ -29,7 +29,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			request := func(run string, epoch int64, at time.Time) PublisherRuntimeRequest {
 				t.Helper()
 				v := PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: run, ExpectedEpoch: epoch, Action: "start", Audience: "https://control.example/v1/publisher-runtime", Now: at}
-				v.Assertion, err = publisheridentity.Sign(v.PublisherIdentityID, replica.member.KeyID, publisheridentity.RuntimeScope(v.ScopeID, v.Action, run, epoch), v.Audience, replica.private, at)
+				v.Assertion, err = publisherproof.Sign(v.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(v.ScopeID, v.Action, run, epoch), v.Audience, replica.private, at)
 				if err != nil {
 					t.Fatal(err)
 				}

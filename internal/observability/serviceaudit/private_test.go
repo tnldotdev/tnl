@@ -5,43 +5,43 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func privateBinding() (ingressv1.PrivateConnectorSessionResult, ingressv1.PrivateServiceStreamResult) {
-	bound := ingressv1.PrivateConnectorSessionResult{PrivateServiceId: "psvc_0123456789ABCDEFGHIJKL", ConnectorSessionId: "pcs_0123456789ABCDEFGHIJKL",
+func privateBinding() (ingressv1.ConnectorSessionResult, ingressv1.ServiceStreamResult) {
+	bound := ingressv1.ConnectorSessionResult{ServiceId: "svc_0123456789ABCDEFGHIJKL", ConnectorSessionId: "cns_0123456789ABCDEFGHIJKL",
 		Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: "ident_0123456789ABCDEFGHIJKL", DeviceID: "vdev_0123456789ABCDEFGHIJKL"}), ObservedSourceIp: "192.0.2.9", ExpiresAt: time.Now().Add(time.Minute)}
-	admitted := ingressv1.PrivateServiceStreamResult{PrivateServiceId: bound.PrivateServiceId, ConnectorSessionId: bound.ConnectorSessionId,
+	admitted := ingressv1.ServiceStreamResult{ServiceId: bound.ServiceId, ConnectorSessionId: bound.ConnectorSessionId,
 		Subject: bound.Subject, ObservedSourceIp: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt,
-		PrivateRunId: "psrun_0123456789ABCDEFGHIJKL", RunNumber: 1, GrantRevision: 1, ValidUntil: bound.ExpiresAt, VisitorConnectionId: "vc_0123456789ABCDEFGHIJKL"}
+		ServiceRunId: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, GrantRevision: 1, ValidUntil: bound.ExpiresAt, VisitorConnectionId: "vc_0123456789ABCDEFGHIJKL"}
 	return bound, admitted
 }
 
 func TestPrivateConstructorsSeparateSessionDenialFromAdmittedStream(t *testing.T) {
 	bound, admitted := privateBinding()
 	denial, err := NewPrivateSessionDenial(bound, admitted.VisitorConnectionId)
-	if err != nil || denial.Validate() != nil || denial.RunID != "" || denial.RunNumber != 0 || denial.ServiceID != bound.PrivateServiceId || denial.SourceIP != bound.ObservedSourceIp {
+	if err != nil || denial.Validate() != nil || denial.RunID != "" || denial.RunNumber != 0 || denial.ServiceID != bound.ServiceId || denial.SourceIP != bound.ObservedSourceIp {
 		t.Fatalf("unverified denial scope: %+v %v", denial, err)
 	}
 	opened, err := NewPrivateStreamObservation(bound, admitted, "connection.open", "allowed", "")
-	if err != nil || opened.Validate() != nil || opened.RunID != admitted.PrivateRunId || opened.RunNumber != admitted.RunNumber {
+	if err != nil || opened.Validate() != nil || opened.RunID != admitted.ServiceRunId || opened.RunNumber != admitted.RunNumber {
 		t.Fatalf("admitted scope: %+v %v", opened, err)
 	}
 	closed, err := NewPrivateStreamObservation(bound, admitted, "connection.close", "closed", "closed")
 	if err != nil || closed.EventID == opened.EventID || closed.VisitorConnectionID != opened.VisitorConnectionID {
 		t.Fatal("close did not retain correlation with a new event identity", err)
 	}
-	for _, change := range []func(*ingressv1.PrivateServiceStreamResult){
-		func(a *ingressv1.PrivateServiceStreamResult) { a.ConnectorSessionId = "pcs_ABCDEFGHIJKL0123456789" },
-		func(a *ingressv1.PrivateServiceStreamResult) {
+	for _, change := range []func(*ingressv1.ServiceStreamResult){
+		func(a *ingressv1.ServiceStreamResult) { a.ConnectorSessionId = "cns_ABCDEFGHIJKL0123456789" },
+		func(a *ingressv1.ServiceStreamResult) {
 			a.Subject.IdentityId = new("ident_ABCDEFGHIJKL0123456789")
 		},
-		func(a *ingressv1.PrivateServiceStreamResult) { a.Subject.DeviceId = new("vdev_ABCDEFGHIJKL0123456789") },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.ObservedSourceIp = "192.0.2.10" },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.PrivateRunId = "" },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.RunNumber = 0 },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.GrantRevision = 0 },
+		func(a *ingressv1.ServiceStreamResult) { a.Subject.DeviceId = new("vdev_ABCDEFGHIJKL0123456789") },
+		func(a *ingressv1.ServiceStreamResult) { a.ObservedSourceIp = "192.0.2.10" },
+		func(a *ingressv1.ServiceStreamResult) { a.ServiceRunId = "" },
+		func(a *ingressv1.ServiceStreamResult) { a.RunNumber = 0 },
+		func(a *ingressv1.ServiceStreamResult) { a.GrantRevision = 0 },
 	} {
 		bad := admitted
 		change(&bad)

@@ -1,4 +1,4 @@
-package connectionruntime
+package runtime
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 )
 
 type fixtureBackend struct {
@@ -29,8 +29,8 @@ type fixtureBackend struct {
 	finished   chan struct{}
 }
 
-func (b *fixtureBackend) Start(context.Context) (projectmeta.PublicMetadata, time.Time, error) {
-	return projectmeta.PublicMetadata{Namespace: "db.example", Services: map[string]projectmeta.Service{"database": {Protocol: "postgres", Namespace: "example", Hostname: "db.example", Port: 15432, Public: true}}}, b.deadline, b.startError
+func (b *fixtureBackend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
+	return meta.PublicMetadata{Namespace: "db.example", Services: map[string]meta.Service{"database": {Protocol: "postgres", Namespace: "example", Hostname: "db.example", Port: 15432, Public: true}}}, b.deadline, b.startError
 }
 func (b *fixtureBackend) Connect(ctx context.Context, name string) (Connection, error) {
 	if b.started != nil {
@@ -82,12 +82,12 @@ func TestConnectionPreparedReadDoesNotWaitForSiblingNetwork(t *testing.T) {
 	}
 	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "sibling"}
 	stalled := make(chan error, 1)
-	go func() { stalled <- Call(ctx, status.PrivateHandle, "prepare", request, new(Prepared)) }()
+	go func() { stalled <- Call(ctx, status.ConnectionHandle, "prepare", request, new(Prepared)) }()
 	<-b.started
 	request.Service = "database"
 	bounded, stop := context.WithTimeout(t.Context(), time.Second)
 	defer stop()
-	if err := Call(bounded, status.PrivateHandle, "prepared", request, new(Prepared)); err != nil {
+	if err := Call(bounded, status.ConnectionHandle, "prepared", request, new(Prepared)); err != nil {
 		t.Error("prepared sibling waited for unrelated network work", err)
 	}
 	cancel()
@@ -172,7 +172,7 @@ func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "sibling"}
-	if err := Call(t.Context(), status.PrivateHandle, "prepared", request, new(Prepared)); err == nil {
+	if err := Call(t.Context(), status.ConnectionHandle, "prepared", request, new(Prepared)); err == nil {
 		t.Error("synchronous sibling read prepared a service")
 	}
 	if got := b.network.Load(); got != 0 {
@@ -180,7 +180,7 @@ func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {
 	}
 }
 
-func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
+func TestConnectionOwnerTargetTrustsAndJoinedStop(t *testing.T) {
 	scope := fixtureScope(t)
 	directory, err := NewDirectory(scope.Directory)
 	if err != nil {
@@ -201,7 +201,7 @@ func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "database"}
 	for i := 1; i <= 2; i++ {
 		var snapshot Connection
-		if err := Call(t.Context(), state.PrivateHandle, "connect", request, &snapshot); err != nil {
+		if err := Call(t.Context(), state.ConnectionHandle, "connect", request, &snapshot); err != nil {
 			t.Fatal(err)
 		}
 		if snapshot.SSL == nil || snapshot.Host != "127.0.0.1" || snapshot.SSL.ServerName != "db.example" || int(b.credential.Load()) != i {
@@ -209,18 +209,18 @@ func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 		}
 	}
 	var prepared Prepared
-	if err := Call(t.Context(), state.PrivateHandle, "prepared", request, &prepared); err != nil {
+	if err := Call(t.Context(), state.ConnectionHandle, "prepared", request, &prepared); err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Schema != Schema || prepared.Connection.SSL == nil || prepared.PublicRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName || prepared.Connection.Host != "127.0.0.1" || b.credential.Load() != 2 {
+	if prepared.Schema != Schema || prepared.Connection.SSL == nil || prepared.ProjectRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName || prepared.Connection.Host != "127.0.0.1" || b.credential.Load() != 2 {
 		t.Fatal("prepared read did not pair the same owner's metadata and fresh connection")
 	}
 	wrong := request
 	wrong.Directory += "-other"
-	if err := Call(t.Context(), state.PrivateHandle, "connect", wrong, new(Connection)); !errors.Is(err, ErrUnauthorized) {
+	if err := Call(t.Context(), state.ConnectionHandle, "connect", wrong, new(Connection)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("project scope: %v", err)
 	}
-	if err := Call(t.Context(), state.PrivateHandle, "stop", request, nil); err != nil {
+	if err := Call(t.Context(), state.ConnectionHandle, "stop", request, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -234,7 +234,7 @@ func TestConnectionOwnerPrivateSnapshotsAndJoinedStop(t *testing.T) {
 	if !b.closed.Load() {
 		t.Fatal("backend still running")
 	}
-	if _, err := os.Stat(state.PrivateHandle); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(state.ConnectionHandle); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("live handle survived cleanup")
 	}
 }
@@ -337,13 +337,13 @@ func TestConnectionStopCancelsHangingCredentialAndJoins(t *testing.T) {
 	}
 	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "database"}
 	requestDone := make(chan error, 1)
-	go func() { requestDone <- Call(t.Context(), state.PrivateHandle, "connect", request, new(Connection)) }()
+	go func() { requestDone <- Call(t.Context(), state.ConnectionHandle, "connect", request, new(Connection)) }()
 	select {
 	case <-b.started:
 	case <-time.After(time.Second):
 		t.Fatal("credential did not start")
 	}
-	if err := Call(t.Context(), state.PrivateHandle, "stop", request, nil); err != nil {
+	if err := Call(t.Context(), state.ConnectionHandle, "stop", request, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -379,7 +379,7 @@ func TestConnectionIPCRejectsWrongProofProjectAndBrowserOrigin(t *testing.T) {
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)
 	}
-	h, err := ReadHandle(state.PrivateHandle)
+	h, err := ReadHandle(state.ConnectionHandle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestConnectionIPCRejectsWrongProofProjectAndBrowserOrigin(t *testing.T) {
 	if b.credential.Load() != 0 {
 		t.Fatal("unauthorized IPC exported a credential")
 	}
-	if err := Call(t.Context(), state.PrivateHandle, "stop", Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, nil); err != nil {
+	if err := Call(t.Context(), state.ConnectionHandle, "stop", Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -447,7 +447,7 @@ func TestConnectionAbsoluteDeadlineStopsOwner(t *testing.T) {
 	if !b.closed.Load() {
 		t.Fatal("deadline did not close the backend")
 	}
-	if err := ReadStopResult(state.PrivateHandle); err != nil {
+	if err := ReadStopResult(state.ConnectionHandle); err != nil {
 		t.Fatal(err)
 	}
 }

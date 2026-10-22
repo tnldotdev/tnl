@@ -10,10 +10,10 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestRunCleansExactAllocationAfterCanceledCallback(t *testing.T) {
@@ -39,7 +39,7 @@ func TestRunCleansExactAllocationAfterCanceledCallback(t *testing.T) {
 	defer cancel()
 	registrationErr := errors.New("registration is no longer current")
 	allocated := ""
-	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: publisher.ApplicationLimits{Requests: 1}, OnAllocated: func(route controlv1.PublicURL) error { allocated = route.Id; cancel(); return registrationErr }})
+	err = Run(ctx, Options{ControlURL: f.URL, HTTPClient: f.HTTP, State: state, EnrollmentKey: secret, InvocationID: invocation, Target: "http://app.internal:3000", Limits: publisher.ApplicationLimits{Requests: 1}, OnAllocated: func(publicURL controlv1.PublicURL) error { allocated = publicURL.Id; cancel(); return registrationErr }})
 	deleted := f.DeletedIDs()
 	if !errors.Is(err, registrationErr) || f.Allocations.Load() != 1 || f.Deletions.Load() != 1 || len(deleted) != 1 || deleted[0] != allocated || f.Runs.Load() != 0 {
 		t.Fatalf("allocation cleanup lost exact ownership: err=%v allocations=%d deleted=%v allocated=%s", err, f.Allocations.Load(), deleted, allocated)
@@ -53,7 +53,7 @@ func TestRunRejectsLimitsAndMissingScopeBeforeAllocation(t *testing.T) {
 		t.Fatal("invalid rate reached allocation")
 	}
 	options.Limits = publisher.ApplicationLimits{}
-	if err := Run(t.Context(), options); !errors.Is(err, nativeauth.ErrSelection) {
+	if err := Run(t.Context(), options); !errors.Is(err, publisheridentity.ErrSelection) {
 		t.Fatalf("missing scope accepted: %v", err)
 	}
 }

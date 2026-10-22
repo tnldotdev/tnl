@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
-	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 )
@@ -22,7 +22,7 @@ type privateControlSettings struct {
 	listener             net.Listener
 }
 
-func privateControlSettingsFrom(cfg tnldconfig.Config) privateControlSettings {
+func privateControlSettingsFrom(cfg daemonconfig.Config) privateControlSettings {
 	return privateControlSettings{
 		ingressLeaseDuration: cfg.IngressLeaseDuration,
 		relayLeaseDuration:   cfg.RelayLeaseDuration,
@@ -31,14 +31,14 @@ func privateControlSettingsFrom(cfg tnldconfig.Config) privateControlSettings {
 }
 
 func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateControlSettings, metrics *observability.Metrics) error {
-	ingressHandler, err := ingressapi.NewHandler(ingressapi.Config{
+	ingressHandler, err := controlingress.NewHandler(controlingress.Config{
 		Store: d.database, ClusterSecrets: d.clusterSecrets,
 		LeaseDuration: settings.ingressLeaseDuration,
 	})
 	if err != nil {
 		return err
 	}
-	relayHandler, err := relayapi.NewHandler(relayapi.Config{
+	relayHandler, err := controlrelay.NewHandler(controlrelay.Config{
 		Store: d.database, ClusterSecrets: d.clusterSecrets,
 		LeaseDuration: settings.relayLeaseDuration,
 	})

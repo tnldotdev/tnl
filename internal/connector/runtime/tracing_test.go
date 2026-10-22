@@ -1,4 +1,4 @@
-package connectionruntime
+package runtime
 
 import (
 	"context"
@@ -82,10 +82,10 @@ func TestConnectionOwnerReadinessAndIPCDoNotWaitForExporter(t *testing.T) {
 	call, stop := context.WithTimeout(t.Context(), time.Second)
 	defer stop()
 	request := Request{Schema: Schema, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}
-	if err := Call(call, state.PrivateHandle, "status", request, new(Status)); err != nil {
+	if err := Call(call, state.ConnectionHandle, "status", request, new(Status)); err != nil {
 		t.Fatal("exporter blocked IPC", err)
 	}
-	if err := Call(call, state.PrivateHandle, "stop", request, nil); err != nil {
+	if err := Call(call, state.ConnectionHandle, "stop", request, nil); err != nil {
 		t.Fatal("exporter blocked stop", err)
 	}
 	select {

@@ -133,8 +133,8 @@ function response(args: string[], input: unknown): unknown {
       state: "ready",
       pid: 1,
       expires_at: new Date(Date.now() + 3600_000).toISOString(),
-      public_runtime: project(),
-      private_handle: file,
+      project_runtime: project(),
+      connection_handle: file,
       executable: "/fixture/tnl",
     };
   }
@@ -155,7 +155,7 @@ function response(args: string[], input: unknown): unknown {
     if (metadata === undefined) throw new Error("service missing");
     return {
       schema: 1,
-      public_runtime: project(),
+      project_runtime: project(),
       connection: {
         schema: 1,
         protocol: metadata.protocol,

@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -422,7 +422,7 @@ func TestExplicitLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	})
 	f.save(t, old)
 	client, err := Login(t.Context(), f.config)
-	if client != nil || !errors.Is(err, authorityclient.ErrUnavailable) {
+	if client != nil || !errors.Is(err, clientauthority.ErrUnavailable) {
 		t.Fatalf("Authenticate error=%v", err)
 	}
 	f.assertSession(t, old)
@@ -534,9 +534,9 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForControlRequests(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			route, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
-			if err != nil || route.Id != "public_url_1" || route.CanonicalHostname != "demo.example" || route.Target != "http://127.0.0.1:3000" {
-				t.Fatalf("authenticated public_url: %#v, %v", route, err)
+			publicURL, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
+			if err != nil || publicURL.Id != "public_url_1" || publicURL.CanonicalHostname != "demo.example" || publicURL.Target != "http://127.0.0.1:3000" {
+				t.Fatalf("authenticated public_url: %#v, %v", publicURL, err)
 			}
 			identity, err := client.Authority.IdentityContext(t.Context())
 			if err != nil || identity.Identity.Id != "identity_1" || identity.PersonalTeamId != "team_1" {
@@ -660,8 +660,8 @@ func TestExplicitAccessTokenDoesNotUseOrChangeSavedLogin(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				route, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
-				if err != nil || route.Id != "public_url_1" {
+				publicURL, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
+				if err != nil || publicURL.Id != "public_url_1" {
 					t.Fatalf("explicit authenticated public_url: %v", err)
 				}
 				requests := f.transport.snapshot()

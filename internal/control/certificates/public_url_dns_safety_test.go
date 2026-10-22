@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
-	dnscontroller "github.com/tnldotdev/tnl/internal/control/dns"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
@@ -31,7 +31,7 @@ func TestPublicURLWorkerDNSUnavailableFailsSafely(t *testing.T) {
 			if len(work.Authorizations) != 0 {
 				authorizationState = work.Authorizations[0].State
 			}
-			if err := worker.advance(t.Context(), api, &work, now); !errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+			if err := worker.advance(t.Context(), api, &work, now); !errors.Is(err, dns.ErrChallengesNotConfigured) {
 				t.Fatalf("DNS-unavailable work error = %v", err)
 			}
 			if api.newOrderCalls != 0 || api.acceptedChallenge != "" || work.State != state {
@@ -56,7 +56,7 @@ func TestPublicURLWorkerUnconfiguredDNSDefersDurableCleanupIntent(t *testing.T) 
 			}
 			worker.now = func() time.Time { return now }
 			worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }
-			if found, err := worker.processOne(t.Context()); !found || !errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+			if found, err := worker.processOne(t.Context()); !found || !errors.Is(err, dns.ErrChallengesNotConfigured) {
 				t.Fatalf("missing DNS configuration: found %v, error %v", found, err)
 			}
 			wantState := controlstate.ACMEOrderFailed
@@ -80,7 +80,7 @@ func TestPublicURLWorkerUnconfiguredDNSDefersDurableCleanupIntent(t *testing.T) 
 			}
 			store.work = store.saved
 			worker.now = func() time.Time { return now.Add(time.Minute) }
-			if _, err := worker.processOne(t.Context()); !errors.Is(err, dnscontroller.ErrChallengesNotConfigured) {
+			if _, err := worker.processOne(t.Context()); !errors.Is(err, dns.ErrChallengesNotConfigured) {
 				t.Fatal(err)
 			}
 			if store.saved.Authorizations[0].State != "cleaning" || store.saved.Authorizations[0].CleanupCompletedAt != nil || !store.saved.AvailableAt.Equal(now.Add(2*time.Minute)) {
@@ -145,7 +145,7 @@ func TestPublicURLWorkerUnconfiguredDNSDefersEveryOrder(t *testing.T) {
 				t.Fatalf("unconfigured DNS issued a certificate: context %v, saves %d, work %#v, ACME calls %d", ctx.Err(), store.saves, store.saved, api.newOrderCalls)
 			}
 			if count := strings.Count(logs.String(), "reason=server.dns_config_invalid"); count != 2 ||
-				strings.Contains(logs.String(), dnscontroller.ErrChallengesNotConfigured.Error()) {
+				strings.Contains(logs.String(), dns.ErrChallengesNotConfigured.Error()) {
 				t.Fatalf("safe certificate error logged %d times: %s", count, &logs)
 			}
 		})
@@ -271,12 +271,12 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 	const hostname = "api.example.test"
 	csr, certificate := testCertificate(t, hostname, now)
 	expires, renewAt := now.Add(time.Hour), now.Add(30*time.Minute)
-	api := &acmeStub{order: acmeclient.Order{
+	api := &acmeStub{order: acme.Order{
 		URL: "https://acme.example.test/order/1", Finalize: "https://acme.example.test/finalize/1", Status: "pending", Expires: &expires,
-		Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}}, Authorizations: []string{"https://acme.example.test/authorization/1"},
+		Identifiers: []acme.Identifier{{Type: "dns", Value: hostname}}, Authorizations: []string{"https://acme.example.test/authorization/1"},
 	}}
 	work := controlstate.ACMEOrderWork{
-		PublicURLID: "public_url_1", State: controlstate.ACMEOrderState(phase), ChallengeMethod: "dns-01", CSRDER: csr, CertificateIdentifiers: []string{hostname},
+		Subject: testCertificateSubject("public_url_1"), State: controlstate.ACMEOrderState(phase), ChallengeMethod: "dns-01", CSRDER: csr, CertificateIdentifiers: []string{hostname},
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"}, OrderURL: api.order.URL,
 		Authorizations: []controlstate.ACMEAuthorizationWork{{ID: "authorization_1", Identifier: hostname, AuthorizationURL: api.order.Authorizations[0], ChallengeURL: "https://acme.example.test/challenge/1", ChallengeType: "dns-01", ChallengeDigest: sha256.Sum256([]byte("challenge")), PresentationReference: "presentation_1", State: controlstate.ACMEAuthorizationState(phase), ExpiresAt: &expires}},
 	}

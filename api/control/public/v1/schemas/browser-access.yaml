@@ -4,17 +4,17 @@ schemas:
     additionalProperties: false
     required: [kind, id]
     properties:
-      kind: { type: string, enum: [public_url, managed_service] }
+      kind: { type: string, enum: [public_url, service] }
       id: { type: string }
-    description: An explicit authorization scope. A public URL grant never applies to a managed service, even when they have related names or owners.
-  CreateManagedHTTPGrantRequest:
+    description: An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+  CreateServiceHTTPGrantRequest:
     type: object
     additionalProperties: false
     required: [kind, expires_at]
     properties:
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
-  ManagedHTTPGrant:
+  ServiceHTTPGrant:
     type: object
     additionalProperties: false
     required: [subject, id, kind, secret, expires_at]
@@ -25,17 +25,17 @@ schemas:
       secret: { type: string }
       share_url: { type: string, format: uri }
       expires_at: { type: string, format: date-time }
-  ManagedHTTPGrantSummary:
+  ServiceHTTPGrantSummary:
     type: object
     additionalProperties: false
     required: [subject, id, kind, expires_at]
     properties:
       subject: { $ref: "../openapi.yaml#/components/schemas/HTTPAuthorizationSubject" }
-      id: { type: string, pattern: "^mhg_[A-Za-z0-9]{22}$" }
+      id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-  ManagedHTTPCredential:
+  ServiceHTTPCredential:
     type: object
     additionalProperties: false
     required: [kind]
@@ -44,7 +44,7 @@ schemas:
       secret: { type: string, maxLength: 256 }
       certificate: { type: string, format: byte, maxLength: 22000 }
     description: Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
-  ManagedHTTPVisitorRequest:
+  ServiceHTTPVisitorRequest:
     type: object
     additionalProperties: false
     required: [run_number, visitor_connection_id, source_ip, destination_port, credential]
@@ -53,8 +53,8 @@ schemas:
       visitor_connection_id: { type: string }
       source_ip: { type: string }
       destination_port: { type: integer, minimum: 1024, maximum: 65535 }
-      credential: { $ref: "../openapi.yaml#/components/schemas/ManagedHTTPCredential" }
-  ManagedBrowserRequest:
+      credential: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPCredential" }
+  ServiceBrowserRequest:
     type: object
     additionalProperties: false
     required: [run_number, secret]
@@ -62,7 +62,7 @@ schemas:
       run_number: { type: integer, format: int64, minimum: 1 }
       secret: { type: string, maxLength: 256 }
   HTTPVisitorRequest:
-    description: A public URL is HTTP-only; private services use enrolled visitor devices.
+    description: A public URL is HTTP-only; services use enrolled visitor devices.
     type: object
     additionalProperties: false
     required: [publish_run_number, source_ip]

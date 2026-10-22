@@ -1,5 +1,5 @@
 // package webhookcatalog resolves bounded provider sender policies for control.
-package webhookcatalog
+package webhooks
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const maxFeedBytes = 8 << 20

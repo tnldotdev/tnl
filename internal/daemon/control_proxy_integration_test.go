@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	clientAuth "github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 )
 
@@ -25,7 +25,7 @@ func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 	const origin = "https://control.proxy.test"
 	issuer := binaryOIDCProvider(t, issuerCertificate, origin)
 	acme := standaloneTestACMEServer(t)
-	cfg := splitTestConfig(tnldconfig.RoleControl, unusedTCPAddress(t))
+	cfg := splitTestConfig(daemonconfig.RoleControl, unusedTCPAddress(t))
 	cfg.DatabaseURL, cfg.StorageKey, cfg.ClusterSecret = databaseURL, testStorageKey, testClusterSecret
 	cfg.ServerDomain, cfg.ManagedDomain = "proxy.test", "apps.proxy.test"
 	cfg.ControlListen, cfg.PrivateControlListen = unusedTCPAddress(t), unusedTCPAddress(t)
@@ -58,18 +58,18 @@ func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = state.Close() })
-	auth := clientauth.Config{Team: "local", ServerEndpoint: origin, State: state, HTTPClient: client, Diagnostics: io.Discard}
-	operation, err := clientauth.StartLogin(t.Context(), auth)
+	auth := clientAuth.Config{Team: "local", ServerEndpoint: origin, State: state, HTTPClient: client, Diagnostics: io.Discard}
+	operation, err := clientAuth.StartLogin(t.Context(), auth)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := oidctest.Approve(t.Context(), client, operation.ApprovalURL); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := clientauth.WaitLogin(t.Context(), auth, operation.ID, 10*time.Second); err != nil {
+	if _, err := clientAuth.WaitLogin(t.Context(), auth, operation.ID, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	loggedIn, err := clientauth.Authenticate(t.Context(), auth)
+	loggedIn, err := clientAuth.Authenticate(t.Context(), auth)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 // package workloadclient is the native visitor authentication adapter for a
 // provider workload. the caller owns its in-memory lifetime and renewal loop.
-package workloadclient
+package workload
 
 import (
 	"context"
@@ -21,14 +21,14 @@ import (
 	"sync"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -41,8 +41,8 @@ type Client struct {
 	mu         sync.RWMutex
 	operations sync.Mutex
 	key        ed25519.PrivateKey
-	authority  *authorityclient.Client
-	control    *controlclient.Client
+	authority  *clientauthority.Client
+	control    *clientcontrol.Client
 	session    authorityv1.WorkloadSession
 	nonce      string
 }
@@ -66,11 +66,11 @@ func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) 
 	if len(key) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(key.Seed()).Equal(key) {
 		return nil, invalidSession()
 	}
-	authority, err := authorityclient.New(server, httpClient, "")
+	authority, err := clientauthority.New(server, httpClient, "")
 	if err != nil {
 		return nil, err
 	}
-	control, err := controlclient.New(server, httpClient, "")
+	control, err := clientcontrol.New(server, httpClient, "")
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 	}
 	r, err := c.authority.ExchangeWorkload(ctx, body)
 	if err != nil {
-		var problem *authorityclient.ProblemError
+		var problem *clientauthority.ProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusGone {
 			return r, errors.Join(ErrSessionExpired, err)
 		}
@@ -136,7 +136,7 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	}
 	seen := map[string]bool{}
 	for _, id := range r.ServiceIds {
-		if !opaqueid.Valid(id, opaqueid.PrivateServicePrefix) || seen[id] {
+		if !opaqueid.Valid(id, opaqueid.ServicePrefix) || seen[id] {
 			return invalidSession()
 		}
 		seen[id] = true
@@ -214,7 +214,7 @@ func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.Work
 	digest := sha256.Sum256([]byte(assertion))
 	next, err := c.authority.AttachWorkloadAssertion(ctx, r.Id, r.Credential, authorityv1.WorkloadAssertion{Assertion: assertion, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Attach(r.Id, digest)))})
 	if err != nil {
-		var problem *authorityclient.ProblemError
+		var problem *clientauthority.ProblemError
 		if errors.As(err, &problem) && problem.Status == http.StatusGone {
 			return next, errors.Join(ErrSessionExpired, err)
 		}
@@ -298,10 +298,10 @@ func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, excl
 	}
 	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude)
 }
-func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.PrivateServiceSelection, error) {
+func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.ServiceSelection, error) {
 	r, err := c.Session()
 	if err != nil {
-		return controlv1.PrivateServiceSelection{}, err
+		return controlv1.ServiceSelection{}, err
 	}
 	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
 }
@@ -338,7 +338,7 @@ func (c *Client) ClientTLSCertificate(ctx context.Context, service string) (tls.
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	if issued.PrivateServiceId != service {
+	if issued.ServiceId != service {
 		return tls.Certificate{}, invalidSession()
 	}
 	block, rest := pem.Decode([]byte(issued.CertificatePem))

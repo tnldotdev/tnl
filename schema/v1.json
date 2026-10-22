@@ -220,9 +220,9 @@
           },
           "additionalProperties": false,
           "type": "object",
-          "description": "Defaults applied only to explicit services.NAME.public_url blocks. These defaults never enable a public URL for another service."
+          "description": "Defaults for explicit local public_url blocks. Applicable HTTP access and limits also apply to named-group http blocks; defaults never enable publication."
         },
-        "publishers": {
+        "publisher_groups": {
           "additionalProperties": {
             "properties": {
               "description": {
@@ -283,17 +283,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -311,9 +318,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -675,6 +682,69 @@
                   "tls": false,
                   "http": {
                     "properties": {
+                      "access": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enum": ["restricted"]
+                          },
+                          {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["restricted"]
+                              },
+                              "ip": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "maxItems": 256,
+                                "minItems": 1,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "limits": {
+                        "properties": {
+                          "total": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "concurrency": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "rate": {
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              },
+                              "per": {
+                                "type": "string",
+                                "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                              },
+                              "burst": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
                       "readiness": {
                         "properties": {
                           "path": {
@@ -731,17 +801,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -759,9 +836,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -983,6 +1060,69 @@
                   "tls": false,
                   "http": {
                     "properties": {
+                      "access": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enum": ["restricted"]
+                          },
+                          {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["restricted"]
+                              },
+                              "ip": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "maxItems": 256,
+                                "minItems": 1,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "limits": {
+                        "properties": {
+                          "total": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "concurrency": {
+                            "type": "integer",
+                            "maximum": 9007199254740991,
+                            "minimum": 1
+                          },
+                          "rate": {
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              },
+                              "per": {
+                                "type": "string",
+                                "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                              },
+                              "burst": {
+                                "type": "integer",
+                                "maximum": 9007199254740991,
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
                       "readiness": {
                         "properties": {
                           "path": {
@@ -1012,17 +1152,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -1040,9 +1187,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -1234,17 +1381,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -1262,9 +1416,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -1527,17 +1681,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -1555,9 +1716,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -1820,17 +1981,24 @@
                   {
                     "if": {
                       "properties": {
-                        "publisher": {
+                        "publisher_group": {
                           "not": {
                             "const": "local"
                           }
                         }
                       },
-                      "required": ["publisher"]
+                      "required": ["publisher_group"]
                     },
                     "then": {
                       "properties": {
-                        "http": false,
+                        "public_url": false,
+                        "http": {
+                          "properties": {
+                            "readiness": false,
+                            "paths": false,
+                            "open": false
+                          }
+                        },
                         "target": {
                           "properties": {
                             "type": {
@@ -1848,9 +2016,9 @@
                   "name": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
-                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                    "description": "Saved name; defaults to the configuration key."
                   },
-                  "publisher": {
+                  "publisher_group": {
                     "type": "string",
                     "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
                     "description": "Assigned publisher group; defaults to the built-in local publisher.",
@@ -2073,7 +2241,7 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."
+          "description": "Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group."
         },
         "webhooks": {
           "additionalProperties": {

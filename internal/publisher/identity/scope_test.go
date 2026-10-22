@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // embedding preserves the full promoted control surface on pkg/tnl.Publisher.
@@ -29,7 +29,7 @@ func TestNativeScopeAndSelectedURLSnapshots(t *testing.T) {
 	fixture, _ := privateScopeFixture(t)
 	identity := fixture.identity.enrollment()
 	id, _ := opaqueid.New(opaqueid.PublicURLPrefix)
-	identity.Kind, identity.PrivateServiceId, identity.PublicUrlId = authorityv1.SavedUrl, nil, &id
+	identity.Kind, identity.ServiceId, identity.PublicUrlId = authorityv1.SavedPublicUrl, nil, &id
 	prefixes := []string{"127.0.0.1/32"}
 	membership, runID, pool, expires := "membership", "run", true, time.Now().Add(time.Hour)
 	u := controlv1.PublicURL{Id: id, TeamId: identity.TeamId, CanonicalHostname: "app.example", LifecycleState: controlv1.Enabled, AllowedIpPrefixes: &prefixes, MembershipId: &membership, OpenPublishRunId: &runID, PublisherPool: &pool, ExpiresAt: &expires}
@@ -41,7 +41,7 @@ func TestNativeScopeAndSelectedURLSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	clear(private)
-	result, err := n.SavedURL(t.Context())
+	result, err := n.SavedPublicURL(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestNativeScopeAndSelectedURLSnapshots(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(again, expected) {
 		t.Fatal("read result aliased selected URL", err)
 	}
-	if err := n.SelectRoute(expected); err != nil {
+	if err := n.SelectPublicURL(expected); err != nil {
 		t.Fatal("enrollment pointer mutation changed exact URL authority", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestNativeForkAndForGrantOwnIndependentScopes(t *testing.T) {
 	i := fixture.identity.enrollment()
 	domain, _ := opaqueid.New(opaqueid.DomainPrefix)
 	namespace := "member.example"
-	i.Kind, i.PrivateServiceId, i.DomainId, i.Namespace = authorityv1.Namespace, nil, &domain, &namespace
+	i.Kind, i.ServiceId, i.DomainId, i.Namespace = authorityv1.Namespace, nil, &domain, &namespace
 	n, err := NewNative(&unusedControl{}, &lostEnrollmentResponse{}, i, fixture.private)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestNativeForkAndForGrantOwnIndependentScopes(t *testing.T) {
 		return controlv1.PublicURL{Id: id, TeamId: i.TeamId, DomainId: domain, CanonicalHostname: "app." + namespace, LifecycleState: controlv1.Enabled, Ephemeral: true, ServiceProtocol: controlv1.Http}
 	}
 	first, second := newURL(), newURL()
-	if err := n.SelectRoute(first); err != nil {
+	if err := n.SelectPublicURL(first); err != nil {
 		t.Fatal(err)
 	}
 	fork, err := n.Fork()
@@ -87,21 +87,21 @@ func TestNativeForkAndForGrantOwnIndependentScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	domain, namespace = "changed-domain", "changed.example"
-	if err := fork.SelectRoute(second); err != nil {
+	if err := fork.SelectPublicURL(second); err != nil {
 		t.Fatal("fork retained the selected URL or aliased namespace authority", err)
 	}
-	if err := n.SelectRoute(second); !errors.Is(err, ErrScope) {
+	if err := n.SelectPublicURL(second); !errors.Is(err, ErrScope) {
 		t.Fatal("fork changed the original worker's selected URL", err)
 	}
 	grantID, _ := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	selectedID := second.Id
-	g := controlv1.PublisherGrant{Id: grantID, Kind: "saved_url", PublicUrlId: &selectedID}
+	g := controlv1.PublisherGrant{Id: grantID, Kind: "saved_public_url", PublicUrlId: &selectedID}
 	worker, err := n.ForGrant(g)
 	if err != nil {
 		t.Fatal(err)
 	}
 	selectedID = first.Id
-	if err := worker.SelectRoute(second); err != nil {
+	if err := worker.SelectPublicURL(second); err != nil {
 		t.Fatal("ForGrant retained the prior selection or aliased its grant DTO", err)
 	}
 	if err := worker.NamespaceScope(); !errors.Is(err, ErrScope) {

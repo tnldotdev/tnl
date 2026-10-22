@@ -1,4 +1,4 @@
-package privateprotocol
+package protocol
 
 import (
 	"encoding/json"

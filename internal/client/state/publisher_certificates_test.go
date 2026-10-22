@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bytes"
@@ -31,10 +31,6 @@ func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := store.Certificates("team", plan)
-	if err != nil {
-		t.Fatal(err)
-	}
 	firstPending, err := first.Pending(t.Context(), "route.example")
 	if err != nil {
 		t.Fatal(err)
@@ -43,12 +39,8 @@ func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyPending, err := legacy.Pending(t.Context(), "route.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstPending.Key.PublicKey.Equal(&secondPending.Key.PublicKey) || bytes.Equal(firstPending.CSRDER, secondPending.CSRDER) || firstPending.Key.PublicKey.Equal(&legacyPending.Key.PublicKey) {
-		t.Fatal("private keys/CSRs crossed publisher or legacy boundaries")
+	if firstPending.Key.PublicKey.Equal(&secondPending.Key.PublicKey) || bytes.Equal(firstPending.CSRDER, secondPending.CSRDER) {
+		t.Fatal("private keys/CSRs crossed publisher boundaries")
 	}
 	if first.plan.CacheKey != plan.CacheKey || second.plan.CacheKey != plan.CacheKey {
 		t.Fatal("local cache scoping changed the server's certificate plan")
@@ -161,6 +153,6 @@ func TestPublisherHostnameLocksAllowExplicitPoolPeers(t *testing.T) {
 		t.Fatalf("publisher's concurrent invocation did not share hostname lock: %v", err)
 	}
 	if _, err = store.CertificatesForPublisher("team", "", exactCertificateTestPlan()); err == nil {
-		t.Fatal("enrolled cache silently fell back to legacy scope")
+		t.Fatal("certificate cache accepted an empty publisher identity")
 	}
 }

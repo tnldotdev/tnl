@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type trafficControlStub struct {
@@ -45,7 +45,7 @@ func (s *trafficControlStub) CreatePublisherRunWithTraffic(_ context.Context, id
 func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	control := &trafficControlStub{}
-	n := &Native{NativeControl: control, authority: &lostEnrollmentResponse{}, private: private, route: controlv1.PublicURL{Id: "url"}}
+	n := &Native{NativeControl: control, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
 	connections := 48
 	selected, err := n.WithTraffic(&trafficlimits.Selection{Connections: &connections})
 	if err != nil {
@@ -58,7 +58,7 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 	if control.url != "url" || control.retry != "retry" || control.token != "access" || control.selection == nil || *control.selection.Connections != 48 || n.traffic != nil {
 		t.Fatal("traffic selection or scoped authentication changed")
 	}
-	if _, err := publisheridentity.VerifyRun(private.Public().(ed25519.PublicKey), control.proof, "url", "retry"); err != nil {
+	if _, err := publisherproof.VerifyRun(private.Public().(ed25519.PublicKey), control.proof, "url", "retry"); err != nil {
 		t.Fatal(err)
 	}
 	*control.selection.Connections = 1

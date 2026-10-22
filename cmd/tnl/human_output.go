@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
@@ -18,8 +18,8 @@ func writeHumanFrame(output io.Writer, command, state, footer string, blocks ...
 	}))
 }
 
-func authenticationPrompt(output io.Writer, command string) func(clientauth.Prompt) error {
-	return func(prompt clientauth.Prompt) error {
+func authenticationPrompt(output io.Writer, command string) func(auth.Prompt) error {
+	return func(prompt auth.Prompt) error {
 		fields := []clioutput.Field{{Label: "open", Value: prompt.URL}}
 		if prompt.Code != "" {
 			fields = append(fields, clioutput.Field{Label: "code", Value: prompt.Code})

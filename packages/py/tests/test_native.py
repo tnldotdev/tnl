@@ -88,7 +88,7 @@ def test_requests_bound_responses_and_never_follow_redirects(
     "code,hint",
     [
         ("runtime.publisher_setup_required", "tnl publisher setup --namespace"),
-        ("runtime.publisher_file_invalid", "publisher file"),
+        ("runtime.publisher_credential_file_invalid", "publisher file"),
     ],
 )
 def test_publisher_selection_failure_is_authored_without_private_details(

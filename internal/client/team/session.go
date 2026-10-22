@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"strings"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 // Options selects a signed-in server context. callers supply any sign-in UI.
@@ -21,7 +21,7 @@ type Options struct {
 	ServerURL, StateDir, AccessToken string
 	ProjectTeam, SelectedTeam        string
 	Diagnostics                      io.Writer
-	AuthenticationPrompt             func(clientauth.Prompt) error
+	AuthenticationPrompt             func(auth.Prompt) error
 	OpenURL                          func(string) error
 	HTTPClient                       *http.Client
 }
@@ -36,7 +36,7 @@ type API interface {
 type Session struct {
 	database      *clientstate.Database
 	store         *clientstate.Store
-	authenticated *clientauth.Client
+	authenticated *auth.Client
 	api           API
 	identity      authorityv1.IdentityContext
 	projectTeam   string
@@ -53,11 +53,11 @@ func Open(ctx context.Context, options Options) (*Session, error) {
 		database.Close()
 		return nil, err
 	}
-	if err := clientauth.RequireSignInOutsideDemo(ctx, database, serverURL, options.AccessToken); err != nil {
+	if err := auth.RequireSignInOutsideDemo(ctx, database, serverURL, options.AccessToken); err != nil {
 		database.Close()
 		return nil, err
 	}
-	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
+	authenticated, err := auth.Authenticate(ctx, auth.Config{
 		ServerEndpoint: serverURL, State: database, AccessToken: options.AccessToken,
 		Diagnostics: options.Diagnostics, AuthenticationPrompt: options.AuthenticationPrompt, OpenURL: options.OpenURL,
 		HTTPClient: options.HTTPClient,
@@ -77,7 +77,7 @@ func Open(ctx context.Context, options Options) (*Session, error) {
 // NewSession reuses authentication and identity facts already read by a caller.
 // pass a database only when transferring its lifetime to this session; otherwise
 // the caller retains ownership and Close is a no-op.
-func NewSession(database *clientstate.Database, store *clientstate.Store, authenticated *clientauth.Client, identity authorityv1.IdentityContext, options Options) *Session {
+func NewSession(database *clientstate.Database, store *clientstate.Store, authenticated *auth.Client, identity authorityv1.IdentityContext, options Options) *Session {
 	return &Session{database: database, store: store, authenticated: authenticated,
 		api: authenticated.Authority, identity: identity,
 		projectTeam: options.ProjectTeam, selectedTeam: options.SelectedTeam}
@@ -92,7 +92,7 @@ func (s *Session) Close() error {
 
 func (s *Session) Database() *clientstate.Database       { return s.database }
 func (s *Session) Store() *clientstate.Store             { return s.store }
-func (s *Session) Authenticated() *clientauth.Client     { return s.authenticated }
+func (s *Session) Authenticated() *auth.Client           { return s.authenticated }
 func (s *Session) Identity() authorityv1.IdentityContext { return s.identity }
 func (s *Session) ProjectTeam() string                   { return s.projectTeam }
 func (s *Session) SelectedTeam() string                  { return s.selectedTeam }

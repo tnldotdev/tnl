@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -13,9 +13,9 @@ func TestIntegrationServiceAuditActualGroupRemovalAndSafeAdminNormalization(t *t
 	d, now := newControlStateIntegrationDatabase(t, "audit_group_remove")
 	d.managedURLMode = naming.ManagedURLModeSimple
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
-		"web":  {Publisher: "production", Target: "http://audit-private-app.internal:3000"},
-		"db":   {Publisher: "production", Protocol: "postgres", Target: "audit-private-db.internal:5432"},
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
+		"web":  {PublisherGroup: "production", Target: "http://audit-private-app.internal:3000"},
+		"db":   {PublisherGroup: "production", Protocol: "postgres", Target: "audit-private-db.internal:5432"},
 		"keep": {Target: "http://localhost:4000"},
 	}}
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
@@ -33,7 +33,7 @@ func TestIntegrationServiceAuditActualGroupRemovalAndSafeAdminNormalization(t *t
 		t.Fatal(err)
 	}
 	r.ExpectedRevision = applied.Revision
-	delete(r.Configuration.Publishers, "production")
+	delete(r.Configuration.PublisherGroups, "production")
 	delete(r.Configuration.Services, "web")
 	delete(r.Configuration.Services, "db")
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {

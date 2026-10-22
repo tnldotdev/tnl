@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"crypto/ed25519"
@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
@@ -54,18 +54,18 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	}
 	server := httptest.NewTLSServer(control)
 	t.Cleanup(server.Close)
-	if _, err := authorityapi.Register(control, authorityapi.Config{ControlURL: server.URL}, d); err != nil {
+	if _, err := controlauthority.Register(control, controlauthority.Config{ControlURL: server.URL}, d); err != nil {
 		t.Fatal(err)
 	}
-	owner, err := controlclient.New(server.URL, server.Client(), session.AccessToken)
+	owner, err := clientcontrol.New(server.URL, server.Client(), session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := controlclient.New(server.URL, server.Client(), "")
+	client, err := clientcontrol.New(server.URL, server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(server.URL, server.Client(), "")
+	authority, err := clientauthority.New(server.URL, server.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	proof, err := publisheridentity.SignRun(private, u.ID, "http-run")
+	proof, err := publisherproof.SignRun(private, u.ID, "http-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +104,11 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	if err != nil || retry.PublishRun.Id != setup.PublishRun.Id || retry.PublishRunToken != setup.PublishRunToken {
 		t.Fatalf("HTTP run retry changed credentials: %v", err)
 	}
-	wrongProof, _ := publisheridentity.SignRun(private, u.ID, "other-attempt")
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongProof); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	wrongProof, _ := publisherproof.SignRun(private, u.ID, "other-attempt")
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongProof); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("HTTP run proof crossed attempts: %v", err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", session.AccessToken.String(), proof); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", session.AccessToken.String(), proof); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("control session bypassed identity authentication: %v", err)
 	}
 	// a publisher token cannot become a control session or change saved policy.
@@ -127,7 +127,7 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	if err := authority.RotatePublisherKey(t.Context(), access, p.ClientId, p.GrantId, p.KeyId, replacement, private, newPrivate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authority.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, p.KeyId, private); !errors.Is(err, authorityclient.ErrUnauthenticated) {
+	if _, err := authority.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, p.KeyId, private); !errors.Is(err, clientauthority.ErrUnauthenticated) {
 		t.Fatalf("retired key accepted over HTTP: %v", err)
 	}
 	if _, err := authority.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, replacement, newPrivate); err != nil {
@@ -137,17 +137,17 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 		t.Fatalf("rotation broke a retry with the still-valid issued token: %v", err)
 	}
 	// signatures include the selected grant; exchanging one for another fails.
-	assertion, _ := publisheridentity.Sign(p.ClientId, replacement, "other-grant", server.URL+"/v1/publisher-token", newPrivate, time.Now())
+	assertion, _ := publisherproof.Sign(p.ClientId, replacement, "other-grant", server.URL+"/v1/publisher-token", newPrivate, time.Now())
 	if _, err := d.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, server.URL+"/v1/publisher-token", assertion, "", time.Now()); !errors.Is(err, controlstate.ErrPublisherIdentity) {
 		t.Fatalf("assertion changed grant during exchange: %v", err)
 	}
 	if err := owner.RevokePublisherGrant(t.Context(), m.TeamID, p.ClientId, p.GrantId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.PublisherPublicURL(t.Context(), access); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err := client.PublisherPublicURL(t.Context(), access); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("revoked token accepted over HTTP: %v", err)
 	}
-	if _, err := client.HeartbeatPublishRun(t.Context(), setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err := client.HeartbeatPublishRun(t.Context(), setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("revoked grant kept a live HTTP run: %v", err)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
+	"github.com/tnldotdev/tnl/internal/publisher/deployment"
 )
 
 func main() {
@@ -20,13 +20,13 @@ func main() {
 }
 
 func check(previous, next string) error {
-	a, err := publisherdeployment.ReadParameters(previous)
+	a, err := deployment.ReadParameters(previous)
 	if err != nil {
 		return err
 	}
-	b, err := publisherdeployment.ReadParameters(next)
+	b, err := deployment.ReadParameters(next)
 	if err != nil {
 		return err
 	}
-	return publisherdeployment.ValidateStorageTransition(a, b)
+	return deployment.ValidateStorageTransition(a, b)
 }

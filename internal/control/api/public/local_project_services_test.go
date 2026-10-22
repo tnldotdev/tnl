@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type localProjectVisitorStore struct {
@@ -25,7 +25,7 @@ func (s *localProjectVisitorStore) GetLocalProjectService(_ context.Context, r c
 	if s.err != nil {
 		return controlstate.LocalProjectService{}, s.err
 	}
-	return controlstate.LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "private_service", ServiceID: "svc_exact", PrivateService: &controlstate.PrivateServiceMetadata{Protocol: "http", TrustRevision: 1}}, nil
+	return controlstate.LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: "svc_exact", Metadata: &controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 1}}, nil
 }
 
 func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testing.T) {
@@ -37,7 +37,7 @@ func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testin
 	}{
 		{"ordinary visitor", nil, 200, true},
 		{"unsigned", nil, 401, false},
-		{"unavailable or unauthorized", controlstate.ErrPrivateServiceAccess, 404, true},
+		{"unavailable or unauthorized", controlstate.ErrServiceAccess, 404, true},
 		{"source collision", controlstate.ErrProjectSourceConflict, 409, true},
 		{"invalid scope", controlstate.ErrProjectConfigurationInvalid, 400, true},
 	} {
@@ -66,7 +66,7 @@ func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testin
 			}
 			if test.status == 200 {
 				var response controlv1.LocalProjectService
-				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || response.ServiceId != "svc_exact" || response.PrivateService == nil || response.PrivateService.Protocol != controlv1.PrivateHttp {
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || response.ServiceId != "svc_exact" || response.Metadata == nil || response.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 					t.Fatal("response lost authoritative safe metadata", response, err)
 				}
 			} else if strings.Contains(w.Body.String(), "manager") || strings.Contains(w.Body.String(), "svc_exact") {

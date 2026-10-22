@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -48,8 +48,8 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteGroups(t *testing.T) 
 	}
 	r.ExpectedRevision = 2
 	r.Configuration = appliedWebhookConfiguration()
-	r.Configuration.Publishers = map[string]ProjectPublisherGroup{"eks": {Description: "externally operated replicas"}}
-	r.Configuration.Services["remote"] = ProjectServiceConfiguration{Publisher: "eks", Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal"), PublicURL: &ProjectServicePublicURL{}}
+	r.Configuration.PublisherGroups = map[string]ProjectPublisherGroup{"eks": {Description: "externally operated replicas"}}
+	r.Configuration.Services["remote"] = ProjectServiceConfiguration{PublisherGroup: "eks", Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal")}
 	configured, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)

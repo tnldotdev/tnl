@@ -24,17 +24,17 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher/private-service:
+  /v1/publisher/service:
     get:
-      operationId: getPublisherPrivateService
+      operationId: getPublisherService
       security: [{ publisherAuth: [] }]
-      description: Read the exact granted private service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+      description: Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
       responses:
         "200":
           description: Exact granted service, without target addresses or credentials
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateService" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/guest-demo/publisher:
     post:

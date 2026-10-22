@@ -1,14 +1,14 @@
-package tnldruntime
+package daemon
 
 import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func TestTrafficRuntimePlumbing(t *testing.T) {
-	c := tnldconfig.Config{TrafficDefaultConnections: 48,
+	c := daemonconfig.Config{TrafficDefaultConnections: 48,
 		TrafficDefaultRate: 30, TrafficDefaultRatePer: 2 * time.Second, TrafficDefaultBurst: 50,
 		TrafficDefaultUploadBytes: 4 << 20, TrafficDefaultDownloadBytes: 8 << 20,
 		TrafficSourceConnections: 12, TrafficProcessRate: 123, PendingConnectionLimit: 50, PendingURLConnectionLimit: 7,
@@ -22,7 +22,7 @@ func TestTrafficRuntimePlumbing(t *testing.T) {
 		t.Fatal("control settings lost traffic limits")
 	}
 	c.ServerDomain = "infra.example.test"
-	c.Role = tnldconfig.RoleControl
+	c.Role = daemonconfig.RoleControl
 	api = controlAPIConfigFrom(c, nil)
 	authority := authorityAPIConfigFrom(c, nil)
 	if api.ControlURL != "https://control.infra.example.test" || authority.ControlURL != api.ControlURL {

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -14,10 +14,10 @@ import (
 
 func TestCertificateWorkSubjectBoundary(t *testing.T) {
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
-	public := controlstatedb.ControlAcmeOrder{ID: "order", PublicURLID: "psvc_opaque-public-url", PublishRunID: "public-run", PublishRunNumber: 7, OrderRevision: 3, WorkEpoch: 2, WorkOwner: text("worker"), WorkExpiresAt: timestamptz(now.Add(time.Minute)), Attempts: 1, AvailableAt: timestamptz(now), CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now), CsrDigest: make([]byte, 32), State: "pending", ChallengeMethod: "dns-01"}
+	public := controlstatedb.ControlAcmeOrder{ID: "order", PublicURLID: "svc_opaque-public-url", PublishRunID: "public-run", PublishRunNumber: 7, OrderRevision: 3, WorkEpoch: 2, WorkOwner: text("worker"), WorkExpiresAt: timestamptz(now.Add(time.Minute)), Attempts: 1, AvailableAt: timestamptz(now), CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now), CsrDigest: make([]byte, 32), State: "pending", ChallengeMethod: "dns-01"}
 	managed := public
 	managed.PublicURLID, managed.PublishRunID, managed.PublishRunNumber = "", "", 0
-	managed.PrivateServiceID, managed.PrivateRunID, managed.PrivateRunNumber = "opaque-managed-service", "private-run", 11
+	managed.ServiceID, managed.ServiceRunID, managed.ServiceRunNumber = "opaque-service", "service-run", 11
 	for _, tc := range []struct {
 		name   string
 		row    controlstatedb.ControlAcmeOrder
@@ -25,13 +25,13 @@ func TestCertificateWorkSubjectBoundary(t *testing.T) {
 		change func(*controlstatedb.ControlAcmeOrder)
 	}{
 		{"public URL with misleading prefix", public, CertificateSubjectPublicURL, nil},
-		{"managed without prefix", managed, CertificateSubjectManagedService, nil},
-		{"crossed service", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.PrivateServiceID = "other" }},
-		{"crossed run", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.PrivateRunID = "other" }},
-		{"crossed number", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.PrivateRunNumber = 1 }},
+		{"managed without prefix", managed, CertificateSubjectService, nil},
+		{"crossed service", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.ServiceID = "other" }},
+		{"crossed run", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.ServiceRunID = "other" }},
+		{"crossed number", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.ServiceRunNumber = 1 }},
 		{"negative public number", managed, "", func(r *controlstatedb.ControlAcmeOrder) { r.PublishRunNumber = -1 }},
 		{"missing public run", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.PublishRunID = "" }},
-		{"missing managed service", managed, "", func(r *controlstatedb.ControlAcmeOrder) { r.PrivateServiceID = "" }},
+		{"missing service", managed, "", func(r *controlstatedb.ControlAcmeOrder) { r.ServiceID = "" }},
 		{"missing number", public, "", func(r *controlstatedb.ControlAcmeOrder) { r.PublishRunNumber = 0 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,15 +46,15 @@ func TestCertificateWorkSubjectBoundary(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || work.Subject.Kind != tc.kind || !work.Subject.Valid() || work.ServiceID() != work.Subject.ID {
+			if err != nil || work.Subject.Kind != tc.kind || !work.Subject.Valid() {
 				t.Fatalf("loaded subject: %#v, %v", work.Subject, err)
 			}
 			if err := validateACMEOrderWork(work); err != nil {
 				t.Fatal(err)
 			}
-			work.Subject.RunNumber++
+			work.Subject.RunNumber = 0
 			if err := validateACMEOrderWork(work); !errors.Is(err, ErrCertificateIssuanceInvalid) {
-				t.Fatal("cached subject and compatibility run diverged")
+				t.Fatal("invalid certificate subject accepted")
 			}
 		})
 	}
@@ -116,8 +116,8 @@ func TestCertificateWorkDNSDispatchBoundary(t *testing.T) {
 		id   string
 		sql  string
 	}{
-		{CertificateSubjectPublicURL, "psvc_misleading-public-id", "-- name: GetDNSChallengeContext :one"},
-		{CertificateSubjectManagedService, "opaque-managed-id", "-- name: GetPrivateDNSChallengeContext :one"},
+		{CertificateSubjectPublicURL, "svc_misleading-public-id", "-- name: GetDNSChallengeContext :one"},
+		{CertificateSubjectService, "opaque-managed-id", "-- name: GetPrivateDNSChallengeContext :one"},
 	} {
 		t.Run(string(tc.kind), func(t *testing.T) {
 			db := &dnsSubjectDispatchDB{}

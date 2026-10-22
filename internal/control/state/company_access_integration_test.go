@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func companyTestPrincipal(t *testing.T, d *Database, s ControlSession, now time.Time) ControlPrincipal {
@@ -56,7 +56,7 @@ func companyActivateTestSetup(t *testing.T, d *Database, c IdentityConnectionSet
 	if err := d.ProvisionCompanyEligibility(t.Context(), c.SetupToken, ProvisionCompanyEligibilityRequest{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, IdentityID: owner.IdentityID, Subject: "directory/" + owner.IdentityID, Revision: 1, Eligible: true, ValidUntil: now.Add(4 * time.Hour), MemberSlug: "owner"}, now); err != nil {
 		t.Fatal(err)
 	}
-	source := OIDCIdentity{Issuer: c.Issuer, Subject: owner.IdentityID, AssertionDigest: sha256.Sum256([]byte("activate/" + c.ID)), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + owner.IdentityID, AuthenticatedAt: now.Unix()}}}
+	source := OIDCIdentity{Issuer: c.Issuer, Subject: owner.IdentityID, AssertionDigest: sha256.Sum256([]byte("activate/" + c.ID)), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidc.TeamContext{{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + owner.IdentityID, AuthenticatedAt: now.Unix()}}}
 	active, err := d.ActivateIdentityConnection(t.Context(), owner, c.TeamID, c.ID, c.SetupToken, c.Revision, source, now, provisioningToken)
 	if err != nil {
 		t.Fatal(err)
@@ -85,14 +85,14 @@ func TestIntegrationCompanyActivationRetryKeepsPrecommittedCredential(t *testing
 		t.Fatal("activation changed precommitted token")
 	}
 	for attempt := range 2 {
-		source := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, AssertionDigest: sha256.Sum256([]byte(fmt.Sprint("retry", attempt))), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
+		source := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, AssertionDigest: sha256.Sum256([]byte(fmt.Sprint("retry", attempt))), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidc.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
 		source.Nonce, source.IssuedAt = "retry-nonce", now
 		retry, err := d.ActivateIdentityConnection(WithCompanyActorProof(t.Context(), source, source.Nonce), p, team.ID, setup.ID, setup.SetupToken, setup.Revision, source, now, token)
 		if err != nil || retry.ProvisioningToken != token || retry.Revision != active.Revision {
 			t.Fatalf("retry changed operation: %+v %v", retry, err)
 		}
 	}
-	proof := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, Nonce: "rotate", IssuedAt: now, AssertionDigest: sha256.Sum256([]byte("rotate")), AssertionExpiry: now.Add(time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
+	proof := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, Nonce: "rotate", IssuedAt: now, AssertionDigest: sha256.Sum256([]byte("rotate")), AssertionExpiry: now.Add(time.Minute), TeamContexts: []oidc.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
 	rotated, err := d.RotateCompanyProvisioningToken(WithCompanyActorProof(t.Context(), proof, proof.Nonce), p, team.ID, setup.ID, active.Revision, now)
 	if err != nil || rotated.ProvisioningToken == token {
 		t.Fatal("rotation", err)
@@ -166,11 +166,11 @@ func TestIntegrationCompanyApprovalSubjectNeedsCurrentCompanySignIn(t *testing.T
 		t.Fatal(err)
 	}
 	person := personal.Identity.Identity.ID
-	service, err := d.CreatePrivateService(t.Context(), team.ID, owner, "approval-private", "approval-private", now)
+	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "approval-private", "approval-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.CreatePrivateServiceGrant(t.Context(), service.ID, owner, "approval-grant", "identity", person, nil, now); err != nil {
+	if _, err = d.CreateServiceGrant(t.Context(), service.ID, owner, "approval-grant", "identity", person, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	c := companyTestConnection(t, d, team.ID, p, "approval", now)
@@ -184,12 +184,12 @@ func TestIntegrationCompanyApprovalSubjectNeedsCurrentCompanySignIn(t *testing.T
 		}
 		defer tx.Rollback(ctx)
 		_, _, err = privateVisitorAccess(ctx, tx, service.ID, person, now)
-		if want && err != nil || !want && !errors.Is(err, ErrPrivateServiceAccess) {
+		if want && err != nil || !want && !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("approval subject authorization", want, err)
 		}
 	}
 	check(personalCtx, false)
-	identity.TeamContexts = []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + person, AuthenticatedAt: now.Unix()}}
+	identity.TeamContexts = []oidc.TeamContext{{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + person, AuthenticatedAt: now.Unix()}}
 	identity, err = companyBindTestIntent(t, d, identity, now)
 	if err != nil {
 		t.Fatal(err)
@@ -406,8 +406,8 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err = d.AuthorizeTeamSession(t.Context(), personalPrincipal, team.ID, now); !errors.Is(err, ErrAuthorityAccess) {
 		t.Fatal("linked account metadata authorized personal sign-in", err)
 	}
-	proof := oidcauth.TeamContext{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + person.Identity.ID, AuthenticatedAt: now.Unix()}
-	identity.TeamContexts = []oidcauth.TeamContext{proof}
+	proof := oidc.TeamContext{TeamID: team.ID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + person.Identity.ID, AuthenticatedAt: now.Unix()}
+	identity.TeamContexts = []oidc.TeamContext{proof}
 	company, err := exchange(identity, "company", now)
 	if err != nil {
 		t.Fatal(err)
@@ -430,10 +430,10 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if _, err = exchange(identity, "company", now); !errors.Is(err, ErrOIDCAssertionReplay) {
 		t.Fatal("proof token replay", err)
 	}
-	for i, mutate := range []func(*oidcauth.TeamContext){func(p *oidcauth.TeamContext) { p.TeamID = personal.Identity.PersonalTeamID }, func(p *oidcauth.TeamContext) { p.IdentityConnectionID = "icn_other" }, func(p *oidcauth.TeamContext) { p.ConnectionRevision++ }, func(p *oidcauth.TeamContext) { p.SourceID = "wrong-source" }, func(p *oidcauth.TeamContext) { p.Subject = "another-directory-subject" }, func(p *oidcauth.TeamContext) { p.AuthenticatedAt = now.Add(time.Second).Unix() }, func(p *oidcauth.TeamContext) { p.AuthenticatedAt = now.Add(-2 * time.Hour).Unix() }} {
+	for i, mutate := range []func(*oidc.TeamContext){func(p *oidc.TeamContext) { p.TeamID = personal.Identity.PersonalTeamID }, func(p *oidc.TeamContext) { p.IdentityConnectionID = "icn_other" }, func(p *oidc.TeamContext) { p.ConnectionRevision++ }, func(p *oidc.TeamContext) { p.SourceID = "wrong-source" }, func(p *oidc.TeamContext) { p.Subject = "another-directory-subject" }, func(p *oidc.TeamContext) { p.AuthenticatedAt = now.Add(time.Second).Unix() }, func(p *oidc.TeamContext) { p.AuthenticatedAt = now.Add(-2 * time.Hour).Unix() }} {
 		bad := proof
 		mutate(&bad)
-		identity.TeamContexts = []oidcauth.TeamContext{bad}
+		identity.TeamContexts = []oidc.TeamContext{bad}
 		if _, err = exchange(identity, fmt.Sprint("bad-", i), now); err == nil {
 			t.Fatal("accepted proof scope", i)
 		}
@@ -464,11 +464,11 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || !permission.VisitAllowed || permission.ExpiresAt == nil || permission.ExpiresAt.After(now.Add(CompanyAuthenticationLifetime)) {
 		t.Fatal("company browser permission", permission, err)
 	}
-	service, err := d.CreatePrivateService(ownerCtx, team.ID, owner, "company-private", "company-private", now)
+	service, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-private", "company-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.CreatePrivateServiceGrant(ownerCtx, service.ID, owner, "company-grant", "identity", person.Identity.ID, nil, now); err != nil {
+	if _, err = d.CreateServiceGrant(ownerCtx, service.ID, owner, "company-grant", "identity", person.Identity.ID, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
@@ -483,7 +483,7 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.IssueServiceClientCertificate(personalCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.IssueServiceClientCertificate(personalCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("personal mTLS issuance bypass", err)
 	}
 	issued, err := d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now)
@@ -491,16 +491,16 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 		t.Fatal("company mTLS issuance", err)
 	}
 	var boundSession string
-	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE private_service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != companyPrincipal.SessionID {
+	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != companyPrincipal.SessionID {
 		t.Fatal("mTLS identity lost exact session provenance", boundSession, err)
 	}
 	// expire the company proof while the leaf remains valid, then reauthenticate
 	// and replay the immutable issuance CSR to rebind without another certificate.
-	if _, err := d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now.Add(CompanyAuthenticationLifetime)); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now.Add(CompanyAuthenticationLifetime)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("cached certificate extended expired company proof", err)
 	}
 	proof.AuthenticatedAt = now.Add(time.Minute).Unix()
-	identity.TeamContexts = []oidcauth.TeamContext{proof}
+	identity.TeamContexts = []oidc.TeamContext{proof}
 	fresh, err := exchange(identity, "fresh-company", now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -511,11 +511,11 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err != nil || rebound != issued {
 		t.Fatal("fresh company sign-in did not reuse issued certificate", err)
 	}
-	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE private_service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != freshPrincipal.SessionID {
+	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != freshPrincipal.SessionID {
 		t.Fatal("certificate was not rebound to current company proof", boundSession, err)
 	}
 	companyTestEligibility(t, d, c, person.Identity.ID, 2, false, now)
-	if _, err = d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded mTLS CSR retry authorized", err)
 	}
 	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || permission.VisitAllowed {
@@ -537,28 +537,28 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	}
 }
 
-func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testing.T) {
+func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testing.T) {
 	f := newTransactionAuthorityFixture(t)
 	d, now := f.database, f.now
 	team := f.member.TeamID
 	shared := reviewSharedURL(t, f)
 	registerCertificatePlanRelays(t, d, now)
-	memberPublic, memberKey := reviewPublisher(t, d, f.route, f.member.IdentityID, now)
+	memberPublic, memberKey := reviewPublisher(t, d, f.publicURL, f.member.IdentityID, now)
 	teamPublic, teamKey := reviewPublisher(t, d, shared, f.member.IdentityID, now)
 	if memberPublic.Ownership != "member" || teamPublic.Ownership != "team" {
 		t.Fatal("implicit publisher ownership", memberPublic, teamPublic)
 	}
-	service, err := d.CreatePrivateService(t.Context(), team, f.member.IdentityID, "offboarding", "create", now, PrivateServiceMetadata{Protocol: "tcp", PublisherPool: true})
+	service, err := d.CreateServiceAt(t.Context(), team, f.member.IdentityID, "offboarding", "create", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp", PublisherPool: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	privatePublisher := func(ownership string) (PublisherIdentity, ed25519.PrivateKey) {
+	servicePublisher := func(ownership string) (PublisherIdentity, ed25519.PrivateKey) {
 		t.Helper()
 		m, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: team, IdentityID: f.member.IdentityID})
 		if err != nil {
 			t.Fatal(err)
 		}
-		e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Ownership: ownership, Scope: PublisherScope{TeamID: team, Kind: "private_service", PrivateServiceID: service.ID}, Name: ownership, Kind: "installed", EditorID: f.member.IdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now})
+		e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Ownership: ownership, Scope: PublisherScope{TeamID: team, Kind: "service", ServiceID: service.ID}, Name: ownership, Kind: "installed", EditorID: f.member.IdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -569,9 +569,9 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 		}
 		return p, key
 	}
-	memberPrivate, memberPrivateKey := privatePublisher("member")
-	teamPrivate, teamPrivateKey := privatePublisher("team")
-	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"group-database": {Publisher: "production", Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
+	memberPrivate, memberPrivateKey := servicePublisher("member")
+	teamPrivate, teamPrivateKey := servicePublisher("team")
+	groupRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"group-database": {PublisherGroup: "production", Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), groupRequest); err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +589,7 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 	}
 	c := companyTestConnection(t, d, team, ownerPrincipal, "managed", now)
 	companyTestEligibility(t, d, c, f.member.IdentityID, 1, true, now)
-	memberRun, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, memberPublic, memberKey, f.route, "member"), now, time.Hour, time.Hour)
+	memberRun, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, memberPublic, memberKey, f.publicURL, "member"), now, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,8 +602,8 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 		name := fmt.Sprintf("plan-relay-%d", i)
 		leases[name] = RelayLease{RelayLeaseIdentity: RelayLeaseIdentity{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", RelayLeaseRevision: 1}}
 	}
-	privateRun := readyAppliedPrivateRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now)
-	teamPrivateRun := readyAppliedPrivateRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now)
+	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now)
+	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now)
 	var beforeRefresh int64
 	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&beforeRefresh); err != nil {
 		t.Fatal(err)
@@ -614,20 +614,20 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 		t.Fatal("healthy directory refresh disconnected visitors", beforeRefresh, afterRefresh, err)
 	}
 	companyTestEligibility(t, d, c, f.member.IdentityID, 3, false, now)
-	for _, id := range []string{memberRun.PublishRunID, privateRun.RunID} {
+	for _, id := range []string{memberRun.PublishRunID, serviceRun.RunID} {
 		var closed bool
-		if err = d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1 UNION ALL SELECT closed_at IS NOT NULL FROM control.private_service_runs WHERE id=$1`, id).Scan(&closed); err != nil || !closed {
+		if err = d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1 UNION ALL SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, id).Scan(&closed); err != nil || !closed {
 			t.Fatal("member run remained open", id, closed, err)
 		}
 	}
-	assertion, err := publisheridentity.Sign(memberPublic.ID, memberPublic.KeyID, memberPublic.GrantID, publisherTestAudience, memberKey, now)
+	assertion, err := publisherproof.Sign(memberPublic.ID, memberPublic.KeyID, memberPublic.GrantID, publisherTestAudience, memberKey, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.ExchangePublisherAssertion(t.Context(), memberPublic.ID, memberPublic.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("member credential survived", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(t.Context(), service.ID, privateRun.RunID, privateRun.Token, now, PrivateRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, serviceRun.RunID, serviceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded member private run renewed", err)
 	}
 	replica := enrollAppliedGroup(t, d, groupRequest, groupEnrollment, now)
@@ -639,10 +639,10 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 	if _, err = d.HeartbeatPublishRun(t.Context(), auth, now, time.Hour, time.Hour); err != nil {
 		t.Fatal("team-owned public publisher depended on creator", err)
 	}
-	if _, err = d.HeartbeatPrivateServiceRun(t.Context(), service.ID, teamPrivateRun.RunID, teamPrivateRun.Token, now, PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, teamServiceRun.RunID, teamServiceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team-owned private publisher depended on creator", err)
 	}
-	url, err := d.GetPublicURLForAuthorization(t.Context(), f.route.ID)
+	url, err := d.GetPublicURLForAuthorization(t.Context(), f.publicURL.ID)
 	if err != nil || url.LifecycleState != PublicURLLifecycleEnabled {
 		t.Fatal("offboarding destructively suspended saved URL", url, err)
 	}
@@ -660,7 +660,7 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndPrivateRuns(t *testin
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, _, err = privateVisitorAccess(context.Background(), tx, service.ID, f.member.IdentityID, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, _, err = privateVisitorAccess(context.Background(), tx, service.ID, f.member.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private identity grant bypassed offboarding", err)
 	}
 	if err = tx.Rollback(t.Context()); err != nil {

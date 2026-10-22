@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"context"
@@ -394,7 +394,7 @@ func TestTypeScriptDatabaseTargetTLSIsPublisherSide(t *testing.T) {
 	}
 	options := config.ServicePublish(value.Services["orders"])
 	service := value.Services["orders"]
-	if config.PrivateServiceName("orders", service) != "orders" || service.Tunnel != nil ||
+	if config.ServiceName("orders", service) != "orders" || service.Tunnel != nil ||
 		service.Target.TLS == nil || service.Target.TLS.ServerName == nil || *service.Target.TLS.ServerName != "db.internal" || *service.Target.TLS.CAFile != "./ca.pem" ||
 		options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||

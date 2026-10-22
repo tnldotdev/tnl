@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -138,8 +138,8 @@ func (d *Database) ensureIngressTransportIssuer(ctx context.Context, tx pgx.Tx, 
 }
 
 func (d *Database) ingressTransportMaterial(ctx context.Context, tx pgx.Tx, lease controlstatedb.ControlIngressLease, now time.Time) (result IngressTransportCertificate, retErr error) {
-	name, err := naming.CanonicalizeHostname(lease.PrivateConnectorTlsServerName)
-	if err != nil || name != lease.PrivateConnectorTlsServerName || strings.Contains(name, "*") || lease.PrivateConnectorAddress == "" || lease.Draining {
+	name, err := naming.CanonicalizeHostname(lease.ConnectorTlsServerName)
+	if err != nil || name != lease.ConnectorTlsServerName || strings.Contains(name, "*") || lease.ConnectorAddress == "" || lease.Draining {
 		return result, ErrIngressTransportCertificate
 	}
 	issuer, ca, issuerKey, err := d.ensureIngressTransportIssuer(ctx, tx, now)
@@ -288,12 +288,12 @@ func (d *Database) GetVisitorIngressTransportTrust(ctx context.Context, identity
 	var revision int64
 	var expires time.Time
 	err = tx.QueryRow(ctx, `SELECT session.assigned_ingress_id,session.assigned_ingress_run_id,session.assigned_ingress_lease_revision,session.expires_at
-	    FROM control.private_connector_sessions session JOIN control.visitor_devices device ON device.id=session.device_id AND device.identity_id=session.identity_id
+	    FROM control.connector_sessions session JOIN control.visitor_devices device ON device.id=session.device_id AND device.identity_id=session.identity_id
 	    JOIN control.identities person ON person.id=device.identity_id WHERE session.id=$1 AND person.id=$2 AND person.disabled_at IS NULL
 	    AND device.revoked_at IS NULL AND session.revoked_at IS NULL AND session.expires_at>$3 FOR SHARE OF session,device,person`, sessionID, identityID, now).
 		Scan(&identity.IngressID, &identity.IngressRunID, &revision, &expires)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	if err != nil {
 		return result, err

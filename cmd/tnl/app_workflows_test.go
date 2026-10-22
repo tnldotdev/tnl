@@ -12,21 +12,21 @@ import (
 	"testing"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	project, state, manager, endpoint := observationFixture(t, true)
-	project.Config.Services = config.Services{"web": {}, "remote": {Publisher: new("production")}}
+	project.Config.Services = config.Services{"web": {}, "remote": {PublisherGroup: new("production")}}
 	if err := manager.Configure(configuredRuntimeServices(project)); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	waitObservationFixture(t, manager, func(s clientruntime.Snapshot) bool { return s.Services[0].Routable })
 	// the owner reports a fresh check; the CLI must count only local services.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request privateprotocol.Check
+		var request publisherprotocol.Check
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		s := manager.Snapshot()
 		s.Services[0].Ready = true
@@ -48,8 +48,8 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	}))
 	defer server.Close()
 	endpoint.Url = server.URL
-	path, _ := privateprotocol.DescriptorPath(state.Root(), project.Root)
-	if err := privateprotocol.WriteEndpoint(path, endpoint); err != nil {
+	path, _ := publisherprotocol.DescriptorPath(state.Root(), project.Root)
+	if err := publisherprotocol.WriteEndpoint(path, endpoint); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
@@ -62,7 +62,7 @@ func TestAppWorkflowCrashInvalidatesPrivateReadiness(t *testing.T) {
 	project, state, manager, _ := observationFixture(t, false)
 	s := manager.Snapshot()
 	s.Services[0].Registered, s.Services[0].Routable, s.Services[0].Ready = true, true, true
-	s.Services[0].RegistrationID, s.Services[0].PublishRunNumber = "old", 7
+	s.Services[0].RegistrationID, s.Services[0].RunNumber = "old", 7
 	if err := clientruntime.CommitSnapshot(t.Context(), state, &s, "service.readiness", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +83,10 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 			t.Error(err)
 		}
 		identities = append(identities, r.URL.Path+":"+body.SourceFingerprint+":"+body.WorktreeKey)
-		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_test", ServiceKind: "private_service", WorktreeKey: body.WorktreeKey})
+		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_test", ServiceKind: "service", WorktreeKey: body.WorktreeKey})
 	}))
 	defer server.Close()
-	control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))
+	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 				t.Fatalf("git remote: %v %s", err, out)
 			}
 		}
-		p, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: configuration}, root, [32]byte{})
+		p, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: configuration}, root, [32]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}

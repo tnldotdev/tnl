@@ -1,4 +1,4 @@
-package dnscontroller
+package dns
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 )
 
 // provider changes and authoritative verification share one implementation for
-// public URLs and managed services. their ownership markers remain distinct.
+// public URLs and services. their ownership markers remain distinct.
 func (w *Worker) reconcileAddress(ctx context.Context, record AddressRecord, nameservers []string, removing bool, kind string) (bool, error) {
 	var zone Zone
 	var err error

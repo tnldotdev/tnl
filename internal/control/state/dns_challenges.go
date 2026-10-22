@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -17,7 +17,7 @@ var ErrDNSChallengeNotFound = errors.New("controlstate: DNS challenge not found"
 type DNSChallengeContext struct {
 	Subject               CertificateSubject `json:"-"`
 	PublicURLID           string
-	PrivateServiceID      string
+	ServiceID             string
 	TeamID                string
 	DomainID              string
 	DNSAuthorityReference string
@@ -80,24 +80,6 @@ func (d *Database) SaveDNSChallengeChange(ctx context.Context, zoneID, recordNam
 	return nil
 }
 
-func (d *Database) GetDNSChallengeContext(
-	ctx context.Context,
-	publicURLID, authorizationID string,
-) (DNSChallengeContext, error) {
-	if !validStateText(publicURLID) || !validStateText(authorizationID) {
-		return DNSChallengeContext{}, ErrDNSChallengeNotFound
-	}
-	if err := d.requireOpen(); err != nil {
-		return DNSChallengeContext{}, err
-	}
-	queries := controlstatedb.New(d.pool)
-	subject, err := d.dnsChallengeSubject(ctx, publicURLID, authorizationID)
-	if err != nil {
-		return DNSChallengeContext{}, err
-	}
-	return dnsChallengeContext(ctx, queries, subject, authorizationID)
-}
-
 func (d *Database) dnsChallengeSubject(ctx context.Context, ownerID, authorizationID string) (CertificateSubject, error) {
 	row, err := controlstatedb.New(d.pool).GetDNSChallengeSubject(ctx, controlstatedb.GetDNSChallengeSubjectParams{
 		AuthorizationID: authorizationID, OwnerID: ownerID,
@@ -108,7 +90,7 @@ func (d *Database) dnsChallengeSubject(ctx context.Context, ownerID, authorizati
 	if err != nil {
 		return CertificateSubject{}, fmt.Errorf("read DNS challenge subject: %w", err)
 	}
-	subject, err := certificateSubject(row.PublicURLID, row.PublishRunID, row.PublishRunNumber, row.PrivateServiceID, row.PrivateRunID, row.PrivateRunNumber)
+	subject, err := certificateSubject(row.PublicURLID, row.PublishRunID, row.PublishRunNumber, row.ServiceID, row.ServiceRunID, row.ServiceRunNumber)
 	if err != nil {
 		return CertificateSubject{}, ErrDNSChallengeNotFound
 	}
@@ -139,11 +121,11 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 	switch subject.Kind {
 	case CertificateSubjectPublicURL:
 		row, err = queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{PublicURLID: subject.ID, AuthorizationID: authorizationID})
-	case CertificateSubjectManagedService:
-		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{PrivateServiceID: subject.ID, AuthorizationID: authorizationID})
+	case CertificateSubjectService:
+		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{ServiceID: subject.ID, AuthorizationID: authorizationID})
 		err = privateErr
 		if err == nil {
-			privateID = private.PrivateServiceID
+			privateID = private.ServiceID
 			row = controlstatedb.GetDNSChallengeContextRow{TeamID: private.TeamID, DomainID: private.DomainID.String, DnsAuthorityReference: private.DnsAuthorityReference, CanonicalHostname: private.CanonicalHostname, CanonicalDomain: private.CanonicalDomain, AuthorizationID: private.AuthorizationID, Identifier: private.Identifier, ChallengeDigest: private.ChallengeDigest, PresentationReference: private.PresentationReference, State: private.State}
 		}
 	default:
@@ -171,7 +153,7 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 	result := DNSChallengeContext{
 		Subject:     subject,
 		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
-		PrivateServiceID:      privateID,
+		ServiceID:             privateID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,
 		AuthorizationID: row.AuthorizationID, Identifier: row.Identifier,
 		PresentationReference: row.PresentationReference.String, State: state,

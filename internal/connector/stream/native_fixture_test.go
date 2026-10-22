@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"crypto/tls"

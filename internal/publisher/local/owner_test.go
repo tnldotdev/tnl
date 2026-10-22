@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 func TestAppWorkflowRejectsStaleOwnerAfterOneAppRestart(t *testing.T) {
@@ -28,11 +28,11 @@ func TestAppWorkflowRejectsStaleOwnerAfterOneAppRestart(t *testing.T) {
 			}
 		}
 	}
-	path, err := privateprotocol.DescriptorPath(a.state.Root(), a.project.Root)
+	path, err := publisherprotocol.DescriptorPath(a.state.Root(), a.project.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := privateprotocol.WriteEndpoint(path, endpoint); err != nil {
+	if err := publisherprotocol.WriteEndpoint(path, endpoint); err != nil {
 		t.Fatal(err)
 	}
 	changed := a.project

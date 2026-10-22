@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func testReport() controlv1.PublisherDeploymentReport {
@@ -62,13 +62,13 @@ func TestPublisherDeploymentProofBindsEveryFieldAndPresence(t *testing.T) {
 	r := testReport()
 	now := time.Now()
 	scope := func(report *controlv1.PublisherDeploymentReport) string {
-		return publisheridentity.RuntimeScope("group", "start", strings.Repeat("a", 32), 7, Digest(report))
+		return publisherproof.RuntimeScope("group", "start", strings.Repeat("a", 32), 7, Digest(report))
 	}
-	proof, err := publisheridentity.Sign("publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", private, now)
+	proof, err := publisherproof.Sign("publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := publisheridentity.Verify(proof, "publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", public, now); err != nil {
+	if _, err := publisherproof.Verify(proof, "publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", public, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*controlv1.PublisherDeploymentReport){
@@ -85,11 +85,11 @@ func TestPublisherDeploymentProofBindsEveryFieldAndPresence(t *testing.T) {
 	} {
 		copy := r
 		change(&copy)
-		if _, err := publisheridentity.Verify(proof, "publisher", "key", scope(&copy), "https://control.example/v1/publisher-runtime", public, now); err == nil {
+		if _, err := publisherproof.Verify(proof, "publisher", "key", scope(&copy), "https://control.example/v1/publisher-runtime", public, now); err == nil {
 			t.Fatal("unsigned metadata mutation accepted")
 		}
 	}
-	if _, err := publisheridentity.Verify(proof, "publisher", "key", scope(nil), "https://control.example/v1/publisher-runtime", public, now); err == nil {
+	if _, err := publisherproof.Verify(proof, "publisher", "key", scope(nil), "https://control.example/v1/publisher-runtime", public, now); err == nil {
 		t.Fatal("metadata stripped from signed proof")
 	}
 }

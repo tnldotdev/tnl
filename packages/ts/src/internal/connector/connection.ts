@@ -449,7 +449,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
           ),
           "connection startup",
         );
-        const file = value.private_handle;
+        const file = value.connection_handle;
         if (typeof file !== "string") throw new TnlError("sdk.response_invalid");
         readArgs(file, name);
         const exitCleanup = independent("sdk.app.cleanup", () => stopOwner(key, startedOwner));
@@ -471,8 +471,8 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
               "state",
               "pid",
               "expires_at",
-              "public_runtime",
-              "private_handle",
+              "project_runtime",
+              "connection_handle",
               "executable",
               ...(Object.hasOwn(value, "kubeconfig") ? ["kubeconfig"] : []),
             ],
@@ -481,7 +481,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
           if (
             value.schema !== 1 ||
             value.state !== "ready" ||
-            typeof value.private_handle !== "string" ||
+            typeof value.connection_handle !== "string" ||
             typeof value.pid !== "number" ||
             !Number.isSafeInteger(value.pid) ||
             value.pid <= 0 ||
@@ -494,7 +494,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
               (typeof value.kubeconfig !== "string" || !path.isAbsolute(value.kubeconfig)))
           )
             throw new TnlError("sdk.response_invalid");
-          parseProjectRuntime(value.public_runtime, "connection startup project");
+          parseProjectRuntime(value.project_runtime, "connection startup project");
           startedOwner.expiresAt = Date.parse(value.expires_at);
           startedOwner.ready = true;
           return startedOwner;
@@ -548,14 +548,14 @@ function parsePrepared(value: unknown, name: string, file: string): Prepared {
     object,
     [
       "schema",
-      "public_runtime",
+      "project_runtime",
       "connection",
       ...(Object.hasOwn(object, "verification") ? ["verification"] : []),
     ],
     "prepared connection",
   );
   if (object.schema !== 1) throw new TnlError("sdk.response_invalid");
-  const project = parseProjectRuntime(object.public_runtime, "connection project");
+  const project = parseProjectRuntime(object.project_runtime, "connection project");
   const snapshot = parseConnection(object.connection);
   const metadata = project.services[name];
   if (
@@ -638,7 +638,7 @@ export function parseConnection(value: unknown): Snapshot {
       ["servername", "rejectUnauthorized", ...(Object.hasOwn(tls, "ca") ? ["ca"] : [])],
       "native TLS",
     );
-    const servername = requiredHostname(tls.servername, "managed service hostname");
+    const servername = requiredHostname(tls.servername, "service hostname");
     if (
       tls.rejectUnauthorized !== true ||
       (Object.hasOwn(tls, "ca") &&

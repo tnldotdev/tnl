@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -19,8 +19,8 @@ const PublisherEnrollmentLifetime = 10 * time.Minute
 const PublisherAccessLifetime = 5 * time.Minute
 
 type PublisherScope struct {
-	TeamID, Kind, PublicURLID, PrivateServiceID, DomainID, Namespace, MembershipID string
-	PublicURLScope                                                                 PublicURLScope
+	TeamID, Kind, PublicURLID, ServiceID, DomainID, Namespace, MembershipID string
+	PublicURLScope                                                          PublicURLScope
 }
 
 // resolvedPublisherScope is a transaction-authorized grant target. submitted
@@ -31,18 +31,18 @@ type resolvedPublisherScope interface {
 }
 
 type savedURLPublisherScope struct{ teamID, publicURLID string }
-type privateServicePublisherScope struct{ teamID, privateServiceID string }
+type servicePublisherScope struct{ teamID, serviceID string }
 type namespacePublisherScope struct {
 	teamID, domainID, namespace, membershipID string
 	publicURLScope                            PublicURLScope
 }
 
 func (s savedURLPublisherScope) publisherScope() PublisherScope {
-	return PublisherScope{TeamID: s.teamID, Kind: "saved_url", PublicURLID: s.publicURLID}
+	return PublisherScope{TeamID: s.teamID, Kind: "saved_public_url", PublicURLID: s.publicURLID}
 }
 
-func (s privateServicePublisherScope) publisherScope() PublisherScope {
-	return PublisherScope{TeamID: s.teamID, Kind: "private_service", PrivateServiceID: s.privateServiceID}
+func (s servicePublisherScope) publisherScope() PublisherScope {
+	return PublisherScope{TeamID: s.teamID, Kind: "service", ServiceID: s.serviceID}
 }
 
 func (s namespacePublisherScope) publisherScope() PublisherScope {
@@ -52,8 +52,8 @@ func (s namespacePublisherScope) publisherScope() PublisherScope {
 // applied services have already been authorized under the project/team guard.
 // their saved target, rather than a caller's submitted scope, determines grants.
 func publisherScopeForAppliedService(s controlstatedb.ControlAppliedProjectService) resolvedPublisherScope {
-	if s.PrivateServiceID.Valid {
-		return privateServicePublisherScope{s.TeamID, s.PrivateServiceID.String}
+	if s.ServiceID.Valid {
+		return servicePublisherScope{s.TeamID, s.ServiceID.String}
 	}
 	return savedURLPublisherScope{s.TeamID, s.PublicURLID.String}
 }
@@ -97,7 +97,7 @@ func publisherLookupError(err, unavailable error) error {
 }
 
 func scopeFromGrant(team string, g controlstatedb.ControlPublisherGrant) PublisherScope {
-	return PublisherScope{TeamID: team, Kind: g.Kind, PublicURLID: g.PublicURLID.String, PrivateServiceID: g.PrivateServiceID.String, DomainID: g.DomainID.String, Namespace: g.Namespace.String, MembershipID: g.MembershipID.String, PublicURLScope: PublicURLScope(g.PublicURLScope.String)}
+	return PublisherScope{TeamID: team, Kind: g.Kind, PublicURLID: g.PublicURLID.String, ServiceID: g.ServiceID.String, DomainID: g.DomainID.String, Namespace: g.Namespace.String, MembershipID: g.MembershipID.String, PublicURLScope: PublicURLScope(g.PublicURLScope.String)}
 }
 
 // authorizePublisherScope captures an explicit grant after checking the current
@@ -122,22 +122,22 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 		}
 		return nil, err
 	}
-	if scope.Kind == "private_service" {
-		if !opaqueid.Valid(scope.PrivateServiceID, opaqueid.PrivateServicePrefix) || scope.PublicURLID != "" || scope.DomainID != "" || scope.Namespace != "" ||
+	if scope.Kind == "service" {
+		if !opaqueid.Valid(scope.ServiceID, opaqueid.ServicePrefix) || scope.PublicURLID != "" || scope.DomainID != "" || scope.Namespace != "" ||
 			scope.MembershipID != "" || scope.PublicURLScope != "" || m.Role != "owner" && m.Role != "admin" {
 			return nil, ErrPublisherIdentity
 		}
-		s, err := q.LockPrivateService(ctx, scope.PrivateServiceID)
+		s, err := q.LockService(ctx, scope.ServiceID)
 		if err != nil {
 			return nil, publisherLookupError(err, ErrPublisherIdentity)
 		}
 		if s.TeamID != scope.TeamID || !s.Enabled || s.DeletedAt.Valid {
 			return nil, ErrPublisherIdentity
 		}
-		return privateServicePublisherScope{scope.TeamID, s.ID}, nil
+		return servicePublisherScope{scope.TeamID, s.ID}, nil
 	}
-	if scope.Kind == "saved_url" {
-		if scope.PrivateServiceID != "" || scope.DomainID != "" || scope.Namespace != "" {
+	if scope.Kind == "saved_public_url" {
+		if scope.ServiceID != "" || scope.DomainID != "" || scope.Namespace != "" {
 			return nil, ErrPublisherIdentity
 		}
 		u, err := q.LockPublicURLForRun(ctx, scope.PublicURLID)
@@ -150,7 +150,7 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 		}
 		return savedURLPublisherScope{scope.TeamID, u.ID}, nil
 	}
-	if scope.Kind != "namespace" || scope.PublicURLID != "" || scope.PrivateServiceID != "" {
+	if scope.Kind != "namespace" || scope.PublicURLID != "" || scope.ServiceID != "" {
 		return nil, ErrPublisherIdentity
 	}
 	c, err := q.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{IdentityID: editor, DomainID: scope.DomainID, TeamID: scope.TeamID})
@@ -177,9 +177,9 @@ func resolvePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pub
 		return nil, err
 	}
 	switch s.Kind {
-	case "private_service":
-		return privateServicePublisherScope{s.TeamID, s.PrivateServiceID}, nil
-	case "saved_url":
+	case "service":
+		return servicePublisherScope{s.TeamID, s.ServiceID}, nil
+	case "saved_public_url":
 		return savedURLPublisherScope{s.TeamID, s.PublicURLID}, nil
 	case "namespace":
 		return namespacePublisherScope{s.TeamID, s.DomainID, s.Namespace, s.MembershipID, s.PublicURLScope}, nil
@@ -191,11 +191,11 @@ func resolvePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pub
 // live-run checks validate current scope availability without creating a grant.
 // resolution uses the same checks before constructing a persistence-only scope.
 func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, guest string) error {
-	if s.Kind == "private_service" {
-		if guest != "" || !opaqueid.Valid(s.PrivateServiceID, opaqueid.PrivateServicePrefix) || s.PublicURLID != "" || s.DomainID != "" || s.Namespace != "" {
+	if s.Kind == "service" {
+		if guest != "" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || s.PublicURLID != "" || s.DomainID != "" || s.Namespace != "" {
 			return ErrPublisherIdentity
 		}
-		service, err := q.LockPrivateService(ctx, s.PrivateServiceID)
+		service, err := q.LockService(ctx, s.ServiceID)
 		if err != nil {
 			return publisherLookupError(err, ErrPublisherIdentity)
 		}
@@ -204,8 +204,8 @@ func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pu
 		}
 		return nil
 	}
-	if s.Kind == "saved_url" {
-		if s.PrivateServiceID != "" {
+	if s.Kind == "saved_public_url" {
+		if s.ServiceID != "" {
 			return ErrPublisherIdentity
 		}
 		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
@@ -225,7 +225,7 @@ func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pu
 		_, err = q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: u.DomainID, TeamID: text(s.TeamID)})
 		return err
 	}
-	if s.Kind != "namespace" || guest != "" || s.PrivateServiceID != "" {
+	if s.Kind != "namespace" || guest != "" || s.ServiceID != "" {
 		return ErrPublisherIdentity
 	}
 	domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: s.DomainID, TeamID: text(s.TeamID)})

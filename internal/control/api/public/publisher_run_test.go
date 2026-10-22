@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"net/http"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPublisherRunRejectsSessionAndOutOfScopeBeforeLookup(t *testing.T) {
@@ -22,7 +22,7 @@ func TestPublisherRunRejectsSessionAndOutOfScopeBeforeLookup(t *testing.T) {
 			t.Fatalf("unregistered publisher reached lookup: %d", w.Code)
 		}
 	}
-	s := &publicURLMutationStoreStub{route: controlstate.PublicURL{TeamID: "team"}, publisher: &controlstate.PublisherIdentity{Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_url", PublicURLID: "authorized"}}}
+	s := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{TeamID: "team"}, publisher: &controlstate.PublisherIdentity{Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "authorized"}}}
 	r := httptest.NewRequest(http.MethodPost, "/v1/public-urls/sensitive/publish-runs", nil)
 	r.Header.Set("Authorization", "Bearer publisher-access")
 	w := httptest.NewRecorder()

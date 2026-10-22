@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -43,12 +43,6 @@ type ACMEOrderWork struct {
 	Subject                CertificateSubject `json:"-"`
 	ID                     string
 	Account                ACMEAccount
-	PublishRunID           string
-	PublicURLID            string
-	PublishRunNumber       uint64
-	PrivateRunID           string
-	PrivateServiceID       string
-	PrivateRunNumber       uint64
 	CertificateCacheKey    string
 	CertificateScope       string
 	CertificateIdentifiers []string
@@ -74,22 +68,6 @@ type ACMEOrderWork struct {
 	WorkEpoch              uint64
 	WorkExpiresAt          time.Time
 	Authorizations         []ACMEAuthorizationWork
-}
-
-// ServiceID keeps DNS challenge ownership typed without inventing a public URL
-// for a managed private-service issuance.
-func (w ACMEOrderWork) ServiceID() string {
-	if w.Subject != (CertificateSubject{}) {
-		subject, err := w.CertificateSubject()
-		if err != nil {
-			return ""
-		}
-		return subject.ID
-	}
-	if w.PrivateServiceID != "" {
-		return w.PrivateServiceID
-	}
-	return w.PublicURLID
 }
 
 func (d *Database) UpdateACMEAccountRegistration(
@@ -214,6 +192,10 @@ func (d *Database) SaveACMEOrderWork(
 	if err != nil {
 		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update order: %w", err)
 	}
+	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
+	if err != nil || subject != work.Subject {
+		return ACMEOrderWork{}, ErrCertificateIssuanceInvalid
+	}
 	for index := range work.Authorizations {
 		authorization := &work.Authorizations[index]
 		if authorization.ID == "" {
@@ -292,7 +274,7 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.PrivateServiceID, order.PrivateRunID, order.PrivateRunNumber)
+	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
 	if err != nil || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||
@@ -301,9 +283,7 @@ func acmeOrderWork(
 	}
 	work := ACMEOrderWork{
 		Subject: subject,
-		ID:      order.ID, Account: account, PublishRunID: order.PublishRunID,
-		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
-		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
+		ID:      order.ID, Account: account, CertificateCacheKey: order.CertificateCacheKey,
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
 		ChallengeMethod: certificateidentity.ChallengeMethod(order.ChallengeMethod), CSRDER: slices.Clone(order.CsrDer), State: ACMEOrderState(order.State),
 		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,
@@ -349,10 +329,9 @@ func acmeOrderWork(
 }
 
 func validateACMEOrderWork(work ACMEOrderWork) error {
-	_, subjectErr := work.CertificateSubject()
 	_, bindingErr := checkedACMEWorkBinding(work.OrderRevision, work.WorkEpoch)
 	_, attemptsOK := nonnegativeInt64(work.Attempts)
-	if !validStateText(work.ID) || !validStateText(work.WorkerID) || subjectErr != nil || bindingErr != nil || !attemptsOK ||
+	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !work.Subject.Valid() || bindingErr != nil || !attemptsOK ||
 		work.WorkExpiresAt.IsZero() ||
 		!work.State.valid() || !work.ChallengeMethod.Valid() ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
@@ -43,7 +43,7 @@ func streamingProxy(t *testing.T, kind string, h2 bool, backend string) (*http.C
 	transport := &http.Transport{ForceAttemptHTTP2: h2}
 	address := ""
 	if kind == "localproxy" {
-		handler, err := localproxy.NewWithMounts(backend, "proxy.example.test", 4, []localproxy.Mount{{Prefix: "/mounted", StripPrefix: true, Target: backend}})
+		handler, err := publisherproxy.NewWithMounts(backend, "proxy.example.test", 4, []publisherproxy.Mount{{Prefix: "/mounted", StripPrefix: true, Target: backend}})
 		if err != nil {
 			t.Fatal(err)
 		}

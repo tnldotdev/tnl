@@ -1,5 +1,5 @@
 // Package feedbacktoolbar serves the versioned development-only browser script.
-package feedbacktoolbar
+package toolbar
 
 import (
 	"crypto/sha256"

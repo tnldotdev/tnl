@@ -1,4 +1,4 @@
-package authorityapi
+package authority
 
 import (
 	"context"

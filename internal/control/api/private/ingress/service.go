@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func optionalString(value *string) string {
@@ -72,7 +72,7 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
-		PrivateConnectorAddress: optionalString(body.PrivateConnectorAddress), PrivateConnectorTLSServerName: optionalString(body.PrivateConnectorTlsServerName),
+		ConnectorAddress: optionalString(body.ConnectorAddress), ConnectorTLSServerName: optionalString(body.ConnectorTlsServerName),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)

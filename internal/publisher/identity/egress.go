@@ -1,11 +1,11 @@
-package native
+package identity
 
 import (
 	"context"
 
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // RemoteRuntime is called only by an actual deployed runtime owner, never while

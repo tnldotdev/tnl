@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ecdsa"
@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func poolReviewFixtures(t *testing.T) ([]publishRunFixture, []PublisherIdentity, []ed25519.PrivateKey, CreatePublicURLRequest) {
@@ -31,7 +31,7 @@ func poolReviewFixtures(t *testing.T) ([]publishRunFixture, []PublisherIdentity,
 	var publishers []PublisherIdentity
 	var keys []ed25519.PrivateKey
 	for index := range 2 {
-		enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: url.TeamID, Kind: "saved_url", PublicURLID: url.ID}, now)
+		enrollment := publisherEnrollment(t, d, creation, PublisherScope{TeamID: url.TeamID, Kind: "saved_public_url", PublicURLID: url.ID}, now)
 		public, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
@@ -54,7 +54,7 @@ func poolReviewFixtures(t *testing.T) ([]publishRunFixture, []PublisherIdentity,
 		request.RequestDigest = sha256.Sum256([]byte(request.IdempotencyKey))
 		request.CertificateCacheKey, request.CertificateScope, request.CertificateIdentifiers, request.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
 		request.PublisherIdentityID, request.PublisherGrantID, request.PublisherKeyID = publisher.ID, publisher.GrantID, publisher.KeyID
-		request.PublisherRunProof, err = publisheridentity.SignRun(key, url.ID, request.IdempotencyKey)
+		request.PublisherRunProof, err = publisherproof.SignRun(key, url.ID, request.IdempotencyKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func poolReviewFixtures(t *testing.T) ([]publishRunFixture, []PublisherIdentity,
 func TestIntegrationSharedPublisherStorageAndPoolAuthorizationReview(t *testing.T) {
 	runs, publishers, keys, creation := poolReviewFixtures(t)
 	d, now := runs[0].database, runs[0].now
-	for _, relation := range []struct{ name, kind string }{{"publisher_service_connection_slots", "r"}, {"publish_run_connection_slots", "v"}, {"private_service_connection_slots", "v"}, {"publisher_service_runs", "v"}} {
+	for _, relation := range []struct{ name, kind string }{{"publisher_service_connection_slots", "r"}, {"publish_run_connection_slots", "v"}, {"service_connection_slots", "v"}, {"publisher_service_runs", "v"}} {
 		var kind string
 		if err := d.pool.QueryRow(t.Context(), `SELECT relkind::text FROM pg_class WHERE oid=to_regclass('control.'||$1)`, relation.name).Scan(&kind); err != nil || kind != relation.kind {
 			t.Fatalf("%s is not the shared storage/view model: %q %v", relation.name, kind, err)
@@ -106,7 +106,7 @@ func TestIntegrationSharedPublisherStorageAndPoolAuthorizationReview(t *testing.
 	duplicate := runs[0].request
 	duplicate.IdempotencyKey = "duplicate"
 	duplicate.ExpectedMutationRevision = current.MutationRevision
-	duplicate.PublisherRunProof, err = publisheridentity.SignRun(keys[0], current.ID, duplicate.IdempotencyKey)
+	duplicate.PublisherRunProof, err = publisherproof.SignRun(keys[0], current.ID, duplicate.IdempotencyKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,20 +130,20 @@ func TestIntegrationSharedPublisherStorageAndPoolAuthorizationReview(t *testing.
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_service_connection_slots WHERE service_id=$1 AND session_open`, current.ID).Scan(&live); err != nil || live != 2 {
 		t.Fatalf("shared slot parent cascade did not preserve sibling: %d %v", live, err)
 	}
-	private, err := d.CreatePrivateService(t.Context(), creation.TeamID, creation.ActingIdentityID, "private", "private", now)
+	private, err := d.CreateServiceAt(t.Context(), creation.TeamID, creation.ActingIdentityID, "private", "private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta := private.PrivateServiceMetadata
+	meta := private.ServiceMetadata
 	meta.PublisherPool = true
-	updated, err := d.ConfigurePrivateService(t.Context(), private.ID, creation.ActingIdentityID, meta, now)
+	updated, err := d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, meta, now)
 	if err != nil || updated.TrustRevision != private.TrustRevision+1 {
 		t.Fatal("operator pool edits are not revision fenced", err)
 	}
-	if _, err = d.ConfigurePrivateService(t.Context(), private.ID, creation.ActingIdentityID, private.PrivateServiceMetadata, now); !errors.Is(err, ErrPrivateServiceConflict) {
+	if _, err = d.ConfigureService(t.Context(), private.ID, creation.ActingIdentityID, private.ServiceMetadata, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("stale operator silently reverted approved pool: %v", err)
 	}
-	if saved, err := d.GetPrivateService(t.Context(), private.ID, creation.ActingIdentityID); err != nil || !saved.PublisherPool || saved.TrustRevision != updated.TrustRevision {
+	if saved, err := d.GetService(t.Context(), private.ID, creation.ActingIdentityID); err != nil || !saved.PublisherPool || saved.TrustRevision != updated.TrustRevision {
 		t.Fatal("stale configuration changed the saved service", err)
 	}
 }
@@ -173,7 +173,7 @@ func TestIntegrationPublisherCertificateCacheAndDNSRetryWindow(t *testing.T) {
 	request := runs[0].request
 	request.IdempotencyKey = "restart"
 	request.ExpectedMutationRevision = current.MutationRevision
-	request.PublisherRunProof, err = publisheridentity.SignRun(keys[0], current.ID, request.IdempotencyKey)
+	request.PublisherRunProof, err = publisherproof.SignRun(keys[0], current.ID, request.IdempotencyKey)
 	if err != nil {
 		t.Fatal(err)
 	}

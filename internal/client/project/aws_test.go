@@ -1,9 +1,10 @@
-package projectconfig
+package project
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,12 +22,12 @@ func TestPublisherAWSConfiguration(t *testing.T) {
 			t.Run(format+"/"+test.name, func(t *testing.T) {
 				root := t.TempDir()
 				path := filepath.Join(root, "tnl."+format)
-				contents := fmt.Sprintf(`{"publishers":{"production":{"aws":%s}}}`, test.aws)
+				contents := fmt.Sprintf(`{"publisher_groups":{"production":{"aws":%s}}}`, test.aws)
 				if format == "json" {
 					contents = `{"version":1,"tnl":` + contents + `}`
 				} else {
 					path = filepath.Join(root, "tnl.config.ts")
-					contents = "export default " + contents + ";"
+					contents = "export default " + strings.ReplaceAll(contents, "publisher_groups", "publisherGroups") + ";"
 				}
 				if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 					t.Fatal(err)
@@ -41,7 +42,7 @@ func TestPublisherAWSConfiguration(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := project.Config.Publishers["production"].AWS; got == nil || got.ReplicaCount() != test.count {
+				if got := project.Config.PublisherGroups["production"].AWS; got == nil || got.ReplicaCount() != test.count {
 					t.Fatalf("AWS capacity = %+v", got)
 				}
 			})

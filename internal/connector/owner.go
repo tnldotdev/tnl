@@ -19,31 +19,31 @@ import (
 	"syscall"
 	"time"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	tcpconnect "github.com/tnldotdev/tnl/internal/connector/stream"
-	workloadclient "github.com/tnldotdev/tnl/internal/connector/workload"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
 type preparedConnection struct {
-	service         controlv1.PrivateService
-	connection      connectionruntime.Connection
+	service         controlv1.Service
+	connection      connectorruntime.Connection
 	kubeSource      kubeconfig.Source
 	kubePlan        kubeconfig.Plan
 	kubeResult      kubeconfig.Result
 	err             error
-	listener        *connectionruntime.ListenerSwitch
+	listener        *connectorruntime.ListenerSwitch
 	ready           bool
 	cancel          context.CancelFunc
-	control         tcpconnect.Control
+	control         connectorstream.Control
 	authorizedUntil time.Time
 	sessionID       string
 }
@@ -52,14 +52,14 @@ type nativeConnectionBackend struct {
 	nativeConnectionSession
 	openSession                                            SessionOpener
 	project                                                projectConfiguration
-	scope                                                  connectionruntime.Context
+	scope                                                  connectorruntime.Context
 	stateDir, assertion, directory, executable, runnerTemp string
 	httpClient                                             *http.Client
 	acquisition                                            workloadmanifest.Acquisition
 	prepared                                               map[string]*preparedConnection
 	initialServices                                        []string
-	services                                               map[string]controlv1.PrivateService
-	metadata                                               projectmeta.PublicMetadata
+	services                                               map[string]controlv1.Service
+	metadata                                               meta.PublicMetadata
 	lifetime                                               context.Context
 	kubeMu                                                 sync.Mutex
 	serviceGates                                           map[string]chan struct{}
@@ -82,13 +82,13 @@ type nativeConnectionBackend struct {
 type nativeConnectionSession struct {
 	human            *Session
 	teamID           string
-	workload         *workloadclient.Client
-	replacement      *workloadclient.Client
-	replacementScope connectionruntime.Context
+	workload         *workload.Client
+	replacement      *workload.Client
+	replacementScope connectorruntime.Context
 	deadline         time.Time
 	sessionGate      chan struct{}
-	verification     *connectionruntime.AssertionVerification
-	assertions       map[string]connectionruntime.AssertionVerification
+	verification     *connectorruntime.AssertionVerification
+	assertions       map[string]connectorruntime.AssertionVerification
 	assertionChecks  map[string]time.Time
 	verifiedSession  string
 }
@@ -96,16 +96,16 @@ type nativeConnectionSession struct {
 // the configured scope never changes with listener readiness or session renewal.
 // snapshots contain only published values; readers never join network work.
 type nativePreparedSnapshot struct {
-	metadata     projectmeta.PublicMetadata
-	verification *connectionruntime.AssertionVerification
-	assertions   map[string]connectionruntime.AssertionVerification
-	connections  map[string]connectionruntime.Connection
+	metadata     meta.PublicMetadata
+	verification *connectorruntime.AssertionVerification
+	assertions   map[string]connectorruntime.AssertionVerification
+	connections  map[string]connectorruntime.Connection
 	errors       map[string]error
 }
 
 func (b *nativeConnectionBackend) publishLocked() {
-	s := &nativePreparedSnapshot{metadata: b.metadata, connections: map[string]connectionruntime.Connection{}, errors: map[string]error{}}
-	s.assertions = make(map[string]connectionruntime.AssertionVerification, len(b.assertions))
+	s := &nativePreparedSnapshot{metadata: b.metadata, connections: map[string]connectorruntime.Connection{}, errors: map[string]error{}}
+	s.assertions = make(map[string]connectorruntime.AssertionVerification, len(b.assertions))
 	for digest, proof := range b.assertions {
 		s.assertions[digest] = proof
 	}
@@ -118,7 +118,7 @@ func (b *nativeConnectionBackend) publishLocked() {
 			continue
 		}
 		service, allowed := b.services[name]
-		if !allowed || service.Id != p.service.Id || service.Protocol != p.service.Protocol || service.ManagedTls == nil || p.service.ManagedTls == nil || *service.ManagedTls != *p.service.ManagedTls {
+		if !allowed || service.Id != p.service.Id || service.Protocol != p.service.Protocol || service.Endpoint == nil || p.service.Endpoint == nil || *service.Endpoint != *p.service.Endpoint {
 			continue
 		}
 		if p.err != nil {
@@ -126,7 +126,7 @@ func (b *nativeConnectionBackend) publishLocked() {
 			continue
 		}
 		if b.closed {
-			s.errors[name] = connectionruntime.ErrExpired
+			s.errors[name] = connectorruntime.ErrExpired
 			continue
 		}
 		deadline := b.deadline
@@ -143,7 +143,7 @@ func (b *nativeConnectionBackend) publishLocked() {
 		c := p.connection
 		c.ExpiresAt = deadline
 		if p.service.Protocol != controlv1.Tcp {
-			c.SSL = &connectionruntime.TLSOptions{ServerName: p.service.ManagedTls.Hostname, RejectUnauthorized: true}
+			c.SSL = &connectorruntime.TLSOptions{ServerName: p.service.Endpoint.Hostname, RejectUnauthorized: true}
 		}
 		s.connections[name] = c
 	}
@@ -161,7 +161,7 @@ func (b *nativeConnectionBackend) begin(ctx context.Context) (context.Context, f
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
-		return nil, nil, connectionruntime.ErrExpired
+		return nil, nil, connectorruntime.ErrExpired
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -184,27 +184,27 @@ func (b *nativeConnectionBackend) cleanup() context.Context {
 	return context.Background()
 }
 
-func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.PublicMetadata, time.Time, error) {
+func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadata, time.Time, error) {
 	b.prepared = map[string]*preparedConnection{}
 	b.teamID = b.scope.TeamID
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 	b.cancel = cancel
 	b.lifetime = lifetime
-	metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
-	services := map[string]controlv1.PrivateService{}
+	metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
+	services := map[string]controlv1.Service{}
 	if b.scope.Workload != "" {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
-		client, err := workloadclient.NewWithKey(b.scope.Server, b.httpClient, key)
+		client, err := workload.NewWithKey(b.scope.Server, b.httpClient, key)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		b.workload = client
 		identity, err := client.IdentifyPolicy(ctx, b.scope.TeamID, b.scope.ProjectKey, b.scope.SourceID, b.scope.Workload, b.assertion)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		selected := []string{}
 		for _, name := range b.scope.Services {
@@ -213,7 +213,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 			}
 		}
 		if len(selected) == 0 {
-			return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrUnauthorized
+			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
 		}
 		requested := b.scope
 		requested.Services = selected
@@ -221,36 +221,36 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 		session, err := exchangeConnectionWorkload(ctx, client, requested, assertion)
 		b.assertion = "" // neither the assertion nor GitHub's request bearer survives exchange.
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		b.deadline = session.ExpiresAt
 		if session.Binding != identity.Binding {
-			return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrUnauthorized
+			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
 		}
 		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
 		if session.ExpiresAt.After(time.Now().Add(b.project.Config.Workloads[b.scope.Workload].DurationLimit())) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
-			return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrExpired
+			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrExpired
 		}
 		inventory, err := client.ListServices(ctx)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		for _, service := range inventory.Services {
 			if _, duplicate := services[service.Service]; duplicate {
-				return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrInvalid
+				return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrInvalid
 			}
-			services[service.Service] = controlv1.PrivateService{Id: service.Id, Name: service.Service, TeamId: session.TeamId, Protocol: service.Protocol, Enabled: true, ManagedTls: &service.ManagedTls, KubernetesAuth: service.KubernetesAuth}
+			services[service.Service] = controlv1.Service{Id: service.Id, Name: service.Service, TeamId: session.TeamId, Protocol: service.Protocol, Enabled: true, Endpoint: &service.Endpoint, KubernetesAuth: service.KubernetesAuth}
 		}
 	} else {
 		session, err := b.openSession(ctx, SessionOptions{ServerURL: b.scope.Server, StateDir: b.stateDir, ProjectTeam: b.scope.TeamID}, "tnl connect", io.Discard)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		b.human = session
 		b.deadline = time.Now().Add(time.Hour)
 		membership, err := session.currentMembership(ctx)
 		if err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 		b.teamID = membership.TeamId
 		for _, name := range b.scope.Services {
@@ -270,12 +270,12 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 			delete(services, name)
 			continue
 		}
-		endpoint := service.ManagedTls
+		endpoint := service.Endpoint
 		if string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
 			delete(services, name)
 			continue
 		}
-		value, err := projectmeta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
+		value, err := meta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
 		if err != nil {
 			delete(services, name)
 			continue
@@ -286,7 +286,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 		}
 	}
 	if err := metadata.Validate(); err != nil {
-		return projectmeta.PublicMetadata{}, time.Time{}, err
+		return meta.PublicMetadata{}, time.Time{}, err
 	}
 	b.services = services
 	b.metadata = metadata.Public(false)
@@ -297,16 +297,16 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 	// application-owned SDK processes prepare each service on its own IPC read.
 	for _, name := range b.initialServices {
 		if _, err := b.Connect(ctx, name); err != nil {
-			return projectmeta.PublicMetadata{}, time.Time{}, err
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 	}
 	return b.metadata, b.deadline, nil
 }
 
-func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (connectionruntime.Connection, error) {
+func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (connectorruntime.Connection, error) {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
-		return connectionruntime.Connection{}, err
+		return connectorruntime.Connection{}, err
 	}
 	defer finish()
 	b.mu.Lock()
@@ -323,10 +323,10 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	case gate <- struct{}{}:
 		defer func() { <-gate }()
 	case <-ctx.Done():
-		return connectionruntime.Connection{}, ctx.Err()
+		return connectorruntime.Connection{}, ctx.Err()
 	}
 	if _, err := b.healthy(); err != nil {
-		return connectionruntime.Connection{}, err
+		return connectorruntime.Connection{}, err
 	}
 	b.mu.Lock()
 	service, found := b.services[name]
@@ -338,7 +338,7 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	}
 	b.mu.Unlock()
 	if !found || ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-		return connectionruntime.Connection{}, connectionruntime.ErrInvalid
+		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
 	}
 	if p != nil && time.Now().Before(authorizedUntil) {
 		if snapshot, err := b.Prepared(name); err == nil {
@@ -349,7 +349,7 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	if client != nil {
 		authorization, err := client.CheckService(ctx, service.Id)
 		if err != nil {
-			return connectionruntime.Connection{}, err
+			return connectorruntime.Connection{}, err
 		}
 		if authorization.ValidUntil.Before(validUntil) {
 			validUntil = authorization.ValidUntil
@@ -367,9 +367,9 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	if p == nil || !p.ready || failed || !time.Now().Before(authorizedUntil) {
 		fresh, err := b.refreshService(ctx, name, service, client)
 		if err != nil {
-			return connectionruntime.Connection{}, err
+			return connectorruntime.Connection{}, err
 		}
-		if p != nil && (fresh.ManagedTls == nil || p.service.ManagedTls == nil || *fresh.ManagedTls != *p.service.ManagedTls) {
+		if p != nil && (fresh.Endpoint == nil || p.service.Endpoint == nil || *fresh.Endpoint != *p.service.Endpoint) {
 			failed = true
 		}
 		service = fresh
@@ -378,24 +378,24 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 		var err error
 		p, err = b.prepareService(ctx, name, p, service, client)
 		if err != nil {
-			return connectionruntime.Connection{}, err
+			return connectorruntime.Connection{}, err
 		}
 	}
 	b.mu.Lock()
 	err = p.err
 	b.mu.Unlock()
 	if err != nil {
-		return connectionruntime.Connection{}, err
+		return connectorruntime.Connection{}, err
 	}
 	if b.human != nil && p.control != nil {
-		if _, err := p.control.ResolvePrivateService(ctx, p.service.Id); err != nil {
-			return connectionruntime.Connection{}, err
+		if _, err := p.control.ResolveService(ctx, p.service.Id); err != nil {
+			return connectorruntime.Connection{}, err
 		}
 	}
 	b.mu.Lock()
 	if b.workload != client || b.closed {
 		b.mu.Unlock()
-		return connectionruntime.Connection{}, connectionruntime.ErrUnprepared
+		return connectorruntime.Connection{}, connectorruntime.ErrUnprepared
 	}
 	p.authorizedUntil = validUntil
 	b.publishLocked()
@@ -403,7 +403,7 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	return b.Prepared(name)
 }
 
-func (b *nativeConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.PrivateService, client *workloadclient.Client) (controlv1.PrivateService, error) {
+func (b *nativeConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.Service, client *workload.Client) (controlv1.Service, error) {
 	service := approved
 	if client != nil {
 		inventory, err := client.ListServices(ctx)
@@ -416,13 +416,13 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 				continue
 			}
 			if found {
-				return service, connectionruntime.ErrInvalid
+				return service, connectorruntime.ErrInvalid
 			}
 			found = true
-			service = controlv1.PrivateService{Id: s.Id, Name: name, TeamId: approved.TeamId, Protocol: s.Protocol, Enabled: true, ManagedTls: &s.ManagedTls, KubernetesAuth: s.KubernetesAuth}
+			service = controlv1.Service{Id: s.Id, Name: name, TeamId: approved.TeamId, Protocol: s.Protocol, Enabled: true, Endpoint: &s.Endpoint, KubernetesAuth: s.KubernetesAuth}
 		}
 		if !found {
-			return service, connectionruntime.ErrUnauthorized
+			return service, connectorruntime.ErrUnauthorized
 		}
 	} else if b.human != nil {
 		var err error
@@ -431,30 +431,30 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 			return service, err
 		}
 		if service.Id != approved.Id {
-			return service, connectionruntime.ErrUnauthorized
+			return service, connectorruntime.ErrUnauthorized
 		}
 	}
 	if ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-		return service, connectionruntime.ErrInvalid
+		return service, connectorruntime.ErrInvalid
 	}
-	endpoint := service.ManagedTls
-	value, err := projectmeta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
+	endpoint := service.Endpoint
+	value, err := meta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
 	if err != nil {
 		return service, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.workload != client || b.closed {
-		return service, connectionruntime.ErrUnprepared
+		return service, connectorruntime.ErrUnprepared
 	}
 	b.services[name] = service
 	metadata := b.metadata
-	metadata.Services = make(map[string]projectmeta.Service, len(b.metadata.Services))
+	metadata.Services = make(map[string]meta.Service, len(b.metadata.Services))
 	for key, s := range b.metadata.Services {
 		metadata.Services[key] = s
 	}
 	metadata.Services[name] = value
-	if approved.ManagedTls != nil && metadata.Namespace == approved.ManagedTls.Hostname {
+	if approved.Endpoint != nil && metadata.Namespace == approved.Endpoint.Hostname {
 		metadata.Namespace = value.Namespace
 	}
 	b.metadata = metadata
@@ -464,16 +464,16 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 
 // Prepared is a local read only: no provider/control requests, key creation,
 // listener setup or repair. an unprepared sibling must be explicitly awaited.
-func (b *nativeConnectionBackend) Prepared(name string) (connectionruntime.Connection, error) {
+func (b *nativeConnectionBackend) Prepared(name string) (connectorruntime.Connection, error) {
 	p, err := b.Snapshot(name)
 	return p.Connection, err
 }
 
-func (b *nativeConnectionBackend) Snapshot(name string) (connectionruntime.Prepared, error) {
+func (b *nativeConnectionBackend) Snapshot(name string) (connectorruntime.Prepared, error) {
 	return b.SnapshotFor(name, "")
 }
 
-func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectionruntime.Prepared, error) {
+func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectorruntime.Prepared, error) {
 	s := b.snapshot.Load()
 	if s == nil {
 		b.mu.Lock()
@@ -482,16 +482,16 @@ func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectio
 		b.mu.Unlock()
 	}
 	if err := s.errors[name]; err != nil {
-		return connectionruntime.Prepared{}, err
+		return connectorruntime.Prepared{}, err
 	}
 	c, ok := s.connections[name]
 	if !ok {
-		return connectionruntime.Prepared{}, connectionruntime.ErrUnprepared
+		return connectorruntime.Prepared{}, connectorruntime.ErrUnprepared
 	}
 	if !c.ExpiresAt.After(time.Now()) {
-		return connectionruntime.Prepared{}, connectionruntime.ErrExpired
+		return connectorruntime.Prepared{}, connectorruntime.ErrExpired
 	}
-	var verification *connectionruntime.AssertionVerification
+	var verification *connectorruntime.AssertionVerification
 	if s.verification != nil && s.verification.ExpiresAt.After(time.Now()) {
 		v := *s.verification
 		verification = &v
@@ -504,11 +504,11 @@ func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectio
 		digest := sha256.Sum256([]byte(assertion))
 		proof, found := s.assertions[hex.EncodeToString(digest[:])]
 		if !found || !proof.ExpiresAt.After(time.Now()) {
-			return connectionruntime.Prepared{}, connectionruntime.ErrUnprepared
+			return connectorruntime.Prepared{}, connectorruntime.ErrUnprepared
 		}
 		verification = &proof
 	}
-	return connectionruntime.Prepared{Schema: 1, PublicRuntime: s.metadata, Connection: c, Verification: verification}, nil
+	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: s.metadata, Connection: c, Verification: verification}, nil
 }
 func (b *nativeConnectionBackend) healthy() (time.Time, error) {
 	b.mu.Lock()
@@ -518,7 +518,7 @@ func (b *nativeConnectionBackend) healthy() (time.Time, error) {
 		b.publishLocked()
 	}
 	if !b.deadline.After(time.Now()) {
-		return time.Time{}, connectionruntime.ErrExpired
+		return time.Time{}, connectorruntime.ErrExpired
 	}
 	return b.deadline, nil
 }
@@ -531,7 +531,7 @@ func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) 
 	if b.parentPID > 0 {
 		process, err := os.FindProcess(b.parentPID)
 		if err != nil || process.Signal(syscall.Signal(0)) != nil {
-			return time.Time{}, connectionruntime.ErrExpired
+			return time.Time{}, connectorruntime.ErrExpired
 		}
 	}
 	if _, err := b.healthy(); err != nil {
@@ -547,7 +547,7 @@ func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) 
 			return time.Time{}, err
 		}
 		if session.ExpiresAt.After(currentDeadline) || !session.LeaseExpiresAt.After(time.Now()) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
-			return time.Time{}, connectionruntime.ErrExpired
+			return time.Time{}, connectorruntime.ErrExpired
 		}
 		b.mu.Lock()
 		if b.workload == client && session.ExpiresAt.Before(b.deadline) {
@@ -611,7 +611,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 	}
 	if assertion == "" {
 		var err error
-		assertion, err = workloadclient.Acquire(ctx, b.acquisition, nil)
+		assertion, err = workload.Acquire(ctx, b.acquisition, nil)
 		if err != nil {
 			return err
 		}
@@ -620,7 +620,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 	client := b.workload
 	b.mu.Unlock()
 	if client == nil {
-		return connectionruntime.ErrInvalid
+		return connectorruntime.ErrInvalid
 	}
 	previous, err := client.Session()
 	if err != nil {
@@ -634,7 +634,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.closed {
-			return connectionruntime.ErrExpired
+			return connectorruntime.ErrExpired
 		}
 		b.deadline = session.ExpiresAt
 		if session.AssertionExpiresAt != nil {
@@ -652,24 +652,24 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 		p.authorizedUntil = time.Time{}
 	}
 	b.mu.Unlock()
-	if errors.Is(err, workloadclient.ErrSessionExpired) {
+	if errors.Is(err, workload.ErrSessionExpired) {
 		// replacement authorizes future accepts from scratch. the old adapter and
 		// its streams retain their old subject and never receive the new rights.
 		if previous.Provider == controlv1.WorkloadGitHub {
-			return connectionruntime.ErrExpired
+			return connectorruntime.ErrExpired
 		}
 		b.mu.Lock()
 		next := b.replacement
 		b.mu.Unlock()
 		if next == nil {
-			next, err = workloadclient.New(b.scope.Server, b.httpClient)
+			next, err = workload.New(b.scope.Server, b.httpClient)
 			if err != nil {
 				return err
 			}
 			b.mu.Lock()
 			if b.closed {
 				b.mu.Unlock()
-				return connectionruntime.ErrExpired
+				return connectorruntime.ErrExpired
 			}
 			b.replacement = next
 			b.mu.Unlock()
@@ -679,7 +679,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 			return err
 		}
 		if identity.Binding != previous.Binding {
-			return connectionruntime.ErrUnauthorized
+			return connectorruntime.ErrUnauthorized
 		}
 		if b.replacementScope.Schema == 0 {
 			b.replacementScope = b.scope
@@ -691,39 +691,39 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 			}
 		}
 		if len(b.replacementScope.Services) == 0 {
-			return connectionruntime.ErrUnauthorized
+			return connectorruntime.ErrUnauthorized
 		}
 		session, err := exchangeConnectionWorkload(ctx, next, b.replacementScope, assertion)
 		if err != nil {
 			// only control-confirmed expiry permits a new retry nonce/key after
 			// an exchange response was lost for longer than its original lease.
-			if errors.Is(err, workloadclient.ErrSessionExpired) {
+			if errors.Is(err, workload.ErrSessionExpired) {
 				b.mu.Lock()
 				b.replacement = nil
-				b.replacementScope = connectionruntime.Context{}
+				b.replacementScope = connectorruntime.Context{}
 				b.mu.Unlock()
 			}
 			return err
 		}
 		if session.Binding != previous.Binding {
 			_ = next.Revoke(ctx)
-			return connectionruntime.ErrUnauthorized
+			return connectorruntime.ErrUnauthorized
 		}
 		inventory, err := next.ListServices(ctx)
 		if err != nil {
 			return err
 		}
-		services := map[string]controlv1.PrivateService{}
-		metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
+		services := map[string]controlv1.Service{}
+		metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
 		for _, s := range inventory.Services {
 			if !slices.Contains(b.scope.Services, s.Service) || string(s.Protocol) != config.Protocol(b.project.Config.Services[s.Service]) {
 				continue
 			}
-			value, err := projectmeta.NewEndpoint(s.ManagedTls.Hostname, s.ManagedTls.Hostname, string(s.Protocol), s.ManagedTls.Port, s.ManagedTls.Public)
+			value, err := meta.NewEndpoint(s.Endpoint.Hostname, s.Endpoint.Hostname, string(s.Protocol), s.Endpoint.Port, s.Endpoint.Public)
 			if err != nil {
 				continue
 			}
-			services[s.Service] = controlv1.PrivateService{Id: s.Id, Name: s.Service, TeamId: session.TeamId, Protocol: s.Protocol, Enabled: true, ManagedTls: &s.ManagedTls, KubernetesAuth: s.KubernetesAuth}
+			services[s.Service] = controlv1.Service{Id: s.Id, Name: s.Service, TeamId: session.TeamId, Protocol: s.Protocol, Enabled: true, Endpoint: &s.Endpoint, KubernetesAuth: s.KubernetesAuth}
 			metadata.Services[s.Service] = value
 			if metadata.Namespace == "" {
 				metadata.Namespace = value.Namespace
@@ -735,14 +735,14 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.closed {
-			return connectionruntime.ErrExpired
+			return connectorruntime.ErrExpired
 		}
 		b.workload = next
 		b.deadline = session.ExpiresAt
 		b.services, b.metadata = services, metadata.Public(false)
 		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
 		b.replacement = nil
-		b.replacementScope = connectionruntime.Context{}
+		b.replacementScope = connectorruntime.Context{}
 		b.publishLocked()
 		return nil
 	}
@@ -775,9 +775,9 @@ func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires ti
 		return
 	}
 	digest := sha256.Sum256([]byte(assertion))
-	b.verification = &connectionruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: session.Binding, ExpiresAt: expires}
+	b.verification = &connectorruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: session.Binding, ExpiresAt: expires}
 	if b.assertions == nil || b.verifiedSession != session.Id {
-		b.assertions = map[string]connectionruntime.AssertionVerification{}
+		b.assertions = map[string]connectorruntime.AssertionVerification{}
 		b.assertionChecks = map[string]time.Time{}
 	}
 	for key, proof := range b.assertions {
@@ -801,7 +801,7 @@ func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires ti
 	b.assertionChecks[b.verification.Digest] = checkedUntil
 	b.verifiedSession = session.Id
 }
-func (b *nativeConnectionBackend) Verification() *connectionruntime.AssertionVerification {
+func (b *nativeConnectionBackend) Verification() *connectorruntime.AssertionVerification {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.verification == nil || !b.verification.ExpiresAt.After(time.Now()) {
@@ -811,7 +811,7 @@ func (b *nativeConnectionBackend) Verification() *connectionruntime.AssertionVer
 	return &v
 }
 
-func (b *nativeConnectionBackend) PublicRuntime() projectmeta.PublicMetadata {
+func (b *nativeConnectionBackend) ProjectRuntime() meta.PublicMetadata {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.metadata
@@ -853,7 +853,7 @@ func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, 
 		return err
 	}
 	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: p.service.Id}
-	p.kubeResult, err = p.kubePlan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(p.connection.Host, strconv.Itoa(p.connection.Port)), TLSServerName: p.service.ManagedTls.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
+	p.kubeResult, err = p.kubePlan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(p.connection.Host, strconv.Itoa(p.connection.Port)), TLSServerName: p.service.Endpoint.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
 	if err == nil {
 		if b.scope.Workload != "" {
 			b.sessionKubeResult = p.kubeResult

@@ -13,7 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -28,7 +28,7 @@ type ForwardingAcceptorConfig struct {
 	Now              func() time.Time
 	Report           func(error)
 	Observer         OperationObserver
-	PrivateRegistry  *PrivateRegistry
+	ServiceRegistry  *ServiceRegistry
 }
 
 // ForwardingAcceptor carries internal visitor streams from ingress to locally
@@ -44,7 +44,7 @@ type ForwardingAcceptor struct {
 	now              func() time.Time
 	report           func(error)
 	observer         OperationObserver
-	private          *PrivateRegistry
+	private          *ServiceRegistry
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
@@ -71,7 +71,7 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected, streamRejected: config.StreamRejected,
 		now: config.Now, report: config.Report,
 		observer: config.Observer,
-		private:  config.PrivateRegistry,
+		private:  config.ServiceRegistry,
 	}, nil
 }
 
@@ -140,7 +140,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 
 func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
 	switch request := incoming.Request().(type) {
-	case *tunnel.IncomingPrivateForwardingStream:
+	case *tunnel.IncomingServiceForwardingStream:
 		return a.forwardPrivate(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
 	case *tunnel.IncomingPublicForwardingStream:
 		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request, ingressSessions...)

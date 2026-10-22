@@ -13,7 +13,7 @@ func TestPrivateHTTPSOriginDoesNotNegotiateTargetTLS(t *testing.T) {
 	// private bytes are owned by the connecting client.
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, r.Host+" "+r.URL.Path) }))
 	defer target.Close()
-	address, close, err := PrivateTarget(t.Context(), PrivateTargetPlan{Protocol: "http", Target: strings.Replace(target.URL, "http://", "https://", 1)})
+	address, close, err := ServiceTarget(t.Context(), TargetPlan{Protocol: "http", Target: strings.Replace(target.URL, "http://", "https://", 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestPrivateHTTPSOriginDoesNotNegotiateTargetTLS(t *testing.T) {
 func TestPrivateClientOwnsNativeHTTPS(t *testing.T) {
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "client TLS") }))
 	defer target.Close()
-	address, close, err := PrivateTarget(t.Context(), PrivateTargetPlan{Protocol: "http", Target: target.URL})
+	address, close, err := ServiceTarget(t.Context(), TargetPlan{Protocol: "http", Target: target.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

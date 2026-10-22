@@ -14,7 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/adhoc"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type RateLimit struct {
@@ -29,17 +29,17 @@ type Limits struct {
 }
 
 type Options struct {
-	EnrollmentKey   string
-	PublisherID     string
-	PublisherFile   string
-	Publisher       *Publisher
-	ServerURL       string
-	StateDir        string
-	HTTPClient      *http.Client
-	AccessMode      controlv1.VisitorAccessMode
-	IP              []string
-	Limits          Limits
-	StateProtection StateProtection
+	EnrollmentKey           string
+	PublisherIdentityID     string
+	PublisherCredentialFile string
+	PublisherIdentity       *PublisherIdentity
+	ServerURL               string
+	StateDir                string
+	HTTPClient              *http.Client
+	AccessMode              controlv1.VisitorAccessMode
+	IP                      []string
+	Limits                  Limits
+	StateProtection         StateProtection
 }
 
 // Tunnel owns its local listener, publish run, and temporary public URL.
@@ -94,9 +94,9 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			ControlURL: serverURL, HTTPClient: options.HTTPClient, State: profile,
 			Publisher: native, InvocationID: invocationID,
 			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
-			OnAllocated: func(route controlv1.PublicURL) error {
+			OnAllocated: func(publicURL controlv1.PublicURL) error {
 				tunnel.mu.Lock()
-				tunnel.id, tunnel.url = route.Id, "https://"+route.CanonicalHostname
+				tunnel.id, tunnel.url = publicURL.Id, "https://"+publicURL.CanonicalHostname
 				tunnel.mu.Unlock()
 				return nil
 			},

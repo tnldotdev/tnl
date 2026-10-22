@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type PublisherRunStore interface {
@@ -56,7 +56,7 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 	if p.Scope.PublicURLID != "" {
 		fields.ServiceProtocol = observability.ProtocolHTTP
 	}
-	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, PublicURLID: p.Scope.PublicURLID, ServiceID: p.Scope.PrivateServiceID}, fields))
+	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, PublicURLID: p.Scope.PublicURLID, ServiceID: p.Scope.ServiceID}, fields))
 	return store, p, true
 }
 
@@ -65,7 +65,7 @@ func (h *handler) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if p.Scope.Kind != "saved_url" {
+	if p.Scope.Kind != "saved_public_url" {
 		writeProblem(w, 404, controlv1.NotFound, "resource not found")
 		return
 	}

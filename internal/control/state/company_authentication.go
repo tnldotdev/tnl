@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -151,12 +151,12 @@ func consumeCompanyAssertion(ctx context.Context, q *controlstatedb.Queries, ide
 	return nil
 }
 
-func validCompanyAuthentication(c oidcauth.TeamContext, now time.Time) bool {
+func validCompanyAuthentication(c oidc.TeamContext, now time.Time) bool {
 	at := time.Unix(c.AuthenticatedAt, 0)
 	return validStateText(c.TeamID) && validStateText(c.IdentityConnectionID) && validStateText(c.Subject) && len(c.Subject) <= 256 && validStateText(c.SourceID) && len(c.SourceID) <= 256 && c.ConnectionRevision > 0 && !at.After(now) && at.Add(CompanyAuthenticationLifetime).After(now)
 }
 
-func verifiedCompanyProof(ctx context.Context, q *controlstatedb.Queries, identity, issuer string, c oidcauth.TeamContext, now time.Time) (bool, error) {
+func verifiedCompanyProof(ctx context.Context, q *controlstatedb.Queries, identity, issuer string, c oidc.TeamContext, now time.Time) (bool, error) {
 	if !validCompanyAuthentication(c, now) {
 		return false, nil
 	}

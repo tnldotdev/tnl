@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestDomainSelectionKeepsReadinessAndHostnameBoundaries(t *testing.T) {

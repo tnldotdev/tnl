@@ -1,4 +1,4 @@
-package projectmeta
+package meta
 
 import (
 	"encoding/json"
@@ -34,11 +34,11 @@ func TestGeneratedDeclarationsTypecheckSourceUnionsAndStaticShape(t *testing.T) 
 			configuration := config.TNL{}
 			source := `import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig(({worktree}) => ({
-  publishers: { production: {} },
+  publisherGroups: { production: {} },
   services: {
     web: {publicURL: {}, http: {paths: {"/api": "api"}}},
     api: {},
-    db: worktree.label.checkout ? {publisher: "production" as const, protocol: "postgres", target: {type: "address", address: "db:5432"}} : {publisher: "production" as const, protocol: "mysql", target: {type: "address", address: "db:3306"}},
+    db: worktree.label.checkout ? {publisherGroup: "production" as const, protocol: "postgres", target: {type: "address", address: "db:5432"}} : {publisherGroup: "production" as const, protocol: "mysql", target: {type: "address", address: "db:3306"}},
     ...(worktree.label.checkout ? {worker: {protocol: "tcp" as const, target: {type: "address" as const, address: "worker:9000"}}} : {}),
   },
   aliases: { review: { service: "web" } },

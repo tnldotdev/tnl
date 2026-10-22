@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -16,19 +16,19 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	controlproxy "github.com/tnldotdev/tnl/internal/control/proxy"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // runtimeHTTPTransport runs the actual router/proxy without dialing a fixture IP.
@@ -62,18 +62,18 @@ func (c *runtimeHTTPTransport) set(h http.Handler, peer, source string) {
 
 // publication heartbeat behavior has its own tests. this adapter isolates the
 // existing heartbeat's runtime renewal while keeping the real signed HTTP/DB path.
-type runtimeNativeControl struct{ *controlclient.Client }
+type runtimeNativeControl struct{ *clientcontrol.Client }
 
 var _ interface {
-	HeartbeatPrivateServiceRun(context.Context, string, string, credentials.ManagedRunToken) (controlv1.PrivateServiceRunState, error)
-	HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.ManagedRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken) (controlv1.ServiceRunState, error)
+	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 } = (*runtimeNativeControl)(nil)
 
 func (*runtimeNativeControl) HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 	return controlv1.PublishRunHeartbeat{}, nil
 }
-func (*runtimeNativeControl) HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.ManagedRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
-	return controlv1.PrivateServiceRunState{}, nil
+func (*runtimeNativeControl) HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+	return controlv1.ServiceRunState{}, nil
 }
 
 func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
@@ -99,29 +99,29 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = authorityapi.Register(h, authorityapi.Config{ControlURL: server}, d); err != nil {
+	if _, err = controlauthority.Register(h, controlauthority.Config{ControlURL: server}, d); err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := (controlproxy.Config{Origin: server, TrustedPeers: []string{"10.0.0.0/24"}, ClientIPHeader: "X-Forwarded-For"}).Handler(h)
+	proxy, err := (controlProxy.Config{Origin: server, TrustedPeers: []string{"10.0.0.0/24"}, ClientIPHeader: "X-Forwarded-For"}).Handler(h)
 	if err != nil {
 		t.Fatal(err)
 	}
 	transport := &runtimeHTTPTransport{handler: proxy, peer: "10.0.0.2:1234", source: "8.8.8.8"}
 	httpClient := &http.Client{Transport: transport}
-	owner, err := controlclient.New(server, httpClient, session.AccessToken)
+	owner, err := clientcontrol.New(server, httpClient, session.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := controlclient.New(server, httpClient, "")
+	client, err := clientcontrol.New(server, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityclient.New(server, httpClient, "")
+	authority, err := clientauthority.New(server, httpClient, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	group := "remote"
-	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{TeamId: m.TeamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Publishers: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: &group, Target: "api.internal:3000"}, "db": {Publisher: &group, Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
+	applied, err := owner.ApplyProjectConfiguration(ctx, "egress", controlv1.ApplyProjectConfigurationRequest{TeamId: m.TeamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432", Protocol: new(controlv1.Postgres)}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatalf("proxy source: %+v", first)
 	}
 	transport.set(proxy, "10.0.0.2:1234", "8.8.4.4")
-	groupClient, err := grouppublisher.NewClient(server, httpClient)
+	groupClient, err := publishergroup.NewClient(server, httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,13 +218,13 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if s := read(member.PublisherIdentityId); s.Address != nil || s.AddressFamily != "unknown" || !s.Active {
 		t.Fatal("local workflow failed", s)
 	}
-	if _, err = client.ListPublisherIdentities(ctx, m.TeamID, ""); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err = client.ListPublisherIdentities(ctx, m.TeamID, ""); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous status", err)
 	}
-	if _, err = owner.ListPublisherIdentities(ctx, "team_other", ""); !errors.Is(err, controlclient.ErrNotFound) {
+	if _, err = owner.ListPublisherIdentities(ctx, "team_other", ""); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatal("cross-team status", err)
 	}
-	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress"); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err = client.GetProjectConfiguration(ctx, m.TeamID, "egress"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("anonymous project status", err)
 	}
 	project, err := owner.GetProjectConfiguration(ctx, m.TeamID, "egress")
@@ -240,8 +240,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 		t.Fatal("runtime leaked into project metadata")
 	}
 	// a publication proof cannot start or replace a runtime, even for this identity.
-	proof, _ := publisheridentity.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher-groups/verify", key, time.Now())
-	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	proof, _ := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, server+"/v1/publisher-groups/verify", key, time.Now())
+	if _, err = client.PublisherRuntime(ctx, controlv1.PublisherRuntimeRequest{PublisherIdentityId: member.PublisherIdentityId, ScopeId: member.GroupId, ProcessRunId: strings.Repeat("e", 32), ExpectedEpoch: 1, Action: controlv1.RuntimeStart, Assertion: proof}); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("verification proof started runtime", err)
 	}
 	if err = runtime.Stop(ctx); err != nil {
@@ -257,7 +257,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	observed := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (grouppublisher.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
+		done <- (publishergroup.Runtime{Control: groupClient, Member: member, Private: key, PollInterval: time.Second, Observe: func(int64, bool) error {
 			select {
 			case observed <- struct{}{}:
 			default:
@@ -319,7 +319,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := nativeauth.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	native, err := publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,10 +359,10 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = replacement.Renew(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = native.HeartbeatPublishRun(ctx, "old-run", 1, credentials.PublishRunToken("test")); !errors.Is(err, controlclient.ErrStatusConflict) {
+	if _, err = native.HeartbeatPublishRun(ctx, "old-run", 1, credentials.PublishRunToken("test")); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatal("old installed heartbeat escaped fence", err)
 	}
-	if err = installed.Stop(ctx); !errors.Is(err, controlclient.ErrStatusConflict) {
+	if err = installed.Stop(ctx); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatal("old stop escaped fence", err)
 	}
 	if err = replacement.Stop(ctx); err != nil {
@@ -371,11 +371,11 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if s := read(identity.ClientId); s.Active || s.Address == nil || *s.Address != "1.1.1.1" || s.Epoch != 2 {
 		t.Fatal("installed stop lost last evidence", s)
 	}
-	service, err := owner.CreatePrivateService(ctx, m.TeamID, "installed-db", "installed-db", controlv1.PrivateServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1})
+	service, err := owner.CreateService(ctx, m.TeamID, "installed-db", "installed-db", controlv1.ServiceMetadata{Protocol: controlv1.Postgres, TrustRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pe, err = owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "installed-private", Kind: "installed", PrivateServiceId: &service.Id})
+	pe, err = owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: m.TeamID, Name: "installed-private", Kind: "installed", ServiceId: &service.Id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err = nativeauth.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	native, err = publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	native.WithRuntime(installed)
 	transport.set(proxy, "10.0.0.2:1234", "2606:4700:4700::1111")
-	if _, err = native.ManagedRunControl().HeartbeatPrivateServiceRunHealth(ctx, service.Id, "private-run", credentials.ManagedRunToken("test"), controlv1.PrivateServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err = native.HeartbeatServiceRunHealth(ctx, service.Id, "service-run", credentials.ServiceRunToken("test"), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal(err)
 	}
 	if s := read(identity.ClientId); s.AddressFamily != "ipv6" || !s.Active {
@@ -413,7 +413,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if before.Active || before.Address == nil {
 		t.Fatal("revocation lost historical evidence or retained liveness")
 	}
-	if _, err = installed.Renew(ctx); !errors.Is(err, controlclient.ErrUnauthenticated) {
+	if _, err = installed.Renew(ctx); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("revoked runtime wrote", err)
 	}
 	if !reflect.DeepEqual(read(identity.ClientId), before) {

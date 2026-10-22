@@ -7,12 +7,12 @@ import (
 	"io"
 	"strconv"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publicURLCommand struct {
@@ -130,22 +130,22 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 		clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
 		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
 	)}
-	for _, route := range routes {
+	for _, publicURL := range routes {
 		fields := []clioutput.Field{
-			clioutput.Field{Label: "scope", Value: string(route.PublicUrlScope)},
-			clioutput.Field{Label: "state", Value: string(route.LifecycleState)},
-			clioutput.Field{Label: "next publish run number", Value: strconv.FormatInt(route.NextPublishRunNumber, 10)},
-			clioutput.Field{Label: "public URL ID", Value: route.Id},
+			clioutput.Field{Label: "scope", Value: string(publicURL.PublicUrlScope)},
+			clioutput.Field{Label: "state", Value: string(publicURL.LifecycleState)},
+			clioutput.Field{Label: "next publish run number", Value: strconv.FormatInt(publicURL.NextPublishRunNumber, 10)},
+			clioutput.Field{Label: "public URL ID", Value: publicURL.Id},
 		}
-		if route.ServiceProtocol != controlv1.Http {
-			address, err := savedPublicAddress(route)
+		if publicURL.ServiceProtocol != controlv1.Http {
+			address, err := savedPublicAddress(publicURL)
 			if err != nil {
 				return err
 			}
-			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(route.ServiceProtocol)},
+			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(publicURL.ServiceProtocol)},
 				clioutput.Field{Label: "public URL", Value: address})
 		}
-		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(fields...)))
+		blocks = append(blocks, clioutput.Section(publicURL.CanonicalHostname, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(output, "tnl url inventory", countState(len(routes), "public URL", "public URLs"), "", blocks...)
 }
@@ -165,7 +165,7 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 		return err
 	}
 	if selected.TeamId != current.Team().Id {
-		return controlclient.ErrNotFound
+		return clientcontrol.ErrNotFound
 	}
 	if err := session.Authenticated().Control.DeletePublicURL(ctx, selected.Id); err != nil {
 		return err
@@ -187,18 +187,18 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if err != nil {
 		return err
 	}
-	route, err := session.Authenticated().Control.GetPublicURL(ctx, flags.PublicURLID)
+	publicURL, err := session.Authenticated().Control.GetPublicURL(ctx, flags.PublicURLID)
 	if err != nil {
 		return err
 	}
-	if route.TeamId != current.Team().Id {
-		return controlclient.ErrNotFound
+	if publicURL.TeamId != current.Team().Id {
+		return clientcontrol.ErrNotFound
 	}
-	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
+	if flags.Target != "" && publicURL.ServiceProtocol != controlv1.Http {
 		return failure.Wrap("validate TCP URL update", failure.InvalidTunnelFlags,
 			errors.New("TCP targets are configured on the publisher, not the saved public URL"))
 	}
-	target := route.Target
+	target := publicURL.Target
 	if flags.Target != "" {
 		target, err = targetsyntax.NormalizeTarget(flags.Target)
 		if err != nil {
@@ -206,8 +206,8 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		}
 	}
 	allowed := []string{}
-	if route.AllowedIpPrefixes != nil {
-		allowed = *route.AllowedIpPrefixes
+	if publicURL.AllowedIpPrefixes != nil {
+		allowed = *publicURL.AllowedIpPrefixes
 	}
 	updated, err := session.Authenticated().Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
 		Target: target, AllowedIpPrefixes: allowed,

@@ -38,10 +38,10 @@ func (w *Workers) runPrivate(ctx context.Context, service Service, configuration
 	})
 }
 
-// ProbePrivateTarget checks the actual local target for a ready private run.
+// ProbeServiceTarget checks the actual local target for a ready private run.
 // it does not claim a public visitor proof or require a public hostname.
-func ProbePrivateTarget(ctx context.Context, service Service, target targettransport.Transport) Observation {
-	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.probe_failed"}
+func ProbeServiceTarget(ctx context.Context, service Service, target targettransport.Transport) Observation {
+	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.probe_failed"}
 	protocol := config.ProtocolName(service.ServiceProtocol)
 	if protocol == "" {
 		protocol = config.ProtocolHTTP

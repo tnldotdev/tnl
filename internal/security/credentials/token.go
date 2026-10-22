@@ -15,7 +15,7 @@ const (
 	accessPrefix     = "tnl_access_"
 	refreshPrefix    = "tnl_refresh_"
 	invitationPrefix = "tnl_invitation_"
-	sessionPrefix    = "tnl_session_"
+	sessionPrefix    = "tnl_publish_run_"
 	connectionPrefix = "tnl_connection_"
 	lookupBytes      = 16
 	secretBytes      = 32

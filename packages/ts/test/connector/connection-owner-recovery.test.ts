@@ -287,12 +287,12 @@ test("concurrent awaits after a known deadline join and replace one same-port ow
 test("expired caller-owned handles fail without SDK replacement or cleanup", async () => {
   await configure({ lifetimeMs: 4000 });
   const { stdout } = await run(binary, ["--no-telemetry", "runtime", "connections", "start"]);
-  const external = z.object({ private_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
-  vi.stubEnv("TNL_CONNECTION_HANDLE", external.private_handle);
+  const external = z.object({ connection_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
+  vi.stubEnv("TNL_CONNECTION_HANDLE", external.connection_handle);
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   const handle = connectionHandle("database", vi.fn());
   await handle;
-  await waitForDeadline(external.private_handle);
+  await waitForDeadline(external.connection_handle);
   await expect(Promise.resolve(handle)).rejects.toMatchObject({
     code: "sdk.connection_unavailable",
   });

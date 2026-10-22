@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestRouteHostnameLookupIsBoundedAndValidatesResponse(t *testing.T) {

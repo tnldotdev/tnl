@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -208,22 +208,22 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 	}})
 }
 
-func separatedConfig(t *testing.T, component string) tnldconfig.Config {
+func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	t.Helper()
-	role := tnldconfig.Role(component)
+	role := daemonconfig.Role(component)
 	if component == "control-a" || component == "control-b" {
-		role = tnldconfig.RoleControl
+		role = daemonconfig.RoleControl
 	}
 	if component == "ingress-a" || component == "ingress-b" {
-		role = tnldconfig.RoleIngress
+		role = daemonconfig.RoleIngress
 	}
 	if strings.HasPrefix(component, "relay-") {
-		role = tnldconfig.RoleRelay
+		role = daemonconfig.RoleRelay
 	}
 	cfg := splitTestConfig(role, "0.0.0.0:9090")
 	cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = 30*time.Second, 30*time.Second
 	cfg.LeaseRenewalInterval, cfg.DrainTimeout = separatedLeaseRenewalInterval, 5*time.Second
-	if role == tnldconfig.RoleIngress && *runtimeLoadCapacityOnly {
+	if role == daemonconfig.RoleIngress && *runtimeLoadCapacityOnly {
 		cfg.DrainTimeout = 30 * time.Second
 	}
 	runtimeLoadAdmission.apply(&cfg)
@@ -244,7 +244,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	switch role {
-	case tnldconfig.RoleControl:
+	case daemonconfig.RoleControl:
 		cfg.DatabaseURL = testutil.PostgresURL(t)
 		cfg.ControlListen, cfg.PrivateControlListen = "127.0.0.1:8080", "0.0.0.0:9443"
 		cfg.ServerDomain, cfg.ManagedDomain = separatedDomain, "routes."+separatedDomain
@@ -263,10 +263,10 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 				cfg.IngressIPv4Addresses = append(cfg.IngressIPv4Addresses, address.String())
 			}
 		}
-	case tnldconfig.RoleIngress:
+	case daemonconfig.RoleIngress:
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
-	case tnldconfig.RoleRelay:
+	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
 		serviceID := strings.TrimSuffix(component, "-2")
 		cfg.RelayServiceID, cfg.RelayID = serviceID, serviceID+"-1"
@@ -278,7 +278,7 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"
 		cfg.InternalRelayListen, cfg.InternalRelayAddress = "0.0.0.0:8443", component+":8443"
 	}
-	resolved, err := tnldconfig.Resolve(cfg)
+	resolved, err := daemonconfig.Resolve(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

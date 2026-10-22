@@ -1,4 +1,4 @@
-package webhookcatalog
+package webhooks
 
 type definition struct {
 	url, field string

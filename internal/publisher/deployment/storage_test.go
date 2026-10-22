@@ -1,4 +1,4 @@
-package publisherdeployment
+package deployment
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ func storageParameters(t *testing.T) Parameters {
 	t.Helper()
 	b := testBundle(t, 2)
 	var parameters []Parameter
-	if err := json.Unmarshal(b.Files[b.Manifest.Publishers[0].ParametersExamplePath], &parameters); err != nil {
+	if err := json.Unmarshal(b.Files[b.Manifest.PublisherGroups[0].ParametersExamplePath], &parameters); err != nil {
 		t.Fatal(err)
 	}
 	result := Parameters{}
@@ -57,7 +57,7 @@ func TestStorageTransitionRejectsChangedKMSAndIdentityButAllowsTaskUpdates(t *te
 
 func TestStoragePolicyProtectsActualTemplateReplacementBoundaries(t *testing.T) {
 	b := testBundle(t, 2)
-	p := b.Manifest.Publishers[0]
+	p := b.Manifest.PublisherGroups[0]
 	if p.StoragePolicyPath == "" || digest(b.Files[p.StoragePolicyPath]) != p.StoragePolicySHA256 {
 		t.Fatal("storage policy is not a hashed owned artifact")
 	}

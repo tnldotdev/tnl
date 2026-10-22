@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -111,7 +111,7 @@ func openLifecycleCache(t *testing.T, root string, plan CertificatePlan) (*clien
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache, err := store.Certificates("team_external", controlv1.CertificatePlan{
+	cache, err := store.CertificatesForPublisher("team_external", "pub_0123456789abcdefghijkl", controlv1.CertificatePlan{
 		CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod),
 	})
 	if err != nil {

@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -267,20 +267,20 @@ func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {
 	var order eventRecorder[string]
 	t.Run("fixture", func(t *testing.T) {
 		owner := newRuntimeTopology(t)
-		add := func(role tnldconfig.Role, name string) *integrationProcess {
+		add := func(role daemonconfig.Role, name string) *integrationProcess {
 			ctx, cancel := context.WithCancel(context.Background())
 			p := &integrationProcess{name: name, cancel: cancel, done: make(chan struct{})}
 			owner.own(role, p)
 			go func() { <-ctx.Done(); order.append(name); close(p.done) }()
 			return p
 		}
-		oldControl := add(tnldconfig.RoleControl, "old control")
-		oldRelay := add(tnldconfig.RoleRelay, "old relay")
-		add(tnldconfig.RoleIngress, "ingress")
+		oldControl := add(daemonconfig.RoleControl, "old control")
+		oldRelay := add(daemonconfig.RoleRelay, "old relay")
+		add(daemonconfig.RoleIngress, "ingress")
 		stopIntegrationProcess(t, oldRelay)
 		stopIntegrationProcess(t, oldControl)
-		add(tnldconfig.RoleRelay, "replacement relay")
-		add(tnldconfig.RoleControl, "replacement control")
+		add(daemonconfig.RoleRelay, "replacement relay")
+		add(daemonconfig.RoleControl, "replacement control")
 		ctx, cancel := context.WithCancel(context.Background())
 		p := &integrationPublisher{cancel: cancel, done: make(chan struct{})}
 		owner.publishers = append(owner.publishers, p)

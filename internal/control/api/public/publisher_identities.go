@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type PublisherIdentityStore interface {
@@ -80,11 +80,11 @@ func publisherScope(team string, url, domain, private *string) (controlstate.Pub
 		return s, false
 	}
 	if private != nil {
-		s.Kind, s.PrivateServiceID = "private_service", *private
-		return s, opaqueid.Valid(*private, opaqueid.PrivateServicePrefix)
+		s.Kind, s.ServiceID = "service", *private
+		return s, opaqueid.Valid(*private, opaqueid.ServicePrefix)
 	}
 	if url != nil {
-		s.Kind, s.PublicURLID = "saved_url", *url
+		s.Kind, s.PublicURLID = "saved_public_url", *url
 		return s, opaqueid.Valid(*url, opaqueid.PublicURLPrefix)
 	}
 	s.Kind, s.DomainID = "namespace", *domain
@@ -97,7 +97,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher enrollment")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return
@@ -119,8 +119,8 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	if e.Scope.PublicURLID != "" {
 		result.PublicUrlId = &e.Scope.PublicURLID
 	}
-	if e.Scope.PrivateServiceID != "" {
-		result.PrivateServiceId = &e.Scope.PrivateServiceID
+	if e.Scope.ServiceID != "" {
+		result.ServiceId = &e.Scope.ServiceID
 	}
 	if e.Scope.DomainID != "" {
 		result.DomainId = &e.Scope.DomainID
@@ -137,8 +137,8 @@ func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.Pu
 	if g.PublicURLID.Valid {
 		r.PublicUrlId = &g.PublicURLID.String
 	}
-	if g.PrivateServiceID.Valid {
-		r.PrivateServiceId = &g.PrivateServiceID.String
+	if g.ServiceID.Valid {
+		r.ServiceId = &g.ServiceID.String
 	}
 	if g.DomainID.Valid {
 		r.DomainId = &g.DomainID.String
@@ -211,7 +211,7 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher grant")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return

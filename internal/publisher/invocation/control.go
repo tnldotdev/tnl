@@ -2,13 +2,12 @@ package invocation
 
 import (
 	"context"
-	"slices"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // publicationVisitors exposes only publish-run-token visitor and feedback calls.
@@ -35,43 +34,22 @@ type publicationControl struct {
 }
 
 var _ publisher.PublicURLControlClient = publicationControl{}
-var _ publicationVisitors = (*controlclient.Client)(nil)
+var _ publicationVisitors = (*clientcontrol.Client)(nil)
 
-func nativePublicationControl(native *nativeauth.Native, control *controlclient.Client) publicationControl {
+func nativePublicationControl(native *publisheridentity.Native, control *clientcontrol.Client) publicationControl {
 	return publicationControl{PublicURLControlClient: native, publicationVisitors: control}
 }
 
-// guestPublicationControl gives the engine the demo URL already assigned by the
-// trial session. it cannot create another URL or delete a different URL, and
-// Native still owns every signed run operation.
+// guestPublicationControl limits cleanup to the trial session's assigned URL.
 type guestPublicationControl struct {
 	publicationControl
 	assigned  controlv1.PublicURL
-	bootstrap *controlclient.Client
-}
-
-func (c guestPublicationControl) CreatePublicURL(_ context.Context, body controlv1.CreatePublicURLRequest, _ string) (controlv1.PublicURL, error) {
-	protocol := controlv1.Http
-	if body.ServiceProtocol != nil {
-		protocol = *body.ServiceProtocol
-	}
-	prefixes := []string{}
-	if body.AllowedIpPrefixes != nil {
-		prefixes = *body.AllowedIpPrefixes
-	}
-	assigned := []string{}
-	if c.assigned.AllowedIpPrefixes != nil {
-		assigned = *c.assigned.AllowedIpPrefixes
-	}
-	if body.Purpose != controlv1.Demo || protocol != controlv1.Http || body.Ephemeral == nil || !*body.Ephemeral || body.TeamId != c.assigned.TeamId || body.DomainId != c.assigned.DomainId || body.CanonicalHostname != c.assigned.CanonicalHostname || body.PublicUrlScope != c.assigned.PublicUrlScope || body.Target != c.assigned.Target || body.MembershipId == nil || c.assigned.MembershipId == nil || *body.MembershipId != *c.assigned.MembershipId || !slices.Equal(prefixes, assigned) {
-		return controlv1.PublicURL{}, nativeauth.ErrScope
-	}
-	return c.assigned, nil
+	bootstrap *clientcontrol.Client
 }
 
 func (c guestPublicationControl) DeletePublicURL(ctx context.Context, id string) error {
 	if id != c.assigned.Id {
-		return nativeauth.ErrScope
+		return publisheridentity.ErrScope
 	}
 	return c.bootstrap.DeletePublicURL(ctx, id)
 }

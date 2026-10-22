@@ -1,4 +1,4 @@
-package clientstate
+package state
 
 import (
 	"bufio"

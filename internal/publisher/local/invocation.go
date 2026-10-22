@@ -12,44 +12,44 @@ import (
 	"sync"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Invocation) (_ privateprotocol.Registration, result error) {
+func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.Invocation) (_ publisherprotocol.Registration, result error) {
 	release, err := a.beginPreparation(ctx, request.InvocationId)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	canonical, err := targetsyntax.NormalizeTarget(request.Target)
-	if err != nil || canonical != request.Target || request.PublisherFile != "" && request.PublisherId != "" ||
+	if err != nil || canonical != request.Target || request.PublisherCredentialFile != "" && request.PublisherIdentityId != "" ||
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
-		return privateprotocol.Registration{}, errors.New("invalid invocation target or policy")
+		return publisherprotocol.Registration{}, errors.New("invalid invocation target or policy")
 	}
 	limits, err := invocationLimits(request.Limits)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
-	file := request.PublisherFile
-	if file == "" && request.PublisherId == "" {
-		file = os.Getenv("TNL_PUBLISHER_FILE")
+	file := request.PublisherCredentialFile
+	if file == "" && request.PublisherIdentityId == "" {
+		file = os.Getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
 	}
 	if file != "" && (!filepath.IsAbs(file) || len(file) > 4096 || strings.ContainsRune(file, 0)) {
-		return privateprotocol.Registration{}, credentialfile.ErrInvalid
+		return publisherprotocol.Registration{}, credentialfile.ErrInvalid
 	}
 	for _, service := range a.manager.Snapshot().Services {
 		if service.Name != request.InvocationId || service.RegistrationID == "" {
@@ -61,60 +61,60 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 		first, _ := json.Marshal(previous)
 		next, _ := json.Marshal(request)
 		if previous == nil || string(first) != string(next) {
-			return privateprotocol.Registration{}, clientruntime.ErrOwnerConflict
+			return publisherprotocol.Registration{}, clientruntime.ErrOwnerConflict
 		}
 		if err := a.manager.Renew(service.RegistrationID, request.Owner); err != nil {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
-		return privateprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, nil
+		return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, nil
 	}
 	server := valueOrEmpty(a.project.Config.Server)
 	if request.ServerUrl != nil {
 		selected, err := clientstate.CanonicalServer(*request.ServerUrl)
 		if err != nil {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
 		if server != "" && server != selected {
-			return privateprotocol.Registration{}, nativeauth.ErrScope
+			return publisherprotocol.Registration{}, publisheridentity.ErrScope
 		}
 		server = selected
 	}
 	server, err = clientserver.Select(ctx, a.state, server)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	profile, err := a.state.Server(ctx, server)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
-	control, err := controlclient.New(server, nil, "")
+	control, err := clientcontrol.New(server, nil, "")
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
-	authority, err := authorityclient.New(server, nil, "")
+	authority, err := clientauthority.New(server, nil, "")
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
-	native, err := nativeauth.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", file, "", request.PublisherId, nil)
+	native, err := publisheridentity.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
 	if err != nil {
-		if file != "" && errors.Is(err, nativeauth.ErrScope) {
-			return privateprotocol.Registration{}, credentialfile.ErrInvalid
+		if file != "" && errors.Is(err, publisheridentity.ErrScope) {
+			return publisherprotocol.Registration{}, credentialfile.ErrInvalid
 		}
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
 	if request.AccessMode != nil {
 		mode := controlv1.VisitorAccessMode(*request.AccessMode)
 		allocation.AccessMode = &mode
 	}
-	route, err := native.Allocate(ctx, allocation)
+	publicURL, err := native.Allocate(ctx, allocation)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	cleanup := sync.OnceValue(func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return native.DeletePublicURL(ctx, route.Id)
+		return native.DeletePublicURL(ctx, publicURL.Id)
 	})
 	transferred, id := false, ""
 	defer func() {
@@ -129,46 +129,46 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 		}
 	}()
 	if err := a.manager.AddService(clientruntime.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: clientruntime.Readiness{Path: "/"}}); err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
-	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+route.CanonicalHostname)
+	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+publicURL.CanonicalHostname)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	policy, err := config.ResolveInspection(nil, "http")
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, PolicyRevision: uint64(route.PolicyRevision), Hostname: route.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AllocatedPublicURL: &route, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
-	cfg.PublisherID = native.PublisherID()
-	if route.MembershipId != nil {
-		cfg.MembershipID = *route.MembershipId
+	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
+	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	if publicURL.MembershipId != nil {
+		cfg.MembershipID = *publicURL.MembershipId
 	}
-	if route.AllowedIpPrefixes != nil {
-		cfg.AllowedIPPrefixes = slices.Clone(*route.AllowedIpPrefixes)
+	if publicURL.AllowedIpPrefixes != nil {
+		cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
-	cfg.AccessMode = route.AccessMode
+	cfg.AccessMode = publicURL.AccessMode
 	configuration := clientruntime.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, clientruntime.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
-			return privateprotocol.Registration{}, err
+			return publisherprotocol.Registration{}, err
 		}
 	}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return privateprotocol.Registration{}, err
+		return publisherprotocol.Registration{}, err
 	}
 	transferred = true
-	return privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
+	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
 }
 
 func invocationLimits(input *controlv1.PublisherApplicationLimits) (publisher.ApplicationLimits, error) {

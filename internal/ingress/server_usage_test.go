@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
@@ -63,7 +63,7 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []ingressbackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
@@ -126,7 +126,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
 			}
-			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []routebackend.Backend{backend},
+			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []ingressbackend.Backend{backend},
 				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 		},
 	}

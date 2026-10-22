@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"errors"
@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	publisheridentity "github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationGroupIdentityVerificationPreservesLease(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "group_verification")
 	r := appliedProjectRequest(t, d, now)
-	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {Publisher: "production", Target: "api.internal:3000"}}}
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}}}
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func TestIntegrationGroupIdentityVerificationPreservesLease(t *testing.T) {
 	}
 	replica := enrollAppliedGroup(t, d, r, enrollment, now)
 	const audience = "https://control.example/v1/publisher-groups/verify"
-	proof, err := publisheridentity.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.GroupID, audience, replica.private, now)
+	proof, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.GroupID, audience, replica.private, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestIntegrationGroupIdentityVerificationPreservesLease(t *testing.T) {
 	if _, err := d.RenamePublisherGroup(t.Context(), r.TeamID, r.ProjectKey, "production", "live", r.ActorID, applied.Revision, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	proof, err = publisheridentity.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.GroupID, audience, replica.private, now.Add(time.Second))
+	proof, err = publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, replica.member.GroupID, audience, replica.private, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

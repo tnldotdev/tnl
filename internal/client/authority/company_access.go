@@ -1,10 +1,10 @@
-package authorityclient
+package authority
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func (c *Client) CreateCompanyLoginIntent(ctx context.Context, team string) (authorityv1.CompanyLoginIntent, error) {

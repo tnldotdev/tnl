@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -33,8 +33,8 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 			key, digest := strings.Repeat("a", 64), strings.Repeat("b", 64)
 			owner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				var request connectionruntime.Request
-				if connectionruntime.ReadJSON(r.Body, &request) != nil || r.Method != "POST" || r.URL.Path != "/v1/connections/prepared" || r.Header.Get("Authorization") != "Bearer "+key || request.Schema != 1 || request.Service != "database" || request.Directory != root || request.ConfigDigest != digest {
+				var request connectorruntime.Request
+				if connectorruntime.ReadJSON(r.Body, &request) != nil || r.Method != "POST" || r.URL.Path != "/v1/connections/prepared" || r.Header.Get("Authorization") != "Bearer "+key || request.Schema != 1 || request.Service != "database" || request.Directory != root || request.ConfigDigest != digest {
 					t.Error("read changed the prepared owner's exact scope")
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -54,19 +54,19 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 				if scenario == "expired-snapshot" {
 					expires = time.Now().Add(-time.Second)
 				}
-				snapshot := connectionruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, SSL: &connectionruntime.TLSOptions{ServerName: "approved.example.test", RejectUnauthorized: true}, ExpiresAt: expires}
+				snapshot := connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, SSL: &connectorruntime.TLSOptions{ServerName: "approved.example.test", RejectUnauthorized: true}, ExpiresAt: expires}
 				if scenario == "bare-snapshot" {
 					_ = json.NewEncoder(w).Encode(snapshot)
 					return
 				}
-				prepared := connectionruntime.Prepared{Schema: 1, PublicRuntime: projectmeta.PublicMetadata{Namespace: "example.test", Services: map[string]projectmeta.Service{"database": {Protocol: "postgres", Namespace: "example.test", Hostname: "approved.example.test", Port: 15432, Public: true}}}, Connection: snapshot}
+				prepared := connectorruntime.Prepared{Schema: 1, ProjectRuntime: meta.PublicMetadata{Namespace: "example.test", Services: map[string]meta.Service{"database": {Protocol: "postgres", Namespace: "example.test", Hostname: "approved.example.test", Port: 15432, Public: true}}}, Connection: snapshot}
 				if scenario == "invalid-schema" {
 					prepared.Schema = 2
 				}
 				_ = json.NewEncoder(w).Encode(prepared)
 			}))
 			defer owner.Close()
-			directory, err := connectionruntime.NewDirectory(root)
+			directory, err := connectorruntime.NewDirectory(root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,14 +75,14 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 			if scenario == "expired-handle" {
 				expires = time.Now().Add(-time.Second)
 			}
-			if err := connectionruntime.WriteHandle(path, connectionruntime.Handle{Schema: 1, URL: owner.URL, Key: key, Directory: root, ConfigDigest: digest, ExpiresAt: expires, Executable: "/absolute/tnl"}); err != nil {
+			if err := connectorruntime.WriteHandle(path, connectorruntime.Handle{Schema: 1, URL: owner.URL, Key: key, Directory: root, ConfigDigest: digest, ExpiresAt: expires, Executable: "/absolute/tnl"}); err != nil {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
 			err = run(ctx, []string{"runtime", "connections", "read", "--handle", path, "--service", "database"}, &output, &output)
 			if scenario == "ready" {
-				var prepared connectionruntime.Prepared
-				if err != nil || connectionruntime.ReadJSON(&output, &prepared) != nil || prepared.Schema != 1 || prepared.Connection.Host != "127.0.0.1" || prepared.Connection.Port != 15432 || prepared.Connection.SSL == nil || prepared.Connection.SSL.ServerName != "approved.example.test" || prepared.PublicRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName {
+				var prepared connectorruntime.Prepared
+				if err != nil || connectorruntime.ReadJSON(&output, &prepared) != nil || prepared.Schema != 1 || prepared.Connection.Host != "127.0.0.1" || prepared.Connection.Port != 15432 || prepared.Connection.SSL == nil || prepared.Connection.SSL.ServerName != "approved.example.test" || prepared.ProjectRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName {
 					t.Fatal("read lost the prepared snapshot", err, output.String())
 				}
 			} else {

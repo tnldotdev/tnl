@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 // TargetTrustSnapshot is portable publisher-to-target trust for every protocol.
@@ -19,12 +19,12 @@ type TargetTrustSnapshot struct {
 }
 
 func (s TargetTrustSnapshot) Validate() error {
-	_, err := s.PrivateSnapshot()
+	_, err := s.TargetTrust()
 	return err
 }
 
-// PrivateSnapshot uses the same verifier for applied and local target trust.
-func (s TargetTrustSnapshot) PrivateSnapshot() (*privatetrust.Snapshot, error) {
+// TargetTrust uses the same verifier for applied and local target trust.
+func (s TargetTrustSnapshot) TargetTrust() (*targettrust.Snapshot, error) {
 	if s.Digest != targetTrustDigest(s.Hostname, s.CAPEM) {
 		return nil, errors.New("target trust digest does not match its snapshot")
 	}
@@ -33,7 +33,7 @@ func (s TargetTrustSnapshot) PrivateSnapshot() (*privatetrust.Snapshot, error) {
 		mode = "system"
 	}
 	digest := sha256.Sum256(append([]byte(s.Hostname+"\x00"+mode+"\x00"), s.CAPEM...))
-	snapshot := &privatetrust.Snapshot{Hostname: s.Hostname, PEM: s.CAPEM, System: len(s.CAPEM) == 0, Digest: hex.EncodeToString(digest[:])}
+	snapshot := &targettrust.Snapshot{Hostname: s.Hostname, PEM: s.CAPEM, System: len(s.CAPEM) == 0, Digest: hex.EncodeToString(digest[:])}
 	_, err := snapshot.Verifier()
 	return snapshot, err
 }
@@ -45,7 +45,7 @@ func targetTrustDigest(hostname string, ca []byte) string {
 
 // CaptureTargetTrust reads the declared CA source at apply time. source paths
 // and bundle URLs never enter the resulting declaration or remote worker.
-func (p Project) CaptureTargetTrust(ctx context.Context, cache *privatetrust.Cache, name, discovered string) (*TargetTrustSnapshot, error) {
+func (p Project) CaptureTargetTrust(ctx context.Context, cache *targettrust.Cache, name, discovered string) (*TargetTrustSnapshot, error) {
 	service := p.Config.Services[name]
 	if service.Target != nil && service.Target.TLS != nil && !(config.TargetType(service) == "app" && discovered == "") {
 		publication, err := p.ResolvePublish(name, discovered)

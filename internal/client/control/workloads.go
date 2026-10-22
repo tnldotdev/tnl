@@ -1,10 +1,10 @@
-package controlclient
+package control
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (c *Client) ListWorkloadServices(ctx context.Context, credential string) (controlv1.WorkloadServices, error) {
@@ -28,8 +28,8 @@ func (c *Client) CreateWorkloadIngressAssignmentSet(ctx context.Context, credent
 	})
 }
 
-func (c *Client) SelectWorkloadServiceRun(ctx context.Context, credential, service string) (controlv1.PrivateServiceSelection, error) {
-	return request[controlv1.PrivateServiceSelection](ctx, c, credential, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) SelectWorkloadServiceRun(ctx context.Context, credential, service string) (controlv1.ServiceSelection, error) {
+	return request[controlv1.ServiceSelection](ctx, c, credential, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.SelectWorkloadServiceRun(ctx, service, editors...)
 	})
 }

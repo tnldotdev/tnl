@@ -1,3 +1,3 @@
-package clientstate
+package state
 
 //go:generate sqlc generate

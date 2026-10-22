@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (c *Client) ControlURL() string { return strings.TrimSuffix(c.api.Server, "/") }

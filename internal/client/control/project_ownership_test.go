@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"encoding/json"
@@ -7,12 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestReleaseVisitorAssignmentUsesPersonAndExactSession(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "DELETE" || r.URL.Path != "/v1/visitor-ingress-assignments/pcs_exact" || r.Header.Get("Authorization") != "Bearer person-token" || r.ContentLength > 0 {
+		if r.Method != "DELETE" || r.URL.Path != "/v1/visitor-ingress-assignments/cns_exact" || r.Header.Get("Authorization") != "Bearer person-token" || r.ContentLength > 0 {
 			t.Error("release changed its session, person credential or body contract")
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -23,7 +23,7 @@ func TestReleaseVisitorAssignmentUsesPersonAndExactSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err = c.ReleaseVisitorIngressAssignment(t.Context(), "pcs_exact"); err != nil {
+		if err = c.ReleaseVisitorIngressAssignment(t.Context(), "cns_exact"); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	"golang.org/x/oauth2"
 )
 
@@ -39,7 +39,7 @@ type companyHTTPFixture struct {
 	sequence       int
 	mu             sync.Mutex
 	browserSubject string
-	browserProof   []oidcauth.TeamContext
+	browserProof   []oidc.TeamContext
 }
 
 func newCompanyHTTPFixture(t *testing.T, name string) *companyHTTPFixture {
@@ -106,20 +106,20 @@ func newCompanyHTTPFixture(t *testing.T, name string) *companyHTTPFixture {
 	})
 	f.issuer = httptest.NewTLSServer(issuerMux)
 	t.Cleanup(f.issuer.Close)
-	verifier, err := oidcauth.NewVerifier(oidcauth.VerifierConfig{Issuer: f.issuer.URL, ClientID: "tnl-control", HTTPClient: f.issuer.Client()})
+	verifier, err := oidc.NewVerifier(oidc.VerifierConfig{Issuer: f.issuer.URL, ClientID: "tnl-control", HTTPClient: f.issuer.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.server = httptest.NewTLSServer(f.mux)
 	t.Cleanup(f.server.Close)
-	if _, err = authorityapi.Register(f.mux, authorityapi.Config{ControlURL: f.server.URL, OIDCIssuer: f.issuer.URL, OIDCClientID: "tnl-control", OIDCScopes: []string{"openid"}, HTTPClient: f.issuer.Client(), OIDCVerifier: verifier, WebServiceSecret: companyWebsiteSecret, ManagedDomain: "example.test", AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour}, f.d); err != nil {
+	if _, err = controlauthority.Register(f.mux, controlauthority.Config{ControlURL: f.server.URL, OIDCIssuer: f.issuer.URL, OIDCClientID: "tnl-control", OIDCScopes: []string{"openid"}, HTTPClient: f.issuer.Client(), OIDCVerifier: verifier, WebServiceSecret: companyWebsiteSecret, ManagedDomain: "example.test", AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour}, f.d); err != nil {
 		t.Fatal(err)
 	}
 	f.now = time.Now().UTC()
 	return f
 }
 
-func (f *companyHTTPFixture) token(sub, nonce string, proofs []oidcauth.TeamContext) string {
+func (f *companyHTTPFixture) token(sub, nonce string, proofs []oidc.TeamContext) string {
 	f.t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -165,7 +165,7 @@ func (f *companyHTTPFixture) call(method, path, bearer, actor string, raw []byte
 	return w
 }
 
-func (f *companyHTTPFixture) ownerCall(method, path, sub string, proofs []oidcauth.TeamContext, body any) *httptest.ResponseRecorder {
+func (f *companyHTTPFixture) ownerCall(method, path, sub string, proofs []oidc.TeamContext, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
 	var raw []byte
 	if body != nil {
@@ -198,7 +198,7 @@ func (f *companyHTTPFixture) exchangeIntent(ctx context.Context, id, binding, to
 	if err != nil {
 		return controlstate.ControlSession{}, err
 	}
-	v, err := oidcauth.NewVerifier(oidcauth.VerifierConfig{Issuer: f.issuer.URL, ClientID: "tnl-control", HTTPClient: f.issuer.Client()})
+	v, err := oidc.NewVerifier(oidc.VerifierConfig{Issuer: f.issuer.URL, ClientID: "tnl-control", HTTPClient: f.issuer.Client()})
 	if err != nil {
 		return controlstate.ControlSession{}, err
 	}
@@ -209,17 +209,17 @@ func (f *companyHTTPFixture) exchangeIntent(ctx context.Context, id, binding, to
 	return f.d.CreateOIDCControlSession(ctx, "example.test", controlstate.OIDCIdentity{Issuer: i.Issuer, Subject: i.Subject, DisplayName: i.DisplayName, AssertionDigest: i.AssertionDigest, AssertionExpiry: i.ExpiresAt, TeamContexts: i.TeamContexts, Nonce: i.Nonce, ClientID: i.ClientID, IssuedAt: i.IssuedAt, CompanyIntent: &controlstate.CompanyIntentBinding{ID: id, BindingToken: binding, RedirectURI: intent.RedirectURI}}, time.Hour, 24*time.Hour, time.Now())
 }
 
-func (f *companyHTTPFixture) proof(c controlstate.IdentityConnection, subject string) []oidcauth.TeamContext {
-	return []oidcauth.TeamContext{{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: subject, AuthenticatedAt: f.now.Unix()}}
+func (f *companyHTTPFixture) proof(c controlstate.IdentityConnection, subject string) []oidc.TeamContext {
+	return []oidc.TeamContext{{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: subject, AuthenticatedAt: f.now.Unix()}}
 }
 
 func (f *companyHTTPFixture) login(c controlstate.IdentityConnection, sub, subject string) authorityv1.ControlSessionResponse {
 	return f.deviceLogin(sub, c.TeamID, f.proof(c, subject))
 }
 
-func (f *companyHTTPFixture) deviceLogin(sub, team string, proof []oidcauth.TeamContext) authorityv1.ControlSessionResponse {
+func (f *companyHTTPFixture) deviceLogin(sub, team string, proof []oidc.TeamContext) authorityv1.ControlSessionResponse {
 	f.t.Helper()
-	client, err := authorityclient.New(f.server.URL, f.server.Client(), "")
+	client, err := clientauthority.New(f.server.URL, f.server.Client(), "")
 	if err != nil {
 		f.t.Fatal(err)
 	}

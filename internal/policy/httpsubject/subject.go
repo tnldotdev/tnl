@@ -6,8 +6,8 @@ import "github.com/tnldotdev/tnl/internal/naming/opaqueid"
 type Kind string
 
 const (
-	PublicURL      Kind = "public_url"
-	ManagedService Kind = "managed_service"
+	PublicURL Kind = "public_url"
+	Service   Kind = "service"
 )
 
 // Subject never infers scope from a hostname or a certificate.
@@ -20,8 +20,8 @@ func (s Subject) Valid() bool {
 	switch s.Kind {
 	case PublicURL:
 		return opaqueid.Valid(s.ID, opaqueid.PublicURLPrefix)
-	case ManagedService:
-		return opaqueid.Valid(s.ID, opaqueid.PrivateServicePrefix)
+	case Service:
+		return opaqueid.Valid(s.ID, opaqueid.ServicePrefix)
 	default:
 		return false
 	}

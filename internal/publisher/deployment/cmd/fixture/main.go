@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
+	"github.com/tnldotdev/tnl/internal/publisher/deployment"
 )
 
 func main() {
 	count := 2
-	bundle, err := publisherdeployment.Generate(config.TNL{Publishers: map[string]config.Publisher{"production": {AWS: &config.PublisherAWS{Replicas: &count}}}}, projectconfig.SourceIdentity{Key: "project-example", Fingerprint: strings.Repeat("a", 64)})
+	bundle, err := deployment.Generate(config.TNL{PublisherGroups: map[string]config.PublisherGroup{"production": {AWS: &config.PublisherGroupAWS{Replicas: &count}}}}, clientproject.SourceIdentity{Key: "project-example", Fingerprint: strings.Repeat("a", 64)})
 	if err != nil {
 		panic(err)
 	}

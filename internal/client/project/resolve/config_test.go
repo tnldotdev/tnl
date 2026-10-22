@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestProjectServerSelection(t *testing.T) {
@@ -39,7 +39,7 @@ func TestProjectServerSelection(t *testing.T) {
 
 func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	root := t.TempDir()
-	worktree := projectconfig.ApplyWorktreeHashSalt(projectconfig.Worktree{Root: root, Name: "tnl"}, root, [32]byte{1})
+	worktree := clientproject.ApplyWorktreeHashSalt(clientproject.Worktree{Root: root, Name: "tnl"}, root, [32]byte{1})
 	selected := authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}
 	membership := authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember, ManagedLabel: "ecstatic-penguin", MemberSlug: "chase"}
 	domains := []authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}}
@@ -48,7 +48,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := projectconfig.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
+	want := clientproject.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
 	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want || service.URL != "https://"+want {
 		t.Fatalf("service metadata = %#v", service)
 	}
@@ -59,7 +59,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = projectconfig.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
+	want = clientproject.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
 	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
 		t.Fatalf("custom-domain metadata = %#v", service)
 	}

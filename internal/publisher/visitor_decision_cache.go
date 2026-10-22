@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 )
 
 const (
@@ -85,7 +85,7 @@ func (c *visitorDecisionCache[T]) checkCurrent(ctx context.Context, key [sha256.
 	}
 	// the cache owns shared I/O; no request's cancellation or shorter deadline
 	// can become another caller's authorization result.
-	requestCtx, cancel := context.WithTimeoutCause(context.WithoutCancel(ctx), 5*time.Second, controlclient.ErrUnavailable)
+	requestCtx, cancel := context.WithTimeoutCause(context.WithoutCancel(ctx), 5*time.Second, clientcontrol.ErrUnavailable)
 	call := &visitorDecisionCall[T]{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	c.active[key] = call
 	c.mu.Unlock()
@@ -122,7 +122,7 @@ func (c *visitorDecisionCache[T]) checkCurrent(ctx context.Context, key [sha256.
 						refreshAfter: earlierDecisionTime(now.Add(visitorDecisionRecheck), until), validUntil: until}
 				}
 			}
-		} else if errors.Is(err, controlclient.ErrUnavailable) && usable && time.Now().Before(entry.validUntil) {
+		} else if errors.Is(err, clientcontrol.ErrUnavailable) && usable && time.Now().Before(entry.validUntil) {
 			entry.refreshAfter = earlierDecisionTime(time.Now().Add(visitorDecisionRetry), entry.validUntil)
 			c.entries[key] = entry
 			value, err = entry.value, nil

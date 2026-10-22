@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func runSession(
@@ -28,11 +28,11 @@ func runSession(
 	plan := authority.plan
 	observability.PublisherLease(ctx, setup.PublishRun.ExpiresAt)
 	setup.CertificatePlan = plan
-	config.PublisherID, err = configuredPublisherID(config)
+	config.PublisherIdentityID, err = configuredPublisherIdentityID(config)
 	if err != nil {
 		return err
 	}
-	state, err := config.State.CertificatesForPublisher(setup.PublicUrl.TeamId, config.PublisherID, plan)
+	state, err := config.State.CertificatesForPublisher(setup.PublicUrl.TeamId, config.PublisherIdentityID, plan)
 	if err != nil {
 		return err
 	}

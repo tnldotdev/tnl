@@ -1,4 +1,4 @@
-package projectmeta
+package meta
 
 import (
 	"encoding/json"
@@ -49,10 +49,10 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		}
 		shape["services"] = services
 		publishers := map[string]any{}
-		for name := range configuration.Publishers {
+		for name := range configuration.PublisherGroups {
 			publishers[name] = map[string]any{}
 		}
-		shape["publishers"] = publishers
+		shape["publisherGroups"] = publishers
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
 			value := map[string]any{"provider": policy.Provider, "services": policy.Services}

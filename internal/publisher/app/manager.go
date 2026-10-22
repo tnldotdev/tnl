@@ -242,7 +242,7 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 		return "", err
 	}
 	service.RegistrationID = "reg_" + hex.EncodeToString(bytes)
-	service.Target, service.Framework, service.PublishRunNumber = "", "", 0
+	service.Target, service.Framework, service.RunNumber = "", "", 0
 	service.TunnelID, service.ProvisioningStage = "", ""
 	service.Registered, service.Routable, service.Ready, service.Observation = false, false, false, nil
 	service.PublicURL, service.Failure = publicURL, ""
@@ -339,7 +339,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	}
 	service.Registered, service.Routable, service.Ready = true, false, false
 	service.Target, service.Framework, service.Failure = target, framework, ""
-	service.PublishRunNumber, service.Observation = 0, nil
+	service.RunNumber, service.Observation = 0, nil
 	service.ProvisioningStage = ""
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
@@ -405,17 +405,17 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 		if service.RegistrationID != id || !service.Registered || reg == nil || time.Now().After(reg.expires) {
 			continue
 		}
-		if run == 0 || run < service.PublishRunNumber || m.Alive != nil && !m.Alive(reg.pid) {
+		if run == 0 || run < service.RunNumber || m.Alive != nil && !m.Alive(reg.pid) {
 			return ErrRegistrationStale
 		}
-		if run != service.PublishRunNumber || !routable {
+		if run != service.RunNumber || !routable {
 			service.Ready, service.Observation = false, nil
-			if run != service.PublishRunNumber {
+			if run != service.RunNumber {
 				service.ProvisioningStage = ""
 			}
 		}
-		becameReady := routable && (!service.Routable || run != service.PublishRunNumber)
-		service.PublishRunNumber, service.Routable = run, routable
+		becameReady := routable && (!service.Routable || run != service.RunNumber)
+		service.RunNumber, service.Routable = run, routable
 		if routable {
 			service.Failure = ""
 			service.ProvisioningStage = ""
@@ -451,12 +451,7 @@ func (m *Manager) CurrentRun(name, id, target string, run uint64) bool {
 }
 
 func (m *Manager) currentRunLocked(name, id, target string, run uint64) bool {
-	return run != 0 && m.currentRegistrationLocked(name, id, target) && m.serviceLocked(name).PublishRunNumber == run
-}
-
-// Current retains the exact-run check for callers using the earlier name.
-func (m *Manager) Current(name, id, target string, run uint64) bool {
-	return m.CurrentRun(name, id, target, run)
+	return run != 0 && m.currentRegistrationLocked(name, id, target) && m.serviceLocked(name).RunNumber == run
 }
 
 // ServiceForRun reads the live registration and run together, without combining
@@ -511,7 +506,7 @@ func (m *Manager) SetProvisioningStage(name, registrationID string, run uint64, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	service := m.serviceLocked(name)
-	if service == nil || !service.Registered || service.Routable || service.RegistrationID != registrationID || service.PublishRunNumber != run || service.ProvisioningStage == stage {
+	if service == nil || !service.Registered || service.Routable || service.RegistrationID != registrationID || service.RunNumber != run || service.ProvisioningStage == stage {
 		return
 	}
 	service.ProvisioningStage = stage
@@ -526,7 +521,7 @@ func (m *Manager) Observe(observation Observation) bool {
 	}
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
-		if service.RegistrationID != observation.RegistrationID || service.PublishRunNumber != observation.PublishRunNumber || !service.Registered || !service.Routable || observation.PublishRunNumber == 0 {
+		if service.RegistrationID != observation.RegistrationID || service.RunNumber != observation.RunNumber || !service.Registered || !service.Routable || observation.RunNumber == 0 {
 			continue
 		}
 		if observation.Readiness != service.Readiness {
@@ -639,7 +634,7 @@ func (m *Manager) unregister(id, owner string) error {
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
 	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
-	service.PublishRunNumber, service.Framework = 0, ""
+	service.RunNumber, service.Framework = 0, ""
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
@@ -657,7 +652,7 @@ func (m *Manager) TargetChanged(name, id, target string) {
 		return
 	}
 	service.Ready = false
-	service.Observation = &Observation{Target: target, RegistrationID: id, PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+	service.Observation = &Observation{Target: target, RegistrationID: id, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
 	m.emitLocked("service.readiness", service)
 }
 

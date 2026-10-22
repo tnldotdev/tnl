@@ -14,7 +14,7 @@ import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -32,60 +32,60 @@ type Document struct {
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Name       *string              `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name for an unnamed HTTP service; named services use their service key unless overridden."`
-	Server     *string              `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
-	Team       *string              `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
-	Feedback   *bool                `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
-	OAuth      bool                 `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
-	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
-	Tunnel     *Tunnel              `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults applied only to explicit services.NAME.public_url blocks. These defaults never enable a public URL for another service."`
-	Publish    *Publish             `json:"-" yaml:"-"`
-	Readiness  *Readiness           `json:"-" yaml:"-"`
-	Publishers map[string]Publisher `json:"publishers,omitempty" yaml:"publishers,omitempty" jsonschema_description:"Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."`
-	Services   Services             `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."`
-	Webhooks   map[string]Webhook   `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
-	Aliases    map[string]Alias     `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
-	Workloads  map[string]Workload  `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
+	Name            *string                   `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name for an unnamed HTTP service; named services use their service key unless overridden."`
+	Server          *string                   `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Team            *string                   `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Feedback        *bool                     `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
+	OAuth           bool                      `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
+	Inspection      *Inspection               `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
+	Tunnel          *Tunnel                   `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults for explicit local public_url blocks. Applicable HTTP access and limits also apply to named-group http blocks; defaults never enable publication."`
+	Publish         *Publish                  `json:"-" yaml:"-"`
+	Readiness       *Readiness                `json:"-" yaml:"-"`
+	PublisherGroups map[string]PublisherGroup `json:"publisher_groups,omitempty" yaml:"publisher_groups,omitempty" jsonschema_description:"Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."`
+	Services        Services                  `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group."`
+	Webhooks        map[string]Webhook        `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
+	Aliases         map[string]Alias          `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+	Workloads       map[string]Workload       `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
 }
 
 type Services map[string]Service
 
-type Publisher struct {
-	AWS         *PublisherAWS `json:"aws,omitempty" yaml:"aws,omitempty" jsonschema_description:"Generate one AWS Fargate group stack. Deployment parameters belong in CloudFormation, not project configuration."`
-	Description *string       `json:"description,omitempty" yaml:"description,omitempty"`
-	Domain      *string       `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
-	Public      bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
+type PublisherGroup struct {
+	AWS         *PublisherGroupAWS `json:"aws,omitempty" yaml:"aws,omitempty" jsonschema_description:"Generate one AWS Fargate group stack. Deployment parameters belong in CloudFormation, not project configuration."`
+	Description *string            `json:"description,omitempty" yaml:"description,omitempty"`
+	Domain      *string            `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
+	Public      bool               `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
 }
 
 // MaxPublisherReplicas bounds generated stacks below CloudFormation quotas.
 const MaxPublisherReplicas = 8
 
-type PublisherAWS struct {
+type PublisherGroupAWS struct {
 	Replicas *int `json:"replicas,omitempty" yaml:"replicas,omitempty"`
 }
 
-func (a PublisherAWS) ReplicaCount() int {
+func (a PublisherGroupAWS) ReplicaCount() int {
 	if a.Replicas == nil {
 		return 1
 	}
 	return *a.Replicas
 }
 
-// ServiceAccess declares a team grant for either a public or private service.
+// ServiceAccess declares team access for a service or local public URL.
 type ServiceAccess struct {
 	Team bool `json:"team,omitempty" yaml:"team,omitempty"`
 }
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Name       *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the service key for both HTTP and private services."`
-	Publisher  *string        `json:"publisher,omitempty" yaml:"publisher,omitempty" jsonschema_description:"Assigned publisher group; defaults to the built-in local publisher."`
-	Access     *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Team grant intent for this service, whether public or private."`
-	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Tunnel     *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable public HTTPS for this HTTP service. Omit this block for a private service, including private HTTP. The saved name belongs on the service."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
-	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
-	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
+	Name           *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the configuration key."`
+	PublisherGroup *string        `json:"publisher_group,omitempty" yaml:"publisher_group,omitempty" jsonschema_description:"Assigned publisher group; defaults to the built-in local publisher."`
+	Access         *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service or public URL."`
+	Inspection     *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
+	Tunnel         *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable a local HTTP service's public URL. Named groups use http settings on their service endpoint."`
+	Protocol       *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
+	Target         *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
+	HTTP           *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
 
 // TrustSource is an evaluated CA source, not a service configuration setting.
@@ -102,12 +102,7 @@ func ServiceName(serviceName string, service Service) string {
 	return serviceName
 }
 
-// PrivateServiceName selects the saved name for a validated private service.
-func PrivateServiceName(serviceName string, service Service) string {
-	return ServiceName(serviceName, service)
-}
-
-// ServiceTarget describes exactly one private discovery mechanism. an omitted
+// ServiceTarget describes one target discovery mechanism. an omitted
 // target means an app-reported HTTP listener.
 type ServiceTarget struct {
 	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker,enum=eks,enum=rds"`
@@ -130,6 +125,8 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
+	Access    *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a named publisher group. IP rules narrow access; group configuration owns reachability."`
+	Limits    *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a named publisher group."`
 	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
 	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
 	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`
@@ -158,11 +155,11 @@ func Protocol(service Service) string {
 
 func IsPublicService(service Service) bool { return service.Tunnel != nil }
 
-func PublisherName(service Service) string {
-	if service.Publisher == nil {
+func PublisherGroupName(service Service) string {
+	if service.PublisherGroup == nil {
 		return "local"
 	}
-	return *service.Publisher
+	return *service.PublisherGroup
 }
 
 // ServicePublish resolves address targets into the native publication settings.
@@ -375,35 +372,35 @@ func parseDuration(value string) (Duration, error) {
 	return Duration(parsed), nil
 }
 
-// TNLDSection is a presence-aware partial tnldconfig.Config value. its field
+// TNLDSection is a presence-aware partial daemonconfig.Config value. its field
 // names and types are derived from Config so file configuration cannot drift
 // from flags.
 type TNLDSection struct {
-	value   tnldconfig.Config
+	value   daemonconfig.Config
 	present map[int]bool
 }
 
-func (s TNLDSection) Value() tnldconfig.Config { return s.value }
+func (s TNLDSection) Value() daemonconfig.Config { return s.value }
 
 // Apply replaces only fields explicitly present in the file.
-func (s TNLDSection) Apply(target *tnldconfig.Config) {
+func (s TNLDSection) Apply(target *daemonconfig.Config) {
 	s.apply(target, nil, false)
 }
 
 // ApplyLowerPrecedence applies file fields unless a command-line flag or one
 // of the field's TNLD_* environment variables supplied a higher-precedence value.
-func (s TNLDSection) ApplyLowerPrecedence(target *tnldconfig.Config, commandLine map[string]bool) map[string]bool {
+func (s TNLDSection) ApplyLowerPrecedence(target *daemonconfig.Config, commandLine map[string]bool) map[string]bool {
 	return s.apply(target, commandLine, true)
 }
 
-func (s TNLDSection) apply(target *tnldconfig.Config, commandLine map[string]bool, respectHigherPrecedence bool) map[string]bool {
+func (s TNLDSection) apply(target *daemonconfig.Config, commandLine map[string]bool, respectHigherPrecedence bool) map[string]bool {
 	applied := make(map[string]bool)
 	if target == nil {
 		return applied
 	}
 	sourceValue := reflect.ValueOf(s.value)
 	targetValue := reflect.ValueOf(target).Elem()
-	typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
+	typeOfConfig := reflect.TypeOf(daemonconfig.Config{})
 	for index := range s.present {
 		field := typeOfConfig.Field(index)
 		name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")
@@ -516,7 +513,7 @@ var (
 
 func tnldFields() map[string]tnldField {
 	tnldFieldsOnce.Do(func() {
-		typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
+		typeOfConfig := reflect.TypeOf(daemonconfig.Config{})
 		durationType := reflect.TypeOf(time.Duration(0))
 		tnldFieldMap = make(map[string]tnldField, typeOfConfig.NumField())
 		for index := 0; index < typeOfConfig.NumField(); index++ {

@@ -7,13 +7,13 @@ import (
 	"io"
 	"strconv"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type applyCommand struct {
@@ -52,7 +52,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 			return publisherCLIError("project key belongs to another configuration source")
 		}
 		revision = existing.Revision
-	} else if !errors.Is(err, controlclient.ErrNotFound) {
+	} else if !errors.Is(err, clientcontrol.ErrNotFound) {
 		return err
 	}
 	if err = bindProjectWorkloads(ctx, project, &declaration, existing.Configuration); err != nil {
@@ -73,7 +73,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		if project.Config.Team != nil {
 			team = *project.Config.Team
 		}
-		if err := connectionruntime.WriteBinding(project.Root, connectionruntime.Binding{Schema: 1, Server: session.Authenticated().ServerEndpoint, Team: team, TeamID: current.Team().Id, ProjectKey: source.Key, SourceID: source.Fingerprint}); err != nil {
+		if err := connectorruntime.WriteBinding(project.Root, connectorruntime.Binding{Schema: 1, Server: session.Authenticated().ServerEndpoint, Team: team, TeamID: current.Team().Id, ProjectKey: source.Key, SourceID: source.Fingerprint}); err != nil {
 			return failure.Wrap("write applied connection scope", failure.ProjectConfigInvalid, err)
 		}
 	}
@@ -90,7 +90,7 @@ func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []cliou
 		if service.ServiceId != nil {
 			id = *service.ServiceId
 		}
-		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "publisher", Value: service.Publisher}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
+		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "publisher", Value: service.PublisherGroup}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
 	}
 	for _, member := range applied.Members {
 		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}

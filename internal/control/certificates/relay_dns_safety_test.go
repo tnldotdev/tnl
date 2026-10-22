@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	acmeclient "github.com/tnldotdev/tnl/internal/control/certificates/acme"
+	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
@@ -128,7 +128,7 @@ func TestRelayWorkerIssuanceRejectsInvalidRenewalCertificate(t *testing.T) {
 			case "future":
 				csr, certificate = testCertificate(t, hostname, now.Add(2*time.Hour))
 			}
-			api := &acmeStub{order: acmeclient.Order{URL: "https://acme.example.test/order/1", Finalize: "https://acme.example.test/finalize/1", Certificate: "https://acme.example.test/certificate/1", Status: "valid", Identifiers: []acmeclient.Identifier{{Type: "dns", Value: hostname}}}, certificatePEM: certificate}
+			api := &acmeStub{order: acme.Order{URL: "https://acme.example.test/order/1", Finalize: "https://acme.example.test/finalize/1", Certificate: "https://acme.example.test/certificate/1", Status: "valid", Identifiers: []acme.Identifier{{Type: "dns", Value: hostname}}}, certificatePEM: certificate}
 			dns := &relayDNSChallengesStub{}
 			worker := &RelayWorker{config: RelayConfig{DNSChallenges: dns}}
 			work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: "finalizing", TLSServerName: hostname, CSRDER: csr, OrderURL: api.order.URL, ChallengeURL: "https://acme.example.test/challenge/1"}

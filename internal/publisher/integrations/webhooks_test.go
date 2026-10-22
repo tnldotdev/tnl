@@ -1,4 +1,4 @@
-package integrationurls
+package integrations
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
+	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -162,11 +162,11 @@ func TestUnavailableCatalogPolicyDoesNotBlockOtherWebhookOrReadFailedBody(t *tes
 	handler, ingressIPs, err := newWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{
 		"stripe": stripe,
 		"github": {Service: "api", Path: "/hooks/github", Provider: "github"},
-	}, nil, func(_ context.Context, _ webhookips.Cache, server, name string) (webhookips.Source, error) {
+	}, nil, func(_ context.Context, _ webhooksource.Cache, server, name string) (webhooksource.Source, error) {
 		if server != testServer || name != "github" {
 			t.Errorf("unexpected catalog lookup for %s on %s", name, server)
 		}
-		return webhookips.Source{}, errors.New("catalog unavailable")
+		return webhooksource.Source{}, errors.New("catalog unavailable")
 	})
 	if err != nil || handler == nil {
 		t.Fatalf("prepare webhook policies: %v", err)

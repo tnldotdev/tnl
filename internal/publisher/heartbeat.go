@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const heartbeatCallTimeout = 10 * time.Second
@@ -110,11 +110,11 @@ func heartbeatResponseOnce(
 		return heartbeatFallback(expiresAt), false, nil
 	}
 	// a missed heartbeat is safe only while the last confirmed publish run remains valid.
-	if errors.Is(err, controlclient.ErrUnavailable) || callTimedOut {
+	if errors.Is(err, clientcontrol.ErrUnavailable) || callTimedOut {
 		if time.Now().Before(expiresAt) {
 			return heartbeatFallback(expiresAt), false, nil
 		}
-		return heartbeatFallback(expiresAt), false, controlclient.ErrStatusConflict
+		return heartbeatFallback(expiresAt), false, clientcontrol.ErrStatusConflict
 	}
 	return heartbeatFallback(expiresAt), false, err
 }

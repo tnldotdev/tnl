@@ -1,6 +1,6 @@
 // package controlproxy admits HTTP requests from an explicitly trusted HTTPS
 // terminator. the external origin is configuration, never forwarded input.
-package controlproxy
+package proxy
 
 import (
 	"errors"

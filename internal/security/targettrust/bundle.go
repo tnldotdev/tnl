@@ -1,6 +1,6 @@
 // package privatetrust captures public CA material for publisher-to-target TLS.
 // no publisher private key or database credential is included in a snapshot.
-package privatetrust
+package targettrust
 
 import (
 	"bytes"
@@ -28,8 +28,8 @@ import (
 const maxBundleBytes = 1 << 20
 const cacheLifetime = 5 * time.Minute
 
-var ErrInvalidBundle = errors.New("private service CA bundle is invalid")
-var ErrFetchBundle = errors.New("private service CA bundle could not be fetched over HTTPS")
+var ErrInvalidBundle = errors.New("service CA bundle is invalid")
+var ErrFetchBundle = errors.New("service CA bundle could not be fetched over HTTPS")
 
 // SourceError retains a typed cause without exposing local paths, remote URLs,
 // or query credentials in messages. errors.Is and errors.As retain the cause.
@@ -118,7 +118,7 @@ func (c *Cache) Capture(ctx context.Context, root, target string, setting config
 	}
 	host, err := tcptarget.Host(target)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("private service TLS target: %w", err)
+		return Snapshot{}, fmt.Errorf("service TLS target: %w", err)
 	}
 	if setting.Hostname != nil {
 		host = *setting.Hostname

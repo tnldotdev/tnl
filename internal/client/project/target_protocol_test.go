@@ -1,4 +1,4 @@
-package projectconfig
+package project
 
 import (
 	"testing"
@@ -15,8 +15,8 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 				if protocol == "http" {
 					address = "https://127.0.0.1:8443"
 				}
-				project := Project{Root: t.TempDir(), Config: config.TNL{Publishers: map[string]config.Publisher{"production": {}}, Services: config.Services{
-					"service": {Publisher: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &host}}},
+				project := Project{Root: t.TempDir(), Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{"production": {}}, Services: config.Services{
+					"service": {PublisherGroup: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &host}}},
 				}}}
 				publication, err := project.ResolvePublish("service", "")
 				if err != nil {
@@ -30,7 +30,7 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 				if err != nil {
 					t.Fatal(err)
 				}
-				remote, err := applied.PrivateSnapshot()
+				remote, err := applied.TargetTrust()
 				if err != nil || remote.Digest != local.Digest || remote.Hostname != host || !remote.System {
 					t.Fatalf("local and applied trust diverged: %+v %+v %v", local, remote, err)
 				}

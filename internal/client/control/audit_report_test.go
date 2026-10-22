@@ -1,4 +1,4 @@
-package controlclient
+package control
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPublisherAuditUsesExactRunTokenAndAcknowledgement(t *testing.T) {

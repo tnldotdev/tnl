@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -211,9 +211,9 @@ func TestTargetResolutionDelegatesDiscoveryAndRejectsApps(t *testing.T) {
 	protocol := "tcp"
 	port := 6379
 	container := "redis-worktree"
-	project := projectconfig.Project{Root: "/project", Config: config.TNL{Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}}, "web": {}}}}
+	project := clientproject.Project{Root: "/project", Config: config.TNL{Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}}, "web": {}}}}
 	var selected string
-	resolved, err := target.ResolveTarget(t.Context(), project, "db", target.TargetResolverFunc(func(_ context.Context, p projectconfig.Project, name string) (string, error) {
+	resolved, err := target.ResolveTarget(t.Context(), project, "db", target.TargetResolverFunc(func(_ context.Context, p clientproject.Project, name string) (string, error) {
 		selected = name
 		if p.Root != "/project" {
 			t.Error("wrong project")
@@ -259,7 +259,7 @@ func TestLifecycleAttachmentIsFencedAndJoined(t *testing.T) {
 	if err := w.Manager.UnregisterTarget(id, "owner", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
-	if service := w.Manager.Snapshot().Services[0]; service.RegistrationID != "" || service.Target != "" || service.TunnelID != "" || service.PublishRunNumber != 0 || service.ProvisioningStage != "" {
+	if service := w.Manager.Snapshot().Services[0]; service.RegistrationID != "" || service.Target != "" || service.TunnelID != "" || service.RunNumber != 0 || service.ProvisioningStage != "" {
 		t.Fatalf("stopped service retained lifecycle identity: %+v", service)
 	}
 	select {

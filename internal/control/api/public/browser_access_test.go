@@ -1,4 +1,4 @@
-package controlapi
+package public
 
 import (
 	"bytes"
@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type browserFlowStore struct {
@@ -81,7 +81,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 		}
 	}))
 	defer provider.Close()
-	verifier, err := oidcauth.NewServer(oidcauth.ServerConfig{Issuer: provider.URL, ClientID: "tnl-browser", RedirectURL: "https://control.example.test/v1/browser/callback", Scopes: []string{"openid"}, HTTPClient: provider.Client()})
+	verifier, err := oidc.NewServer(oidc.ServerConfig{Issuer: provider.URL, ClientID: "tnl-browser", RedirectURL: "https://control.example.test/v1/browser/callback", Scopes: []string{"openid"}, HTTPClient: provider.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorityClient, err := authorityclient.New(provider.URL, provider.Client(), "")
+	authorityClient, err := clientauthority.New(provider.URL, provider.Client(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 		{controlstate.ErrPreviewNotFound, http.StatusNotFound, "not_found"},
 		{errors.New("database password private-test-secret"), http.StatusInternalServerError, "internal"},
 	} {
-		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserOIDC: &oidcauth.Server{}, browserAuthority: &authorityclient.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
+		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserOIDC: &oidc.Server{}, browserAuthority: &clientauthority.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
 		response := httptest.NewRecorder()
 		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: new("pv_example"), PublicUrlId: "url_example", ReturnPath: "/"})
 		var body struct {

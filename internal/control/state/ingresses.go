@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -24,13 +24,13 @@ var (
 
 // IngressRegistration describes one ingress process run.
 type IngressRegistration struct {
-	IngressID                                              string
-	IngressRunID                                           string
-	ProtocolVersion                                        uint64
-	ConnectionCapacity                                     uint64
-	IngressPoolID                                          string
-	ServicePorts                                           []int32
-	PrivateConnectorAddress, PrivateConnectorTLSServerName string
+	IngressID                                string
+	IngressRunID                             string
+	ProtocolVersion                          uint64
+	ConnectionCapacity                       uint64
+	IngressPoolID                            string
+	ServicePorts                             []int32
+	ConnectorAddress, ConnectorTLSServerName string
 }
 
 // IngressLeaseIdentity identifies one exact ingress process lease.
@@ -93,7 +93,7 @@ func (d *Database) RegisterIngress(
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
-		PrivateConnectorAddress: registration.PrivateConnectorAddress, PrivateConnectorTlsServerName: registration.PrivateConnectorTLSServerName,
+		ConnectorAddress: registration.ConnectorAddress, ConnectorTlsServerName: registration.ConnectorTLSServerName,
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 	})
@@ -289,15 +289,15 @@ func validateIngressRegistration(registration IngressRegistration, leaseDuration
 			return errors.New("ingress service ports must be sorted, distinct network ports")
 		}
 	}
-	if registration.PrivateConnectorAddress != "" || registration.PrivateConnectorTLSServerName != "" {
-		host, port, err := net.SplitHostPort(registration.PrivateConnectorAddress)
+	if registration.ConnectorAddress != "" || registration.ConnectorTLSServerName != "" {
+		host, port, err := net.SplitHostPort(registration.ConnectorAddress)
 		number, portErr := strconv.Atoi(port)
-		name, nameErr := naming.CanonicalizeHostname(registration.PrivateConnectorTLSServerName)
+		name, nameErr := naming.CanonicalizeHostname(registration.ConnectorTLSServerName)
 		_, hostErr := naming.CanonicalizeHostname(host)
 		if ip, err := netip.ParseAddr(host); err == nil && ip.Zone() == "" {
 			hostErr = nil
 		}
-		if err != nil || portErr != nil || number < 1 || number > 65535 || hostErr != nil || nameErr != nil || name != registration.PrivateConnectorTLSServerName {
+		if err != nil || portErr != nil || number < 1 || number > 65535 || hostErr != nil || nameErr != nil || name != registration.ConnectorTLSServerName {
 			return errors.New("controlstate: private connector address and TLS server name are invalid")
 		}
 	}

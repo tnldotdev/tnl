@@ -1,12 +1,12 @@
-package native
+package identity
 
 import (
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // nativeScope owns the validated scalar authority of one worker. wire documents
@@ -14,7 +14,7 @@ import (
 type nativeScope struct {
 	clientID, keyID, grantID, teamID string
 	kind                             authorityv1.PublisherEnrollmentResultKind
-	publicURLID, privateServiceID    string
+	publicURLID, serviceID           string
 	domainID, namespace              string
 }
 
@@ -24,18 +24,18 @@ func newNativeScope(i authorityv1.PublisherEnrollmentResult) (nativeScope, error
 	}
 	s := nativeScope{clientID: i.ClientId, keyID: i.KeyId, grantID: i.GrantId, teamID: i.TeamId, kind: i.Kind}
 	switch i.Kind {
-	case authorityv1.SavedUrl:
-		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.PrivateServiceId != nil || i.Namespace != nil || i.DomainId != nil {
+	case authorityv1.SavedPublicUrl:
+		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.ServiceId != nil || i.Namespace != nil || i.DomainId != nil {
 			return nativeScope{}, ErrScope
 		}
 		s.publicURLID = *i.PublicUrlId
-	case authorityv1.PrivateService:
-		if i.PrivateServiceId == nil || !opaqueid.Valid(*i.PrivateServiceId, opaqueid.PrivateServicePrefix) || i.PublicUrlId != nil || i.Namespace != nil || i.DomainId != nil {
+	case authorityv1.Service:
+		if i.ServiceId == nil || !opaqueid.Valid(*i.ServiceId, opaqueid.ServicePrefix) || i.PublicUrlId != nil || i.Namespace != nil || i.DomainId != nil {
 			return nativeScope{}, ErrScope
 		}
-		s.privateServiceID = *i.PrivateServiceId
+		s.serviceID = *i.ServiceId
 	case authorityv1.Namespace:
-		if i.Namespace == nil || i.DomainId == nil || i.PublicUrlId != nil || i.PrivateServiceId != nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) {
+		if i.Namespace == nil || i.DomainId == nil || i.PublicUrlId != nil || i.ServiceId != nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) {
 			return nativeScope{}, ErrScope
 		}
 		canonical, err := naming.CanonicalizeHostname(*i.Namespace)
@@ -50,10 +50,10 @@ func newNativeScope(i authorityv1.PublisherEnrollmentResult) (nativeScope, error
 func (s nativeScope) enrollment() authorityv1.PublisherEnrollmentResult {
 	i := authorityv1.PublisherEnrollmentResult{ClientId: s.clientID, KeyId: s.keyID, GrantId: s.grantID, TeamId: s.teamID, Kind: s.kind}
 	switch s.kind {
-	case authorityv1.SavedUrl:
+	case authorityv1.SavedPublicUrl:
 		i.PublicUrlId = &s.publicURLID
-	case authorityv1.PrivateService:
-		i.PrivateServiceId = &s.privateServiceID
+	case authorityv1.Service:
+		i.ServiceId = &s.serviceID
 	case authorityv1.Namespace:
 		i.DomainId, i.Namespace = &s.domainID, &s.namespace
 	}

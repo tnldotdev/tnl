@@ -1,10 +1,10 @@
-package controlapi
+package public
 
 import (
 	"net/http"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (h *handler) CreatePublishRunPreview(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {

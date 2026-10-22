@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"context"
@@ -14,14 +14,14 @@ import (
 
 	"github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -175,7 +175,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			d := &daemon{ctx: ctx, cancel: cancel, relayClientTLS: &tls.Config{RootCAs: ca.roots}, componentDone: make(chan error, 1)}
 			metrics := observability.New("ingress")
 			t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
-			settings := ingressSettingsFrom(tnldconfig.Config{VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Minute, ControlRetryInterval: time.Millisecond, RoutingTableWait: time.Second})
+			settings := ingressSettingsFrom(daemonconfig.Config{VisitorConnectionLimit: 16, LeaseRenewalInterval: time.Minute, ControlRetryInterval: time.Millisecond, RoutingTableWait: time.Second})
 			if err := d.startIngressRuntime(ctx, settings, metrics, ingressRuntimeConfig{client: control, ingressID: "ingress", listener: listener, clusterSecret: "0123456789abcdef0123456789abcdef"}); err != nil {
 				_ = listener.Close()
 				t.Fatal(err)

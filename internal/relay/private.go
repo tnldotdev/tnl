@@ -11,37 +11,37 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type privateConnection struct {
-	ref   tunnelv1.PrivatePublisherConnectionRef
+type serviceConnection struct {
+	ref   tunnelv1.ServicePublisherConnectionRef
 	lease relayv1.RelayLease
 	paths *streamLifetime
 }
 
-// PrivateRegistry contains only exact locally claimed private assignments.
+// ServiceRegistry contains only exact locally claimed private assignments.
 // public URL references cannot select entries from this registry.
-type PrivateRegistry struct {
+type ServiceRegistry struct {
 	observer    OperationObserver
 	mu          sync.Mutex
-	connections map[string]*privateConnection
+	connections map[string]*serviceConnection
 	claims      map[string]*privateClaim
 	closed      bool
 }
 
-func NewPrivateRegistry() *PrivateRegistry {
-	return &PrivateRegistry{connections: make(map[string]*privateConnection)}
+func NewServiceRegistry() *ServiceRegistry {
+	return &ServiceRegistry{connections: make(map[string]*serviceConnection)}
 }
 
 // Instrument configures observation before the registry begins serving work.
-func (r *PrivateRegistry) Instrument(observer OperationObserver) { r.observer = observer }
+func (r *ServiceRegistry) Instrument(observer OperationObserver) { r.observer = observer }
 
 // reserve holds local ownership from before control's claim through its final
 // disconnect. response-loss retries use the same assignment and process lease;
 // a duplicate handshake must never reach control or clean up the owner's claim.
-func (r *PrivateRegistry) reserve(c *privateClaim) error {
+func (r *ServiceRegistry) reserve(c *privateClaim) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -51,7 +51,7 @@ func (r *PrivateRegistry) reserve(c *privateClaim) error {
 		return &tunnel.ProtocolError{Code: tunnelv1.DuplicatePublisherConnection}
 	}
 	for _, old := range r.claims {
-		if old.ref.PrivateRunID == c.ref.PrivateRunID && old.ref.ConnectionSlot == c.ref.ConnectionSlot && old.ref.ConnectionAssignmentRevision >= c.ref.ConnectionAssignmentRevision {
+		if old.ref.ServiceRunID == c.ref.ServiceRunID && old.ref.ConnectionSlot == c.ref.ConnectionSlot && old.ref.ConnectionAssignmentRevision >= c.ref.ConnectionAssignmentRevision {
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
 	}
@@ -62,7 +62,7 @@ func (r *PrivateRegistry) reserve(c *privateClaim) error {
 	return nil
 }
 
-func (r *PrivateRegistry) release(c *privateClaim) {
+func (r *ServiceRegistry) release(c *privateClaim) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.claims[c.ref.PublisherConnectionID] == c {
@@ -70,15 +70,15 @@ func (r *PrivateRegistry) release(c *privateClaim) {
 	}
 }
 
-func (r *PrivateRegistry) insert(c *privateConnection) error {
+func (r *ServiceRegistry) insert(c *serviceConnection) error {
 	r.mu.Lock()
 	if r.closed || r.connections[c.ref.PublisherConnectionID] != nil {
 		r.mu.Unlock()
 		return errors.New("relay: private assignment already connected or draining")
 	}
-	var replaced *privateConnection
+	var replaced *serviceConnection
 	for _, old := range r.connections {
-		if old.ref.PrivateServiceID == c.ref.PrivateServiceID && old.ref.PrivateRunID == c.ref.PrivateRunID && old.ref.ConnectionSlot == c.ref.ConnectionSlot {
+		if old.ref.ServiceID == c.ref.ServiceID && old.ref.ServiceRunID == c.ref.ServiceRunID && old.ref.ConnectionSlot == c.ref.ConnectionSlot {
 			if old.ref.ConnectionAssignmentRevision >= c.ref.ConnectionAssignmentRevision {
 				r.mu.Unlock()
 				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
@@ -104,7 +104,7 @@ func (r *PrivateRegistry) insert(c *privateConnection) error {
 	return nil
 }
 
-func (r *PrivateRegistry) remove(c *privateConnection) {
+func (r *ServiceRegistry) remove(c *serviceConnection) {
 	r.mu.Lock()
 	if r.connections[c.ref.PublisherConnectionID] == c {
 		delete(r.connections, c.ref.PublisherConnectionID)
@@ -116,7 +116,7 @@ func (r *PrivateRegistry) remove(c *privateConnection) {
 	_ = c.paths.Close()
 }
 
-func (r *PrivateRegistry) candidate(h tunnelv1.PrivateForwardingHeader, lease relayv1.RelayLease, now time.Time) (*privateConnection, bool) {
+func (r *ServiceRegistry) candidate(h tunnelv1.ServiceForwardingHeader, lease relayv1.RelayLease, now time.Time) (*serviceConnection, bool) {
 	if h.Validate() != nil || !h.ExpiresAt.After(now) || !h.LeaseExpiresAt.After(now) || lease.Draining || !lease.LeaseExpiresAt.After(now) ||
 		h.RelayServiceID != lease.RelayServiceId || h.RelayID != lease.RelayId || h.RelayRunID != lease.RelayRunId || h.RelayLeaseRevision != uint64(lease.RelayLeaseRevision) {
 		return nil, false
@@ -124,7 +124,7 @@ func (r *PrivateRegistry) candidate(h tunnelv1.PrivateForwardingHeader, lease re
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := r.connections[h.PublisherConnectionID]
-	if c == nil || r.closed || tunnel.PrivateForwardingRef(h) != c.ref ||
+	if c == nil || r.closed || tunnel.ServiceForwardingRef(h) != c.ref ||
 		c.lease.RelayServiceId != lease.RelayServiceId || c.lease.RelayId != lease.RelayId ||
 		c.lease.RelayRunId != lease.RelayRunId || c.lease.RelayLeaseRevision != lease.RelayLeaseRevision {
 		return nil, false
@@ -132,17 +132,17 @@ func (r *PrivateRegistry) candidate(h tunnelv1.PrivateForwardingHeader, lease re
 	return c, true
 }
 
-func (r *PrivateRegistry) snapshot() []*privateConnection {
+func (r *ServiceRegistry) snapshot() []*serviceConnection {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var entries []*privateConnection
+	var entries []*serviceConnection
 	for _, c := range r.connections {
 		entries = append(entries, c)
 	}
 	return entries
 }
 
-func (r *PrivateRegistry) Load() (connections, streams int64) {
+func (r *ServiceRegistry) Load() (connections, streams int64) {
 	for _, c := range r.snapshot() {
 		connections++
 		c.paths.mu.Lock()
@@ -152,7 +152,7 @@ func (r *PrivateRegistry) Load() (connections, streams int64) {
 	return
 }
 
-func (r *PrivateRegistry) Close() error {
+func (r *ServiceRegistry) Close() error {
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
@@ -163,7 +163,7 @@ func (r *PrivateRegistry) Close() error {
 	return result
 }
 
-func (r *PrivateRegistry) Drain(ctx context.Context) error {
+func (r *ServiceRegistry) Drain(ctx context.Context) error {
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
@@ -177,25 +177,25 @@ func (r *PrivateRegistry) Drain(ctx context.Context) error {
 	return result
 }
 
-type PrivatePublisherTarget struct {
+type ServicePublisherTarget struct {
 	Control  *Controller
-	Registry *PrivateRegistry
+	Registry *ServiceRegistry
 }
-type PrivatePublisherAcceptor struct {
-	Select func(string) (PrivatePublisherTarget, bool)
+type ServicePublisherAcceptor struct {
+	Select func(string) (ServicePublisherTarget, bool)
 }
 
 type privateClaim struct {
-	target PrivatePublisherTarget
-	ref    tunnelv1.PrivatePublisherConnectionRef
+	target ServicePublisherTarget
+	ref    tunnelv1.ServicePublisherConnectionRef
 	lease  relayv1.RelayLease
 }
 
-func (a *PrivatePublisherAcceptor) claim(ctx context.Context, message tunnelv1.Message) (*privateClaim, error) {
-	if a == nil || a.Select == nil || message.Role != tunnelv1.Publisher || message.PrivateConnection == nil {
+func (a *ServicePublisherAcceptor) claim(ctx context.Context, message tunnelv1.Message) (*privateClaim, error) {
+	if a == nil || a.Select == nil || message.Role != tunnelv1.Publisher || message.ServiceConnection == nil {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	ref := *message.PrivateConnection
+	ref := *message.ServiceConnection
 	target, ok := a.Select(ref.RelayServiceID)
 	if !ok || target.Control == nil || target.Registry == nil {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
@@ -243,7 +243,7 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 		return errors.New("relay: private handshake failed after claim")
 	}
 	paths := newStreamLifetime(session)
-	connection := &privateConnection{ref: c.ref, lease: c.lease, paths: paths}
+	connection := &serviceConnection{ref: c.ref, lease: c.lease, paths: paths}
 	if err := c.target.Registry.insert(connection); err != nil {
 		var protocol *tunnel.ProtocolError
 		if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
@@ -277,8 +277,8 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingPrivateForwardingStream) (retErr error) {
-	ctx, endSpan := observability.Start(ctx, "relay.open_private_visitor_stream")
+func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream) (retErr error) {
+	ctx, endSpan := observability.Start(ctx, "relay.open_connector_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
@@ -312,7 +312,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 		rejected = err
 		return incoming.Reject(tunnelv1.DrainingPublisherConnection)
 	}
-	stream, err := connection.paths.session.OpenPrivateForwardingStream(ctx, header)
+	stream, err := connection.paths.session.OpenServiceForwardingStream(ctx, header)
 	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
@@ -349,13 +349,13 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 	defer func() { close(copyDone); <-watchDone }()
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
-	_, finishForward := observability.Start(ctx, "relay.forward_private_visitor")
+	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream, publisher)
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)
 	}); ok {
-		observer.ObserveRelayTransfer("managed_service", copied.LeftToRight, copied.RightToLeft, err)
+		observer.ObserveRelayTransfer("service", copied.LeftToRight, copied.RightToLeft, err)
 	}
 	return err
 }

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) {
@@ -25,9 +25,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 		}
 	}
 	alias, group := "database", "production"
-	project := projectConfiguration{Project: projectconfig.Project{Root: root, Selection: projectconfig.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: projectconfig.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
 		"orders": {Name: &alias, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://do-not-evaluate.internal"))}},
-		"remote": {Name: &group, Publisher: &group},
+		"remote": {Name: &group, PublisherGroup: &group},
 	}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -48,9 +48,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 		{name: "remote", team: "team_one", status: 404, wantReason: failure.ServerResourceNotFound},
 		{name: "svc_bound", want: "svc_bound"},
 		{name: "orders", noConfig: true, want: "svc_unrelated"},
-		{name: "orders", team: "team_one", status: 404, wantReason: failure.LocalPrivateServiceUnavailable},
-		{name: alias, team: "team_one", omitID: true, wantReason: failure.LocalPrivateServiceUnavailable},
-		{name: "orders", team: "team_other", wantReason: failure.LocalPrivateServiceUnavailable},
+		{name: "orders", team: "team_one", status: 404, wantReason: failure.LocalServiceUnavailable},
+		{name: alias, team: "team_one", omitID: true, wantReason: failure.LocalServiceUnavailable},
+		{name: "orders", team: "team_other", wantReason: failure.LocalServiceUnavailable},
 		{name: "orders", team: "team_one", corrupt: true, wantReason: failure.ServerResponseInvalid},
 		{name: "orders", team: "team_one", status: 409, wantReason: failure.ServerConflict},
 	} {
@@ -62,7 +62,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				}
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
-				case "/v1/projects/" + source.Key + "/private-services/remote":
+				case "/v1/projects/" + source.Key + "/services/remote":
 					remoteLookup++
 					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 2 {
 						t.Errorf("applied lookup scope = %s", r.URL)
@@ -73,7 +73,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 						_ = json.NewEncoder(w).Encode(controlv1.Problem{Status: test.status, Code: controlv1.NotFound, Title: "unavailable", Detail: "binding unavailable"})
 						return
 					}
-					_ = json.NewEncoder(w).Encode(controlv1.PrivateService{Id: "svc_remote", Name: group, TeamId: "team_one"})
+					_ = json.NewEncoder(w).Encode(controlv1.Service{Id: "svc_remote", Name: group, TeamId: "team_one"})
 				case "/v1/projects/" + localSource.Key + "/local-services/orders":
 					lookup++
 					if r.URL.Query().Get("source_fingerprint") != localSource.Fingerprint || r.URL.Query().Get("worktree_key") != project.LocalWorktreeKey() || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 3 {
@@ -93,21 +93,21 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 					if test.corrupt {
 						worktree = "other-worktree"
 					}
-					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceKind: controlv1.LocalProjectServiceServiceKindPrivateService, ServiceId: "svc_bound", PrivateService: &controlv1.PrivateServiceMetadata{Protocol: controlv1.PrivateHttp}})
-				case "/v1/visitor/private-services":
+					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceKind: controlv1.LocalProjectServiceServiceKindService, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
+				case "/v1/visitor/services":
 					inventory++
-					services := []controlv1.PrivateService{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
+					services := []controlv1.Service{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
 					if !test.omitID {
-						services = append(services, controlv1.PrivateService{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
+						services = append(services, controlv1.Service{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
 					}
-					_ = json.NewEncoder(w).Encode(controlv1.PrivateServicePage{Services: services})
+					_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: services})
 				default:
 					t.Errorf("connector selection requested another API: %s", r.URL)
 					w.WriteHeader(500)
 				}
 			}))
 			defer server.Close()
-			control, err := controlclient.New(server.URL, server.Client(), "visitor-token")
+			control, err := clientcontrol.New(server.URL, server.Client(), "visitor-token")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				if reason, ok := failure.ReasonOf(err); !ok || reason != test.wantReason {
 					t.Fatalf("selection error = %v, want %s", err, test.wantReason)
 				}
-				if test.status == 404 && !errors.Is(err, controlclient.ErrNotFound) {
+				if test.status == 404 && !errors.Is(err, clientcontrol.ErrNotFound) {
 					t.Fatal("missing binding lost its API cause")
 				}
 			} else if err != nil || service.Id != test.want {
@@ -140,7 +140,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 
 func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 	name := "orders"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"orders": {}, "other": {Name: &name}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"orders": {}, "other": {Name: &name}}}}}
 	if _, err := ConfiguredService(project.Project, name); err == nil {
 		t.Fatal("key/override collision selected an arbitrary declaration")
 	}
@@ -153,11 +153,11 @@ func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 		t.Fatal("public service key fell back to another project's friendly name")
 	}
 	group := "production"
-	project.Config.Services["orders"] = config.Service{Publisher: &group, Tunnel: &config.Tunnel{}}
+	project.Config.Services["orders"] = config.Service{PublisherGroup: &group, Tunnel: &config.Tunnel{}}
 	if selected, err := ConfiguredService(project.Project, name); err != nil || selected != name {
-		t.Fatal("named managed HTTP policy was mistaken for a public URL", err)
+		t.Fatal("named service HTTP policy was mistaken for a public URL", err)
 	}
-	definition, ok := failure.DefinitionFor(failure.LocalPrivateServiceUnavailable)
+	definition, ok := failure.DefinitionFor(failure.LocalServiceUnavailable)
 	if !ok || !strings.Contains(definition.Action, "tnl publish") || definition.Retry != failure.RetryAfterChange {
 		t.Fatal("missing realization has no actionable publisher diagnostic")
 	}

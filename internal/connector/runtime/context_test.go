@@ -1,4 +1,4 @@
-package connectionruntime
+package runtime
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestConnectionIPCInheritsProcessObservationContext(t *testing.T) {
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)
 	}
-	if err := Call(t.Context(), state.PrivateHandle, "connect", Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "database"}, new(Connection)); err != nil {
+	if err := Call(t.Context(), state.ConnectionHandle, "connect", Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "database"}, new(Connection)); err != nil {
 		t.Fatal(err)
 	}
 	if !b.observed.Load() {

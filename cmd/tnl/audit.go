@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type auditCommand struct {
@@ -21,7 +21,7 @@ type auditCommand struct {
 
 type auditListCommand struct {
 	scopedTeamFlags `embed:""`
-	Service         string           `name:"service" help:"Private service name, public hostname, or immutable service ID."`
+	Service         string           `name:"service" help:"service name, public hostname, or immutable service ID."`
 	Since           string           `name:"since" default:"24h" help:"Read events since a positive duration such as 24h, or an RFC3339 timestamp."`
 	After           string           `name:"after" help:"Resume after the cursor returned by a previous audit list."`
 	Limit           int              `name:"limit" default:"100" help:"Maximum events to return, from 1 to 10000."`
@@ -73,7 +73,7 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 		if len(flags.Service) > 253 || strings.TrimSpace(flags.Service) != flags.Service || strings.ContainsAny(flags.Service, "\x00\r\n") {
 			return failure.Wrap("select audit service", failure.InvalidTunnelFlags, errors.New("--service requires a service name, hostname or ID"))
 		}
-		if opaqueid.Valid(flags.Service, opaqueid.PrivateServicePrefix) || opaqueid.Valid(flags.Service, opaqueid.PublicURLPrefix) {
+		if opaqueid.Valid(flags.Service, opaqueid.ServicePrefix) || opaqueid.Valid(flags.Service, opaqueid.PublicURLPrefix) {
 			params.ServiceId = &flags.Service
 		} else {
 			params.Service = &flags.Service

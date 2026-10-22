@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
-	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 )
 
 // Jobs lists or stops one installed connector. removal joins the supervisor's
 // attempt before releasing the remembered local port.
-func Jobs(ctx context.Context, options publisherjob.ServiceOptions, name, action string) ([]publisherjob.Job, error) {
-	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: options.Root, User: true})
+func Jobs(ctx context.Context, options supervisor.ServiceOptions, name, action string) ([]supervisor.Job, error) {
+	registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: true})
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +20,7 @@ func Jobs(ctx context.Context, options publisherjob.ServiceOptions, name, action
 	if err != nil {
 		return nil, err
 	}
-	connectors := []publisherjob.Job{}
+	connectors := []supervisor.Job{}
 	for _, job := range jobs {
 		if job.Kind == "connector" && (name == "" || job.Name == name || job.ID == name) {
 			connectors = append(connectors, job)
@@ -30,10 +30,10 @@ func Jobs(ctx context.Context, options publisherjob.ServiceOptions, name, action
 		return connectors, nil
 	}
 	if len(connectors) == 0 {
-		return nil, publisherjob.ErrJobNotFound
+		return nil, supervisor.ErrJobNotFound
 	}
 	if len(connectors) != 1 {
-		return nil, publisherjob.ErrJobAmbiguous
+		return nil, supervisor.ErrJobAmbiguous
 	}
 	job := connectors[0]
 	if err := registry.Stop(ctx, job.ID); err != nil {
@@ -57,7 +57,7 @@ func Jobs(ctx context.Context, options publisherjob.ServiceOptions, name, action
 		if err != nil {
 			return nil, err
 		}
-		if err := profile.RemovePrivateServicePort(ctx, job.IdentityID, job.PrivateServiceID); err != nil {
+		if err := profile.RemoveServicePort(ctx, job.IdentityID, job.ServiceID); err != nil {
 			return nil, err
 		}
 		return connectors, nil
@@ -69,8 +69,8 @@ func Jobs(ctx context.Context, options publisherjob.ServiceOptions, name, action
 	}
 	for _, current := range jobs {
 		if current.ID == job.ID {
-			return []publisherjob.Job{current}, nil
+			return []supervisor.Job{current}, nil
 		}
 	}
-	return []publisherjob.Job{}, nil
+	return []supervisor.Job{}, nil
 }

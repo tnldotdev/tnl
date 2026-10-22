@@ -1,4 +1,4 @@
-package ingressapi
+package ingress
 
 import "time"
 

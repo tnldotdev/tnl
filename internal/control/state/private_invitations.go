@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -17,38 +17,38 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-type PrivateServiceInvitation struct {
-	ID, PrivateServiceID, Email, Secret string
-	ExpiresAt                           time.Time
-	AcceptedAt, RevokedAt               *time.Time
+type ServiceInvitation struct {
+	ID, ServiceID, Email, Secret string
+	ExpiresAt                    time.Time
+	AcceptedAt, RevokedAt        *time.Time
 }
 
-func privateInvitationRecord(row controlstatedb.ControlPrivateServiceInvitation) PrivateServiceInvitation {
-	return PrivateServiceInvitation{ID: row.ID, PrivateServiceID: row.PrivateServiceID,
+func privateInvitationRecord(row controlstatedb.ControlServiceInvitation) ServiceInvitation {
+	return ServiceInvitation{ID: row.ID, ServiceID: row.ServiceID,
 		Email: row.NormalizedEmail, ExpiresAt: row.ExpiresAt.Time,
 		AcceptedAt: optionalTime(row.AcceptedAt), RevokedAt: optionalTime(row.RevokedAt)}
 }
 
-func (d *Database) InvitePrivateServiceVisitor(ctx context.Context, serviceID, actorID, key, email string, expires, now time.Time) (result PrivateServiceInvitation, retErr error) {
+func (d *Database) InviteServiceVisitor(ctx context.Context, serviceID, actorID, key, email string, expires, now time.Time) (result ServiceInvitation, retErr error) {
 	email, err := normalizeEmailRestriction(email)
-	if err != nil || email == "" || !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) || len(key) < 1 || len(key) > 128 {
-		return result, ErrPrivateServiceAccess
+	if err != nil || email == "" || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || len(key) < 1 || len(key) > 128 {
+		return result, ErrServiceAccess
 	}
 	requestDigest := sha256.Sum256([]byte(serviceID + "\x00" + email + "\x00" + expires.UTC().Format(time.RFC3339Nano)))
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "invite private service visitor", &retErr)()
-	service, err := lockManagedPrivateService(ctx, tx, serviceID, actorID)
+	defer rollback(ctx, tx, "invite service visitor", &retErr)()
+	service, err := lockService(ctx, tx, serviceID, actorID)
 	if err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	existing, err := q.FindPrivateServiceInvitationRequest(ctx, controlstatedb.FindPrivateServiceInvitationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
+	existing, err := q.FindServiceInvitationRequest(ctx, controlstatedb.FindServiceInvitationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
 	if err == nil {
-		if existing.PrivateServiceID != serviceID || !bytes.Equal(existing.RequestDigest, requestDigest[:]) {
-			return result, ErrPrivateServiceConflict
+		if existing.ServiceID != serviceID || !bytes.Equal(existing.RequestDigest, requestDigest[:]) {
+			return result, ErrServiceConflict
 		}
 		// only the digest is stored. an exact retry recovers the owned ID and
 		// current state so the manager can explicitly revoke and reissue.
@@ -58,9 +58,9 @@ func (d *Database) InvitePrivateServiceVisitor(ctx context.Context, serviceID, a
 		return result, err
 	}
 	if !expires.After(now) || expires.After(now.Add(maximumShareLifetime)) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
-	id, err := opaqueid.New(opaqueid.PrivateServiceInvitationPrefix)
+	id, err := opaqueid.New(opaqueid.ServiceInvitationPrefix)
 	if err != nil {
 		return result, err
 	}
@@ -70,14 +70,14 @@ func (d *Database) InvitePrivateServiceVisitor(ctx context.Context, serviceID, a
 	}
 	secret := id + "." + base64.RawURLEncoding.EncodeToString(secretBytes[:])
 	digest := sha256.Sum256(secretBytes[:])
-	row, err := q.InsertPrivateServiceInvitation(ctx, controlstatedb.InsertPrivateServiceInvitationParams{
-		ID: id, PrivateServiceID: serviceID, TeamID: service.TeamID, NormalizedEmail: email,
+	row, err := q.InsertServiceInvitation(ctx, controlstatedb.InsertServiceInvitationParams{
+		ID: id, ServiceID: serviceID, TeamID: service.TeamID, NormalizedEmail: email,
 		TokenDigest: digest[:], CreatedByIdentityID: actorID, IdempotencyKey: key,
 		RequestDigest: requestDigest[:], Now: timestamptz(now), ExpiresAt: timestamptz(expires),
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return result, ErrPrivateServiceConflict
+		return result, ErrServiceConflict
 	}
 	if err != nil {
 		return result, err
@@ -93,26 +93,26 @@ func (d *Database) InvitePrivateServiceVisitor(ctx context.Context, serviceID, a
 	return result, nil
 }
 
-func (d *Database) ListPrivateServiceInvitations(ctx context.Context, serviceID, actorID, after string) (result []PrivateServiceInvitation, next string, retErr error) {
-	if !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) || after != "" && !opaqueid.Valid(after, opaqueid.PrivateServiceInvitationPrefix) {
-		return nil, "", ErrPrivateServiceAccess
+func (d *Database) ListServiceInvitations(ctx context.Context, serviceID, actorID, after string) (result []ServiceInvitation, next string, retErr error) {
+	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || after != "" && !opaqueid.Valid(after, opaqueid.ServiceInvitationPrefix) {
+		return nil, "", ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, "", err
 	}
-	defer rollback(ctx, tx, "list private service invitations", &retErr)()
-	if _, err = lockManagedPrivateService(ctx, tx, serviceID, actorID); err != nil {
+	defer rollback(ctx, tx, "list service invitations", &retErr)()
+	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
 		return nil, "", err
 	}
-	rows, err := controlstatedb.New(tx).ListPrivateServiceInvitations(ctx, controlstatedb.ListPrivateServiceInvitationsParams{PrivateServiceID: serviceID, AfterID: after})
+	rows, err := controlstatedb.New(tx).ListServiceInvitations(ctx, controlstatedb.ListServiceInvitationsParams{ServiceID: serviceID, AfterID: after})
 	if err != nil {
 		return nil, "", err
 	}
 	if len(rows) > 100 {
 		next, rows = rows[99].ID, rows[:100]
 	}
-	result = make([]PrivateServiceInvitation, 0, len(rows))
+	result = make([]ServiceInvitation, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, privateInvitationRecord(row))
 	}
@@ -122,35 +122,35 @@ func (d *Database) ListPrivateServiceInvitations(ctx context.Context, serviceID,
 	return result, next, nil
 }
 
-func (d *Database) AcceptPrivateServiceInvitation(ctx context.Context, identityID, secret string, now time.Time) (result PrivateServiceGrant, retErr error) {
+func (d *Database) AcceptServiceInvitation(ctx context.Context, identityID, secret string, now time.Time) (result ServiceGrant, retErr error) {
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "accept private service invitation", &retErr)()
+	defer rollback(ctx, tx, "accept service invitation", &retErr)()
 	invitation, err := pendingPrivateInvitation(ctx, tx, identityID, secret, now)
 	if err != nil {
 		return result, err
 	}
-	serviceID, id, digest := invitation.PrivateServiceID, invitation.ID, invitation.TokenDigest
+	serviceID, id, digest := invitation.ServiceID, invitation.ID, invitation.TokenDigest
 	q := controlstatedb.New(tx)
 	verifiedEmail := ""
 	if proof, signed := serviceActor(ctx); signed && proof.identity.EmailVerified {
 		verifiedEmail = proof.identity.NormalizedEmail
 	}
-	invitation, err = q.AcceptPrivateServiceInvitation(ctx, controlstatedb.AcceptPrivateServiceInvitationParams{ID: id, PrivateServiceID: serviceID, IdentityID: text(identityID), TokenDigest: digest, VerifiedActorEmail: nullableText(verifiedEmail), Now: timestamptz(now)})
+	invitation, err = q.AcceptServiceInvitation(ctx, controlstatedb.AcceptServiceInvitationParams{ID: id, ServiceID: serviceID, IdentityID: text(identityID), TokenDigest: digest, VerifiedActorEmail: nullableText(verifiedEmail), Now: timestamptz(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	if err != nil {
 		return result, err
 	}
-	grantID, err := opaqueid.New(opaqueid.PrivateServiceGrantPrefix)
+	grantID, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
 	if err != nil {
 		return result, err
 	}
-	grant, err := q.InsertPrivateServiceGrant(ctx, controlstatedb.InsertPrivateServiceGrantParams{
-		ID: grantID, PrivateServiceID: serviceID, TeamID: invitation.TeamID, Kind: "identity",
+	grant, err := q.InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
+		ID: grantID, ServiceID: serviceID, TeamID: invitation.TeamID, Kind: "identity",
 		IdentityID: text(identityID), InvitationID: text(id), CreatedByIdentityID: invitation.CreatedByIdentityID,
 		IdempotencyKey: "invitation/" + id, RequestDigest: invitation.RequestDigest,
 		Now: timestamptz(now), ExpiresAt: invitation.ExpiresAt,
@@ -172,32 +172,32 @@ func (d *Database) AcceptPrivateServiceInvitation(ctx context.Context, identityI
 
 // pendingPrivateInvitation is shared by preview and acceptance. every rejected
 // secret or recipient gets the same denial, without a service projection.
-func pendingPrivateInvitation(ctx context.Context, tx pgx.Tx, identityID, secret string, now time.Time) (result controlstatedb.ControlPrivateServiceInvitation, retErr error) {
+func pendingPrivateInvitation(ctx context.Context, tx pgx.Tx, identityID, secret string, now time.Time) (result controlstatedb.ControlServiceInvitation, retErr error) {
 	id, encoded, found := strings.Cut(secret, ".")
-	if !found || !opaqueid.Valid(id, opaqueid.PrivateServiceInvitationPrefix) || len(encoded) != 43 {
-		return result, ErrPrivateServiceAccess
+	if !found || !opaqueid.Valid(id, opaqueid.ServiceInvitationPrefix) || len(encoded) != 43 {
+		return result, ErrServiceAccess
 	}
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
 	if err != nil || len(raw) != 32 {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	digest := sha256.Sum256(raw)
 	var serviceID string
-	if err = tx.QueryRow(ctx, `SELECT private_service_id FROM control.private_service_invitations WHERE id=$1`, id).Scan(&serviceID); errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
+	if err = tx.QueryRow(ctx, `SELECT service_id FROM control.service_invitations WHERE id=$1`, id).Scan(&serviceID); errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrServiceAccess
 	} else if err != nil {
 		return result, err
 	}
-	if err = lockPrivateAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	result, err = q.LockPendingPrivateServiceInvitation(ctx, controlstatedb.LockPendingPrivateServiceInvitationParams{ID: id, PrivateServiceID: serviceID, Now: timestamptz(now)})
+	result, err = q.LockPendingServiceInvitation(ctx, controlstatedb.LockPendingServiceInvitationParams{ID: id, ServiceID: serviceID, Now: timestamptz(now)})
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	if subtle.ConstantTimeCompare(result.TokenDigest, digest[:]) != 1 {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	if _, signed := serviceActor(ctx); signed {
 		i, err := consumeServiceActor(ctx, q, identityID, now)
@@ -208,7 +208,7 @@ func pendingPrivateInvitation(ctx context.Context, tx pgx.Tx, identityID, secret
 			return result, ErrServiceVerifiedEmailRequired
 		}
 		if i.NormalizedEmail != result.NormalizedEmail {
-			return result, ErrPrivateServiceAccess
+			return result, ErrServiceAccess
 		}
 		if err = serviceActorRecipientSource(ctx, q, result.TeamID, identityID, i, now); err != nil {
 			return result, err
@@ -217,67 +217,67 @@ func pendingPrivateInvitation(ctx context.Context, tx pgx.Tx, identityID, secret
 	}
 	identity, err := q.LockVisitorIdentity(ctx, identityID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	if err != nil {
 		return result, err
 	}
 	if !identity.EmailVerified || identity.NormalizedEmail.String != result.NormalizedEmail {
-		return result, ErrPrivateServiceAccess
+		return result, ErrServiceAccess
 	}
 	return result, nil
 }
 
-func (d *Database) PreviewPrivateServiceInvitation(ctx context.Context, actor, secret string, now time.Time) (result PrivateServiceInvitationPreview, retErr error) {
+func (d *Database) PreviewServiceInvitation(ctx context.Context, actor, secret string, now time.Time) (result ServiceInvitationPreview, retErr error) {
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "preview private service invitation", &retErr)()
+	defer rollback(ctx, tx, "preview service invitation", &retErr)()
 	invitation, err := pendingPrivateInvitation(ctx, tx, actor, secret, now)
 	if err != nil {
 		return result, err
 	}
-	service, err := controlstatedb.New(tx).GetPrivateService(ctx, invitation.PrivateServiceID)
+	service, err := controlstatedb.New(tx).GetService(ctx, invitation.ServiceID)
 	if err != nil {
-		return result, publisherLookupError(err, ErrPrivateServiceAccess)
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	result = PrivateServiceInvitationPreview{PrivateServiceID: service.ID, TeamID: service.TeamID, Name: service.Name, Protocol: service.Protocol, ExpiresAt: invitation.ExpiresAt.Time}
+	result = ServiceInvitationPreview{ServiceID: service.ID, TeamID: service.TeamID, Name: service.Name, Protocol: service.Protocol, ExpiresAt: invitation.ExpiresAt.Time}
 	return result, tx.Commit(ctx)
 }
 
-type PrivateServiceInvitationPreview struct {
-	PrivateServiceID string    `json:"private_service_id"`
-	TeamID           string    `json:"team_id"`
-	Name             string    `json:"name"`
-	Protocol         string    `json:"protocol"`
-	ExpiresAt        time.Time `json:"expires_at"`
+type ServiceInvitationPreview struct {
+	ServiceID string    `json:"service_id"`
+	TeamID    string    `json:"team_id"`
+	Name      string    `json:"name"`
+	Protocol  string    `json:"protocol"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
-func (d *Database) RevokePrivateServiceInvitation(ctx context.Context, serviceID, actorID, invitationID string, now time.Time) (retErr error) {
-	if !opaqueid.Valid(invitationID, opaqueid.PrivateServiceInvitationPrefix) {
-		return ErrPrivateServiceAccess
+func (d *Database) RevokeServiceInvitation(ctx context.Context, serviceID, actorID, invitationID string, now time.Time) (retErr error) {
+	if !opaqueid.Valid(invitationID, opaqueid.ServiceInvitationPrefix) {
+		return ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
-	defer rollback(ctx, tx, "revoke private service invitation", &retErr)()
-	if _, err = lockManagedPrivateService(ctx, tx, serviceID, actorID); err != nil {
+	defer rollback(ctx, tx, "revoke service invitation", &retErr)()
+	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
-	count, err := q.RevokePrivateServiceInvitation(ctx, controlstatedb.RevokePrivateServiceInvitationParams{
-		ID: invitationID, PrivateServiceID: serviceID, Now: timestamptz(now),
+	count, err := q.RevokeServiceInvitation(ctx, controlstatedb.RevokeServiceInvitationParams{
+		ID: invitationID, ServiceID: serviceID, Now: timestamptz(now),
 	})
 	if err != nil {
 		return err
 	}
 	if count != 1 {
-		return ErrPrivateServiceAccess
+		return ErrServiceAccess
 	}
-	revoked, err := q.RevokePrivateServiceInvitationGrant(ctx, controlstatedb.RevokePrivateServiceInvitationGrantParams{
-		InvitationID: text(invitationID), PrivateServiceID: serviceID, Now: timestamptz(now),
+	revoked, err := q.RevokeServiceInvitationGrant(ctx, controlstatedb.RevokeServiceInvitationGrantParams{
+		InvitationID: text(invitationID), ServiceID: serviceID, Now: timestamptz(now),
 	})
 	if err != nil {
 		return err

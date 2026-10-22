@@ -11,26 +11,26 @@ servers:
 paths:
   /v1/service/teams/{team_id}/usage-authorization:
     $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1usage-authorization"
-  /v1/service/teams/{team_id}/private-services:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1private-services"
-  /v1/service/private-services/{private_service_id}:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}"
-  /v1/service/private-services/{private_service_id}/grants:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1grants"
-  /v1/service/private-services/{private_service_id}/grants/{grant_id}:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1grants~1{grant_id}"
-  /v1/service/private-services/{private_service_id}/invitations:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1invitations"
-  /v1/service/private-services/{private_service_id}/invitations/{invitation_id}:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1invitations~1{invitation_id}"
-  /v1/service/private-service-invitations/preview:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-service-invitations~1preview"
-  /v1/service/private-service-invitations/accept:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-service-invitations~1accept"
-  /v1/service/private-services/{private_service_id}/http-grants:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1http-grants"
-  /v1/service/private-services/{private_service_id}/http-grants/{grant_id}:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1private-services~1{private_service_id}~1http-grants~1{grant_id}"
+  /v1/service/teams/{team_id}/services:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1services"
+  /v1/service/services/{service_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}"
+  /v1/service/services/{service_id}/grants:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1grants"
+  /v1/service/services/{service_id}/grants/{grant_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1grants~1{grant_id}"
+  /v1/service/services/{service_id}/invitations:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1invitations"
+  /v1/service/services/{service_id}/invitations/{invitation_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1invitations~1{invitation_id}"
+  /v1/service/service-invitations/preview:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1service-invitations~1preview"
+  /v1/service/service-invitations/accept:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1service-invitations~1accept"
+  /v1/service/services/{service_id}/http-grants:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants"
+  /v1/service/services/{service_id}/http-grants/{grant_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants~1{grant_id}"
   /v1/workload-sessions/identity:
     $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1identity"
   /v1/workload-sessions/{session_id}/assertions:
@@ -128,8 +128,8 @@ components:
     bearerAuth:
       $ref: "./schemas/common.yaml#/securitySchemes/bearerAuth"
   parameters:
-    PrivateServiceID:
-      $ref: "./schemas/common.yaml#/parameters/PrivateServiceID"
+    ServiceID:
+      $ref: "./schemas/common.yaml#/parameters/ServiceID"
     ServiceActorToken:
       $ref: "./schemas/common.yaml#/parameters/ServiceActorToken"
     CompanyActorToken:
@@ -150,10 +150,10 @@ components:
     BearerProblem:
       $ref: "./schemas/common.yaml#/responses/BearerProblem"
   schemas:
-    PrivateServiceInvitationCredential:
-      $ref: "./schemas/service.yaml#/schemas/PrivateServiceInvitationCredential"
-    PrivateServiceInvitationPreview:
-      $ref: "./schemas/service.yaml#/schemas/PrivateServiceInvitationPreview"
+    ServiceInvitationCredential:
+      $ref: "./schemas/service.yaml#/schemas/ServiceInvitationCredential"
+    ServiceInvitationPreview:
+      $ref: "./schemas/service.yaml#/schemas/ServiceInvitationPreview"
     WorkloadIdentityRequest:
       $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentityRequest"
     WorkloadIdentity:
@@ -190,8 +190,8 @@ components:
       $ref: "./schemas/company.yaml#/schemas/CompanyEligibilityRequest"
     VerifiedOIDCTeamContext:
       $ref: "./schemas/teams.yaml#/schemas/VerifiedOIDCTeamContext"
-    PrivateServiceID:
-      $ref: "./schemas/service.yaml#/schemas/PrivateServiceID"
+    ServiceID:
+      $ref: "./schemas/service.yaml#/schemas/ServiceID"
     TeamFeedbackPolicy:
       $ref: "./schemas/teams.yaml#/schemas/TeamFeedbackPolicy"
     RedeemPublisherEnrollmentRequest:

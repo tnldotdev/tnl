@@ -21,7 +21,7 @@ func TestSharedQUICListenerAcceptsOnlyTunnelALPNs(t *testing.T) {
 		connector Connector
 		alpn      string
 	}{
-		{QUICConnector{TLSConfig: roots}, ALPN}, {PrivateQUICConnector{TLSConfig: roots}, PrivateALPN},
+		{QUICConnector{TLSConfig: roots}, ALPN}, {ConnectorQUIC{TLSConfig: roots}, ConnectorALPN},
 	} {
 		client, err := candidate.connector.Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 		if err != nil {

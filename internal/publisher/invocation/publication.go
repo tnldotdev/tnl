@@ -11,18 +11,18 @@ import (
 	"strconv"
 	"time"
 
-	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
-	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation) (result error) {
@@ -47,7 +47,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	if err != nil {
 		return err
 	}
-	targetOptions, err := localproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
+	targetOptions, err := publisherproxy.TargetOptionsForCA(flags.TargetCAFile, flags.ProjectRoot)
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	defer state.Close()
 	var oauthHostname string
 	if !flags.Demo {
-		if err := clientauth.RequireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+		if err := auth.RequireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
 			return err
 		}
 	}
@@ -82,7 +82,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		return err
 	}
 	if protocol == controlv1.Http {
-		if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
+		if err := publisherproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
 			return err
 		}
 	}
@@ -149,11 +149,11 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	integrationGroup := ""
 	if protocol == controlv1.Http && !flags.Demo && (project.Config.OAuth || len(project.Config.Webhooks) != 0 || len(project.Config.Aliases) != 0) {
 		if project.Root == "" {
-			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.ProjectRoot)
+			worktree, resolveErr := clientproject.ResolveWorktree(ctx, flags.ProjectRoot)
 			if resolveErr != nil {
 				return resolveErr
 			}
-			project.Project = projectconfig.Project{Root: flags.ProjectRoot, Worktree: worktree}
+			project.Project = clientproject.Project{Root: flags.ProjectRoot, Worktree: worktree}
 		}
 		integrationGroup = projectIntegrationGroup(project.Project, services.namespace)
 		if err := tunnel.SetIntegrationGroup(ctx, integrationGroup); err != nil {
@@ -191,7 +191,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	publisherConfig.InspectionMode = inspection.Mode(flags.InspectionMode)
 	publisherConfig.OnWarning = publishWarning(tunnel, output)
 	if oauthHostname != "" {
-		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
+		publisherConfig.ObserveResponse = integrations.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
 	}
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable

@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type feedbackOutputMode string
@@ -387,7 +387,7 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	for {
 		var more bool
 		cursor, more, err = pollFeedbackEvents(ctx, session.Authenticated().Control, teamID, previewID, cursor, output, flags.Output)
-		if err != nil && !errors.Is(err, controlclient.ErrUnavailable) {
+		if err != nil && !errors.Is(err, clientcontrol.ErrUnavailable) {
 			return err
 		}
 		if more && err == nil {

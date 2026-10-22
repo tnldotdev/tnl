@@ -25,21 +25,21 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var sharedOwnerFixture = flag.String("tnl-shared-owner-fixture", "", "private local shared-owner fixture path")
 
 type sharedOwnerInput struct {
-	Scope     connectionruntime.Context
+	Scope     connectorruntime.Context
 	Directory string
 	ParentPID int
 }
@@ -58,8 +58,8 @@ func TestConnectionSharedOwnerSubprocess(t *testing.T) {
 	if err := json.Unmarshal(data, &input); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
-	if err := connectionruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b, os.Stdout); err != nil {
+	b := &nativeConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
+	if err := connectorruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b, os.Stdout); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -139,7 +139,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		}
 	})
 	team, id := "tm_"+strings.Repeat("t", 22), "wls_"+strings.Repeat("s", 22)
-	ids := []string{"psvc_" + strings.Repeat("a", 22), "psvc_" + strings.Repeat("b", 22)}
+	ids := []string{"svc_" + strings.Repeat("a", 22), "svc_" + strings.Repeat("b", 22)}
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
@@ -174,7 +174,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		case r.URL.Path == "/v1/workload/services":
 			services := []any{}
 			for i, name := range serviceNames {
-				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocols[i], "managed_tls": controlv1.ManagedServiceTLS{Hostname: name + ".example.test", Port: 15443 + i}})
+				services = append(services, map[string]any{"id": ids[i], "service": name, "protocol": protocols[i], "endpoint": controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": services})
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
@@ -187,7 +187,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 			if service == ids[1] {
 				i = 1
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"private_service_id": service, "private_run_id": "psrun_" + strings.Repeat("r", 22), "run_number": 1, "protocol": protocols[i], "trust_revision": 1, "expires_at": now.Add(time.Minute), "subject": session.Subject, "managed_tls": controlv1.ManagedServiceTLS{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": "srun_" + strings.Repeat("r", 22), "run_number": 1, "protocol": protocols[i], "trust_revision": 1, "expires_at": now.Add(time.Minute), "subject": session.Subject, "endpoint": controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}})
 		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
 			parts := strings.Split(r.URL.Path, "/")
 			_ = json.NewEncoder(w).Encode(map[string]any{"subject": session.Subject, "assignments": assignments[parts[len(parts)-2]]})
@@ -204,11 +204,11 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	authority.TLS = tlsServer.Clone()
 	authority.StartTLS()
 	defer authority.Close()
-	directory, err := connectionruntime.NewDirectory(root)
+	directory, err := connectorruntime.NewDirectory(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := connectionruntime.Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: authority.URL, Audience: authority.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), WorktreeKey: "worktree", Workload: "worker", Services: serviceNames}
+	scope := connectorruntime.Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: authority.URL, Audience: authority.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), WorktreeKey: "worktree", Workload: "worker", Services: serviceNames}
 	input, _ := json.Marshal(sharedOwnerInput{Scope: scope, Directory: directory, ParentPID: os.Getpid()})
 	path := filepath.Join(root, "fixture.json")
 	if err := os.WriteFile(path, input, 0o600); err != nil {
@@ -233,16 +233,16 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { cancel(); _ = command.Wait() }()
-	var status connectionruntime.Status
+	var status connectorruntime.Status
 	if err := json.NewDecoder(output).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	request := connectionruntime.Request{Schema: 1, Directory: root, ConfigDigest: scope.ConfigDigest}
-	prepared := map[string]connectionruntime.Prepared{}
+	request := connectorruntime.Request{Schema: 1, Directory: root, ConfigDigest: scope.ConfigDigest}
+	prepared := map[string]connectorruntime.Prepared{}
 	for _, name := range serviceNames {
 		request.Service = name
-		var value connectionruntime.Prepared
-		if err := connectionruntime.Call(ctx, status.PrivateHandle, "prepare", request, &value); err != nil {
+		var value connectorruntime.Prepared
+		if err := connectorruntime.Call(ctx, status.ConnectionHandle, "prepare", request, &value); err != nil {
 			t.Fatal(name, err)
 		}
 		prepared[name] = value
@@ -267,7 +267,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	stalled.Service, stalled.Assertion = "db", "stall"
 	done := make(chan error, 1)
 	go func() {
-		done <- connectionruntime.Call(ctx, status.PrivateHandle, "prepare", stalled, new(connectionruntime.Prepared))
+		done <- connectorruntime.Call(ctx, status.ConnectionHandle, "prepare", stalled, new(connectorruntime.Prepared))
 	}()
 	select {
 	case <-entered:
@@ -276,8 +276,8 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	}
 	request.Service = "api"
 	bounded, stop := context.WithTimeout(ctx, time.Second)
-	var warm connectionruntime.Prepared
-	err = connectionruntime.Call(bounded, status.PrivateHandle, "prepared", request, &warm)
+	var warm connectorruntime.Prepared
+	err = connectorruntime.Call(bounded, status.ConnectionHandle, "prepared", request, &warm)
 	stop()
 	if err != nil {
 		t.Fatal("prepared HTTP sibling blocked", err)
@@ -287,7 +287,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	}
 	request.Assertion = "first"
 	bounded, stop = context.WithTimeout(ctx, time.Second)
-	err = connectionruntime.Call(bounded, status.PrivateHandle, "prepare", request, &warm)
+	err = connectorruntime.Call(bounded, status.ConnectionHandle, "prepare", request, &warm)
 	stop()
 	if err != nil || warm.Verification == nil {
 		t.Fatal("verified warm preparation joined the stalled assertion", err)
@@ -314,7 +314,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	if err := database.QueryRow(ctx, "select 1").Scan(&one); err != nil {
 		t.Fatal("failed sibling assertion canceled an existing database stream", err)
 	}
-	if err := connectionruntime.Call(ctx, status.PrivateHandle, "stop", request, nil); err != nil {
+	if err := connectorruntime.Call(ctx, status.ConnectionHandle, "stop", request, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := command.Wait(); err != nil {

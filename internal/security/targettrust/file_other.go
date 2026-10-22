@@ -1,6 +1,6 @@
 //go:build !unix
 
-package privatetrust
+package targettrust
 
 import "os"
 

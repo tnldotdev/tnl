@@ -1,4 +1,4 @@
-package clientauth
+package auth
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestDeviceIssuedCancellationRevokesSessionAfterPollingCredentialExpires(t *testing.T) {

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"bytes"
@@ -504,7 +504,7 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 			return err
 		}
 	}
-	rows, err = tx.Query(ctx, `SELECT p.id,COALESCE(g.private_service_id,'') FROM control.publisher_identities p LEFT JOIN control.publisher_grants g ON g.publisher_identity_id=p.id WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id,g.id`, team, now)
+	rows, err = tx.Query(ctx, `SELECT p.id,COALESCE(g.service_id,'') FROM control.publisher_identities p LEFT JOIN control.publisher_grants g ON g.publisher_identity_id=p.id WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id,g.id`, team, now)
 	if err != nil {
 		return err
 	}
@@ -543,9 +543,9 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 	if err = pending.publish(ctx, q); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.private_visitor_streams stream SET closed_at=COALESCE(stream.closed_at,$2) FROM control.private_services service WHERE service.id=stream.private_service_id AND service.team_id=$1 AND NOT control.active_team_subject($1,stream.identity_id,$2)`, team, now); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.connector_visitor_streams stream SET closed_at=COALESCE(stream.closed_at,$2) FROM control.services service WHERE service.id=stream.service_id AND service.team_id=$1 AND NOT control.active_team_subject($1,stream.identity_id,$2)`, team, now); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors visitor SET closed_at=COALESCE(visitor.closed_at,$2) FROM control.private_services service WHERE service.id=visitor.private_service_id AND service.team_id=$1 AND visitor.identity_id IS NOT NULL AND NOT control.active_team_subject($1,visitor.identity_id,$2)`, team, now)
+	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors visitor SET closed_at=COALESCE(visitor.closed_at,$2) FROM control.services service WHERE service.id=visitor.service_id AND service.team_id=$1 AND visitor.identity_id IS NOT NULL AND NOT control.active_team_subject($1,visitor.identity_id,$2)`, team, now)
 	return err
 }

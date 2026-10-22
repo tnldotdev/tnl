@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"net/http"
@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
-	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 )
 
-type unusedIngressStore struct{ ingressapi.Store }
-type unusedRelayStore struct{ relayapi.Store }
+type unusedIngressStore struct{ controlingress.Store }
+type unusedRelayStore struct{ controlrelay.Store }
 
 func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 	for _, test := range []struct {
@@ -28,7 +28,7 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			handler, err := newPublicAPIHandler(tnldconfig.Config{Role: tnldconfig.RoleControl},
+			handler, err := newPublicAPIHandler(daemonconfig.Config{Role: daemonconfig.RoleControl},
 				time.Now(), &http.Client{}, nil, metrics, &daemon{}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -69,11 +69,11 @@ func TestPrivateAPISurfacesFollowTheirRouters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ingress, err := ingressapi.NewHandler(ingressapi.Config{Store: unusedIngressStore{}, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	ingress, err := controlingress.NewHandler(controlingress.Config{Store: unusedIngressStore{}, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay, err := relayapi.NewHandler(relayapi.Config{Store: unusedRelayStore{}, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	relay, err := controlrelay.NewHandler(controlrelay.Config{Store: unusedRelayStore{}, ClusterSecrets: secrets, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"crypto/ecdsa"
@@ -52,7 +52,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 			}
 			plan := CertificatePlan{CacheKey: "member." + domain, Scope: "member." + domain,
 				Identifiers: []string{"member." + domain, "*.member." + domain}, ChallengeMethod: "dns-01"}
-			var route PublicURL
+			var publicURL PublicURL
 			var authentication PublishRunAuthentication
 			if kind == "oidc_control" {
 				local, err := createTestControlSession(t.Context(), database, domain, time.Hour, 24*time.Hour, now)
@@ -68,7 +68,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				namespace := membership.ManagedLabel + "." + domain
 				plan.CacheKey, plan.Scope, plan.Identifiers = namespace, namespace, []string{namespace, "*." + namespace}
 				slices.Sort(plan.Identifiers)
-				route, err = database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
+				publicURL, err = database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
 					TeamID: membership.TeamID, DomainID: domains[0].ID, MembershipID: membership.ID,
 					ActingIdentityID: local.Identity.Identity.ID, IdempotencyKey: "route", RequestDigest: sha256.Sum256([]byte("route")),
 					CanonicalHostname: "api." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp,
@@ -82,32 +82,32 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 					t.Fatal(err)
 				}
 				setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
-					PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: membership.ID, ActingIdentityID: principal.IdentityID,
+					PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: membership.ID, ActingIdentityID: principal.IdentityID,
 					RetrySecret: principal.RetrySecret[:], PolicyRevision: uint64(membership.PolicyRevision),
-					IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), ExpectedMutationRevision: route.MutationRevision,
+					IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), ExpectedMutationRevision: publicURL.MutationRevision,
 					CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod,
 				}, now, time.Hour, time.Hour)
 				if err != nil {
 					t.Fatal(err)
 				}
-				authentication = PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+				authentication = PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 			} else {
-				route, authentication = newExternalPlanSession(t, database, now, "team_external", "api.member."+domain, reference, plan)
+				publicURL, authentication = newExternalPlanSession(t, database, now, "team_external", "api.member."+domain, reference, plan)
 			}
 			work := createPlanIssuanceWork(t, database, now, authentication, plan, false, nil)
 			for _, authorization := range work.Authorizations {
 				t.Run(authorization.Identifier, func(t *testing.T) {
-					challenge, err := database.GetDNSChallengeContext(t.Context(), route.ID, authorization.ID)
+					challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), work.Subject, authorization.ID)
 					if err != nil {
 						t.Fatalf("DNS challenge context for %s domain with reference %q: %v", kind, reference, err)
 					}
 					if challenge.CanonicalDomain != contextDomain || challenge.DNSAuthorityReference != reference ||
-						challenge.TeamID != route.TeamID || challenge.Identifier != authorization.Identifier ||
+						challenge.TeamID != publicURL.TeamID || challenge.Identifier != authorization.Identifier ||
 						challenge.PresentationReference != authorization.PresentationReference || challenge.ChallengeDigest != authorization.ChallengeDigest ||
 						len(challenge.Presentations) != 2 {
 						t.Fatalf("challenge context = %#v", challenge)
 					}
-					assertDNSChallengeSubjectBinding(t, database, CertificateSubject{Kind: CertificateSubjectPublicURL, ID: route.ID, RunID: authentication.PublishRunID, RunNumber: authentication.PublishRunNumber}, challenge)
+					assertDNSChallengeSubjectBinding(t, database, CertificateSubject{Kind: CertificateSubjectPublicURL, ID: publicURL.ID, RunID: authentication.PublishRunID, RunNumber: authentication.PublishRunNumber}, challenge)
 					for _, presentation := range challenge.Presentations {
 						if !presentation.Active {
 							t.Fatal("presenting authorization was not active")
@@ -115,7 +115,9 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 					}
 				})
 			}
-			if _, err := database.GetDNSChallengeContext(t.Context(), "another_route", work.Authorizations[0].ID); !errors.Is(err, ErrDNSChallengeNotFound) {
+			wrong := work.Subject
+			wrong.ID = "another_route"
+			if _, err := database.GetDNSChallengeContextForSubject(t.Context(), wrong, work.Authorizations[0].ID); !errors.Is(err, ErrDNSChallengeNotFound) {
 				t.Fatalf("wrong-route challenge lookup = %v", err)
 			}
 		})
@@ -167,7 +169,7 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			database, now := newCertificatePlanDatabase(t)
 			const hostname = "api.member.routes.example.test"
 			plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
-			route, first := newExternalPlanSession(t, database, now, "team_external", hostname, "managed:routes.example.test", plan)
+			publicURL, first := newExternalPlanSession(t, database, now, "team_external", hostname, "managed:routes.example.test", plan)
 			work := createPlanIssuanceWork(t, database, now, first, plan, true, nil)
 			if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), first, work.ID, *work.NotAfter, now); err != nil {
 				t.Fatalf("valid issuance precondition: %v", err)
@@ -185,7 +187,7 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			}
 			// start a new publish run on the same public URL so a public URL identity
 			// mismatch cannot mask the certificate plan checks.
-			authentication := startExternalPlanSession(t, database, now, route, plan, "replacement")
+			authentication := startExternalPlanSession(t, database, now, publicURL, plan, "replacement")
 			notAfter, installedAt := *work.NotAfter, now
 			wantErr := ErrPublicURLCertificate
 			if name == "not_after" {
@@ -274,24 +276,24 @@ func newExternalPlanSession(t *testing.T, database *Database, now time.Time, tea
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := database.GetPublicURLForAuthorization(t.Context(), id)
+	publicURL, err := database.GetPublicURLForAuthorization(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return route, startExternalPlanSession(t, database, now, route, plan, "session")
+	return publicURL, startExternalPlanSession(t, database, now, publicURL, plan, "session")
 }
 
-func startExternalPlanSession(t *testing.T, database *Database, now time.Time, route PublicURL, plan CertificatePlan, key string) PublishRunAuthentication {
+func startExternalPlanSession(t *testing.T, database *Database, now time.Time, publicURL PublicURL, plan CertificatePlan, key string) PublishRunAuthentication {
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
-	current, err := database.GetPublicURLForAuthorization(t.Context(), route.ID)
+	current, err := database.GetPublicURLForAuthorization(t.Context(), publicURL.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secret := sha256.Sum256([]byte("plan-retry"))
 	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
-		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID, ActingIdentityID: "identity_" + strings.TrimPrefix(route.TeamID, "team_"),
+		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: "identity_" + strings.TrimPrefix(publicURL.TeamID, "team_"),
 		RetrySecret: secret[:], IdempotencyKey: key, RequestDigest: sha256.Sum256([]byte(key)), PolicyRevision: 1,
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: slices.Clone(plan.Identifiers),
 		CertificateChallenge: plan.ChallengeMethod, ExpectedMutationRevision: current.MutationRevision,
@@ -299,10 +301,10 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	if err != nil {
 		t.Fatal(err)
 	}
-	return PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+	return PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: publicURL.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 }
 
-func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), private ...PrivateRunState) ACMEOrderWork {
+func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), private ...ServiceRunState) ACMEOrderWork {
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
@@ -324,7 +326,7 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	var issuance CertificateIssuance
 	if len(private) == 1 {
 		run := private[0]
-		issuance, err = database.CreatePrivateCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
+		issuance, err = database.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
 	} else {
 		issuance, err = database.CreateCertificateIssuance(t.Context(), CreateCertificateIssuanceRequest{Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr}, now)
 	}
@@ -395,10 +397,10 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	return work
 }
 
-func installPrivateTestCertificate(t *testing.T, d *Database, prep PrivateRunPreparation, run PrivateRunState, now time.Time) {
+func installPrivateTestCertificate(t *testing.T, d *Database, prep ServiceRunPreparation, run ServiceRunState, now time.Time) {
 	t.Helper()
 	work := createPlanIssuanceWork(t, d, now, PublishRunAuthentication{}, prep.CertificatePlan, true, nil, run)
-	if err := d.MarkPrivateCertificateInstalled(t.Context(), run.ServiceID, run.RunID, run.Token, work.ID, run.RunNumber, *work.NotAfter, now); err != nil {
+	if err := d.MarkServiceCertificateInstalled(t.Context(), run.ServiceID, run.RunID, run.Token, work.ID, run.RunNumber, *work.NotAfter, now); err != nil {
 		t.Fatal(err)
 	}
 }

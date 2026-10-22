@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
-	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
-	awsbootstrap "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
+	"github.com/tnldotdev/tnl/internal/publisher/deployment"
+	publisheraws "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/awsfixture"
@@ -48,11 +48,11 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	control, err := controlapi.NewHandler(controlapi.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, database, database, nil)
+	control, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, database, database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityapi.NewHandler(authorityapi.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, database)
+	authority, err := controlauthority.NewHandler(controlauthority.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 		}
 	}
 	configFile := filepath.Join(root, "tnl.json")
-	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publishers":{"production":{"aws":{"replicas":2}}},"services":{"api":{"publisher":"production","target":{"type":"address","address":"http://uncreated.internal:3000"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publisher_groups":{"production":{"aws":{"replicas":2}}},"services":{"api":{"publisher_group":"production","target":{"type":"address","address":"http://uncreated.internal:3000"}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	project, err := loadProjectConfigurationWithSalt(ctx, cli{ConfigPath: configFile}, [32]byte{})
@@ -92,29 +92,29 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := publisherdeployment.Generate(project.Config, source)
+	bundle, err := deployment.Generate(project.Config, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bundle.Write(filepath.Join(root, publisherdeployment.DefaultOutputDir)); err != nil {
+	if err := bundle.Write(filepath.Join(root, deployment.DefaultOutputDir)); err != nil {
 		t.Fatal(err)
 	}
 	customer := filepath.Join(root, "aws.json")
-	if err := os.WriteFile(customer, []byte(`{"schema_version":1,"deployments":[{"name":"east","publisher":"production","account_id":"123456789012","region":"us-east-1"}]}`), 0600); err != nil {
+	if err := os.WriteFile(customer, []byte(`{"schema_version":1,"deployments":[{"name":"east","publisher_group":"production","account_id":"123456789012","region":"us-east-1"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	f := awsfixture.New(t)
 	secrets, caller := f.Clients()
-	load := func(context.Context, string, string) (awsbootstrap.Secrets, awsbootstrap.Caller, error) {
+	load := func(context.Context, string, string) (publisheraws.Secrets, publisheraws.Caller, error) {
 		return secrets, caller, nil
 	}
-	flags := bootstrapCommand{scopedTeamFlags: remote, Publisher: "production", DeploymentFile: customer, GeneratedDir: publisherdeployment.DefaultOutputDir, Output: statusOutputJSON}
+	flags := bootstrapCommand{scopedTeamFlags: remote, PublisherGroup: "production", DeploymentFile: customer, GeneratedDir: deployment.DefaultOutputDir, Output: statusOutputJSON}
 	var output bytes.Buffer
 	if err := runBootstrapUsing(ctx, flags, project, &output, io.Discard, load); err != nil {
 		t.Fatal(err)
 	}
 	var result bootstrapResult
-	if json.Unmarshal(output.Bytes(), &result) != nil || result.State != "prepared" || len(result.Replicas) != 2 || len(result.Parameters) != 15 || len(result.ObservedMembers) != 0 || result.TemplateVersion != publisherdeployment.TemplateVersion {
+	if json.Unmarshal(output.Bytes(), &result) != nil || result.State != "prepared" || len(result.Replicas) != 2 || len(result.Parameters) != 15 || len(result.ObservedMembers) != 0 || result.TemplateVersion != deployment.TemplateVersion {
 		t.Fatal("bootstrap did not compile the actual generated parameter contract")
 	}
 	for _, ref := range result.Replicas {
@@ -145,7 +145,7 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 		}
 	}
 	// customer overrides cannot retarget a bootstrap-owned identity parameter.
-	if err := os.WriteFile(customer, []byte(`{"schema_version":1,"deployments":[{"name":"east","publisher":"production","account_id":"123456789012","region":"us-east-1","parameters":{"ControlURL":"https://other.invalid"}}]}`), 0600); err != nil {
+	if err := os.WriteFile(customer, []byte(`{"schema_version":1,"deployments":[{"name":"east","publisher_group":"production","account_id":"123456789012","region":"us-east-1","parameters":{"ControlURL":"https://other.invalid"}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	before = len(f.Calls())

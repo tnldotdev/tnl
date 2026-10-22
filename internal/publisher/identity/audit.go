@@ -1,4 +1,4 @@
-package native
+package identity
 
 import (
 	"context"
@@ -12,11 +12,11 @@ type publisherAuditControl interface {
 }
 
 func (n *Native) ReportPublisherServiceObservations(ctx context.Context, runID string, number uint64, token credentials.PublishRunToken, batch serviceaudit.Batch) error {
-	if n == nil || n.route.Id == "" || len(batch.Events) == 0 {
+	if n == nil || n.publicURL.Id == "" || len(batch.Events) == 0 {
 		return ErrScope
 	}
 	for _, e := range batch.Events {
-		if e.ServiceKind != "public_url" || e.ServiceID != n.route.Id || e.RunID != runID {
+		if e.ServiceKind != "public_url" || e.ServiceID != n.publicURL.Id || e.RunID != runID {
 			return ErrScope
 		}
 	}

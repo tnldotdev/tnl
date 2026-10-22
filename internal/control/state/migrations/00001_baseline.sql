@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-native-owner')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-native-owner');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -706,8 +706,8 @@ CREATE TABLE control.ingress_leases (
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
     service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
-    private_connector_address text NOT NULL DEFAULT '',
-    private_connector_tls_server_name text NOT NULL DEFAULT '',
+    connector_address text NOT NULL DEFAULT '',
+    connector_tls_server_name text NOT NULL DEFAULT '',
     reported_connections bigint NOT NULL DEFAULT 0 CHECK (reported_connections >= 0),
     routing_table_revision bigint NOT NULL DEFAULT 0 CHECK (routing_table_revision >= 0),
     draining boolean NOT NULL DEFAULT false,
@@ -757,7 +757,7 @@ CREATE TABLE control.publisher_service_connection_slots (
     run_number bigint NOT NULL CHECK (run_number >= 1),
     service_kind text NOT NULL CHECK (service_kind IN ('http','private')),
     public_parent_id text,
-    private_parent_id text,
+    service_parent_id text,
     connection_slot smallint NOT NULL CHECK (connection_slot BETWEEN 0 AND 1),
     publisher_connection_id text NOT NULL UNIQUE CHECK (publisher_connection_id <> ''),
     connection_assignment_revision bigint NOT NULL CHECK (connection_assignment_revision >= 1),
@@ -778,8 +778,8 @@ CREATE TABLE control.publisher_service_connection_slots (
     disconnected_at timestamptz,
     closed_at timestamptz,
     session_open boolean NOT NULL DEFAULT true,
-    CHECK ((service_kind='http' AND public_parent_id IS NOT NULL AND public_parent_id=run_id AND private_parent_id IS NULL)
-        OR (service_kind='private' AND private_parent_id IS NOT NULL AND private_parent_id=run_id AND public_parent_id IS NULL)),
+    CHECK ((service_kind='http' AND public_parent_id IS NOT NULL AND public_parent_id=run_id AND service_parent_id IS NULL)
+        OR (service_kind='private' AND service_parent_id IS NOT NULL AND service_parent_id=run_id AND public_parent_id IS NULL)),
     CHECK ((connected_relay_id IS NULL)=(connected_relay_run_id IS NULL) AND (connected_relay_id IS NULL)=(connected_relay_lease_revision IS NULL)),
     UNIQUE (run_id, connection_slot),
     UNIQUE (run_id, relay_service_id),
@@ -807,7 +807,7 @@ CREATE TABLE control.publisher_service_connection_slots (
 CREATE FUNCTION control.bind_publisher_slot_parent() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     NEW.public_parent_id:=CASE WHEN NEW.service_kind='http' THEN NEW.run_id END;
-    NEW.private_parent_id:=CASE WHEN NEW.service_kind='private' THEN NEW.run_id END;
+    NEW.service_parent_id:=CASE WHEN NEW.service_kind='private' THEN NEW.run_id END;
     RETURN NEW;
 END;
 $$;
@@ -941,13 +941,13 @@ CREATE TABLE control.acme_orders (
     publish_run_id text NOT NULL DEFAULT '',
     public_url_id text NOT NULL DEFAULT '',
     publish_run_number bigint NOT NULL DEFAULT 0 CHECK (publish_run_number >= 0),
-    private_run_id text NOT NULL DEFAULT '',
-    private_service_id text NOT NULL DEFAULT '',
-    private_run_number bigint NOT NULL DEFAULT 0 CHECK (private_run_number >= 0),
+    service_run_id text NOT NULL DEFAULT '',
+    service_id text NOT NULL DEFAULT '',
+    service_run_number bigint NOT NULL DEFAULT 0 CHECK (service_run_number >= 0),
     public_run_parent text GENERATED ALWAYS AS (NULLIF(publish_run_id,'')) STORED,
     public_url_parent text GENERATED ALWAYS AS (NULLIF(public_url_id,'')) STORED,
-    private_run_parent text GENERATED ALWAYS AS (NULLIF(private_run_id,'')) STORED,
-    private_service_parent text GENERATED ALWAYS AS (NULLIF(private_service_id,'')) STORED,
+    service_run_parent text GENERATED ALWAYS AS (NULLIF(service_run_id,'')) STORED,
+    service_parent text GENERATED ALWAYS AS (NULLIF(service_id,'')) STORED,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     certificate_cache_key text NOT NULL CHECK (certificate_cache_key <> ''),
@@ -979,8 +979,8 @@ CREATE TABLE control.acme_orders (
     updated_at timestamptz NOT NULL,
     FOREIGN KEY (public_run_parent, public_url_parent, publish_run_number)
         REFERENCES control.publish_runs(id, public_url_id, publish_run_number) ON DELETE RESTRICT,
-    CHECK ((publish_run_id<>'' AND public_url_id<>'' AND publish_run_number>=1 AND private_run_id='' AND private_service_id='' AND private_run_number=0)
-        OR (private_run_id<>'' AND private_service_id<>'' AND private_run_number>=1 AND publish_run_id='' AND public_url_id='' AND publish_run_number=0 AND challenge_method='dns-01' AND certificate_domain_id IS NOT NULL)),
+    CHECK ((publish_run_id<>'' AND public_url_id<>'' AND publish_run_number>=1 AND service_run_id='' AND service_id='' AND service_run_number=0)
+        OR (service_run_id<>'' AND service_id<>'' AND service_run_number>=1 AND publish_run_id='' AND public_url_id='' AND publish_run_number=0 AND challenge_method='dns-01' AND certificate_domain_id IS NOT NULL)),
     CHECK (array_position(certificate_identifiers, NULL) IS NULL),
     CHECK ((work_owner IS NULL) = (work_expires_at IS NULL)),
     CHECK ((not_before IS NULL) = (not_after IS NULL)),
@@ -996,8 +996,8 @@ CREATE INDEX acme_orders_route
     ON control.acme_orders (public_url_id, publish_run_number, created_at DESC);
 CREATE UNIQUE INDEX acme_orders_public_retry ON control.acme_orders(publish_run_id,idempotency_key) WHERE publish_run_id<>'';
 CREATE UNIQUE INDEX acme_orders_public_csr ON control.acme_orders(public_url_id,publish_run_number,csr_digest,account_id) WHERE public_url_id<>'';
-CREATE UNIQUE INDEX acme_orders_private_retry ON control.acme_orders(private_run_id,idempotency_key) WHERE private_run_id<>'';
-CREATE UNIQUE INDEX acme_orders_private_csr ON control.acme_orders(private_service_id,private_run_number,csr_digest,account_id) WHERE private_service_id<>'';
+CREATE UNIQUE INDEX acme_orders_service_retry ON control.acme_orders(service_run_id,idempotency_key) WHERE service_run_id<>'';
+CREATE UNIQUE INDEX acme_orders_service_csr ON control.acme_orders(service_id,service_run_number,csr_digest,account_id) WHERE service_id<>'';
 
 CREATE TABLE control.acme_authorizations (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1678,9 +1678,9 @@ CREATE TABLE control.publisher_identity_keys (
     UNIQUE (publisher_identity_id, revision), UNIQUE (id, publisher_identity_id)
 );
 -- +goose StatementBegin
-CREATE FUNCTION control.active_publisher(publisher_id text, at_time timestamptz)
+CREATE FUNCTION control.active_publisher(publisher_identity_id text, at_time timestamptz)
 RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS (SELECT 1 FROM control.publisher_identities p WHERE p.id=publisher_id
+    SELECT EXISTS (SELECT 1 FROM control.publisher_identities p WHERE p.id=publisher_identity_id
         AND p.revoked_at IS NULL AND (p.ownership<>'member' OR control.active_membership(p.owner_membership_id,at_time)))
 $$;
 -- +goose StatementEnd
@@ -1688,24 +1688,24 @@ CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identit
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    kind text NOT NULL CHECK (kind IN ('saved_url', 'namespace', 'private_service')),
+    kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
-    private_service_id text,
+    service_id text,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
     membership_id text, public_url_scope text CHECK (public_url_scope IN ('member', 'shared')),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
     UNIQUE (id, publisher_identity_id),
     CHECK (expires_at IS NULL OR expires_at > created_at),
-    CHECK ((kind = 'saved_url' AND public_url_id IS NOT NULL AND private_service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
-        OR (kind = 'namespace' AND public_url_id IS NULL AND private_service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
-        OR (kind = 'private_service' AND private_service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL))
+    CHECK ((kind = 'saved_public_url' AND public_url_id IS NOT NULL AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
+        OR (kind = 'namespace' AND public_url_id IS NULL AND service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
+        OR (kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL))
 );
-CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_url';
+CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_public_url';
 CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
 CREATE TABLE control.publisher_enrollments (
     id text PRIMARY KEY CHECK (id <> ''), enrollment_key_digest bytea NOT NULL CHECK (octet_length(enrollment_key_digest) = 32),
     team_id text NOT NULL, name text NOT NULL, identity_kind text NOT NULL CHECK (identity_kind IN ('installed', 'automation', 'run')),
-    grant_kind text NOT NULL CHECK (grant_kind IN ('saved_url', 'namespace', 'private_service')), public_url_id text, private_service_id text, domain_id text, namespace text,
+    grant_kind text NOT NULL CHECK (grant_kind IN ('saved_public_url', 'namespace', 'service')), public_url_id text, service_id text, domain_id text, namespace text,
     membership_id text, public_url_scope text,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     ownership text NOT NULL CHECK (ownership IN ('team', 'member')),
@@ -1717,9 +1717,9 @@ CREATE TABLE control.publisher_enrollments (
     redeemed_key_id text, redeemed_grant_id text, redeemed_public_key bytea, redeemed_at timestamptz,
     CHECK ((redeemed_at IS NULL) = (redeemed_identity_id IS NULL)),
     CHECK ((redeemed_at IS NULL) = (redeemed_public_key IS NULL)),
-    CHECK ((grant_kind = 'saved_url' AND public_url_id IS NOT NULL AND private_service_id IS NULL AND domain_id IS NULL)
-        OR (grant_kind = 'namespace' AND public_url_id IS NULL AND private_service_id IS NULL AND domain_id IS NOT NULL)
-        OR (grant_kind = 'private_service' AND private_service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND membership_id IS NULL AND public_url_scope IS NULL))
+    CHECK ((grant_kind = 'saved_public_url' AND public_url_id IS NOT NULL AND service_id IS NULL AND domain_id IS NULL)
+        OR (grant_kind = 'namespace' AND public_url_id IS NULL AND service_id IS NULL AND domain_id IS NOT NULL)
+        OR (grant_kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND membership_id IS NULL AND public_url_scope IS NULL))
 );
 CREATE TABLE control.publisher_assertions (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
@@ -1749,8 +1749,8 @@ SELECT id AS publish_run_id,COALESCE(publisher_identity_id,'')::text AS publishe
 
 -- managed endpoints remain service records. a certificate name and optional
 -- direct ingress mapping never create a public URL or replace visitor grants.
-CREATE TABLE control.private_services (
-    id text PRIMARY KEY CHECK (id ~ '^psvc_[A-Za-z0-9]{22}$'),
+CREATE TABLE control.services (
+    id text PRIMARY KEY CHECK (id ~ '^svc_[A-Za-z0-9]{22}$'),
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     name text NOT NULL CHECK (name ~ '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'),
     name_scope text NOT NULL DEFAULT '',
@@ -1777,11 +1777,11 @@ CREATE TABLE control.private_services (
     deleted_at timestamptz,
     UNIQUE (id, team_id), UNIQUE (created_by_identity_id, idempotency_key)
 );
-CREATE UNIQUE INDEX private_services_scoped_name ON control.private_services(team_id, name_scope, name) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX private_services_certificate_hostname ON control.private_services(certificate_hostname) WHERE deleted_at IS NULL AND certificate_hostname<>'';
-CREATE TABLE control.managed_service_port_claims (
+CREATE UNIQUE INDEX services_scoped_name ON control.services(team_id, name_scope, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX services_certificate_hostname ON control.services(certificate_hostname) WHERE deleted_at IS NULL AND certificate_hostname<>'';
+CREATE TABLE control.service_port_claims (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    private_service_id text NOT NULL UNIQUE REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     ingress_pool_id text NOT NULL REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     port integer NOT NULL CHECK (port BETWEEN 1024 AND 65535),
     state text NOT NULL DEFAULT 'held' CHECK (state IN ('held','quarantined','released')),
@@ -1789,30 +1789,30 @@ CREATE TABLE control.managed_service_port_claims (
     reusable_after timestamptz,
     CHECK ((state='held') = (reusable_after IS NULL))
 );
-CREATE UNIQUE INDEX managed_service_ports_held ON control.managed_service_port_claims(ingress_pool_id,port) WHERE state<>'released';
+CREATE UNIQUE INDEX service_ports_held ON control.service_port_claims(ingress_pool_id,port) WHERE state<>'released';
 -- +goose StatementBegin
-CREATE FUNCTION control.retire_managed_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION control.retire_service_port() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
-        UPDATE control.managed_service_port_claims SET state='quarantined',
+        UPDATE control.service_port_claims SET state='quarantined',
             reusable_after=GREATEST(NEW.deleted_at+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=NEW.certificate_scope),NEW.deleted_at))
-            WHERE private_service_id=NEW.id AND state='held';
-        PERFORM control.retire_managed_endpoints(NEW.id,'',NEW.deleted_at);
+            WHERE service_id=NEW.id AND state='held';
+        PERFORM control.retire_service_endpoints(NEW.id,'',NEW.deleted_at);
     END IF;
     RETURN NEW;
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER retire_managed_service_port AFTER UPDATE ON control.private_services FOR EACH ROW EXECUTE FUNCTION control.retire_managed_service_port();
-ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_private_service_fkey
-    FOREIGN KEY (private_service_id) REFERENCES control.private_services(id) ON DELETE RESTRICT;
-ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_private_service_fkey
-    FOREIGN KEY (private_service_id) REFERENCES control.private_services(id) ON DELETE RESTRICT;
-CREATE UNIQUE INDEX publisher_grants_active_private_service ON control.publisher_grants(publisher_identity_id, private_service_id)
-    WHERE revoked_at IS NULL AND kind = 'private_service';
+CREATE TRIGGER retire_service_port AFTER UPDATE ON control.services FOR EACH ROW EXECUTE FUNCTION control.retire_service_port();
+ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_service_fkey
+    FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
+ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_service_fkey
+    FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX publisher_grants_active_service ON control.publisher_grants(publisher_identity_id, service_id)
+    WHERE revoked_at IS NULL AND kind = 'service';
 
-CREATE TABLE control.private_service_grants (
-    id text PRIMARY KEY CHECK (id ~ '^psgr_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+CREATE TABLE control.service_grants (
+    id text PRIMARY KEY CHECK (id ~ '^sgr_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text NOT NULL,
     kind text NOT NULL CHECK (kind IN ('team', 'identity')),
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     auto_owner boolean NOT NULL DEFAULT false,
@@ -1821,7 +1821,7 @@ CREATE TABLE control.private_service_grants (
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
-    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (service_id, team_id) REFERENCES control.services(id, team_id) ON DELETE RESTRICT,
     CHECK ((kind = 'identity') = (identity_id IS NOT NULL)),
     CHECK (NOT auto_owner OR kind='identity'),
     CHECK (invitation_id IS NULL OR kind = 'identity'),
@@ -1829,15 +1829,15 @@ CREATE TABLE control.private_service_grants (
     UNIQUE (created_by_identity_id, kind, idempotency_key),
     UNIQUE (invitation_id)
 );
-CREATE INDEX private_service_grants_by_service ON control.private_service_grants(private_service_id) WHERE revoked_at IS NULL;
+CREATE INDEX service_grants_by_service ON control.service_grants(service_id) WHERE revoked_at IS NULL;
 CREATE TABLE control.service_client_certificate_issuer (
     id boolean PRIMARY KEY DEFAULT true CHECK (id),
     seed_ciphertext bytea NOT NULL CHECK (octet_length(seed_ciphertext)>29),
     storage_key_id text NOT NULL,
     created_at timestamptz NOT NULL
 );
-CREATE TABLE control.private_service_invitations (
-    id text PRIMARY KEY CHECK (id ~ '^psivt_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+CREATE TABLE control.service_invitations (
+    id text PRIMARY KEY CHECK (id ~ '^sivt_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text NOT NULL,
     normalized_email text NOT NULL CHECK (normalized_email <> ''),
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
@@ -1846,19 +1846,19 @@ CREATE TABLE control.private_service_invitations (
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
     accepted_at timestamptz, accepted_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     revoked_at timestamptz,
-    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (service_id, team_id) REFERENCES control.services(id, team_id) ON DELETE RESTRICT,
     CHECK ((accepted_at IS NULL) = (accepted_identity_id IS NULL)),
     UNIQUE (created_by_identity_id, idempotency_key),
-    UNIQUE (id, private_service_id, team_id)
+    UNIQUE (id, service_id, team_id)
 );
-ALTER TABLE control.private_service_grants ADD CONSTRAINT private_service_grants_invitation_fkey
-    FOREIGN KEY (invitation_id, private_service_id, team_id)
-        REFERENCES control.private_service_invitations(id, private_service_id, team_id) ON DELETE RESTRICT;
+ALTER TABLE control.service_grants ADD CONSTRAINT service_grants_invitation_fkey
+    FOREIGN KEY (invitation_id, service_id, team_id)
+        REFERENCES control.service_invitations(id, service_id, team_id) ON DELETE RESTRICT;
 
 -- authenticated publishers prepare and start runs against a captured managed
 -- endpoint and certificate plan. visitor TLS keys never enter control storage.
-CREATE TABLE control.private_service_runs (
-    id text PRIMARY KEY CHECK (id ~ '^psrun_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+CREATE TABLE control.service_runs (
+    id text PRIMARY KEY CHECK (id ~ '^srun_[A-Za-z0-9]{22}$'), service_id text NOT NULL, team_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number >= 1),
     publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
     publisher_key_id text NOT NULL,
@@ -1885,11 +1885,11 @@ CREATE TABLE control.private_service_runs (
     created_at timestamptz NOT NULL, publisher_expires_at timestamptz NOT NULL CHECK (publisher_expires_at > created_at),
     ready_at timestamptz, closed_at timestamptz,
     assignments_open boolean GENERATED ALWAYS AS (closed_at IS NULL) STORED,
-    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (service_id, team_id) REFERENCES control.services(id, team_id) ON DELETE RESTRICT,
     FOREIGN KEY (publisher_grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT,
     FOREIGN KEY (publisher_key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT,
-    UNIQUE (private_service_id, run_number), UNIQUE (private_service_id,publisher_identity_id,idempotency_key),
-    UNIQUE (id, private_service_id, run_number), UNIQUE (id, assignments_open),
+    UNIQUE (service_id, run_number), UNIQUE (service_id,publisher_identity_id,idempotency_key),
+    UNIQUE (id, service_id, run_number), UNIQUE (id, assignments_open),
     CHECK ((state = 'closed') = (closed_at IS NOT NULL)),
     CHECK (state <> 'ready' OR ready_at IS NOT NULL),
     CHECK (certificate_domain_id IS NOT NULL AND certificate_hostname<>'' AND service_port IS NOT NULL
@@ -1899,47 +1899,47 @@ CREATE TABLE control.private_service_runs (
     CHECK (state NOT IN ('starting', 'ready') OR started_at IS NOT NULL AND cardinality(certificate_identifiers)>0),
     CHECK (state <> 'prepared' OR started_at IS NULL)
 );
-CREATE UNIQUE INDEX private_service_runs_active ON control.private_service_runs(private_service_id, publisher_identity_id) WHERE closed_at IS NULL;
-CREATE INDEX private_service_runs_expiring ON control.private_service_runs(publisher_expires_at) WHERE closed_at IS NULL;
-ALTER TABLE control.acme_orders ADD CONSTRAINT acme_orders_private_run_fkey
-    FOREIGN KEY(private_run_parent,private_service_parent,private_run_number)
-    REFERENCES control.private_service_runs(id,private_service_id,run_number) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX service_runs_active ON control.service_runs(service_id, publisher_identity_id) WHERE closed_at IS NULL;
+CREATE INDEX service_runs_expiring ON control.service_runs(publisher_expires_at) WHERE closed_at IS NULL;
+ALTER TABLE control.acme_orders ADD CONSTRAINT acme_orders_service_run_fkey
+    FOREIGN KEY(service_run_parent,service_parent,service_run_number)
+    REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT;
 
-ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT publisher_slots_private_run
-    FOREIGN KEY(private_parent_id,service_id,run_number) REFERENCES control.private_service_runs(id,private_service_id,run_number) ON DELETE RESTRICT;
-ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT publisher_slots_private_open
-    FOREIGN KEY(private_parent_id,session_open) REFERENCES control.private_service_runs(id,assignments_open)
+ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT publisher_slots_service_run
+    FOREIGN KEY(service_parent_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT;
+ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT publisher_slots_service_open
+    FOREIGN KEY(service_parent_id,session_open) REFERENCES control.service_runs(id,assignments_open)
     ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED;
-CREATE VIEW control.private_service_connection_slots AS
-SELECT publisher_connection_id,run_id AS private_run_id,service_id AS private_service_id,run_number,
+CREATE VIEW control.service_connection_slots AS
+SELECT publisher_connection_id,run_id AS service_run_id,service_id AS service_id,run_number,
     connection_slot,connection_assignment_revision,relay_service_id,relay_address,tls_server_name,
     publisher_connection_credential_digest AS credential_digest,publisher_connection_credential_expires_at AS credential_expires_at,
     connected_relay_id AS relay_id,connected_relay_run_id AS relay_run_id,connected_relay_lease_revision AS relay_lease_revision,
     state,session_open,service_kind,assigned_at
 FROM control.publisher_service_connection_slots WHERE service_kind='private' WITH LOCAL CHECK OPTION;
-ALTER VIEW control.private_service_connection_slots ALTER COLUMN service_kind SET DEFAULT 'private';
+ALTER VIEW control.service_connection_slots ALTER COLUMN service_kind SET DEFAULT 'private';
 
 -- ingress receives only the shared connector address and an ID-keyed projection.
 -- a run tombstone supersedes that run; a service tombstone closes all runs.
-CREATE TABLE control.private_service_routing_events (
+CREATE TABLE control.service_routing_events (
     revision bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     kind text NOT NULL CHECK (kind IN ('upsert', 'tombstone')),
-    private_run_id text REFERENCES control.private_service_runs(id) ON DELETE RESTRICT,
+    service_run_id text REFERENCES control.service_runs(id) ON DELETE RESTRICT,
     run_number bigint CHECK (run_number >= 1),
     projection bytea NOT NULL,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
-    CHECK ((private_run_id IS NULL) = (run_number IS NULL)),
-    CHECK (kind <> 'upsert' OR private_run_id IS NOT NULL)
+    CHECK ((service_run_id IS NULL) = (run_number IS NULL)),
+    CHECK (kind <> 'upsert' OR service_run_id IS NOT NULL)
 );
-CREATE INDEX private_service_routing_by_service ON control.private_service_routing_events(private_service_id, revision DESC);
-CREATE TABLE control.private_service_routing_clock (
+CREATE INDEX service_routing_by_service ON control.service_routing_events(service_id, revision DESC);
+CREATE TABLE control.service_routing_clock (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     current_revision bigint NOT NULL DEFAULT 0 CHECK (current_revision >= 0),
     updated_at timestamptz NOT NULL
 );
-INSERT INTO control.private_service_routing_clock(id, updated_at) VALUES (1, now());
+INSERT INTO control.service_routing_clock(id, updated_at) VALUES (1, now());
 
 -- workload executions are visitor principals, independent of people and
 -- publishers. the unique execution fence prevents a new key stealing a job.
@@ -1977,9 +1977,9 @@ CREATE TABLE control.workload_sessions (
 CREATE INDEX workload_sessions_retention ON control.workload_sessions(expires_at,id);
 CREATE TABLE control.workload_session_services (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service_id text NOT NULL REFERENCES control.services(id),
     service text NOT NULL,
-    PRIMARY KEY(workload_session_id,private_service_id)
+    PRIMARY KEY(workload_session_id,service_id)
 );
 CREATE TABLE control.workload_assertions (
     jti_digest bytea PRIMARY KEY CHECK (octet_length(jti_digest)=32),
@@ -1992,7 +1992,7 @@ CREATE INDEX workload_assertions_session ON control.workload_assertions(workload
 CREATE TABLE control.workload_ingress_requests (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service_id text NOT NULL REFERENCES control.services(id),
     result_ciphertext bytea NOT NULL,
     storage_key_id text NOT NULL,
     PRIMARY KEY(workload_session_id,idempotency_key)
@@ -2000,17 +2000,17 @@ CREATE TABLE control.workload_ingress_requests (
 CREATE TABLE control.workload_client_certificates (
     certificate_digest bytea PRIMARY KEY CHECK (octet_length(certificate_digest)=32),
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service_id text NOT NULL REFERENCES control.services(id),
     csr_digest bytea NOT NULL CHECK (octet_length(csr_digest)=32),
     certificate_pem bytea NOT NULL,
     expires_at timestamptz NOT NULL,
-    UNIQUE(workload_session_id,private_service_id,csr_digest)
+    UNIQUE(workload_session_id,service_id,csr_digest)
 );
 CREATE INDEX workload_certificates_retention ON control.workload_client_certificates(expires_at,certificate_digest);
 CREATE TABLE control.workload_audit (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     event text NOT NULL CHECK (event IN ('start','renew','revoke','certificate.issue','assignment.create')),
-    private_service_id text REFERENCES control.private_services(id),
+    service_id text REFERENCES control.services(id),
     occurred_at timestamptz NOT NULL
 );
 CREATE INDEX workload_audit_retention ON control.workload_audit(occurred_at);
@@ -2030,7 +2030,7 @@ CREATE TABLE control.visitor_devices (
 CREATE TABLE control.service_client_certificates (
     control_session_id text REFERENCES control.control_sessions(id),
     certificate_digest bytea PRIMARY KEY CHECK (octet_length(certificate_digest)=32),
-    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     device_id text NOT NULL REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
     csr_digest bytea NOT NULL CHECK (octet_length(csr_digest)=32),
@@ -2038,14 +2038,14 @@ CREATE TABLE control.service_client_certificates (
     created_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL CHECK (expires_at>created_at),
     revoked_at timestamptz,
-    UNIQUE (private_service_id,device_id,csr_digest)
+    UNIQUE (service_id,device_id,csr_digest)
 );
-CREATE TABLE control.private_connector_sessions (
+CREATE TABLE control.connector_sessions (
     workload_session_id text REFERENCES control.workload_sessions(id),
     control_session_id text REFERENCES control.control_sessions(id),
-    id text PRIMARY KEY CHECK (id ~ '^pcs_[A-Za-z0-9]{22}$'),
+    id text PRIMARY KEY CHECK (id ~ '^cns_[A-Za-z0-9]{22}$'),
     credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest) = 32),
-    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     device_id text REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
     assigned_ingress_id text NOT NULL,
@@ -2066,15 +2066,15 @@ CREATE TABLE control.private_connector_sessions (
         OR (bound_at IS NOT NULL AND source_ip IS NOT NULL AND ingress_id IS NOT NULL AND ingress_run_id IS NOT NULL AND ingress_lease_revision >= 1)),
     CHECK (source_ip IS NULL OR masklen(source_ip) = CASE family(source_ip) WHEN 4 THEN 32 ELSE 128 END),
     CHECK (revoked_at IS NULL OR revoked_at >= created_at),
-    UNIQUE (id, private_service_id, identity_id, source_ip)
+    UNIQUE (id, service_id, identity_id, source_ip)
 );
-CREATE INDEX private_connector_sessions_expiring ON control.private_connector_sessions(expires_at);
-CREATE INDEX private_connector_sessions_workload ON control.private_connector_sessions(workload_session_id) WHERE workload_session_id IS NOT NULL;
-CREATE INDEX private_connector_sessions_unbound_assignment ON control.private_connector_sessions(assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at) WHERE bound_at IS NULL AND revoked_at IS NULL;
+CREATE INDEX connector_sessions_expiring ON control.connector_sessions(expires_at);
+CREATE INDEX connector_sessions_workload ON control.connector_sessions(workload_session_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX connector_sessions_unbound_assignment ON control.connector_sessions(assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at) WHERE bound_at IS NULL AND revoked_at IS NULL;
 
 -- recover committed assignment responses without reserving capacity again.
 -- credentials are encrypted under the control storage key, never stored raw.
-CREATE TABLE control.private_ingress_assignment_requests (
+CREATE TABLE control.connector_ingress_assignment_requests (
     identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
@@ -2083,15 +2083,15 @@ CREATE TABLE control.private_ingress_assignment_requests (
     expires_at timestamptz NOT NULL,
     PRIMARY KEY (identity_id, idempotency_key)
 );
-CREATE INDEX private_ingress_assignment_requests_expiring ON control.private_ingress_assignment_requests(expires_at);
+CREATE INDEX connector_ingress_assignment_requests_expiring ON control.connector_ingress_assignment_requests(expires_at);
 
-CREATE TABLE control.private_visitor_streams (
+CREATE TABLE control.connector_visitor_streams (
     workload_session_id text REFERENCES control.workload_sessions(id),
     visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
-    private_service_id text NOT NULL,
-    private_run_id text NOT NULL,
+    service_id text NOT NULL,
+    service_run_id text NOT NULL,
     run_number bigint NOT NULL,
-    connector_session_id text NOT NULL REFERENCES control.private_connector_sessions(id) ON DELETE RESTRICT,
+    connector_session_id text NOT NULL REFERENCES control.connector_sessions(id) ON DELETE RESTRICT,
     identity_id text,
     device_id text,
     source_ip inet NOT NULL,
@@ -2101,29 +2101,29 @@ CREATE TABLE control.private_visitor_streams (
     closed_at timestamptz,
     CHECK ((workload_session_id IS NOT NULL AND identity_id IS NULL AND device_id IS NULL)
         OR (workload_session_id IS NULL AND identity_id IS NOT NULL AND device_id IS NOT NULL)),
-    FOREIGN KEY (private_run_id, private_service_id, run_number)
-        REFERENCES control.private_service_runs(id, private_service_id, run_number) ON DELETE RESTRICT,
+    FOREIGN KEY (service_run_id, service_id, run_number)
+        REFERENCES control.service_runs(id, service_id, run_number) ON DELETE RESTRICT,
     FOREIGN KEY (device_id, identity_id) REFERENCES control.visitor_devices(id, identity_id) ON DELETE RESTRICT
 );
-CREATE TABLE control.private_certificate_requests (
-    private_run_id text NOT NULL REFERENCES control.private_service_runs(id) ON DELETE RESTRICT,
+CREATE TABLE control.service_certificate_requests (
+    service_run_id text NOT NULL REFERENCES control.service_runs(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     issuance_id text NOT NULL REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
-    PRIMARY KEY (private_run_id,idempotency_key)
+    PRIMARY KEY (service_run_id,idempotency_key)
 );
-CREATE INDEX private_visitor_streams_capacity ON control.private_visitor_streams(private_run_id, valid_until) WHERE closed_at IS NULL;
-CREATE INDEX private_visitor_streams_connector ON control.private_visitor_streams(connector_session_id);
-CREATE INDEX private_visitor_streams_workload ON control.private_visitor_streams(workload_session_id) WHERE workload_session_id IS NOT NULL;
-CREATE INDEX private_visitor_streams_workload_retention ON control.private_visitor_streams(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX connector_visitor_streams_capacity ON control.connector_visitor_streams(service_run_id, valid_until) WHERE closed_at IS NULL;
+CREATE INDEX connector_visitor_streams_connector ON control.connector_visitor_streams(connector_session_id);
+CREATE INDEX connector_visitor_streams_workload ON control.connector_visitor_streams(workload_session_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX connector_visitor_streams_workload_retention ON control.connector_visitor_streams(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 
 -- direct admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
 CREATE TABLE control.direct_service_visitors (
     workload_session_id text REFERENCES control.workload_sessions(id),
     visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
-    private_service_id text NOT NULL,
-    private_run_id text NOT NULL,
+    service_id text NOT NULL,
+    service_run_id text NOT NULL,
     run_number bigint NOT NULL,
     ingress_id text NOT NULL,
     ingress_run_id text NOT NULL,
@@ -2139,7 +2139,7 @@ CREATE TABLE control.direct_service_visitors (
     valid_until timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
     closed_at timestamptz,
-    FOREIGN KEY (private_run_id,private_service_id,run_number) REFERENCES control.private_service_runs(id,private_service_id,run_number) ON DELETE RESTRICT,
+    FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
     FOREIGN KEY (device_id,identity_id) REFERENCES control.visitor_devices(id,identity_id) ON DELETE RESTRICT,
     CHECK ((identity_id IS NULL)=(device_id IS NULL)),
     CHECK (((identity_id IS NOT NULL OR workload_session_id IS NOT NULL))=(certificate_digest IS NOT NULL)),
@@ -2148,21 +2148,21 @@ CREATE TABLE control.direct_service_visitors (
     CHECK (http_credential_kind IS NULL OR certificate_digest IS NULL),
     CHECK (promoted_at IS NULL OR identity_id IS NOT NULL OR workload_session_id IS NOT NULL OR http_credential_kind IS NOT NULL)
 );
-CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(private_run_id,valid_until) WHERE closed_at IS NULL;
+CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(service_run_id,valid_until) WHERE closed_at IS NULL;
 CREATE INDEX direct_service_visitors_workload ON control.direct_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE INDEX direct_service_visitors_certificate ON control.direct_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
 CREATE INDEX direct_service_visitors_workload_retention ON control.direct_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
-CREATE VIEW control.private_service_visitor_capacity AS
-SELECT visitor_connection_id,private_run_id,valid_until,closed_at FROM control.private_visitor_streams
+CREATE VIEW control.service_visitor_capacity AS
+SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.connector_visitor_streams
 UNION ALL
-SELECT visitor_connection_id,private_run_id,valid_until,closed_at FROM control.direct_service_visitors;
+SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.direct_service_visitors;
 
 -- managed HTTP credentials are never public URL/preview credentials. runs are
 -- captured at login, so a later replacement cannot redeem an earlier handoff.
-CREATE TABLE control.managed_http_browser_logins (
+CREATE TABLE control.service_http_browser_logins (
     state_digest bytea PRIMARY KEY CHECK (octet_length(state_digest)=32),
     binding_digest bytea NOT NULL CHECK (octet_length(binding_digest)=32),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service_id text NOT NULL REFERENCES control.services(id),
     run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     return_path text NOT NULL,
     nonce text NOT NULL,
@@ -2171,10 +2171,10 @@ CREATE TABLE control.managed_http_browser_logins (
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz
 );
-CREATE TABLE control.managed_http_browser_sessions (
+CREATE TABLE control.service_http_browser_sessions (
     handoff_digest bytea PRIMARY KEY CHECK (octet_length(handoff_digest)=32),
     cookie_digest bytea UNIQUE CHECK (octet_length(cookie_digest)=32),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service_id text NOT NULL REFERENCES control.services(id),
     run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     control_session_id text NOT NULL REFERENCES control.control_sessions(id),
     return_path text NOT NULL,
@@ -2182,9 +2182,9 @@ CREATE TABLE control.managed_http_browser_sessions (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz
 );
-CREATE TABLE control.managed_http_grants (
-    id text PRIMARY KEY CHECK (id ~ '^mhg_[A-Za-z0-9]{22}$'),
-    private_service_id text NOT NULL REFERENCES control.private_services(id),
+CREATE TABLE control.service_http_grants (
+    id text PRIMARY KEY CHECK (id ~ '^shg_[A-Za-z0-9]{22}$'),
+    service_id text NOT NULL REFERENCES control.services(id),
     kind text NOT NULL CHECK (kind IN ('token','share')),
     secret_digest bytea NOT NULL UNIQUE CHECK (octet_length(secret_digest)=32),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id),
@@ -2201,18 +2201,18 @@ SELECT id,public_url_id AS service_id,'http'::text AS service_kind,team_id,publi
     COALESCE((traffic_limits->>'connections')::integer,32) AS stream_capacity,0::integer AS reported_streams,publisher_expires_at,closed_at
 FROM control.publish_runs
 UNION ALL
-SELECT id,private_service_id,'private'::text,team_id,publisher_identity_id,publisher_grant_id,run_number,state,
-    healthy,stream_capacity,reported_streams,publisher_expires_at,closed_at FROM control.private_service_runs;
+SELECT id,service_id,'private'::text,team_id,publisher_identity_id,publisher_grant_id,run_number,state,
+    healthy,stream_capacity,reported_streams,publisher_expires_at,closed_at FROM control.service_runs;
 
 -- +goose StatementBegin
-CREATE FUNCTION control.advance_private_visitor_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION control.advance_connector_visitor_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    UPDATE control.private_services SET visitor_revision=visitor_revision+1 WHERE id=NEW.private_service_id;
+    UPDATE control.services SET visitor_revision=visitor_revision+1 WHERE id=NEW.service_id;
     RETURN NEW;
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER advance_private_visitor_revision AFTER INSERT OR UPDATE ON control.private_service_grants FOR EACH ROW EXECUTE FUNCTION control.advance_private_visitor_revision();
+CREATE TRIGGER advance_connector_visitor_revision AFTER INSERT OR UPDATE ON control.service_grants FOR EACH ROW EXECUTE FUNCTION control.advance_connector_visitor_revision();
 
 -- applied project desired state is independent of local worktree previews.
 -- the normalized document, including targets, is encrypted under the storage key.
@@ -2248,7 +2248,7 @@ CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher
 CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
 -- namespace claims outlive group names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
-CREATE TABLE control.managed_namespace_claims (
+CREATE TABLE control.service_namespace_claims (
     namespace text PRIMARY KEY CHECK (namespace <> ''),
     group_id text REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
@@ -2261,9 +2261,9 @@ CREATE TABLE control.managed_namespace_claims (
     CHECK ((group_id IS NOT NULL AND local_source_key='' AND membership_id IS NULL)
         OR (group_id IS NULL AND local_source_key<>'' AND membership_id IS NOT NULL))
 );
-CREATE TABLE control.managed_service_endpoints (
+CREATE TABLE control.service_endpoints (
     hostname text PRIMARY KEY CHECK (hostname<>''),
-    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     group_id text REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
@@ -2286,22 +2286,22 @@ CREATE TABLE control.managed_service_endpoints (
     CHECK ((dns_state IN ('pending','removing'))=(dns_available_at IS NOT NULL)),
     CHECK ((dns_work_owner IS NULL)=(dns_work_expires_at IS NULL))
 );
-CREATE INDEX managed_service_endpoints_dns_work ON control.managed_service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
+CREATE INDEX service_endpoints_dns_work ON control.service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
 -- +goose StatementBegin
-CREATE FUNCTION control.retire_managed_endpoints(service text,keep text,retired timestamptz) RETURNS void LANGUAGE sql AS $$
-    UPDATE control.managed_service_endpoints endpoint SET retired_at=COALESCE(retired_at,retired),
+CREATE FUNCTION control.retire_service_endpoints(service text,keep text,retired timestamptz) RETURNS void LANGUAGE sql AS $$
+    UPDATE control.service_endpoints endpoint SET retired_at=COALESCE(retired_at,retired),
         reusable_after=GREATEST(retired+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=endpoint.namespace),retired)),
         dns_state=CASE WHEN dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
         dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE retired END,
         dns_revision=dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
-        WHERE private_service_id=service AND hostname<>keep AND retired_at IS NULL;
+        WHERE service_id=service AND hostname<>keep AND retired_at IS NULL;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION control.managed_namespace_reusable(scope text,observed timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS(SELECT 1 FROM control.managed_namespace_claims claim WHERE claim.namespace=scope AND claim.retired_at IS NOT NULL AND claim.reusable_after<=observed)
-      AND NOT EXISTS(SELECT 1 FROM control.managed_service_endpoints endpoint WHERE endpoint.namespace=scope AND(endpoint.retired_at IS NULL OR endpoint.dns_state<>'removed'))
-      AND NOT EXISTS(SELECT 1 FROM control.private_service_runs run WHERE run.certificate_scope=scope AND(run.certificate_expires_at>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
+CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=scope AND claim.retired_at IS NOT NULL AND claim.reusable_after<=observed)
+      AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.namespace=scope AND(endpoint.retired_at IS NULL OR endpoint.dns_state<>'removed'))
+      AND NOT EXISTS(SELECT 1 FROM control.service_runs run WHERE run.certificate_scope=scope AND(run.certificate_expires_at>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
       AND NOT EXISTS(SELECT 1 FROM control.acme_orders issuance WHERE issuance.certificate_scope=scope
         AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL
           OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))));
@@ -2330,14 +2330,14 @@ CREATE TABLE control.applied_project_services (
     project_key text NOT NULL,
     service text NOT NULL,
     group_id text,
-    private_service_id text UNIQUE REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
     desired_revision bigint NOT NULL CHECK (desired_revision >= 1),
     PRIMARY KEY (team_id, project_key, service),
     FOREIGN KEY (team_id, project_key) REFERENCES control.applied_projects(team_id, project_key) ON DELETE RESTRICT,
     FOREIGN KEY (group_id, team_id, project_key) REFERENCES control.project_publisher_groups(id, team_id, project_key) ON DELETE RESTRICT,
-    CHECK (private_service_id IS NULL OR public_url_id IS NULL)
+    CHECK (service_id IS NULL OR public_url_id IS NULL)
 );
 -- local realization can precede the first apply. provenance never comes from a
 -- name lookup, and each worktree has independent saved resources and team grants.
@@ -2347,12 +2347,12 @@ CREATE TABLE control.local_project_services (
     source_fingerprint text NOT NULL CHECK (source_fingerprint ~ '^[0-9a-f]{64}$'),
     service text NOT NULL,
     worktree_key text NOT NULL CHECK (length(worktree_key) BETWEEN 1 AND 128),
-    private_service_id text UNIQUE REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    service_id text UNIQUE REFERENCES control.services(id) ON DELETE RESTRICT,
     public_url_id text UNIQUE REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     visitor_grant_id text,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     PRIMARY KEY (team_id, project_key, service, worktree_key),
-    CHECK ((private_service_id IS NULL) <> (public_url_id IS NULL))
+    CHECK ((service_id IS NULL) <> (public_url_id IS NULL))
 );
 CREATE TABLE control.publisher_group_enrollments (
     id text PRIMARY KEY,
@@ -2444,8 +2444,8 @@ BEGIN
         JOIN control.applied_project_services service ON service.group_id=publisher_group.id
             AND service.team_id=publisher_group.team_id AND service.project_key=publisher_group.project_key
         WHERE member.publisher_identity_id=NEW.publisher_identity_id
-          AND ((NEW.kind='saved_url' AND service.public_url_id=NEW.public_url_id)
-            OR (NEW.kind='private_service' AND service.private_service_id=NEW.private_service_id))
+          AND ((NEW.kind='saved_public_url' AND service.public_url_id=NEW.public_url_id)
+            OR (NEW.kind='service' AND service.service_id=NEW.service_id))
     ) THEN
         RAISE EXCEPTION 'publisher grant is outside its group' USING ERRCODE='23514';
     END IF;
@@ -2468,8 +2468,8 @@ CREATE TABLE control.publisher_certificate_checkpoints (
 CREATE FUNCTION control.require_publisher_certificate_state() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE publisher text; plan jsonb; digest text;
 BEGIN
-    IF NEW.private_run_id<>'' THEN
-        SELECT publisher_identity_id INTO publisher FROM control.private_service_runs WHERE id=NEW.private_run_id;
+    IF NEW.service_run_id<>'' THEN
+        SELECT publisher_identity_id INTO publisher FROM control.service_runs WHERE id=NEW.service_run_id;
     ELSE
         SELECT publisher_identity_id INTO publisher FROM control.publish_runs WHERE id=NEW.publish_run_id;
     END IF;
@@ -2499,7 +2499,7 @@ CREATE TABLE control.service_audit_events (
     id text NOT NULL UNIQUE CHECK (length(id) BETWEEN 26 AND 68),
     team_id text NOT NULL,
     service_id text NOT NULL,
-    service_kind text NOT NULL CHECK (service_kind IN ('public_url','private_service')),
+    service_kind text NOT NULL CHECK (service_kind IN ('public_url','service')),
     event_type text NOT NULL CHECK (event_type IN ('public_url.create','public_url.update','public_url.delete','publish_run.create','certificate_issuance.create',
         'service.create','service.update','service.delete','grant.create','grant.revoke','invitation.create','invitation.accept','invitation.revoke',
         'trust.update','device.enroll','device.revoke','publisher.join','publisher.revoke','run.prepare','run.start','run.close','apply','group.update','certificate.issue','certificate.install','certificate.client.issue',
@@ -2565,11 +2565,11 @@ DECLARE team text; service text; audit_kind text; operation text; actor_id text;
 BEGIN
     IF TG_TABLE_NAME='publisher_identities' THEN
         IF NEW.revoked_at IS NULL OR OLD.revoked_at IS NOT NULL THEN RETURN NEW; END IF;
-        FOR grant_row IN SELECT g.id,g.kind,g.private_service_id,g.public_url_id FROM control.publisher_grants AS g WHERE g.publisher_identity_id=NEW.id ORDER BY g.id LOOP
-            IF grant_row.kind='private_service' THEN
-                SELECT s.team_id INTO team FROM control.private_services AS s WHERE s.id=grant_row.private_service_id;
-                service:=grant_row.private_service_id; audit_kind:='private_service';
-            ELSIF grant_row.kind='saved_url' THEN
+        FOR grant_row IN SELECT g.id,g.kind,g.service_id,g.public_url_id FROM control.publisher_grants AS g WHERE g.publisher_identity_id=NEW.id ORDER BY g.id LOOP
+            IF grant_row.kind='service' THEN
+                SELECT s.team_id INTO team FROM control.services AS s WHERE s.id=grant_row.service_id;
+                service:=grant_row.service_id; audit_kind:='service';
+            ELSIF grant_row.kind='saved_public_url' THEN
                 SELECT s.team_id INTO team FROM control.public_urls AS s WHERE s.id=grant_row.public_url_id;
                 service:=grant_row.public_url_id; audit_kind:='public_url';
             ELSE
@@ -2586,10 +2586,10 @@ BEGIN
     IF TG_OP='INSERT' THEN operation:='publisher.join'; happened:=NEW.created_at; actor_id:=NEW.created_by_identity_id;
     ELSIF NEW.revoked_at IS NOT NULL AND OLD.revoked_at IS NULL THEN operation:='publisher.revoke'; happened:=NEW.revoked_at; actor_id:=NULLIF(current_setting('tnl.audit_actor',true),'');
     ELSE RETURN NEW; END IF;
-    IF NEW.kind='private_service' THEN
-        SELECT s.team_id INTO team FROM control.private_services AS s WHERE s.id=NEW.private_service_id;
-        service:=NEW.private_service_id; audit_kind:='private_service';
-    ELSIF NEW.kind='saved_url' THEN
+    IF NEW.kind='service' THEN
+        SELECT s.team_id INTO team FROM control.services AS s WHERE s.id=NEW.service_id;
+        service:=NEW.service_id; audit_kind:='service';
+    ELSIF NEW.kind='saved_public_url' THEN
         SELECT s.team_id INTO team FROM control.public_urls AS s WHERE s.id=NEW.public_url_id;
         service:=NEW.public_url_id; audit_kind:='public_url';
     ELSE
@@ -2607,19 +2607,19 @@ CREATE TRIGGER audit_publisher_service_grant AFTER INSERT OR UPDATE ON control.p
 CREATE TRIGGER audit_publisher_service_identity AFTER UPDATE ON control.publisher_identities FOR EACH ROW EXECUTE FUNCTION control.audit_publisher_service_grant();
 
 -- +goose StatementBegin
-CREATE FUNCTION control.audit_private_service_run() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION control.audit_service_run() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE operation text; happened timestamptz;
 BEGIN
     IF TG_OP='INSERT' THEN operation:='run.prepare'; happened:=NEW.created_at;
     ELSIF NEW.closed_at IS NOT NULL AND OLD.closed_at IS NULL THEN operation:='run.close'; happened:=NEW.closed_at;
     ELSIF NEW.started_at IS NOT NULL AND OLD.started_at IS NULL THEN operation:='run.start'; happened:=NEW.started_at;
     ELSE RETURN NEW; END IF;
-    PERFORM control.append_service_audit('sae_'||md5(operation||NEW.id)||md5(operation||NEW.id),NEW.team_id,NEW.private_service_id,'private_service',operation,happened,NULL,NULL,NEW.publisher_identity_id,NEW.id);
+    PERFORM control.append_service_audit('sae_'||md5(operation||NEW.id)||md5(operation||NEW.id),NEW.team_id,NEW.service_id,'service',operation,happened,NULL,NULL,NEW.publisher_identity_id,NEW.id);
     RETURN NEW;
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER audit_private_service_run AFTER INSERT OR UPDATE ON control.private_service_runs FOR EACH ROW EXECUTE FUNCTION control.audit_private_service_run();
+CREATE TRIGGER audit_service_run AFTER INSERT OR UPDATE ON control.service_runs FOR EACH ROW EXECUTE FUNCTION control.audit_service_run();
 
 -- +goose StatementBegin
 CREATE FUNCTION control.audit_public_service_run() RETURNS trigger LANGUAGE plpgsql AS $$

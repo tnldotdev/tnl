@@ -8,10 +8,10 @@ import {
 } from "@tnldotdev/tnl/config";
 
 export const grouped = defineConfig({
-  publishers: { cloud: { description: "database publisher", aws: { replicas: 2 } } },
+  publisherGroups: { cloud: { description: "database publisher", aws: { replicas: 2 } } },
   services: {
     db: {
-      publisher: "cloud",
+      publisherGroup: "cloud",
       protocol: "postgres",
       target: { type: "address", address: "db.internal:5432" },
       access: { team: true },
@@ -20,32 +20,32 @@ export const grouped = defineConfig({
   },
 });
 defineConfig({
-  publishers: { cloud: {} },
+  publisherGroups: { cloud: {} },
   services: {
     // @ts-expect-error groups must be declared.
-    db: { publisher: "missing", target: { type: "address", address: "db.internal:5432" } },
+    db: { publisherGroup: "missing", target: { type: "address", address: "db.internal:5432" } },
   },
 });
 defineConfig({
-  publishers: { cloud: {} },
+  publisherGroups: { cloud: {} },
   // @ts-expect-error remote groups cannot use app discovery.
-  services: { web: { publisher: "cloud", target: { type: "app" } } },
+  services: { web: { publisherGroup: "cloud", target: { type: "app" } } },
 });
 // @ts-expect-error local is reserved.
-defineConfig({ publishers: { local: {} } });
+defineConfig({ publisherGroups: { local: {} } });
 const infrastructureGroup = {
-  publishers: { cloud: { description: "db", type: "self-hosted" } },
+  publisherGroups: { cloud: { description: "db", type: "self-hosted" } },
 } as const;
 // @ts-expect-error provider selection uses the aws key, including inferred values.
 defineConfig(infrastructureGroup);
 const detailedAWSGroup = {
-  publishers: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
+  publisherGroups: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
 } as const;
 // @ts-expect-error inferred AWS objects also reject deploy-time settings.
 defineConfig(detailedAWSGroup);
-defineConfig({ publishers: { production: { aws: {} } } });
+defineConfig({ publisherGroups: { production: { aws: {} } } });
 defineConfig({
-  publishers: {
+  publisherGroups: {
     production: {
       aws: {
         // @ts-expect-error capacity must be numeric.
@@ -55,7 +55,7 @@ defineConfig({
   },
 });
 defineConfig({
-  publishers: {
+  publisherGroups: {
     production: {
       aws: {
         // @ts-expect-error detailed infrastructure settings belong in deploy-time parameters.
@@ -257,7 +257,7 @@ defineConfig(publicPool);
 // @ts-expect-error Docker discovery requires the private port.
 ({ services: { db: { target: { type: "docker", container: "db" } } } }) satisfies TnlConfig;
 // @ts-expect-error publisher placement is not project configuration.
-({ publisher: { type: "host", port: 8765 } }) satisfies TnlConfig;
+({ publisherGroup: { type: "host", port: 8765 } }) satisfies TnlConfig;
 ({
   // @ts-expect-error private target TLS never accepts visitor passthrough.
   services: { web: { target: { type: "address", address: 3000, tls: { passthrough: true } } } },
@@ -538,10 +538,10 @@ const privateWebhook = {
 // @ts-expect-error private HTTP is not a webhook receiver.
 defineConfig(privateWebhook);
 const remoteReadiness = {
-  publishers: { cloud: {} },
+  publisherGroups: { cloud: {} },
   services: {
     web: {
-      publisher: "cloud",
+      publisherGroup: "cloud",
       publicURL: {},
       target: { type: "address", address: 3000 },
       http: { readiness: { path: "/health" } },
@@ -551,10 +551,10 @@ const remoteReadiness = {
 // @ts-expect-error remote assignments cannot honor readiness overrides.
 defineConfig(remoteReadiness);
 const remoteMount = {
-  publishers: { cloud: {} },
+  publisherGroups: { cloud: {} },
   services: {
     web: {
-      publisher: "cloud",
+      publisherGroup: "cloud",
       publicURL: {},
       target: { type: "address", address: 3000 },
       http: { paths: { "/api": "api" } },
@@ -566,7 +566,7 @@ const remoteMount = {
 defineConfig(remoteMount);
 
 // @ts-expect-error publisher placement is not project configuration.
-({ publisher: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
+({ publisherGroup: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
 // @ts-expect-error combined byte totals are removed.
 ({ publicURL: { limits: { traffic: { totalBytes: 1024 } } } }) satisfies TnlConfig;
 // @ts-expect-error combined byte rates are removed.
@@ -587,15 +587,15 @@ defineConfig(remoteMount);
 }) satisfies TnlConfig;
 
 defineConfig({
-  publishers: { production: { aws: { replicas: 2 } } },
+  publisherGroups: { production: { aws: { replicas: 2 } } },
   services: {
     cluster: {
-      publisher: "production",
+      publisherGroup: "production",
       protocol: "kubernetes",
       target: { type: "eks", cluster: "development", region: "us-east-1" },
     },
     db: {
-      publisher: "production",
+      publisherGroup: "production",
       protocol: "postgres",
       target: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
     },
@@ -629,11 +629,11 @@ defineConfig({
   },
 });
 defineConfig({
-  publishers: { production: {} },
+  publisherGroups: { production: {} },
   services: {
-    inventory: { publisher: "production", target: { type: "address", address: 3000 } },
+    inventory: { publisherGroup: "production", target: { type: "address", address: 3000 } },
     models: {
-      publisher: "production",
+      publisherGroup: "production",
       protocol: "postgres",
       target: { type: "address", address: "localhost:5432" },
     },
@@ -706,16 +706,16 @@ defineConfig(() => privateAliasEntry);
 // @ts-expect-error asynchronous factories cannot alias private HTTP services.
 defineConfig(async () => privateAliasEntry);
 const groupAliasEntry = {
-  publishers: { cloud: {} },
+  publisherGroups: { cloud: {} },
   services: {
-    web: { publisher: "cloud", publicURL: {}, target: { type: "address", address: 3000 } },
+    web: { publisherGroup: "cloud", publicURL: {}, target: { type: "address", address: 3000 } },
   },
   aliases: { review: { service: "web" } },
 } as const;
 // @ts-expect-error aliases require local entry services.
 defineConfig(groupAliasEntry);
 const localWorkload = {
-  services: { web: {}, explicit: { publisher: "local" } },
+  services: { web: {}, explicit: { publisherGroup: "local" } },
   workloads: {
     ci: {
       provider: "fly",

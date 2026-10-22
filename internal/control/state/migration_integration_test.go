@@ -1,4 +1,4 @@
-package controlstate
+package state
 
 import (
 	"context"
@@ -63,7 +63,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
 		}
 	}
-	for _, view := range []string{"publish_run_connection_slots", "private_service_connection_slots", "publisher_service_runs"} {
+	for _, view := range []string{"publish_run_connection_slots", "service_connection_slots", "publisher_service_runs"} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.views WHERE table_schema='control' AND table_name=$1)`, view).Scan(&exists); err != nil || !exists {
 			t.Errorf("control.%s typed view missing: %v", view, err)
@@ -119,8 +119,8 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
-		"tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors",
-		"tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-provider-workloads",
+		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-workload-visitors",
+		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-provider-workloads",
 		"tnl-control-fresh-v1-services-platform-access",
 	} {
 		t.Run(previous, func(t *testing.T) {

@@ -1,4 +1,4 @@
-package publicurlusageworker
+package usage
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/pkg/api/publicurlusagev1"
+	publicurlusagev1 "github.com/tnldotdev/tnl/pkg/api/integrations/public-url-usage/v1"
 )
 
 func TestWorkerRetiresSingleReportRejectedAsTooLarge(t *testing.T) {

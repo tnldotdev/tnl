@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type resolvedNamedInvocation struct {
@@ -20,7 +20,7 @@ type resolvedNamedInvocation struct {
 type resolvedPublicInvocation struct{ resolvedNamedInvocation }
 type resolvedPrivateInvocation struct {
 	resolvedNamedInvocation
-	protocol controlv1.PrivateServiceProtocol
+	protocol controlv1.ServiceProtocol
 }
 
 func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
@@ -59,9 +59,9 @@ func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) 
 
 func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error) {
 	selected, err := namedInvocation(flags)
-	protocol := controlv1.PrivateServiceProtocol(flags.Protocol)
+	protocol := controlv1.ServiceProtocol(flags.Protocol)
 	if err == nil && (!protocol.Valid() || config.IsPublicService(selected.project.Config.Services[selected.service])) {
-		err = failure.Wrap("select private service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
+		err = failure.Wrap("select service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
 	}
 	return resolvedPrivateInvocation{selected, protocol}, err
 }

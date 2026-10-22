@@ -1,4 +1,4 @@
-package tnldruntime
+package daemon
 
 import (
 	"bufio"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"golang.org/x/net/websocket"
@@ -27,10 +27,10 @@ type standalonePublishFixture struct {
 	visitor                        *integrationVisitor
 }
 
-func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart ...func(tnldconfig.Config)) *standalonePublishFixture {
+func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart ...func(daemonconfig.Config)) *standalonePublishFixture {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicListener := privateRuntimeListener(t)
+	publicListener := serviceRuntimeListener(t)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
@@ -63,20 +63,20 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
 
-func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDPAddress, directoryURL string) (tnldconfig.Config, runtimeListeners) {
+func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDPAddress, directoryURL string) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
 	const serverDomain = "integration.test"
 	// standalone uses one public listener and creates its internal listeners on
 	// :0 itself. these required but unused split-role addresses need no probes.
 	servicePorts, serviceListeners := reserveIntegrationServicePorts(t)
 	listeners := runtimeListeners{
-		control: privateRuntimeListener(t), metrics: privateRuntimeListener(t),
+		control: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t),
 		ingress: combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
 	}
 	t.Cleanup(func() { _ = listeners.ingress.Close() })
-	return tnldconfig.Config{
+	return daemonconfig.Config{
 		ServicePortRanges: servicePorts,
-		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
+		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
 		ControlListen: listeners.control.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicListener.Addr().String(),
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},

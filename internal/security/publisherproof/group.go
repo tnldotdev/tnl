@@ -1,6 +1,6 @@
-package publisheridentity
+package publisherproof
 
-import "github.com/tnldotdev/tnl/pkg/api/controlv1"
+import controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 
 // SameGroupMember compares immutable membership fields. selectors are mutable;
 // callers verify them separately against control's current/historical names.

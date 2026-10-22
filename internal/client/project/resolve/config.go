@@ -1,5 +1,5 @@
 // package resolve composes project selection with client state and current
-// server facts. static evaluation remains in projectconfig.
+// server facts. static evaluation remains in clientproject.
 package resolve
 
 import (
@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -27,43 +27,43 @@ type Options struct {
 	NoConfig        bool
 }
 
-func Select(ctx context.Context, options Options) (projectconfig.Selection, string, error) {
+func Select(ctx context.Context, options Options) (clientproject.Selection, string, error) {
 	cwd := options.Directory
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
 		if err != nil {
-			return projectconfig.Selection{}, "", failure.Wrap("read working directory", failure.CurrentDirectoryUnavailable, err)
+			return clientproject.Selection{}, "", failure.Wrap("read working directory", failure.CurrentDirectoryUnavailable, err)
 		}
 	}
-	selection, err := projectconfig.SelectProjectConfig(ctx, cwd, options.ConfigPath, options.EnvironmentPath, options.NoConfig)
+	selection, err := clientproject.SelectProjectConfig(ctx, cwd, options.ConfigPath, options.EnvironmentPath, options.NoConfig)
 	return selection, cwd, failure.Wrap("select project configuration", failure.ProjectConfigInvalid, err)
 }
 
-func Load(ctx context.Context, options Options, stateRoot string) (projectconfig.Project, error) {
+func Load(ctx context.Context, options Options, stateRoot string) (clientproject.Project, error) {
 	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {
-		return projectconfig.Project{}, failure.Wrap("open client state", failure.ClientStateUnavailable, err)
+		return clientproject.Project{}, failure.Wrap("open client state", failure.ClientStateUnavailable, err)
 	}
 	salt, err := state.WorktreeHashSalt(ctx)
 	closeErr := state.Close()
 	if err != nil {
-		return projectconfig.Project{}, failure.Wrap("read worktree identity", failure.ClientStateUnavailable, err)
+		return clientproject.Project{}, failure.Wrap("read worktree identity", failure.ClientStateUnavailable, err)
 	}
 	if closeErr != nil {
-		return projectconfig.Project{}, failure.Wrap("close client state", failure.ClientStateUnavailable, closeErr)
+		return clientproject.Project{}, failure.Wrap("close client state", failure.ClientStateUnavailable, closeErr)
 	}
 	return LoadWithSalt(ctx, options, salt)
 }
 
-func LoadWithSalt(ctx context.Context, options Options, salt [32]byte) (projectconfig.Project, error) {
+func LoadWithSalt(ctx context.Context, options Options, salt [32]byte) (clientproject.Project, error) {
 	selection, cwd, err := Select(ctx, options)
 	if err != nil {
-		return projectconfig.Project{}, err
+		return clientproject.Project{}, err
 	}
-	project, err := projectconfig.Resolve(ctx, selection, cwd, salt)
+	project, err := clientproject.Resolve(ctx, selection, cwd, salt)
 	if err != nil {
-		return projectconfig.Project{}, failure.Wrap("load project configuration", failure.ProjectConfigInvalid, err)
+		return clientproject.Project{}, failure.Wrap("load project configuration", failure.ProjectConfigInvalid, err)
 	}
 	return project, nil
 }
@@ -77,7 +77,7 @@ func Root(ctx context.Context, options Options) (string, error) {
 	if selection.Path != "" {
 		return filepath.EvalSymlinks(filepath.Dir(selection.Path))
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	worktree, err := clientproject.ResolveWorktree(ctx, cwd)
 	if err != nil {
 		return "", fmt.Errorf("resolve project worktree: %w", err)
 	}

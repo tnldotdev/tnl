@@ -21,7 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -56,9 +56,9 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 			t.Fatal(err)
 		}
 		context.AfterFunc(ctx, func() { _ = listener.Close() })
-		id, _ := opaqueid.New(opaqueid.PrivateConnectorSessionPrefix)
+		id, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
 		expires := time.Now().Add(time.Minute)
-		assignments = append(assignments, map[string]any{"id": id, "private_service_id": service, "ingress_id": name, "ingress_address": listener.Addr().String(), "tls_server_name": "localhost", "credential": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expires_at": expires})
+		assignments = append(assignments, map[string]any{"id": id, "service_id": service, "ingress_id": name, "ingress_address": listener.Addr().String(), "tls_server_name": "localhost", "credential": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expires_at": expires})
 		trusts[id] = controlv1.IngressTransportTrust{IngressId: name, IngressRunId: "irun_aaaaaaaaaaaaaaaaaaaaaa", IngressLeaseRevision: 1, TlsServerName: "localhost", IssuerPem: string(caPEM), CertificatePem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), PublicKeySha256: hex.EncodeToString(digest[:]), LeaseUri: lease.String(), NotBefore: parsed.NotBefore, NotAfter: parsed.NotAfter, ValidUntil: expires, IssuerRevision: 1}
 		workers.Go(func() {
 			for {
@@ -70,16 +70,16 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 					defer connection.Close()
 					stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 					defer stop()
-					transport, err := muxsession.AcceptPrivateMuxTLS(ctx, connection, tlsConfig, muxsession.TLSYamuxConfig{})
+					transport, err := muxsession.AcceptConnectorMuxTLS(ctx, connection, tlsConfig, muxsession.TLSYamuxConfig{})
 					if err != nil {
 						return
 					}
 					defer transport.Close()
-					session, err := tunnel.AcceptPrivateConnector(ctx, transport, func(_ context.Context, hello tunnelv1.PrivateConnectorSessionHello) (tunnelv1.PrivateConnectorSessionAccepted, error) {
-						if hello.SessionID != id || hello.PrivateServiceID != service || hello.Subject.Kind != tunnelv1.VisitorWorkloadSession || hello.Subject.WorkloadSessionID != workload {
-							return tunnelv1.PrivateConnectorSessionAccepted{}, io.ErrUnexpectedEOF
+					session, err := tunnel.AcceptConnector(ctx, transport, func(_ context.Context, hello tunnelv1.ConnectorSessionHello) (tunnelv1.ConnectorSessionAccepted, error) {
+						if hello.SessionID != id || hello.ServiceID != service || hello.Subject.Kind != tunnelv1.VisitorWorkloadSession || hello.Subject.WorkloadSessionID != workload {
+							return tunnelv1.ConnectorSessionAccepted{}, io.ErrUnexpectedEOF
 						}
-						return tunnelv1.PrivateConnectorSessionAccepted{ProtocolVersion: 1, Kind: "private_connector_session_accepted", PrivateServiceID: service, SessionID: id, Subject: hello.Subject, SourceIP: "127.0.0.1", ExpiresAt: expires}, nil
+						return tunnelv1.ConnectorSessionAccepted{ProtocolVersion: 1, Kind: "connector_session_accepted", ServiceID: service, SessionID: id, Subject: hello.Subject, SourceIP: "127.0.0.1", ExpiresAt: expires}, nil
 					})
 					if err != nil {
 						return
@@ -91,12 +91,12 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 						}
 						workers.Go(func() {
 							defer stream.Close()
-							if _, err := tunnelv1.ReadPrivateVisitorEntry(stream); err != nil {
+							if _, err := tunnelv1.ReadConnectorVisitorEntry(stream); err != nil {
 								return
 							}
 							visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 							publisher, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-							if err := tunnelv1.WritePrivateVisitorAccepted(stream, tunnelv1.PrivateVisitorAccepted{ProtocolVersion: 1, Kind: "private_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: visitor, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
+							if err := tunnelv1.WriteConnectorVisitorAccepted(stream, tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: 1, Kind: "connector_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: visitor, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
 								return
 							}
 							backend, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", target)

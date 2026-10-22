@@ -1,4 +1,4 @@
-package acmeclient
+package acme
 
 import (
 	"bytes"

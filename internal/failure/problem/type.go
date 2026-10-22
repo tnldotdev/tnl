@@ -1,5 +1,5 @@
 // Package problemtype defines canonical API problem type URIs.
-package problemtype
+package problem
 
 import "strings"
 

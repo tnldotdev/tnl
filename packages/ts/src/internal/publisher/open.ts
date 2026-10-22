@@ -15,10 +15,20 @@ import { record, exactKeys } from "../project/runtime.js";
 import { parseStatus } from "./status.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 
-export type PublisherFile = { readonly publisherFile: string; readonly publisherID?: never };
-export type PublisherID = { readonly publisherID: string; readonly publisherFile?: never };
+export type PublisherCredentialFile = {
+  readonly publisherCredentialFile: string;
+  readonly publisherIdentityID?: never;
+};
+export type PublisherIdentityID = {
+  readonly publisherIdentityID: string;
+  readonly publisherCredentialFile?: never;
+};
 export type OpenOptions = OpenSettings &
-  (PublisherFile | PublisherID | { readonly publisherFile?: never; readonly publisherID?: never });
+  (
+    | PublisherCredentialFile
+    | PublisherIdentityID
+    | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
+  );
 interface OpenSettings {
   readonly server?: string;
   readonly directory?: string;
@@ -89,11 +99,14 @@ async function openServerUntraced(
   ).join("")}`;
   // the SDK process may receive this environment variable after the native
   // owner starts. pass the path, never the credential contents, to that owner.
-  const publisherFile =
-    options.publisherID === undefined
-      ? (options.publisherFile ?? process.env.TNL_PUBLISHER_FILE)
+  const publisherCredentialFile =
+    options.publisherIdentityID === undefined
+      ? (options.publisherCredentialFile ?? process.env.TNL_PUBLISHER_CREDENTIAL_FILE)
       : undefined;
-  if (publisherFile !== undefined && !validPublisherFile(publisherFile))
+  if (
+    publisherCredentialFile !== undefined &&
+    !validPublisherCredentialFile(publisherCredentialFile)
+  )
     throw new TnlError("sdk.configuration_invalid");
   const request = {
     version: 1,
@@ -102,8 +115,12 @@ async function openServerUntraced(
     pid: process.pid,
     target,
     ...(options.server === undefined ? {} : { server_url: options.server }),
-    ...(options.publisherID === undefined ? {} : { publisher_id: options.publisherID }),
-    ...(publisherFile === undefined ? {} : { publisher_file: publisherFile }),
+    ...(options.publisherIdentityID === undefined
+      ? {}
+      : { publisher_identity_id: options.publisherIdentityID }),
+    ...(publisherCredentialFile === undefined
+      ? {}
+      : { publisher_credential_file: publisherCredentialFile }),
     ...(options.access === undefined
       ? {}
       : {
@@ -343,8 +360,8 @@ function validateOptions(options: OpenOptions): void {
     Object.keys(options).some(
       (key) =>
         ![
-          "publisherFile",
-          "publisherID",
+          "publisherCredentialFile",
+          "publisherIdentityID",
           "server",
           "directory",
           "stateDir",
@@ -354,11 +371,12 @@ function validateOptions(options: OpenOptions): void {
           "signal",
         ].includes(key),
     ) ||
-    (options.publisherFile !== undefined && !validPublisherFile(options.publisherFile)) ||
-    (options.publisherFile !== undefined && options.publisherID !== undefined) ||
-    (options.publisherID !== undefined &&
-      (typeof options.publisherID !== "string" ||
-        !/^pub_[A-Za-z0-9]{22}$/.test(options.publisherID))) ||
+    (options.publisherCredentialFile !== undefined &&
+      !validPublisherCredentialFile(options.publisherCredentialFile)) ||
+    (options.publisherCredentialFile !== undefined && options.publisherIdentityID !== undefined) ||
+    (options.publisherIdentityID !== undefined &&
+      (typeof options.publisherIdentityID !== "string" ||
+        !/^pub_[A-Za-z0-9]{22}$/.test(options.publisherIdentityID))) ||
     (options.server !== undefined &&
       (typeof options.server !== "string" || !validServer(options.server))) ||
     (options.directory !== undefined &&
@@ -379,7 +397,7 @@ function validateOptions(options: OpenOptions): void {
     throw new TnlError("sdk.configuration_invalid");
 }
 
-function validPublisherFile(value: unknown): value is string {
+function validPublisherCredentialFile(value: unknown): value is string {
   return (
     typeof value === "string" &&
     path.isAbsolute(value) &&

@@ -1,4 +1,4 @@
-package oidcauth_test
+package oidc_test
 
 import (
 	"crypto/ecdsa"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
-	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 )
 
@@ -43,8 +43,8 @@ func TestWorkloadJWKSigningAlgorithms(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: public, KeyID: "workload", Algorithm: string(alg), Use: "sig"}}})
 			}))
 			defer keys.Close()
-			p := oidcauth.WorkloadTrust{Provider: "oidc", Issuer: keys.URL, JWKSURL: keys.URL + "/.well-known/jwks", Audience: "tnl-store", Claims: map[string]string{"sub": "service:store"}}
-			v, err := oidcauth.NewWorkloadVerifier("https://control.example", keys.Client())
+			p := oidc.WorkloadTrust{Provider: "oidc", Issuer: keys.URL, JWKSURL: keys.URL + "/.well-known/jwks", Audience: "tnl-store", Claims: map[string]string{"sub": "service:store"}}
+			v, err := oidc.NewWorkloadVerifier("https://control.example", keys.Client())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +72,7 @@ func TestWorkloadJWKSigningAlgorithms(t *testing.T) {
 			raw := sign(map[string]any{"iss": p.Issuer, "aud": p.Audience, "sub": "service:store", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Minute).Unix()})
 			verified, err := v.Verify(t.Context(), p, raw)
 			if alg == jose.ES384 {
-				if !errors.Is(err, oidcauth.ErrUnauthenticated) {
+				if !errors.Is(err, oidc.ErrUnauthenticated) {
 					t.Fatal("unsupported signing algorithm accepted", err)
 				}
 			} else if err != nil || !verified.Matches(p) {
@@ -81,12 +81,12 @@ func TestWorkloadJWKSigningAlgorithms(t *testing.T) {
 			// the generic key-fetch configuration must not widen GitHub or the
 			// RS256-only provider profiles, even with a valid signed assertion.
 			github := sign(githubtest.Claims("https://control.example", now))
-			if _, err := v.Verify(t.Context(), oidcauth.WorkloadTrust{Provider: "github"}, github); !errors.Is(err, oidcauth.ErrUnauthenticated) {
+			if _, err := v.Verify(t.Context(), oidc.WorkloadTrust{Provider: "github"}, github); !errors.Is(err, oidc.ErrUnauthenticated) {
 				t.Fatal("GitHub accepted a non-RS256 assertion", err)
 			}
 			for _, provider := range []string{"vercel", "fly"} {
 				p.Provider = provider
-				if _, err := v.Verify(t.Context(), p, raw); !errors.Is(err, oidcauth.ErrUnauthenticated) {
+				if _, err := v.Verify(t.Context(), p, raw); !errors.Is(err, oidc.ErrUnauthenticated) {
 					t.Fatal("provider accepted a non-RS256 assertion", err)
 				}
 			}

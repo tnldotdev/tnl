@@ -1,4 +1,4 @@
-package projectinit
+package init
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/tailscale/hujson"
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 )
 
 type projectTypeIncludeResult struct {
@@ -37,7 +37,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	if visited[path] {
 		return result, nil
 	}
-	relative, err := filepath.Rel(filepath.Dir(path), filepath.Join(root, projectmeta.GeneratedDirectoryName, projectmeta.DeclarationsName))
+	relative, err := filepath.Rel(filepath.Dir(path), filepath.Join(root, meta.GeneratedDirectoryName, meta.DeclarationsName))
 	if err != nil {
 		return result, err
 	}

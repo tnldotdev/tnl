@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	localproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -216,7 +216,7 @@ func (p *ReadinessProof) consume(r *http.Request, run PublishRunIdentity) bool {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	values := r.Header.Values(localproxy.ReadinessProbeHeader)
+	values := r.Header.Values(publisherproxy.ReadinessProbeHeader)
 	if p.secret == "" || time.Now().After(p.expires) || run != p.run || r.Method != http.MethodGet ||
 		r.URL.EscapedPath() != p.path || r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" || len(values) != 1 ||
 		subtle.ConstantTimeCompare([]byte(values[0]), []byte(p.secret)) != 1 {

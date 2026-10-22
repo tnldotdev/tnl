@@ -1,5 +1,5 @@
 // package privateprotocol owns the bounded, machine-local SDK protocol.
-package privateprotocol
+package protocol
 
 import (
 	"encoding/json"
@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"regexp"
 
-	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
-	api "github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	api "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 const Version = 1
@@ -32,12 +32,12 @@ const (
 type Prepare = api.Prepare
 
 type Assignment struct {
-	Version        int                        `json:"version"`
-	RegistrationID string                     `json:"registration_id"`
-	Service        string                     `json:"service"`
-	Hostname       string                     `json:"hostname"`
-	PublicURL      string                     `json:"public_url"`
-	Project        projectmeta.PublicMetadata `json:"project"`
+	Version        int                 `json:"version"`
+	RegistrationID string              `json:"registration_id"`
+	Service        string              `json:"service"`
+	Hostname       string              `json:"hostname"`
+	PublicURL      string              `json:"public_url"`
+	Project        meta.PublicMetadata `json:"project"`
 }
 
 type Registration = api.Registration

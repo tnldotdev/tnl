@@ -1,4 +1,4 @@
-package tcpconnect
+package stream
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 // must clear readiness, fetch and approve current metadata, then start a new
 // runner and listener. queued connections belong only to the old runner.
 type MetadataReloadError struct {
-	PrivateServiceID                   string
+	ServiceID                          string
 	ApprovedRevision, SelectedRevision int64
 }
 
-const metadataReloadMessage = "private service metadata changed; refresh the approved service and restart the connector"
+const metadataReloadMessage = "service metadata changed; refresh the approved service and restart the connector"
 
 func (*MetadataReloadError) Error() string   { return metadataReloadMessage }
 func (MetadataReloadError) String() string   { return metadataReloadMessage }
@@ -27,11 +27,11 @@ func IsMetadataReload(err error) bool {
 }
 
 func metadataReload(service string, approved, selected int64) error {
-	return &MetadataReloadError{PrivateServiceID: service, ApprovedRevision: approved, SelectedRevision: selected}
+	return &MetadataReloadError{ServiceID: service, ApprovedRevision: approved, SelectedRevision: selected}
 }
 
 // assignmentReleaser is optional for controls that own server reservations.
 // closing a path releases only its own assignment, after stopping its streams.
 type assignmentReleaser interface {
-	ReleasePrivateConnectorAssignment(context.Context, string) error
+	ReleaseConnectorAssignment(context.Context, string) error
 }
