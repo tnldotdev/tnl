@@ -226,7 +226,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector/... -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector/stream -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   private-claims:
     dir: "{{.ROOT_DIR}}"
@@ -298,7 +298,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Verify an existing OpenSSH daemon through private QUIC and TLS/TCP streams
     cmds:
-      - go test -race -v ./internal/connector/... -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+      - go test -race -v ./internal/connector/stream -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   compose:
     dir: "{{.ROOT_DIR}}"

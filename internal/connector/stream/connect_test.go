@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -135,17 +136,33 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		workers.Wait()
 	})
 	for slot := range uint8(2) {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = listener.Close() })
-		f.endpoints[slot] = muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "db.example"}
-		if transport == "quic" {
-			udp, err := muxsession.ListenPrivateQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{})
+		var listener net.Listener
+		var udp *muxsession.QUICListener
+		// tcp and udp allocate ports independently; keep both listeners on success.
+		for range 32 {
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
+			if transport != "quic" {
+				break
+			}
+			udp, err = muxsession.ListenPrivateQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{})
+			if err == nil {
+				break
+			}
+			_ = listener.Close()
+			listener = nil
+			if !errors.Is(err, syscall.EADDRINUSE) {
+				t.Fatal(err)
+			}
+		}
+		if listener == nil {
+			t.Fatalf("reserve connector tcp and quic listeners: %v", err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		f.endpoints[slot] = muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "db.example"}
+		if udp != nil {
 			t.Cleanup(func() { _ = udp.Close() })
 			workers.Go(func() {
 				for {

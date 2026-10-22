@@ -160,7 +160,10 @@ test("streamed response bodies can outlive 30 seconds without an SDK total abort
   const server = createServer({ key, cert }, (_request, response) => {
     response.writeHead(200).write("start\n");
     const heartbeat = setInterval(() => response.write("tick\n"), 100);
-    const finish = setTimeout(() => response.end("done\n"), 31_000);
+    const finish = setTimeout(() => {
+      clearInterval(heartbeat);
+      response.end("done\n");
+    }, 31_000);
     response.once("close", () => {
       clearInterval(heartbeat);
       clearTimeout(finish);

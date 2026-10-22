@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"reflect"
@@ -131,5 +132,19 @@ func TestSingleShardAccountsForSelectionWithoutRewritingSubtests(t *testing.T) {
 	}
 	if _, _, _, err := shardTestPattern("TestAlpha", "^Test", "Test/subtest", testShard{1, 4}); err == nil {
 		t.Fatal("multiple shards accepted a subtest exclusion")
+	}
+}
+
+func TestShardDiscoveryPreservesGoTestDiagnostics(t *testing.T) {
+	command := []string{"go", "test", "./testdata/shards", "-run=^TestAlpha$", "-args", "-tnl-unregistered-tier=integration"}
+	_, err := shardGoTestCommand(t.Context(), ".", command, "")
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) {
+		t.Fatalf("discovery failure lost its process exit: %v", err)
+	}
+	for _, want := range []string{"discover tests for shard", "flag provided but not defined: -tnl-unregistered-tier", "Usage of"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("discovery failure lost %q: %v", want, err)
+		}
 	}
 }

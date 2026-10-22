@@ -90,6 +90,9 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 	child.Dir, child.Stderr = root, os.Stderr
 	output, err := child.Output()
 	if err != nil {
+		if details := strings.TrimSpace(string(output)); details != "" {
+			return nil, fmt.Errorf("discover tests for shard: %w\n%s", err, details)
+		}
 		return nil, fmt.Errorf("discover tests for shard: %w", err)
 	}
 	pattern, selected, total, err := shardTestPattern(string(output), discoveryRun, discoverySkip, shard)
