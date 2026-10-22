@@ -25,7 +25,8 @@ type separatedSnapshot struct {
 }
 
 var (
-	runtimeLoadWorkload           = flag.String("tnl-runtime-load-workload", "public-url", "public-url or connect workload")
+	runtimeLoadWorkload           = flag.String("tnl-runtime-load-workload", "public-url", "public-url, public-auth, or connect workload")
+	publicLoadAccess              = flag.String("tnl-public-load-access", "anonymous", "anonymous, browser, or share visitor preparation")
 	connectLoadPayloadBytes       = flag.Int("tnl-connect-load-payload-bytes", 256, "opaque connect request payload bytes (8-1048576)")
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
@@ -107,6 +108,10 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		return
 	}
 	publishers := activateSeparatedPublishers(t, database, routes)
+	if *runtimeLoadWorkload == "public-auth" {
+		runSeparatedPublicAuthorization(t, database, publishers, rate, duration)
+		return
+	}
 	separatedWrite(t, "visitors.start", time.Now())
 	for i := 1; i <= 4; i++ {
 		separatedWait(t, fmt.Sprintf("visitor-%d.ready", i), 15*time.Second, nil)
@@ -174,8 +179,13 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
-	if *runtimeLoadWorkload != "public-url" && *runtimeLoadWorkload != "connect" {
+	if !slices.Contains([]string{"public-url", "public-auth", "connect"}, *runtimeLoadWorkload) {
 		t.Fatal("invalid runtime workload")
+	}
+	if *runtimeLoadWorkload == "public-auth" {
+		if !*runtimeLoadCapacityOnly || !*runtimeLoadHATopology || *runtimeLoadPublicURLs > 64 || *runtimeLoadWorkers > 64 || *runtimeLoadDuration > time.Minute || !slices.Contains([]string{"anonymous", "browser", "share"}, *publicLoadAccess) || !slices.Contains([]string{"relay-restart", "latency", "packet-loss"}, *runtimeLoadScenario) {
+			t.Fatal("public authorization load requires HA, capacity-only, 4-64 URLs, 4-64 workers, 10s-1m windows, and anonymous/browser/share access with baseline/latency/packet-loss")
+		}
 	}
 	if *runtimeLoadWorkload == "connect" {
 		if !*runtimeLoadHATopology || !*runtimeLoadCapacityOnly || *runtimeLoadPublicURLs > 64 || *runtimeLoadWorkers > 64 || *runtimeLoadDuration > time.Minute || *runtimeLoadRPS > 256 || *connectLoadPayloadBytes < 8 || *connectLoadPayloadBytes > 1<<20 {
@@ -251,7 +261,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadScenario == "control-restart" && !*runtimeLoadHATopology {
 		t.Fatal("control restart requires the two-control topology")
 	}
-	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" && *runtimeLoadWorkload != "connect" {
+	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" && *runtimeLoadWorkload == "public-url" {
 		t.Fatal("capacity-only workload requires the default scenario")
 	}
 	if !slices.Contains([]string{"forwarding", "publisher"}, *runtimeLoadNetworkPath) && !(*runtimeLoadWorkload == "connect" && *runtimeLoadNetworkPath == "connector") {
@@ -358,6 +368,7 @@ func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, afte
 	components := append(append(separatedIngresses(), "relay-a", "relay-b"), separatedAppComponents()...)
 	components = append(components, separatedPublisherComponents()...)
 	components = append(components, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
+	components = append(components, "coordinator")
 	for _, component := range components {
 		a, b := before.Resources[component], after.Resources[component]
 		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {

@@ -43,6 +43,7 @@ type PublisherConfig struct {
 	Server, Domain, StateRoot, Target string
 	HostnamePrefix                    string
 	Ephemeral                         bool
+	AccessMode                        controlv1.VisitorAccessMode
 	HTTPClient                        *http.Client
 	RelayTLS                          *tls.Config
 	AllowedIPPrefixes                 []string
@@ -100,6 +101,12 @@ type Publishers struct {
 }
 
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
+	if config.AccessMode == "" {
+		config.AccessMode = controlv1.Anonymous
+	}
+	if config.AccessMode != controlv1.Anonymous && config.AccessMode != controlv1.Restricted || config.Ephemeral && config.AccessMode != controlv1.Anonymous {
+		return nil, errors.New("invalid benchmark visitor access mode")
+	}
 	if config.Parallel < 1 || config.StartParallel < 0 || config.RateRequests < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
 	}
@@ -262,7 +269,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
+			PolicyRevision: uint64(team.PolicyRevision), AccessMode: config.AccessMode, AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
 			FallbackDelay: 250 * time.Millisecond},

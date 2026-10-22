@@ -173,6 +173,11 @@ tasks:
     cmds:
       - task: workloads:go:test:load:connect
 
+  go:test:load:visitors:
+    desc: Measure public HTTP cold/warm/refresh permission and HTTP/2 reuse
+    cmds:
+      - task: workloads:go:test:load:visitors
+
   go:bench:plan:
     dir: "{{.ROOT_DIR}}"
     desc: Describe a local workload against an explicit tnl server without creating resources

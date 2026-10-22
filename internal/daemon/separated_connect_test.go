@@ -227,6 +227,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		assertSeparatedNoMemoryLimitEvents(t, name, before, after)
 		assertSeparatedNoRejections(t, name, before, after)
 		reportConnectLoad(t, name, results)
+		reportSeparatedSetupEvidence(t, name, phase.Start, time.Now())
 	}
 	separatedWrite(t, "connect.phase-4", connectLoadPhase{Done: true})
 	for index := 1; index <= 4; index++ {
@@ -262,6 +263,16 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 }
 
 func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
+	t.Helper()
+	var expected int
+	for index := range 4 {
+		rate := benchworkload.Assignment(*runtimeLoadRPS, 4, index)
+		expected += int((time.Duration(rate)**runtimeLoadDuration + time.Second - 1) / time.Second)
+	}
+	reportSetupLoad(t, name, results, expected)
+}
+
+func reportSetupLoad(t *testing.T, name string, results []connectLoadResult, expected int) {
 	t.Helper()
 	var summary benchworkload.VisitorResult
 	var setup benchworkload.Histogram
@@ -312,11 +323,6 @@ func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
 	}
 	separatedResult(t, name+"-latency", map[string]any{"samples": len(actual), "request": exact(actual), "first_response_byte": exact(first), "scheduled": exact(scheduled)})
 	t.Logf("connect_load phase=%s success=%d failure=%d missed=%d queue_expired=%d request=%v first_response_byte=%v", name, summary.Successes, summary.Failures, summary.Missed, summary.QueueExpired, exact(actual), exact(first))
-	var expected int
-	for index := range 4 {
-		rate := benchworkload.Assignment(*runtimeLoadRPS, 4, index)
-		expected += int((time.Duration(rate)**runtimeLoadDuration + time.Second - 1) / time.Second)
-	}
 	if err := summary.Err(); err != nil || summary.Scheduled != expected || len(actual) != summary.Successes {
 		t.Errorf("%s: %v; failures=%+v", name, err, summary.FailuresSample)
 		t.Errorf("scheduled=%d expected=%d latency samples=%d successes=%d", summary.Scheduled, expected, len(actual), summary.Successes)

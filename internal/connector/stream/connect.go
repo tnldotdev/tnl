@@ -372,10 +372,14 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		}
 	}
 	var next atomic.Uint64
-	forward := func(forwardCtx context.Context, local net.Conn) error {
+	forward := func(forwardCtx context.Context, local net.Conn) (retErr error) {
+		forwardCtx, endConnection := observability.Start(observability.Independent(forwardCtx), "connector.visitor_connection")
+		defer func() { endConnection(retErr) }()
 		// resolve approved metadata before opening one publisher stream. native
 		// clients negotiate TLS through it; opaque clients use tnl's TLS helper.
-		run, err := config.Control.ResolveService(forwardCtx, config.ServiceID)
+		selectionCtx, endSelection := observability.Start(forwardCtx, "connector.run_selection")
+		run, err := config.Control.ResolveService(selectionCtx, config.ServiceID)
+		endSelection(err)
 		if err != nil {
 			return err
 		}
@@ -495,7 +499,9 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	if err = tunnelv1.WriteConnectorVisitorEntry(stream, entry); err != nil {
 		return nil, false, err
 	}
+	_, endAcceptance := observability.Start(ctx, "connector.acceptance")
 	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
+	endAcceptance(err)
 	if err != nil {
 		return nil, false, err
 	}
@@ -515,7 +521,10 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 			verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
 			secured := tls.Client(stream, verification)
 			committed = true
-			if err = secured.HandshakeContext(setup); err != nil {
+			tlsCtx, endTLS := observability.Start(setup, "connector.visitor_tls")
+			err = secured.HandshakeContext(tlsCtx)
+			endTLS(err)
+			if err != nil {
 				return nil, true, err
 			}
 			if err = stream.SetDeadline(time.Time{}); err != nil {
