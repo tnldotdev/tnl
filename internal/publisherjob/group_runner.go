@@ -1,6 +1,7 @@
 package publisherjob
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -20,15 +21,28 @@ import (
 // jobs. dependencies are explicit; nil discovery providers are rejected
 // rather than selecting process credentials. providers must honor cancellation.
 type GroupRunner struct {
+	scope      *groupRunnerScope
 	Discovery  targetdiscovery.Provider
 	Deployment *controlv1.PublisherDeploymentReport
 	// Startup bounds finite setup only, never a group's lease lifetime.
 	Startup *OperationLimiter
 }
 
+type groupRunnerScope struct {
+	identity                 GroupScope
+	project, instance, keyID string
+	public                   ed25519.PublicKey
+}
+
 func (r GroupRunner) Serve(ctx context.Context, job Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) (result error) {
 	if validateJob(&job) != nil || job.Kind != KindGroup || profile == nil || r.Discovery == nil || publisherprovenance.Validate(r.Deployment) != nil || r.Deployment != nil && r.Deployment.Instance != job.GroupInstance {
 		return ErrScope
+	}
+	if r.scope != nil {
+		s := r.scope
+		if s.identity != (GroupScope{job.Server, job.GroupMember.TeamId, job.GroupMember.GroupId, job.PublisherID}) || s.project != job.GroupMember.ProjectKey || s.instance != job.GroupInstance || s.keyID != job.GroupMember.KeyId || len(private) != ed25519.PrivateKeySize || !bytes.Equal(s.public, private.Public().(ed25519.PublicKey)) {
+			return ErrScope
+		}
 	}
 	identity := observability.Identity{TeamID: job.GroupMember.TeamId, PublisherGroupID: job.GroupMember.GroupId, PublisherIdentityID: job.GroupMember.PublisherIdentityId}
 	if r.Deployment != nil {
@@ -137,15 +151,20 @@ func WithCertificateState(ctx context.Context, job Job, profile *clientstate.Sto
 	}
 	actual := assignments.Member
 	actual.GroupName = member.GroupName
-	if actual != member || assignments.CertificateStateRequired == nil {
+	if actual != member || assignments.CertificateStatePlans == nil {
 		return failure.Wrap("read publisher certificate recovery boundary", failure.ServerResponseInvalid, ErrScope)
 	}
 	found, err := profile.PublisherCertificateMaterialExists(ctx, member.TeamId, member.PublisherIdentityId)
 	if err != nil {
 		return err
 	}
-	if *assignments.CertificateStateRequired && !found {
+	if len(assignments.CertificateStatePlans) != 0 && !found {
 		return failure.Wrap("restore publisher certificate state", failure.PublisherCertificateStateMissing, clientstate.ErrPublisherStateConflict)
+	}
+	if len(assignments.CertificateStatePlans) != 0 {
+		if err := profile.RequirePublisherCertificatePlans(ctx, member.TeamId, member.PublisherIdentityId, assignments.CertificateStatePlans); err != nil {
+			return failure.Wrap("restore every publisher certificate plan", failure.PublisherCertificateStateMissing, err)
+		}
 	}
 	return serve(ctx)
 }

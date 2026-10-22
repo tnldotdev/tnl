@@ -34,6 +34,7 @@ The default output is relative to the selected project's root:
 .tnl/generated/manifest.json
 .tnl/generated/readme.md
 .tnl/generated/aws/production.yaml
+.tnl/generated/aws/production.storage-policy.json
 .tnl/generated/aws/production.parameters.example.json
 ```
 
@@ -153,7 +154,7 @@ for exported Go types and stale-artifact validation.
 | `AssignPublicIp`                   | `DISABLED` by default; `ENABLED` requires appropriate public routing                                 |
 | `MountSubnetCount`                 | 1–6 retained mount targets, default 2                                                                |
 | `MountSubnet1` … `6`               | fill exactly the selected count with **one subnet per distinct AZ**, covering all task AZs           |
-| `FileSystemKMSKeyArn`              | optional customer key for EFS; empty uses the EFS default key                                        |
+| `FileSystemKMSKeyArn`              | immutable customer key binding for EFS; empty uses the EFS default key                               |
 
 There are no subnet lookups or custom Lambda resources. CloudFormation requires
 every selected mount subnet; operators must select one per AZ, even when task
@@ -209,13 +210,44 @@ use `AWS::URLSuffix`.
 
 Apply customer tags on the stack. Explicit supported resource tags include
 deployment, project, team and group IDs; ECS propagates service tags to tasks.
-The output contract has `OutputSchemaVersion=1`, `TemplateVersion=1`,
+The output contract has `OutputSchemaVersion=1`, `TemplateVersion=2`,
 `TemplateSHA256`, identity metadata, `ClusterArn`, `PublisherSecurityGroupId`,
 `IdentityFileSystemId`, and per-replica service/task-definition/log/access-point,
 execution/task role, publisher ID and secret ARN/version references. Outputs
 contain no private key or secret JSON.
 
 ## limits, lifecycle and validation
+
+### immutable storage updates
+
+Supply the generated `aws/NAME.storage-policy.json` as CloudFormation's stack
+policy at creation and preserve it on updates. The policy denies replacement of
+EFS, access points, mount targets and security groups, and update-time deletion of
+the identity filesystem. `Retain` alone is not an immutability check: changing
+`FileSystemKMSKeyArn` retains the old filesystem but mounts new empty storage.
+
+Keep fully resolved deployed parameter snapshots, including defaults and retired
+replica slots. Before an update, run the offline boundary check from a tnl source
+checkout, using absolute paths for the parameter files:
+
+```console
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task deploy:publishers:storage-check PREVIOUS=deployed.parameters.json NEXT=next.parameters.json
+```
+
+The checker rejects changed storage/KMS/network identity bindings and changed
+surviving publisher/instance/secret-container bindings. Image, task sizing, friendly
+group names, pinned versions of the same secret and desired counts can change.
+The manifest hashes the policy alongside the template. This repository does not
+apply stack policies or infrastructure; the deployment workflow must use both the
+offline check and CloudFormation policy and inspect the change set.
+
+The EFS key, filesystem, access points and storage/network identity bindings are
+fixed for the deployment's lifetime. The template creates that storage once;
+replacement tasks use the same private identity trees and checkpoints. Changing
+parameters or removing a policy must not rebind an existing publisher identity to
+empty replacement storage.
+
+### retirement and qualification
 
 Templates are bounded below CloudFormation's 200 parameters, 500 resources,
 200 outputs and 1 MiB S3 template limit at eight replicas. Even small generated

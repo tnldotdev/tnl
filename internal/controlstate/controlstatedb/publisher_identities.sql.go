@@ -360,7 +360,7 @@ func (q *Queries) InsertPublisherGrant(ctx context.Context, arg InsertPublisherG
 
 const insertPublisherIdentity = `-- name: InsertPublisherIdentity :one
 INSERT INTO control.publisher_identities(id, team_id, name, kind, created_by_identity_id, guest_id, created_at, ownership, owner_membership_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, certificate_state_required, created_at, revoked_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, created_at, revoked_at
 `
 
 type InsertPublisherIdentityParams struct {
@@ -397,7 +397,6 @@ func (q *Queries) InsertPublisherIdentity(ctx context.Context, arg InsertPublish
 		&i.Ownership,
 		&i.OwnerMembershipID,
 		&i.GuestID,
-		&i.CertificateStateRequired,
 		&i.CreatedAt,
 		&i.RevokedAt,
 	)
@@ -467,7 +466,7 @@ func (q *Queries) ListPublisherGrants(ctx context.Context, publisherIdentityID s
 }
 
 const listPublisherIdentities = `-- name: ListPublisherIdentities :many
-SELECT id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, certificate_state_required, created_at, revoked_at FROM control.publisher_identities WHERE team_id = $1 AND id > $2 ORDER BY id LIMIT 101
+SELECT id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, created_at, revoked_at FROM control.publisher_identities WHERE team_id = $1 AND id > $2 ORDER BY id LIMIT 101
 `
 
 type ListPublisherIdentitiesParams struct {
@@ -493,7 +492,6 @@ func (q *Queries) ListPublisherIdentities(ctx context.Context, arg ListPublisher
 			&i.Ownership,
 			&i.OwnerMembershipID,
 			&i.GuestID,
-			&i.CertificateStateRequired,
 			&i.CreatedAt,
 			&i.RevokedAt,
 		); err != nil {
@@ -542,7 +540,7 @@ func (q *Queries) LockPublisherEnrollment(ctx context.Context, id string) (Contr
 }
 
 const lockPublisherIdentity = `-- name: LockPublisherIdentity :one
-SELECT id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, certificate_state_required, created_at, revoked_at FROM control.publisher_identities WHERE id = $1 FOR UPDATE
+SELECT id, team_id, name, kind, created_by_identity_id, ownership, owner_membership_id, guest_id, created_at, revoked_at FROM control.publisher_identities WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error) {
@@ -557,7 +555,6 @@ func (q *Queries) LockPublisherIdentity(ctx context.Context, id string) (Control
 		&i.Ownership,
 		&i.OwnerMembershipID,
 		&i.GuestID,
-		&i.CertificateStateRequired,
 		&i.CreatedAt,
 		&i.RevokedAt,
 	)

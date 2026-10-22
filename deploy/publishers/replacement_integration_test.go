@@ -108,6 +108,14 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		if err := credentialfile.VerifyGroup(ctx, client, injected, server.URL, project, group, instance); err != nil {
 			t.Fatalf("replacement %d could not authenticate its restored key: %v", replacement, err)
 		}
+		lease, err := client.Lease(ctx, injected.Member, private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assignments, err := client.Assignments(ctx, lease.AccessToken)
+		if err != nil || assignments.CertificateStatePlans == nil || len(assignments.CertificateStatePlans) != 0 {
+			t.Fatal("real control HTTP did not preserve the precise fresh recovery contract", err)
+		}
 		state, err := clientstate.OpenWithOptions(ctx, root, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 		if err != nil {
 			t.Fatal(err)

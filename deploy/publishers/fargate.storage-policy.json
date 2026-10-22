@@ -1,0 +1,32 @@
+{
+  "Statement": [
+    {
+      "Action": "Update:*",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Resource": "*"
+    },
+    {
+      "Action": "Update:Replace",
+      "Condition": {
+        "StringEquals": {
+          "ResourceType": [
+            "AWS::EFS::FileSystem",
+            "AWS::EFS::AccessPoint",
+            "AWS::EFS::MountTarget",
+            "AWS::EC2::SecurityGroup"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": "*"
+    },
+    {
+      "Action": "Update:Delete",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": "LogicalResourceId/IdentityFileSystem"
+    }
+  ]
+}

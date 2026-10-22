@@ -238,6 +238,10 @@ baseline requires a fresh database and a coordinated stop/start of all serving
 roles. Control checks both the exact migration version and baseline identity
 before serving.
 
+The single PostgreSQL baseline includes durable publisher certificate-plan
+checkpoints. Fresh identities have an empty plan inventory; submitted plans
+remain required after order cleanup. See [publisher groups](docs/maintainers/publisher-groups.md).
+
 For local services, an explicit `publicURL` block (`public_url` in static files)
 enables public HTTPS. Without it, the service is private, including `protocol: http`.
 Named groups use their own `public` setting for reachability and always require

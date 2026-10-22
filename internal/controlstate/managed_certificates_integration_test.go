@@ -13,6 +13,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
 func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
@@ -32,7 +34,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := enrollAppliedGroup(t, d, r, e, now), enrollAppliedGroup(t, d, r, e, now)
-	if a.assignments.CertificateStateRequired || b.assignments.CertificateStateRequired {
+	if len(a.assignments.CertificateStatePlans) != 0 || len(b.assignments.CertificateStatePlans) != 0 {
 		t.Fatal("fresh replicas required nonexistent certificate state")
 	}
 	attempt := 0
@@ -96,11 +98,31 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal("private issuance required a public subject", issue, err)
 	}
 	checkpointBoundary, err := d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now)
-	if err != nil || !checkpointBoundary.CertificateStateRequired {
+	if err != nil || len(checkpointBoundary.CertificateStatePlans) == 0 {
 		t.Fatal("issuance did not require durable state for future replacements", err)
 	}
+	if len(checkpointBoundary.CertificateStatePlans) != 1 || checkpointBoundary.CertificateStatePlans[0].CacheKey != plan.CacheKey || !slices.Equal(checkpointBoundary.CertificateStatePlans[0].Identifiers, plan.Identifiers) {
+		t.Fatal("issuance did not checkpoint its exact plan", checkpointBoundary.CertificateStatePlans)
+	}
+	t.Run("checkpoint-survives-order-retention", func(t *testing.T) {
+		tx, err := d.pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(t.Context())
+		if _, err := tx.Exec(t.Context(), `DELETE FROM control.private_certificate_requests WHERE issuance_id=$1`, issue.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), `DELETE FROM control.acme_orders WHERE id=$1`, issue.ID); err != nil {
+			t.Fatal(err)
+		}
+		checkpoints, err := controlstatedb.New(tx).ListPublisherCertificateCheckpoints(t.Context(), a.member.PublisherIdentityID)
+		if err != nil || len(checkpoints) != 1 {
+			t.Fatal("order cleanup erased durable plan checkpoint", err)
+		}
+	})
 	independent, err := d.GetPublisherGroupAssignments(t.Context(), b.lease.AccessToken, now)
-	if err != nil || independent.CertificateStateRequired {
+	if err != nil || len(independent.CertificateStatePlans) != 0 {
 		t.Fatal("another replica inherited the certificate-state requirement", err)
 	}
 	retry, err := d.CreatePrivateCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, directory, "csr", run.RunNumber, csr, now)

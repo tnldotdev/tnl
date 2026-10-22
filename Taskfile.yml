@@ -209,8 +209,8 @@ tasks:
       - task: go:generate
       - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh
       - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh)"
-      - git diff --exit-code HEAD -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json
-      - test -z "$(git ls-files --others --exclude-standard -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json)"
+      - git diff --exit-code HEAD -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json deploy/publishers/fargate.storage-policy.json
+      - test -z "$(git ls-files --others --exclude-standard -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json deploy/publishers/fargate.storage-policy.json)"
       - git diff --exit-code HEAD -- api/observability/v1/vocabulary.json
       - test -z "$(git ls-files --others --exclude-standard -- api/observability/v1/vocabulary.json)"
 
@@ -586,7 +586,7 @@ tasks:
   deploy:publishers:check:
     desc: Validate publisher templates, TypeScript contracts, and CloudFormation schemas without AWS
     cmds:
-      - go test ./internal/publisherdeployment ./cmd/tnl -run='^Test(GoldenAndReplicaStability|ReadValidateAndReadOnlyCheck|ManifestRejectsUnsafeAndUnboundedInputs|OutputOwnershipAndSymlinks|ParameterContract|GenerateOfflineAcrossWorktreesAndReadOnlyCheck|ApplyIgnoresPublisherInfrastructure)$' -count=1
+      - go test ./internal/publisherdeployment ./cmd/tnl -run='^Test(Storage|GoldenAndReplicaStability|ReadValidateAndReadOnlyCheck|ManifestRejectsUnsafeAndUnboundedInputs|OutputOwnershipAndSymlinks|ParameterContract|GenerateOfflineAcrossWorktreesAndReadOnlyCheck|ApplyIgnoresPublisherInfrastructure)' -count=1
       - pnpm exec vitest run deploy/publishers/fargate.test.ts
       - pnpm exec tsc --project deploy/publishers/tsconfig.json
       - pnpm exec oxlint --deny-warnings --report-unused-disable-directives deploy/publishers/*.ts
@@ -598,6 +598,13 @@ tasks:
     desc: Check the portable group identity file and injected-secret contract
     cmds:
       - go test -race ./internal/publisheridentity/credentialfile -run='^TestGroupIdentity' -count=1
+
+  deploy:publishers:storage-check:
+    desc: Reject immutable publisher storage changes using resolved parameter files, without AWS
+    requires:
+      vars: [PREVIOUS, NEXT]
+    cmds:
+      - go run ./internal/publisherdeployment/cmd/storage-check -previous '{{.PREVIOUS}}' -next '{{.NEXT}}'
 
   go:test:publisher-groups:
     desc: Check scoped group dependencies, ownership, retries, and joined shutdown
@@ -624,6 +631,11 @@ tasks:
     desc: Restore one publisher identity after deleting task-local SQLite, using disposable PostgreSQL
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./deploy/publishers -run='^TestIntegrationPublisherIdentitySurvivesTaskStateDeletion$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  go:test:integration:publisher-recovery:
+    desc: Check fresh publisher plan checkpoints and order retention in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate -run='^TestIntegration(ManagedCertificateRunAuthority|PublisherFreshBaseline|PostgresMigrationAndOpen)' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers

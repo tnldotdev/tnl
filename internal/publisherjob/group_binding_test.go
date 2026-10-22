@@ -127,8 +127,10 @@ func TestScopedGroupDiscoveryRequiresExactPermissionBeforeProvider(t *testing.T)
 		calls.Add(1)
 		return targetdiscovery.ResolvedTarget{ResourceID: r.Account}, nil
 	})
-	a := scopedGroupDiscovery{allowed: map[targetdiscovery.Request]bool{request: true}, provider: provider, limiter: NewOperationLimiter(1)}
-	b := scopedGroupDiscovery{allowed: map[targetdiscovery.Request]bool{}, provider: provider, limiter: a.limiter}
+	selector := request
+	selector.Account = ""
+	a := scopedGroupDiscovery{allowed: map[targetdiscovery.Request]string{selector: request.Account}, provider: provider, limiter: NewOperationLimiter(1)}
+	b := scopedGroupDiscovery{allowed: map[targetdiscovery.Request]string{}, provider: provider, limiter: a.limiter}
 	if _, err := a.Discover(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -204,4 +206,52 @@ func TestOperationLimiterBoundsAndJoinsCanceledWaiters(t *testing.T) {
 	}
 	release()
 	release()
+}
+
+func TestScopedGroupRunnerRejectsWrongJobBeforeAnyControlWork(t *testing.T) {
+	job, _, key := kindFixture(t, KindGroup)
+	value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, *job.GroupMember, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, _, err := ScopedGroupRunner(value, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := testRegistry(t)
+	profile, err := registry.Profile(t.Context(), job.Server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*Job){
+		func(j *Job) { j.Server = "https://other.example" },
+		func(j *Job) { j.GroupMember.TeamId = "other-team" },
+		func(j *Job) { j.GroupInstance = "other-instance" },
+		func(j *Job) { j.GroupMember.ProjectKey = "other-project" },
+		func(j *Job) { other, _, _ := kindFixture(t, KindGroup); j.GroupMember.KeyId = other.GroupMember.KeyId },
+	} {
+		other := job
+		member := *job.GroupMember
+		other.GroupMember = &member
+		change(&other)
+		if err := runner.Serve(t.Context(), other, profile, key, nil); !errors.Is(err, ErrScope) {
+			t.Fatal("runner accepted dependencies for another job", err)
+		}
+	}
+	_, _, otherKey := kindFixture(t, KindGroup)
+	if err := runner.Serve(t.Context(), job, profile, otherKey, nil); !errors.Is(err, ErrScope) {
+		t.Fatal("runner accepted another signing key", err)
+	}
+}
+
+func TestScopedGroupBindingRejectsConflictingAccountConstraints(t *testing.T) {
+	job, _, key := kindFixture(t, KindGroup)
+	value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, *job.GroupMember, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := GroupBinding{Version: 1, Scope: ScopeForGroup(value), AWS: &AWSBinding{CredentialsFile: "/run/secrets/aws.json"}, Discovery: []DiscoveryBinding{{Type: "eks", Region: "us-east-1", Cluster: "production", Protocol: "kubernetes", Account: "123456789012"}, {Type: "eks", Region: "us-east-1", Cluster: "production", Protocol: "kubernetes", Account: "210987654321"}}}
+	if err := b.Validate(); !errors.Is(err, ErrScope) {
+		t.Fatal("same selector admitted ambiguous accounts", err)
+	}
 }

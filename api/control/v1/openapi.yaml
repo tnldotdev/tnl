@@ -3519,11 +3519,13 @@ components:
           items: { type: string, minLength: 1, maxLength: 63 }
     PublisherGroupAssignments:
       type: object
-      required: [member, revision, configuration_hash, services]
+      required: [member, revision, configuration_hash, services, certificate_state_plans]
       properties:
-        certificate_state_required:
-          type: boolean
-          description: This replica has submitted certificate issuance work. Missing durable certificate state must not be replaced with fresh keys. Absence means the server does not support this recovery boundary.
+        certificate_state_plans:
+          type: array
+          maxItems: 1024
+          description: Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
+          items: { $ref: "#/components/schemas/CertificatePlan" }
         member: { $ref: "#/components/schemas/PublisherGroupMember" }
         revision: { type: integer, format: int64 }
         configuration_hash: { type: string }

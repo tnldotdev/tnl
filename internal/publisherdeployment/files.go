@@ -142,6 +142,7 @@ func (m Manifest) hashes() map[string]string {
 	}
 	for _, p := range m.Publishers {
 		result[p.TemplatePath], result[p.ParametersExamplePath] = p.TemplateSHA256, p.ParametersExampleSHA256
+		result[p.StoragePolicyPath] = p.StoragePolicySHA256
 	}
 	return result
 }

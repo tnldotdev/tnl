@@ -10,6 +10,11 @@ JOIN control.private_services service ON service.id=run.private_service_id
 WHERE run.id=sqlc.arg(private_run_id) AND run.closed_at IS NULL AND cardinality(run.certificate_identifiers)>0
 RETURNING *;
 
+-- name: ListPublisherCertificateCheckpoints :many
+SELECT certificate_plan FROM control.publisher_certificate_checkpoints
+WHERE publisher_identity_id=sqlc.arg(publisher_identity_id)
+ORDER BY plan_digest LIMIT 1025;
+
 -- name: GetPrivateCertificateRequest :one
 SELECT * FROM control.private_certificate_requests
 WHERE private_run_id=sqlc.arg(private_run_id) AND idempotency_key=sqlc.arg(idempotency_key);

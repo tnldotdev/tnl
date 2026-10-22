@@ -1665,7 +1665,6 @@ CREATE TABLE control.publisher_identities (
     ownership text NOT NULL CHECK (ownership IN ('team', 'member', 'guest')),
     owner_membership_id text,
     guest_id text REFERENCES control.guest_trials(id) ON DELETE CASCADE,
-    certificate_state_required boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL, revoked_at timestamptz,
     UNIQUE (id, team_id), CHECK ((kind = 'guest') = (guest_id IS NOT NULL)),
     CHECK ((ownership = 'member') = (owner_membership_id IS NOT NULL)),
@@ -2456,18 +2455,37 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER enforce_publisher_group_grant BEFORE INSERT OR UPDATE ON control.publisher_grants FOR EACH ROW EXECUTE FUNCTION control.enforce_publisher_group_grant();
 
--- this monotonic fact survives certificate-order retention. a replica that has
--- submitted issuance work must restore its keys rather than bootstrap empty.
+-- exact plan checkpoints outlive certificate-order/run retention and contain no
+-- private material. a replica must retain every submitted plan's local keys.
+CREATE TABLE control.publisher_certificate_checkpoints (
+    publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
+    plan_digest text NOT NULL CHECK (plan_digest ~ '^[a-f0-9]{64}$'),
+    certificate_plan jsonb NOT NULL CHECK (jsonb_typeof(certificate_plan)='object'),
+    PRIMARY KEY (publisher_identity_id,plan_digest)
+);
+
 -- +goose StatementBegin
 CREATE FUNCTION control.require_publisher_certificate_state() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE publisher text;
+DECLARE publisher text; plan jsonb; digest text;
 BEGIN
     IF NEW.private_run_id<>'' THEN
         SELECT publisher_identity_id INTO publisher FROM control.private_service_runs WHERE id=NEW.private_run_id;
     ELSE
         SELECT publisher_identity_id INTO publisher FROM control.publish_runs WHERE id=NEW.publish_run_id;
     END IF;
-    UPDATE control.publisher_identities SET certificate_state_required=true WHERE id=publisher;
+    IF publisher IS NOT NULL THEN
+        -- serialize the per-identity checkpoint capacity check with its owner.
+        PERFORM id FROM control.publisher_identities WHERE id=publisher FOR UPDATE;
+        plan := jsonb_build_object('cache_key',NEW.certificate_cache_key,'scope',NEW.certificate_scope,
+            'identifiers',NEW.certificate_identifiers,'challenge_method',NEW.challenge_method);
+        digest := encode(sha256(convert_to(plan::text,'UTF8')),'hex');
+        IF NOT EXISTS (SELECT 1 FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher AND plan_digest=digest) THEN
+            IF (SELECT count(*) FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher)>=1024 THEN
+                RAISE EXCEPTION 'publisher certificate checkpoint capacity exceeded' USING ERRCODE='23514';
+            END IF;
+            INSERT INTO control.publisher_certificate_checkpoints VALUES(publisher,digest,plan);
+        END IF;
+    END IF;
     RETURN NEW;
 END;
 $$;

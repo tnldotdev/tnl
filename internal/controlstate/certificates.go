@@ -41,10 +41,10 @@ type ACMEAccount struct {
 }
 
 type CertificatePlan struct {
-	CacheKey        string
-	Scope           string
-	Identifiers     []string
-	ChallengeMethod certificateidentity.ChallengeMethod
+	CacheKey        string                              `json:"cache_key"`
+	Scope           string                              `json:"scope"`
+	Identifiers     []string                            `json:"identifiers"`
+	ChallengeMethod certificateidentity.ChallengeMethod `json:"challenge_method"`
 }
 
 type CertificateIssuance struct {

@@ -16,9 +16,40 @@ type groupReference struct {
 	Instance string                         `json:"instance"`
 }
 
+type groupPin struct {
+	Version   int            `json:"version"`
+	Reference groupReference `json:"reference"`
+}
+
 func groupStateName(ref groupReference) string {
 	digest := sha256.Sum256([]byte(GroupSelection(ref.Member.ProjectKey, ref.Member.GroupId, ref.Instance) + ":" + ref.Member.PublisherIdentityId))
 	return "group-" + hex.EncodeToString(digest[:]) + ".json"
+}
+
+func groupPinName(project, group, instance string) string {
+	digest := sha256.Sum256([]byte(GroupSelection(project, group, instance)))
+	return "group-pin-v1-" + hex.EncodeToString(digest[:]) + ".json"
+}
+
+func readGroupPin(directory *clientstate.PrivateDirectory, project, group, instance string) (groupReference, bool, error) {
+	data, found, err := directory.Read(groupPinName(project, group, instance), maxGroupIdentityBytes)
+	if err != nil || !found {
+		return groupReference{}, found, err
+	}
+	var pin groupPin
+	if json.Unmarshal(data, &pin, json.RejectUnknownMembers(true)) != nil || pin.Version != 1 || pin.Reference.Member.ProjectKey != project || pin.Reference.Member.GroupId != group || pin.Reference.Instance != instance {
+		return groupReference{}, true, clientstate.ErrPublisherStateConflict
+	}
+	return pin.Reference, true, nil
+}
+
+func pinnedGroup(directory *clientstate.PrivateDirectory, server, project, group, instance string) (GroupFile, bool, error) {
+	ref, found, err := readGroupPin(directory, project, group, instance)
+	if err != nil || !found {
+		return GroupFile{}, found, err
+	}
+	value, err := readGroupReference(directory, server, ref)
+	return value, true, err
 }
 
 func groupStateDirectory(profile *clientstate.Store, server string) (*clientstate.PrivateDirectory, error) {
@@ -35,8 +66,17 @@ func groupReferences(directory *clientstate.PrivateDirectory) ([]groupReference,
 		return nil, err
 	}
 	var refs []groupReference
-	if json.Unmarshal(data, &refs, json.RejectUnknownMembers(true)) != nil || len(refs) > 256 {
+	if json.Unmarshal(data, &refs, json.RejectUnknownMembers(true)) != nil || refs == nil || len(refs) > 256 {
 		return nil, ErrInvalid
+	}
+	for _, ref := range refs {
+		pin, found, err := readGroupPin(directory, ref.Member.ProjectKey, ref.Member.GroupId, ref.Instance)
+		if err != nil {
+			return nil, err
+		}
+		if !found || !SameGroupIdentity(pin.Member, ref.Member) {
+			return nil, clientstate.ErrPublisherStateConflict
+		}
 	}
 	return refs, nil
 }
@@ -67,17 +107,10 @@ func SavedGroup(profile *clientstate.Store, server, project, groupID, instance s
 	if err != nil {
 		return GroupFile{}, false, err
 	}
-	refs, err := groupReferences(directory)
-	if err != nil {
+	if _, err := groupReferences(directory); err != nil {
 		return GroupFile{}, false, err
 	}
-	for _, ref := range refs {
-		if ref.Member.ProjectKey == project && ref.Member.GroupId == groupID && ref.Instance == instance {
-			value, err := readGroupReference(directory, server, ref)
-			return value, true, err
-		}
-	}
-	return GroupFile{}, false, nil
+	return pinnedGroup(directory, server, project, groupID, instance)
 }
 
 // ResolveSavedGroup refreshes public identity references through control. no
@@ -129,6 +162,15 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 		return err
 	}
 	defer lock.Close()
+	// a retired catalog entry keeps a selection pin and its original private
+	// file. reactivation can reuse that authority, never silently replace it.
+	pinned, exists, err := pinnedGroup(directory, value.ControlURL, value.Member.ProjectKey, value.Member.GroupId, value.Instance)
+	if err != nil {
+		return err
+	}
+	if exists && (!SameGroupIdentity(pinned.Member, value.Member) || subtle.ConstantTimeCompare([]byte(pinned.PrivateKey), []byte(value.PrivateKey)) != 1) {
+		return clientstate.ErrPublisherStateConflict
+	}
 	refs, err := groupReferences(directory)
 	if err != nil {
 		return err
@@ -153,14 +195,15 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 		if len(refs) >= 256 {
 			return ErrInvalid
 		}
-		// recover a file synced before its catalog update without ever replacing
-		// that pinned key after an interrupted first retention.
-		data, exists, err := directory.Read(groupStateName(ref), maxGroupIdentityBytes)
+		data, fileExists, err := directory.Read(groupStateName(ref), maxGroupIdentityBytes)
 		defer clear(data)
 		if err != nil {
 			return err
 		}
-		if exists {
+		if fileExists && !exists {
+			return clientstate.ErrPublisherStateConflict
+		}
+		if fileExists {
 			saved, err := ParseGroup(data)
 			if err != nil || saved.ControlURL != value.ControlURL || saved.Instance != value.Instance || !SameGroupIdentity(saved.Member, value.Member) || subtle.ConstantTimeCompare([]byte(saved.PrivateKey), []byte(value.PrivateKey)) != 1 {
 				return clientstate.ErrPublisherStateConflict
@@ -176,9 +219,57 @@ func RetainGroup(ctx context.Context, profile *clientstate.Store, value GroupFil
 	if err := directory.Write(groupStateName(ref), data); err != nil {
 		return err
 	}
+	pin, err := json.Marshal(groupPin{Version: 1, Reference: ref})
+	if err != nil {
+		return err
+	}
+	if err := directory.Write(groupPinName(value.Member.ProjectKey, value.Member.GroupId, value.Instance), pin); err != nil {
+		return err
+	}
 	catalog, err := json.Marshal(refs)
 	if err != nil {
 		return err
 	}
 	return directory.Write("groups.json", catalog)
+}
+
+// RetireGroup explicitly removes a joined replica from active name discovery.
+// private identity/certificate files and the immutable selection pin remain.
+// this reclaims catalog capacity without revoking or deleting issued authority.
+func RetireGroup(ctx context.Context, profile *clientstate.Store, value GroupFile) error {
+	if _, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance); err != nil {
+		return err
+	}
+	directory, err := groupStateDirectory(profile, value.ControlURL)
+	if err != nil {
+		return err
+	}
+	lock, err := directory.Lock(ctx, "groups.lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	refs, err := groupReferences(directory)
+	if err != nil {
+		return err
+	}
+	for i, ref := range refs {
+		if ref.Member.ProjectKey != value.Member.ProjectKey || ref.Member.GroupId != value.Member.GroupId || ref.Instance != value.Instance {
+			continue
+		}
+		saved, err := readGroupReference(directory, value.ControlURL, ref)
+		if err != nil {
+			return err
+		}
+		if !SameGroupIdentity(saved.Member, value.Member) || subtle.ConstantTimeCompare([]byte(saved.PrivateKey), []byte(value.PrivateKey)) != 1 {
+			return clientstate.ErrPublisherStateConflict
+		}
+		refs = append(refs[:i], refs[i+1:]...)
+		data, err := json.Marshal(refs)
+		if err != nil {
+			return err
+		}
+		return directory.Write("groups.json", data)
+	}
+	return nil
 }

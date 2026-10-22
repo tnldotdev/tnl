@@ -58,6 +58,8 @@ type Publisher struct {
 	TemplateSHA256           string    `json:"template_sha256"`
 	ParametersExamplePath    string    `json:"parameters_example_path"`
 	ParametersExampleSHA256  string    `json:"parameters_example_sha256"`
+	StoragePolicyPath        string    `json:"storage_policy_path"`
+	StoragePolicySHA256      string    `json:"storage_policy_sha256"`
 	Replicas                 []Replica `json:"replicas"`
 }
 
@@ -153,6 +155,8 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity, dec
 		}
 		p.TemplateSHA256, p.ParametersExampleSHA256 = digest(template), digest(example)
 		result.Files[p.TemplatePath], result.Files[p.ParametersExamplePath] = template, example
+		p.StoragePolicyPath, p.StoragePolicySHA256 = "aws/"+name+".storage-policy.json", digest(StoragePolicy())
+		result.Files[p.StoragePolicyPath] = StoragePolicy()
 		result.Manifest.Publishers = append(result.Manifest.Publishers, p)
 	}
 	if len(declarations) != 0 {
@@ -183,6 +187,9 @@ func (m Manifest) Validate() error {
 	}
 	last := ""
 	for _, p := range m.Publishers {
+		if p.StoragePolicyPath != "aws/"+p.Name+".storage-policy.json" || !validHash(p.StoragePolicySHA256) {
+			return errors.New("invalid publisher storage policy artifact")
+		}
 		if !naming.ValidServiceName(p.Name) || p.Name == "local" || p.Name <= last || p.Provider != "aws" || !validHash(p.ConfigurationFingerprint) || !validHash(p.TemplateSHA256) || !validHash(p.ParametersExampleSHA256) || p.TemplatePath != "aws/"+p.Name+".yaml" || p.ParametersExamplePath != "aws/"+p.Name+".parameters.example.json" || len(p.Replicas) < 1 || len(p.Replicas) > config.MaxPublisherReplicas {
 			return errors.New("invalid publisher manifest entry")
 		}

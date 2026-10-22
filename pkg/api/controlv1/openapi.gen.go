@@ -2984,12 +2984,12 @@ type PublisherGroupAcknowledgement struct {
 
 // PublisherGroupAssignments defines model for PublisherGroupAssignments.
 type PublisherGroupAssignments struct {
-	// CertificateStateRequired This replica has submitted certificate issuance work. Missing durable certificate state must not be replaced with fresh keys. Absence means the server does not support this recovery boundary.
-	CertificateStateRequired *bool                             `json:"certificate_state_required,omitempty"`
-	ConfigurationHash        string                            `json:"configuration_hash"`
-	Member                   PublisherGroupMember              `json:"member"`
-	Revision                 int64                             `json:"revision"`
-	Services                 []PublisherGroupServiceAssignment `json:"services"`
+	// CertificateStatePlans Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
+	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
+	ConfigurationHash     string                            `json:"configuration_hash"`
+	Member                PublisherGroupMember              `json:"member"`
+	Revision              int64                             `json:"revision"`
+	Services              []PublisherGroupServiceAssignment `json:"services"`
 }
 
 // PublisherGroupEnrollment defines model for PublisherGroupEnrollment.

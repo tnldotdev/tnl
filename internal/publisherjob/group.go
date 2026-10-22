@@ -76,6 +76,28 @@ func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) err
 		jobs = append(jobs, job)
 	}
 	return r.update(ctx, func(existing *[]Job) error {
+		// Engine.Initialize holds exclusive supervisor ownership before this
+		// fixed-list replacement. omitted replicas leave active name discovery;
+		// their durable signing authority is retained behind immutable pins.
+		for _, old := range *existing {
+			if seen[JobKey(old.Server, "publisher", old.PublisherID)] {
+				continue
+			}
+			if old.Kind != KindGroup {
+				return ErrScope
+			}
+			member, private, profile, err := r.GroupIdentity(ctx, old)
+			if err != nil {
+				return err
+			}
+			value, err := credentialfile.NewGroup(old.Server, old.GroupInstance, member, private)
+			if err != nil {
+				return err
+			}
+			if err := credentialfile.RetireGroup(ctx, profile, value); err != nil {
+				return err
+			}
+		}
 		for i, job := range jobs {
 			if err := r.retainGroup(ctx, job, *job.GroupMember, inputs[i].Private); err != nil {
 				return err

@@ -5,7 +5,7 @@ from the project to check every owned artifact without rewriting it. If you use
 a custom output directory, pass the same `--output-dir` to generation and checks.
 
 For each AWS publisher in `manifest.json`, the manifest names a group stack
-template and a `.parameters.example.json` file. Copy the example to a separately
+template, a `.storage-policy.json` stack policy and a `.parameters.example.json` file. Copy the example to a separately
 named actual parameter file; replace every `REQUIRED` entry before deployment.
 Generation never owns that actual file. Examples contain public identifiers and
 references only. Never put signing keys or identity JSON in parameter files.
@@ -37,6 +37,23 @@ CAPABILITY_IAM for generated roles. Templates exceeding 51,200 bytes require an
 S3 TemplateURL (or your tool's template_url), preserving their exact bytes.
 The supported 1–8 replica range stays within template count and S3 size limits;
 account vCPU and other service quotas still apply.
+
+Supply the generated storage policy as CloudFormation's stack policy when creating
+the stack and preserve it on every update. Retain preserves replaced data; it does
+not keep tasks mounted on the old filesystem. The policy denies replacement of EFS,
+access points, mount targets and their security groups, and deletion of the identity
+filesystem during updates. Before every update, compare fully resolved old/new
+parameter snapshots (including defaults and retired replica slots). Run this from
+a tnl source checkout, using absolute paths for the parameter files:
+
+```console
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task deploy:publishers:storage-check PREVIOUS=deployed.parameters.json NEXT=next.parameters.json
+```
+
+FileSystemKMSKeyArn, DeploymentID and the storage/network identity bindings are
+immutable for the deployment's lifetime. Keep the same filesystem, access points,
+private identity state and KMS key. The template always creates EFS; the checker
+rejects changes that would rebind a publisher to empty replacement storage.
 
 Each service runs one independent publisher without rolling surge. `/state`
 remains task-local; `/identity` is retained private EFS state. Set a replica's

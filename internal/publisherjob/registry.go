@@ -290,6 +290,19 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 			if job.Enabled || job.Status.State != "stopped" {
 				return ErrScope
 			}
+			if job.Kind == KindGroup {
+				member, private, profile, err := r.GroupIdentity(ctx, job)
+				if err != nil {
+					return err
+				}
+				value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, member, private)
+				if err != nil {
+					return err
+				}
+				if err := credentialfile.RetireGroup(ctx, profile, value); err != nil {
+					return err
+				}
+			}
 			if job.Kind != KindConnector && job.Kind != KindGroup {
 				profile, err := r.database.Server(ctx, job.Server)
 				if err != nil {
@@ -502,6 +515,7 @@ func validateJob(job *Job) error {
 		job.Kind != KindGroup && job.GroupInstance != "" ||
 		job.Kind != KindGroup && job.IdentityDir != "" ||
 		job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
+		job.Kind != KindPrivateService && job.Kind != KindConnector && job.ManagedTLS != nil ||
 		job.Kind != KindPrivateService && (job.Project != nil || job.ProjectService != "" || job.PublisherPool) ||
 		(job.Kind == KindPublicURL || job.Kind == KindGroup) && (job.Trust != nil || job.TrustRevision != 0) {
 		return ErrScope
@@ -519,6 +533,7 @@ func validateJob(job *Job) error {
 			!opaqueid.Valid(job.PublisherID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GroupMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
 			job.GroupMember.TeamId == "" || job.GroupMember.GroupId == "" || job.GroupMember.ProjectKey == "" ||
 			job.PrivateServiceID != "" || job.PublicURLID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" ||
+			job.VerifyReadiness ||
 			job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 || job.Limits != (publisher.ApplicationLimits{}) {
 			return ErrScope
 		}

@@ -266,3 +266,29 @@ func (q *Queries) InsertPrivateCertificateRequest(ctx context.Context, arg Inser
 	)
 	return err
 }
+
+const listPublisherCertificateCheckpoints = `-- name: ListPublisherCertificateCheckpoints :many
+SELECT certificate_plan FROM control.publisher_certificate_checkpoints
+WHERE publisher_identity_id=$1
+ORDER BY plan_digest LIMIT 1025
+`
+
+func (q *Queries) ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, listPublisherCertificateCheckpoints, publisherIdentityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var certificate_plan []byte
+		if err := rows.Scan(&certificate_plan); err != nil {
+			return nil, err
+		}
+		items = append(items, certificate_plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

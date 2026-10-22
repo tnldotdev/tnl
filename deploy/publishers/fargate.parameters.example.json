@@ -249,7 +249,7 @@
   },
   {
     "ParameterKey": "TemplateSHA256",
-    "ParameterValue": "838a95a6450ef790545c6838c77f85f78ab85f8f9f98ef143cb4036196bc8aa5"
+    "ParameterValue": "b8aa28b211af4a3cdcd36eeba92419dd7c4fe520953d61c5b1c85fb319127337"
   },
   {
     "ParameterKey": "VpcId",

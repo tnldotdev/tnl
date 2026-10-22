@@ -152,6 +152,19 @@ func (r *CertificateCache) read() (certificateFile, error) {
 	if err != nil {
 		return value, err
 	}
+	plans, err := r.checkpoints()
+	if err != nil {
+		return value, err
+	}
+	checkpointed := false
+	for _, plan := range plans {
+		if certificateidentity.SamePlan(plan, r.plan) {
+			checkpointed = true
+		}
+	}
+	if found != checkpointed {
+		return value, identityFileError(ErrPublisherStateConflict)
+	}
 	if !found {
 		return certificateFile{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherID, Plan: r.plan}, nil
 	}
@@ -221,6 +234,11 @@ func (r *CertificateCache) pending(ctx context.Context, hostname string, replace
 		return Pending{}, err
 	}
 	defer lock.Close()
+	checkpointLock, err := r.files.Lock(ctx, "certificate-plans.lock")
+	if err != nil {
+		return Pending{}, err
+	}
+	defer checkpointLock.Close()
 	value, err := r.read()
 	if err != nil {
 		return Pending{}, err
@@ -253,6 +271,10 @@ func (r *CertificateCache) pending(ctx context.Context, hostname string, replace
 		return Pending{}, err
 	}
 	if err := r.files.Sync(certificateFilename(r.planJSON)); err != nil {
+		return Pending{}, err
+	}
+	// the complete plan checkpoint is durable before a CSR can leave this process.
+	if err := r.checkpoint(); err != nil {
 		return Pending{}, err
 	}
 	return Pending{Key: key, CSRDER: bytes.Clone(value.Pending.CSRDER), keyDER: bytes.Clone(value.Pending.PrivateKeyDER), scope: r.pendingScope()}, nil
@@ -367,7 +389,7 @@ func validateStoredCertificate(material *storedCertificate, plan controlv1.Certi
 	return err
 }
 
-func (s *Store) PublisherCertificateMaterialExists(_ context.Context, team, publisher string) (bool, error) {
+func (s *Store) PublisherCertificateMaterialExists(ctx context.Context, team, publisher string) (bool, error) {
 	files, err := s.PublisherIdentityFiles(team, publisher)
 	if err != nil {
 		return false, err
@@ -376,7 +398,12 @@ func (s *Store) PublisherCertificateMaterialExists(_ context.Context, team, publ
 	if err != nil {
 		return false, identityFileError(err)
 	}
+	foundAny := false
+	plans := map[string]bool{}
 	for _, entry := range entries {
+		if entry.Name() == "certificate-plans-v1.json" {
+			continue
+		}
 		if !strings.HasPrefix(entry.Name(), "certificate-") || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
@@ -406,10 +433,103 @@ func (s *Store) PublisherCertificateMaterialExists(_ context.Context, team, publ
 			return false, err
 		}
 		if found {
-			return true, nil
+			foundAny = true
+			plans[cache.planJSON] = true
 		}
 	}
-	return false, nil
+	probe := &CertificateCache{store: s, files: files, teamID: team, publisherID: publisher}
+	checkpoint, err := probe.checkpoints()
+	if err != nil {
+		return false, err
+	}
+	for _, plan := range checkpoint {
+		if err := ctx.Err(); err != nil {
+			return false, context.Cause(ctx)
+		}
+		data, _ := json.Marshal(plan)
+		if !plans[string(data)] {
+			return false, identityFileError(ErrPublisherStateConflict)
+		}
+	}
+	return foundAny && len(checkpoint) != 0 && len(plans) == len(checkpoint), nil
+}
+
+// RequirePublisherCertificatePlans checks control's monotonic plan inventory, so
+// restoring an entire older local checkpoint cannot hide a newer missing plan.
+func (s *Store) RequirePublisherCertificatePlans(ctx context.Context, team, publisher string, plans []controlv1.CertificatePlan) error {
+	if len(plans) == 0 || len(plans) > 1024 {
+		return identityFileError(ErrPublisherStateConflict)
+	}
+	for _, plan := range plans {
+		if err := ctx.Err(); err != nil {
+			return context.Cause(ctx)
+		}
+		cache, err := s.CertificatesForPublisher(team, publisher, plan)
+		if err != nil {
+			return err
+		}
+		value, err := cache.read()
+		found := value.Pending != nil || value.Current != nil
+		value.destroy()
+		if err != nil {
+			return err
+		}
+		if !found {
+			return identityFileError(ErrPublisherStateConflict)
+		}
+	}
+	return nil
+}
+
+type certificateCheckpoints struct {
+	Version   int                         `json:"version"`
+	Server    string                      `json:"server"`
+	Team      string                      `json:"team_id"`
+	Publisher string                      `json:"publisher_identity_id"`
+	Plans     []controlv1.CertificatePlan `json:"plans"`
+}
+
+func (r *CertificateCache) checkpoints() ([]controlv1.CertificatePlan, error) {
+	data, found, err := r.files.Read("certificate-plans-v1.json", maxCertificateFileBytes)
+	if err != nil || !found {
+		return nil, err
+	}
+	var checkpoint certificateCheckpoints
+	if json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)) != nil || checkpoint.Version != 1 || checkpoint.Server != r.store.controlEndpoint || checkpoint.Team != r.teamID || checkpoint.Publisher != r.publisherID || len(checkpoint.Plans) == 0 || len(checkpoint.Plans) > 1024 {
+		return nil, identityFileError(ErrPublisherStateConflict)
+	}
+	seen := map[string]bool{}
+	for _, plan := range checkpoint.Plans {
+		canonical, err := certificateidentity.CanonicalPlan(plan)
+		encoded, _ := json.Marshal(canonical)
+		if err != nil || !certificateidentity.SamePlan(canonical, plan) || seen[string(encoded)] {
+			return nil, identityFileError(ErrPublisherStateConflict)
+		}
+		seen[string(encoded)] = true
+	}
+	return checkpoint.Plans, nil
+}
+
+// checkpoint runs under certificate-plans.lock after the key/CSR file is synced.
+func (r *CertificateCache) checkpoint() error {
+	plans, err := r.checkpoints()
+	if err != nil {
+		return err
+	}
+	for _, plan := range plans {
+		if certificateidentity.SamePlan(plan, r.plan) {
+			return r.files.Sync("certificate-plans-v1.json")
+		}
+	}
+	if len(plans) >= 1024 {
+		return identityFileError(ErrPublisherStateConflict)
+	}
+	plans = append(plans, r.plan)
+	data, err := json.Marshal(certificateCheckpoints{Version: 1, Server: r.store.controlEndpoint, Team: r.teamID, Publisher: r.publisherID, Plans: plans})
+	if err != nil || len(data) > maxCertificateFileBytes {
+		return identityFileError(ErrPublisherStateConflict)
+	}
+	return r.files.Write("certificate-plans-v1.json", data)
 }
 
 func validateCSR(csrDER []byte, key any, identifiers []string) error {

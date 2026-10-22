@@ -361,6 +361,7 @@ type Querier interface {
 	ListPrivateServicesForTeam(ctx context.Context, arg ListPrivateServicesForTeamParams) ([]ControlPrivateService, error)
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
 	ListPublisherGroupServiceGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGroupServiceGrant, error)
