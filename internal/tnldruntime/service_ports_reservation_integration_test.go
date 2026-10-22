@@ -76,3 +76,36 @@ func TestIntegrationStandalonePublishReservesSockets(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegrationSplitPublishReservesSockets(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	newSplitPublishFixtureWithOptions(t, "reserved", splitPublishOptions{configureProcess: func(cfg *tnldconfig.Config) {
+		addresses := []string{cfg.MetricsListen}
+		switch cfg.Role {
+		case tnldconfig.RoleControl:
+			addresses = append(addresses, cfg.ControlListen, cfg.PrivateControlListen)
+		case tnldconfig.RoleIngress:
+			addresses = append(addresses, cfg.IngressListen)
+		case tnldconfig.RoleRelay:
+			addresses = append(addresses, cfg.RelayTCPListen, cfg.InternalRelayListen)
+		}
+		if cfg.Role.RunsControl() || cfg.Role.RunsIngress() {
+			ports, err := cfg.ServicePortInventory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, interval := range ports {
+				for port := interval.First; port <= interval.Last; port++ {
+					addresses = append(addresses, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+				}
+			}
+		}
+		for _, address := range addresses {
+			listener, err := net.Listen("tcp", address)
+			if err == nil {
+				_ = listener.Close()
+				t.Fatalf("%s socket %s was released before the runtime claimed it", cfg.Role, address)
+			}
+		}
+	}})
+}

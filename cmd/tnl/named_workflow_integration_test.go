@@ -34,7 +34,12 @@ func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=150s", "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child"}
+	timeout := 150 * time.Second
+	if len(noGit) != 0 && noGit[0] {
+		// three git transitions each wait for a full owner shutdown and restart.
+		timeout = 3 * time.Minute
+	}
+	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=" + timeout.String(), "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child"}
 	if personal {
 		args = append(args, "-tnl-cli-workflow-personal-team")
 	}

@@ -91,11 +91,9 @@ jobs:
             tools/testharness/go.sum
 
       - name: Set up pnpm and Node 24
-        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        uses: ./.github/actions/setup-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           runtime: node@24.20.0
-          cache: true
-          require-lockfile: true
 
       - name: Set up Bun for installed SDK checks
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -159,11 +157,9 @@ jobs:
           checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Set up pnpm and Node
-        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        uses: ./.github/actions/setup-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           runtime: node@22.23.2
-          cache: true
-          require-lockfile: true
 
       - name: Install driver fixture dependencies
         run: pnpm install --frozen-lockfile
@@ -215,11 +211,9 @@ jobs:
             .github/workflows/integration.yml
 
       - name: Set up pnpm and Node
-        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        uses: ./.github/actions/setup-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           runtime: node@22.23.2
-          cache: true
-          require-lockfile: true
 
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0

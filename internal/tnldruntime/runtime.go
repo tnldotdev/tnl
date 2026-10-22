@@ -59,9 +59,12 @@ func Serve(ctx context.Context, cfg tnldconfig.Config) error {
 }
 
 type runtimeListeners struct {
-	control          net.Listener
-	metrics          net.Listener
-	standalonePublic net.Listener
+	control        net.Listener
+	privateControl net.Listener
+	metrics        net.Listener
+	ingress        net.Listener
+	relayInternal  net.Listener
+	relayTCP       net.Listener
 }
 
 type runtimeOptions struct {
@@ -169,6 +172,8 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 	switch cfg.Role {
 	case tnldconfig.RoleRelay:
 		settings := relayProcessSettingsFrom(cfg)
+		settings.internalListener = options.listeners.relayInternal
+		settings.tcpListener = options.listeners.relayTCP
 		settings.transportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err
@@ -177,13 +182,15 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 			return err
 		}
 	case tnldconfig.RoleIngress:
-		if err := d.startIngress(lifetime, ingressProcessSettingsFrom(cfg), metrics); err != nil {
+		settings := ingressProcessSettingsFrom(cfg)
+		settings.listener = options.listeners.ingress
+		if err := d.startIngress(lifetime, settings, metrics); err != nil {
 			return err
 		}
 	case tnldconfig.RoleStandalone:
 		settings := standaloneSettingsFrom(cfg)
 		settings.control.listener = options.listeners.control
-		settings.publicListener = options.listeners.standalonePublic
+		settings.publicListener = options.listeners.ingress
 		settings.relayTransportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err
@@ -197,7 +204,9 @@ func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOpt
 		if err := d.startControl(settings, controlHandler); err != nil {
 			return err
 		}
-		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg), metrics); err != nil {
+		privateSettings := privateControlSettingsFrom(cfg)
+		privateSettings.listener = options.listeners.privateControl
+		if err := d.startPrivateControlAPIs(lifetime, privateSettings, metrics); err != nil {
 			return err
 		}
 	}

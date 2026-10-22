@@ -210,7 +210,9 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 		return true, nil
 	})
 	var installed bool
-	if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
+	// dns cleanup can commit after the publisher becomes ready.
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		err := fixture.inspect.QueryRowContext(ctx, `
 		SELECT orders.order_url = $2 AND orders.publish_run_id = $3
 			AND orders.state = 'installed' AND orders.certificate_pem IS NOT NULL
 			AND orders.not_before IS NOT NULL AND orders.not_after IS NOT NULL
@@ -223,9 +225,9 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id
 		JOIN control.acme_accounts AS accounts ON accounts.id = orders.account_id
 		WHERE orders.id = $1
-	`, orderID, orderURL, publishRunID, accountURL).Scan(&installed); err != nil {
-		t.Fatal(err)
-	}
+		`, orderID, orderURL, publishRunID, accountURL).Scan(&installed)
+		return installed, err
+	})
 	if !installed || integrationRouteOrderCount(t, fixture.inspect, publicURLID) != 1 || newOrders.Load() != 1 {
 		t.Fatalf("original certificate order was not installed and acknowledged without duplication: installed %v, new orders %d",
 			installed, newOrders.Load())

@@ -1,0 +1,25 @@
+name: Set up pnpm and Node
+description: Install the pinned package manager and selected Node runtime, with one bounded setup retry
+inputs:
+  runtime:
+    description: Exact Node runtime selection
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm, Node, and frozen dependencies
+      id: install
+      continue-on-error: true
+      uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+      with:
+        runtime: ${{ inputs.runtime }}
+        cache: true
+        require-lockfile: true
+
+    - name: Retry package manager setup once
+      if: steps.install.outcome == 'failure'
+      uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+      with:
+        runtime: ${{ inputs.runtime }}
+        cache: true
+        require-lockfile: true

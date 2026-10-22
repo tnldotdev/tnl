@@ -71,9 +71,9 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 	servicePorts, serviceListeners := reserveIntegrationServicePorts(t)
 	listeners := runtimeListeners{
 		control: privateRuntimeListener(t), metrics: privateRuntimeListener(t),
-		standalonePublic: combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
+		ingress: combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
 	}
-	t.Cleanup(func() { _ = listeners.standalonePublic.Close() })
+	t.Cleanup(func() { _ = listeners.ingress.Close() })
 	return tnldconfig.Config{
 		ServicePortRanges: servicePorts,
 		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
