@@ -100,7 +100,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	configuration := filepath.Join(root, "tnl.json")
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "publisher_groups": map[string]any{"cluster": map[string]any{"description": "CLI workflow"}, "external": map[string]any{"public": true}}, "services": map[string]any{
 		"api":       map[string]any{"publisher_group": "cluster", "target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
-		"publicapi": map[string]any{"publisher_group": "external", "target": map[string]any{"type": "address", "address": target.URL}, "public_url": map[string]any{}, "access": map[string]any{"team": true}},
+		"publicapi": map[string]any{"publisher_group": "external", "target": map[string]any{"type": "address", "address": target.URL}, "http": map[string]any{}, "access": map[string]any{"team": true}},
 		"internal":  map[string]any{"name": "local-internal", "target": map[string]any{"type": "app"}, "access": map[string]any{"team": true}},
 		"web":       map[string]any{"target": map[string]any{"type": "app"}, "public_url": map[string]any{"access": "anonymous"}},
 	}}})

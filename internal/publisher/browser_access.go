@@ -208,7 +208,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			query.Set("switch_account", "true")
 		}
 		if a.subject.Kind == httpsubject.Service {
-			endpoint.Path = "/v1/browser/managed-login"
+			endpoint.Path = "/v1/browser/service-login"
 			query.Set("service_id", a.subject.ID)
 		} else {
 			query.Set("public_url_id", a.publicURLID)

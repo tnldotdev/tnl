@@ -192,7 +192,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 								publisherDone <- e
 								return
 							}
-							stream = v.Stream
+							stream = v.Stream()
 							received = v.Context()
 							if e = v.Accept(); e != nil {
 								publisherDone <- e

@@ -116,7 +116,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 					return
 				}
 				if acceptCtx.Err() != nil {
-					_ = incoming.Stream.Close()
+					_ = incoming.Stream().Close()
 					return
 				}
 				group.Go(func() {
@@ -138,18 +138,18 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
-	switch request := incoming.Request().(type) {
+func (a *ForwardingAcceptor) forward(ctx context.Context, incoming tunnel.InternalForwardingRequest, ingressSession *tunnel.Session) (retErr error) {
+	switch request := incoming.(type) {
 	case *tunnel.IncomingServiceForwardingStream:
-		return a.forwardPrivate(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
+		return a.forwardService(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
 	case *tunnel.IncomingPublicForwardingStream:
-		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request, ingressSessions...)
+		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request, ingressSession)
 	default:
 		return incoming.Reject(tunnelv1.InvalidMessage)
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
+func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream, ingressSession *tunnel.Session) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
@@ -174,11 +174,7 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	}
 	openVisitor := connection.OpenVisitor
 	if incoming.Header.AccessPending {
-		var session *tunnel.Session
-		if len(ingressSessions) > 0 {
-			session = ingressSessions[0]
-		}
-		remove, ok := connection.registerPending(incoming.Header, session, func() bool {
+		remove, ok := connection.registerPending(incoming.Header, ingressSession, func() bool {
 			// ingress rechecks the current projection on promotion. a copied
 			// deadline from stream open may have been extended by a refresh.
 			current, ok := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
@@ -209,9 +205,9 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	opened = true
 	finishOpen(nil)
 	endSpan(nil)
-	defer incoming.Stream.Close()
+	defer incoming.Stream().Close()
 	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
-	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)

@@ -67,19 +67,19 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				if err := await(t, wrote); err != nil {
 					t.Fatal(err)
 				}
-				counted := &responseCountingStream{Stream: incoming.Stream}
-				incoming.response.stream = counted
-				request := incoming.Request()
+				counted := &responseCountingStream{Stream: incoming.Stream()}
 				var copiedAccept func() error
 				var copiedReject func(tunnelv1.ErrorCode) error
-				switch value := request.(type) {
+				switch value := incoming.(type) {
 				case *IncomingPublicForwardingStream:
+					value.response.stream = counted
 					if private {
 						t.Fatal("private request dispatched as public")
 					}
 					copy := *value
 					copiedAccept, copiedReject = copy.Accept, copy.Reject
 				case *IncomingServiceForwardingStream:
+					value.response.stream = counted
 					if !private {
 						t.Fatal("public request dispatched as private")
 					}
@@ -119,8 +119,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// competing responses from the legacy wrapper and concrete value
-				// copies must all observe the first response without writing again.
+				// concrete value copies share the first response without writing again.
 				var group sync.WaitGroup
 				for range 16 {
 					group.Go(func() { _ = copiedAccept() })
@@ -143,7 +142,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 					if counted.closes.Load() != 0 || counted.deadlines.Load() != 1 {
 						t.Fatal("accept deadline reset repeated")
 					}
-					if _, err := incoming.Stream.Write([]byte("body")); err != nil {
+					if _, err := incoming.Stream().Write([]byte("body")); err != nil {
 						t.Fatal(err)
 					}
 				}

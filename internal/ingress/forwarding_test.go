@@ -405,23 +405,27 @@ func captureForwardingRequests(
 			}
 			return err
 		}
+		request, ok := incoming.(*tunnel.IncomingPublicForwardingStream)
+		if !ok {
+			return errors.New("test relay expected a public URL forwarding request")
+		}
 		if err := func() error {
-			defer incoming.Stream.Close()
+			defer incoming.Stream().Close()
 			if err := incoming.Accept(); err != nil {
 				return err
 			}
-			if err := incoming.Stream.SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
+			if err := incoming.Stream().SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
 				return err
 			}
 			payload := make([]byte, 4)
-			if _, err := io.ReadFull(incoming.Stream, payload); err != nil {
+			if _, err := io.ReadFull(incoming.Stream(), payload); err != nil {
 				return err
 			}
-			if _, err := incoming.Stream.Write([]byte("pong")); err != nil {
+			if _, err := incoming.Stream().Write([]byte("pong")); err != nil {
 				return err
 			}
 			select {
-			case requests <- forwardingTestRequest{header: incoming.Header, payload: string(payload)}:
+			case requests <- forwardingTestRequest{header: request.Header, payload: string(payload)}:
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()

@@ -183,7 +183,7 @@ func (s *Session) OpenInternalForwardingStream(
 
 func (s *Session) OpenServiceForwardingStream(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (muxsession.Stream, error) {
 	header.TraceContext = observability.WireTrace(ctx)
-	return s.openAcknowledgedStream(ctx, "private forwarding", func(stream muxsession.Stream) error {
+	return s.openAcknowledgedStream(ctx, "service forwarding", func(stream muxsession.Stream) error {
 		return tunnelv1.WriteServiceForwardingHeader(stream, header)
 	})
 }
@@ -330,22 +330,12 @@ func (r *IncomingVisitorStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }
 
-// IncomingInternalForwardingStream is an ingress stream awaiting acceptance by a relay.
-type IncomingInternalForwardingStream struct {
-	owner         context.Context
-	Stream        muxsession.Stream
-	Header        tunnelv1.InternalForwardingHeader
-	ServiceHeader *tunnelv1.ServiceForwardingHeader
-
-	response *incomingStreamResponse
-}
-
-func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*IncomingInternalForwardingStream, error) {
+func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (InternalForwardingRequest, error) {
 	stream, err := s.acceptStream(ctx, "internal forwarding")
 	if err != nil {
 		return nil, err
 	}
-	header, private, err := tunnelv1.ReadForwardingHeader(stream)
+	header, service, err := tunnelv1.ReadForwardingHeader(stream)
 	if err != nil {
 		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{
 			Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage,
@@ -353,18 +343,11 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
 	}
-	return &IncomingInternalForwardingStream{
-		owner:  ctx,
-		Stream: stream, Header: header, ServiceHeader: private, response: &incomingStreamResponse{stream: stream},
-	}, nil
-}
-
-func (r *IncomingInternalForwardingStream) Accept() error {
-	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
-}
-
-func (r *IncomingInternalForwardingStream) Reject(code tunnelv1.ErrorCode) error {
-	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
+	response := &incomingStreamResponse{stream: stream}
+	if service != nil {
+		return &IncomingServiceForwardingStream{owner: ctx, stream: stream, Header: *service, response: response}, nil
+	}
+	return &IncomingPublicForwardingStream{owner: ctx, stream: stream, Header: header, response: response}, nil
 }
 
 // InternalForwardingRequest narrows the decoded wire union before forwarding.
@@ -373,11 +356,14 @@ func (r *IncomingInternalForwardingStream) Reject(code tunnelv1.ErrorCode) error
 type InternalForwardingRequest interface {
 	internalForwardingRequest()
 	Context() context.Context
+	Stream() muxsession.Stream
+	Accept() error
+	Reject(tunnelv1.ErrorCode) error
 }
 
 type IncomingPublicForwardingStream struct {
 	owner    context.Context
-	Stream   muxsession.Stream
+	stream   muxsession.Stream
 	Header   tunnelv1.InternalForwardingHeader
 	response *incomingStreamResponse
 }
@@ -385,12 +371,7 @@ type IncomingPublicForwardingStream struct {
 func (*IncomingPublicForwardingStream) internalForwardingRequest()  {}
 func (*IncomingServiceForwardingStream) internalForwardingRequest() {}
 
-func (r *IncomingInternalForwardingStream) Request() InternalForwardingRequest {
-	if r.ServiceHeader != nil {
-		return &IncomingServiceForwardingStream{owner: r.owner, Stream: r.Stream, Header: *r.ServiceHeader, response: r.response}
-	}
-	return &IncomingPublicForwardingStream{owner: r.owner, Stream: r.Stream, Header: r.Header, response: r.response}
-}
+func (r *IncomingPublicForwardingStream) Stream() muxsession.Stream { return r.stream }
 
 func (r *IncomingPublicForwardingStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)
@@ -404,21 +385,21 @@ func (r *IncomingPublicForwardingStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }
 
-// IncomingServiceForwardingStream carries one decoded private request.
+// IncomingServiceForwardingStream carries one decoded service request.
 // publisher acceptance also binds it to the claimed connection. callers check
 // the relay lease and PROXY source before permitting application bytes.
 type IncomingServiceForwardingStream struct {
 	owner    context.Context
-	Stream   muxsession.Stream
+	stream   muxsession.Stream
 	Header   tunnelv1.ServiceForwardingHeader
 	response *incomingStreamResponse
 }
 
 func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingServiceForwardingStream, error) {
 	if s == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil {
-		return nil, errors.New("tunnel: claimed private publisher connection is required")
+		return nil, errors.New("tunnel: claimed service publisher connection is required")
 	}
-	stream, err := s.acceptStream(ctx, "private forwarding")
+	stream, err := s.acceptStream(ctx, "service forwarding")
 	if err != nil {
 		return nil, err
 	}
@@ -426,14 +407,14 @@ func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingS
 	if err != nil {
 		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage})
 		_ = stream.Close()
-		return nil, &StreamHeaderError{Kind: "private forwarding", Err: err}
+		return nil, &StreamHeaderError{Kind: "service forwarding", Err: err}
 	}
 	if ServiceForwardingRef(header) != *s.serviceConnection {
 		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.StaleConnectionAssignment})
 		_ = stream.Close()
-		return nil, &StreamHeaderError{Kind: "private forwarding", Err: errors.New("claimed assignment changed")}
+		return nil, &StreamHeaderError{Kind: "service forwarding", Err: errors.New("claimed assignment changed")}
 	}
-	return &IncomingServiceForwardingStream{owner: ctx, Stream: stream, Header: header, response: &incomingStreamResponse{stream: stream}}, nil
+	return &IncomingServiceForwardingStream{owner: ctx, stream: stream, Header: header, response: &incomingStreamResponse{stream: stream}}, nil
 }
 
 // Context retains the receiver's process context and adopts only the untrusted
@@ -442,12 +423,7 @@ func (r *IncomingVisitorStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)
 }
 
-func (r *IncomingInternalForwardingStream) Context() context.Context {
-	if r.ServiceHeader != nil {
-		return incomingContext(r.owner, r.ServiceHeader.TraceContext)
-	}
-	return incomingContext(r.owner, r.Header.TraceContext)
-}
+func (r *IncomingServiceForwardingStream) Stream() muxsession.Stream { return r.stream }
 
 func (r *IncomingServiceForwardingStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)

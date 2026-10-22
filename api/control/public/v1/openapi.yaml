@@ -23,8 +23,8 @@ paths:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1ingress-assignments"
   /v1/workload/services/{service_id}/client-certificate:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1client-certificate"
-  /v1/browser/managed-login:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1managed-login"
+  /v1/browser/service-login:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1service-login"
   /v1/services/{service_id}/http-grants:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants"
   /v1/services/{service_id}/http-grants/{grant_id}:

@@ -115,14 +115,15 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 							}
 							streams.Add(1)
 							workers.Go(func() {
-								defer incoming.Stream.Close()
-								if incoming.Header.PublishRunID != fmt.Sprintf("pr_%022d", 444444) {
+								defer incoming.Stream().Close()
+								request, ok := incoming.(*tunnel.IncomingPublicForwardingStream)
+								if !ok || request.Header.PublishRunID != fmt.Sprintf("pr_%022d", 444444) {
 									t.Error("selected oldest full run")
 								}
 								if incoming.Accept() != nil {
 									return
 								}
-								_, remaining, err := proxyproto.Decode(incoming.Stream)
+								_, remaining, err := proxyproto.Decode(incoming.Stream())
 								if err != nil {
 									return
 								}
@@ -131,7 +132,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 									_, _ = remaining.Read(b[:])
 									return
 								}
-								visitor := tls.Server(&wiringReaderConn{Conn: incoming.Stream, reader: remaining}, secure)
+								visitor := tls.Server(&wiringReaderConn{Conn: incoming.Stream(), reader: remaining}, secure)
 								defer visitor.Close()
 								if err := visitor.HandshakeContext(ctx); err != nil {
 									return

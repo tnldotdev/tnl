@@ -53,10 +53,11 @@ func TestSessionMaximumForwardingHeaders(t *testing.T) {
 							if err != nil {
 								return nil, nil, nil, err
 							}
-							if v.ServiceHeader != nil {
-								return nil, nil, nil, errors.New("public header dispatched as private")
+							request, ok := v.(*IncomingPublicForwardingStream)
+							if !ok {
+								return nil, nil, nil, errors.New("public URL header dispatched as service")
 							}
-							return v.Stream, v.Header, v.Accept, nil
+							return request.Stream(), request.Header, request.Accept, nil
 						})
 				})
 			}
@@ -83,16 +84,17 @@ func TestSessionMaximumForwardingHeaders(t *testing.T) {
 									if err != nil {
 										return nil, nil, nil, err
 									}
-									return v.Stream, v.Header, v.Accept, nil
+									return v.Stream(), v.Header, v.Accept, nil
 								}
 								v, err := peer.AcceptInternalForwardingStream(ctx)
 								if err != nil {
 									return nil, nil, nil, err
 								}
-								if v.ServiceHeader == nil {
-									return nil, nil, nil, errors.New("private header dispatched as public")
+								request, ok := v.(*IncomingServiceForwardingStream)
+								if !ok {
+									return nil, nil, nil, errors.New("service header dispatched as public URL")
 								}
-								return v.Stream, *v.ServiceHeader, v.Accept, nil
+								return request.Stream(), request.Header, request.Accept, nil
 							})
 					})
 				}
@@ -271,6 +273,10 @@ func TestSessionForwardingBoundsRejectMalformedStreams(t *testing.T) {
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return v.Stream, v.Header, v.Accept, nil
+		request, ok := v.(*IncomingPublicForwardingStream)
+		if !ok {
+			return nil, nil, nil, errors.New("valid public URL header lost its request kind")
+		}
+		return request.Stream(), request.Header, request.Accept, nil
 	})
 }

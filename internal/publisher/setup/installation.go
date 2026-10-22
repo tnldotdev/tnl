@@ -82,7 +82,7 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 		return err
 	}
 	job := selected.Job
-	job.ID, job.Server, job.PublicURLID, job.Protocol = supervisor.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
+	job.Kind, job.ID, job.Server, job.PublicURLID, job.Protocol = supervisor.KindPublicURL, supervisor.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
 	job.PublisherIdentityID, job.GrantID, job.VerifyReadiness = credential.PublisherIdentityID, credential.GrantID, true
 	caPath := selected.TargetCAFile
 	if caPath != "" && !filepath.IsAbs(caPath) {

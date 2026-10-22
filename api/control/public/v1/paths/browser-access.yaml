@@ -1,5 +1,5 @@
 paths:
-  /v1/browser/managed-login:
+  /v1/browser/service-login:
     get:
       operationId: beginServiceBrowserLogin
       security: []

@@ -4302,7 +4302,7 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BeginServiceBrowserLogin performs a GET /v1/browser/managed-login (the `BeginServiceBrowserLogin` operationId) request.
+	// BeginServiceBrowserLogin performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
 	//
 	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 	BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5520,7 +5520,7 @@ func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPrev
 	return c.Client.Do(req)
 }
 
-// BeginServiceBrowserLogin performs a GET /v1/browser/managed-login (the `BeginServiceBrowserLogin` operationId) request.
+// BeginServiceBrowserLogin performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
 //
 // Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 func (c *Client) BeginServiceBrowserLogin(ctx context.Context, params *BeginServiceBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8945,7 +8945,7 @@ func NewBeginServiceBrowserLoginRequest(server string, params *BeginServiceBrows
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/browser/managed-login")
+	operationPath := fmt.Sprintf("/v1/browser/service-login")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -15274,7 +15274,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
 
-	// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/managed-login (the `BeginServiceBrowserLogin` operationId) request.
+	// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
 	//
 	// Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 	//
@@ -23098,7 +23098,7 @@ func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.C
 	return ParseBeginPreviewBrowserLoginResponse(rsp)
 }
 
-// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/managed-login (the `BeginServiceBrowserLogin` operationId) request.
+// BeginServiceBrowserLoginWithResponse performs a GET /v1/browser/service-login (the `BeginServiceBrowserLogin` operationId) request.
 //
 // Start sign-in for one service HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
 //
@@ -30060,7 +30060,7 @@ type ServerInterface interface {
 	// (GET /v1/browser/login)
 	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
 
-	// (GET /v1/browser/managed-login)
+	// (GET /v1/browser/service-login)
 	BeginServiceBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginServiceBrowserLoginParams)
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
@@ -35155,7 +35155,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/authorization", wrapper.CheckWorkloadService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/client-certificate", wrapper.IssueWorkloadServiceClientCertificate)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/managed-login", wrapper.BeginServiceBrowserLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/service-login", wrapper.BeginServiceBrowserLogin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/http-grants", wrapper.ListServiceHTTPGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/http-grants", wrapper.CreateServiceHTTPGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/http-grants/{grant_id}", wrapper.RevokeServiceHTTPGrant)

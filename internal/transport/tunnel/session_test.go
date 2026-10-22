@@ -124,14 +124,15 @@ func TestInternalForwardingStream(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer incoming.Stream.Close()
-		if incoming.Header != header {
+		defer incoming.Stream().Close()
+		request, ok := incoming.(*IncomingPublicForwardingStream)
+		if !ok || request.Header != header {
 			return errors.New("unexpected internal forwarding header")
 		}
 		if err := incoming.Accept(); err != nil {
 			return err
 		}
-		payload, err := io.ReadAll(io.LimitReader(incoming.Stream, 7))
+		payload, err := io.ReadAll(io.LimitReader(incoming.Stream(), 7))
 		if err == nil && string(payload) != "payload" {
 			err = errors.New("unexpected payload")
 		}

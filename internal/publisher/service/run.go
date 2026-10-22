@@ -345,8 +345,8 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		}
 		workers.Go(func() {
 			defer func() { <-capacity }()
-			defer incoming.Stream.Close()
-			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream, incoming.Header)
+			defer incoming.Stream().Close()
+			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header)
 		})
 	}
 }

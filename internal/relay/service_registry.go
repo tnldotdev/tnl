@@ -277,7 +277,7 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream) (retErr error) {
+func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_connector_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
@@ -290,7 +290,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 			endSpan(err)
 		}
 	}()
-	defer incoming.Stream.Close()
+	defer incoming.Stream().Close()
 	if a.private == nil {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		return incoming.Reject(tunnelv1.Unauthenticated)
@@ -330,7 +330,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 	opened = true
 	finishOpen(nil)
 	endSpan(nil)
-	stop := context.AfterFunc(ctx, func() { _ = incoming.Stream.Close(); _ = publisher.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = incoming.Stream().Close(); _ = publisher.Close() })
 	defer stop()
 	copyDone, watchDone := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -340,7 +340,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 			// losing the carrier is not an application half-close. reset the
 			// ingress stream so an idle TLS visitor cannot wait for more bytes
 			// on a publisher path that no longer exists.
-			_ = incoming.Stream.Reset(1)
+			_ = incoming.Stream().Reset(1)
 			_ = publisher.Close()
 		case <-copyDone:
 		case <-ctx.Done():
@@ -350,7 +350,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
-	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)

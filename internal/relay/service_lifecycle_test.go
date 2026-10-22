@@ -168,7 +168,7 @@ func TestPrivateLifecycleCloseAndForcedDrainInterruptPendingOpen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer incoming.Stream.Close()
+			defer incoming.Stream().Close()
 			if n, s := registry.Load(); n != 1 || s != 1 {
 				t.Fatalf("pending load=%d/%d", n, s)
 			}
@@ -220,7 +220,7 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	}
 	defer stream.Close()
 	incoming := relayAwait(t, peer)
-	defer incoming.Stream.Close()
+	defer incoming.Stream().Close()
 	if err := relayAwait(t, accepted); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	var data [4]byte
-	if _, err := io.ReadFull(incoming.Stream, data[:]); err != nil || string(data[:]) != "live" {
+	if _, err := io.ReadFull(incoming.Stream(), data[:]); err != nil || string(data[:]) != "live" {
 		t.Fatalf("drain interrupted stream: %q %v", data, err)
 	}
 	select {
@@ -273,7 +273,7 @@ func TestPrivateLifecycleDrainRejectsLatePendingAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer incoming.Stream.Close()
+	defer incoming.Stream().Close()
 	waiting := &waitingDrainContext{Context: ctx, waiting: make(chan struct{})}
 	drained := relayWorker(t, func() { _ = c.paths.Close() }, func() error { return registry.Drain(waiting) })
 	relayAwait(t, waiting.waiting)
