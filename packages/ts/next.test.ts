@@ -31,7 +31,7 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => process.env.APP_TEST_SOCKET ?? "",
+        start: async () => JSON.parse(process.env.APP_TEST_ENDPOINT ?? "null"),
         request: actual.runtimeRequest,
       });
       onTestFinished(() => prepared.close());
@@ -108,17 +108,24 @@ describe("withTnl", () => {
             dev: true,
             services: {
               api: {
+                protocol: "http",
+                port: 443,
+                public: true,
                 hostname: "api.member.example",
                 namespace: "member.example",
                 url: "https://api.member.example",
               },
               web: {
+                protocol: "http",
+                port: 443,
+                public: true,
                 hostname: "web.member.example",
                 namespace: "member.example",
                 url: "https://web.member.example",
               },
             },
           });
+          expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
           await expect(withTnl(config)(productionPhase, context)).resolves.toBe(config);
         }),
     );

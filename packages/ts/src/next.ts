@@ -3,6 +3,7 @@ import { canonicalLoopbackTarget, parseListenerPort } from "./internal/target.js
 import type { NextConfig } from "next";
 import { TnlError } from "./errors.js";
 import { prepareService, reportFrameworkTarget, type PrepareOptions } from "./internal/app.js";
+import { operation } from "./internal/tracing.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
@@ -40,10 +41,13 @@ export function withTnl(
       throw new TnlError("sdk.configuration_invalid");
     }
     const target = nextTarget(process.env);
-    const assignment = await prepareService(options, "next");
-    // supported Next versions set this origin from their bound HTTP listener
-    // before loading configuration. PORT alone is never a registration.
-    await reportFrameworkTarget(assignment, target);
+    const assignment = await operation("next.register", async () => {
+      const assignment = await prepareService(options, "next");
+      // supported Next versions set this origin from their bound HTTP listener
+      // before loading configuration. PORT alone is never a registration.
+      await reportFrameworkTarget(assignment, target);
+      return assignment;
+    });
 
     return injectRuntime(
       {

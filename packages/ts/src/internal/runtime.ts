@@ -1,15 +1,41 @@
 import { TnlError } from "../errors.js";
 import type { TnlWorktreeLabel } from "../config.gen.js";
+import type { TnlProtocolRegistry } from "../project.js";
 const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
-export interface ProjectServiceMetadata {
+interface ServiceAddress {
   readonly namespace: string;
   readonly hostname: string;
+  readonly port: number;
+  readonly public: boolean;
+}
+
+export type ServiceProtocol = keyof TnlProtocolRegistry;
+
+export interface HTTPServiceMetadata extends ServiceAddress {
+  readonly protocol: "http";
   readonly url: `https://${string}`;
   readonly paths?: Readonly<Record<string, ProjectPathMetadata | undefined>>;
+  readonly address?: never;
 }
+
+export type ProjectServiceMetadata =
+  | HTTPServiceMetadata
+  | (ServiceAddress &
+      (
+        | {
+            readonly protocol: "postgres" | "mysql" | "tcp";
+            readonly url?: never;
+            readonly paths?: never;
+          }
+        | {
+            readonly protocol: "kubernetes";
+            readonly url: `https://${string}`;
+            readonly paths?: never;
+          }
+      ));
 
 export interface ProjectPathMetadata {
   readonly service: string;
@@ -51,11 +77,11 @@ export interface ProjectRuntime extends ProjectMetadata {
 
 /** returns the public hostnames that can reach this service. */
 export function serviceHostnames(assignment: {
-  readonly hostname: string;
+  readonly hostname: string | undefined;
   readonly service: string;
   readonly project: ProjectRuntime;
 }): string[] {
-  const hostnames = new Set([assignment.hostname]);
+  const hostnames = new Set(assignment.hostname === undefined ? [] : [assignment.hostname]);
   for (const alias of Object.values(assignment.project.aliases ?? {})) {
     if (
       alias !== undefined &&
@@ -75,9 +101,16 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   const object = record(value, description);
   exactKeys(object, ["namespace", "services", ...optionalProjectKeys(object)], description);
   const worktree = object.worktree === undefined ? undefined : parseWorktree(object.worktree);
-  const projectNamespace = requiredHostname(object.namespace, `${description} namespace`);
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
+  const projectNamespace =
+    object.namespace === "" &&
+    entries.length === 0 &&
+    object.oauth === undefined &&
+    object.webhooks === undefined &&
+    object.aliases === undefined
+      ? ""
+      : requiredHostname(object.namespace, `${description} namespace`);
   if (entries.length > maximumServices) {
     throw new TnlError("sdk.runtime_invalid");
   }
@@ -91,9 +124,27 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      ["hostname", "namespace", "url", ...["paths"].filter((key) => Object.hasOwn(service, key))],
+      [
+        "protocol",
+        "hostname",
+        "namespace",
+        "port",
+        "public",
+        ...(["http", "kubernetes"].includes(String(service.protocol)) ? ["url"] : []),
+        ...["paths"].filter((key) => Object.hasOwn(service, key)),
+      ],
       `${description} service ${JSON.stringify(name)}`,
     );
+    if (
+      !["http", "postgres", "mysql", "tcp", "kubernetes"].includes(String(service.protocol)) ||
+      !Number.isInteger(service.port) ||
+      typeof service.port !== "number" ||
+      service.port < 1 ||
+      service.port > 65535 ||
+      typeof service.public !== "boolean"
+    ) {
+      throw new TnlError("sdk.runtime_invalid");
+    }
     const serviceNamespace = requiredHostname(
       service.namespace,
       `${description} service ${JSON.stringify(name)} namespace`,
@@ -102,16 +153,39 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       service.hostname,
       `${description} service ${JSON.stringify(name)} hostname`,
     );
-    const url: `https://${string}` = `https://${hostname}`;
-    if (service.url !== url) {
-      throw new TnlError("sdk.runtime_invalid");
-    }
     if (hostnames.has(hostname)) {
       throw new TnlError("sdk.runtime_invalid");
     }
     hostnames.add(hostname);
+    if (
+      service.protocol === "postgres" ||
+      service.protocol === "mysql" ||
+      service.protocol === "tcp"
+    ) {
+      if (service.paths !== undefined) throw new TnlError("sdk.runtime_invalid");
+      services[name] = Object.freeze({
+        protocol: service.protocol,
+        namespace: serviceNamespace,
+        hostname,
+        port: service.port,
+        public: service.public,
+      });
+      continue;
+    }
+    if (typeof service.url !== "string") throw new TnlError("sdk.runtime_invalid");
+    let endpoint: URL;
+    try {
+      endpoint = new URL(service.url);
+    } catch {
+      throw new TnlError("sdk.runtime_invalid");
+    }
+    const port = endpoint.port === "" ? 443 : Number(endpoint.port);
+    const url: `https://${string}` = `https://${hostname}${port === 443 ? "" : `:${port}`}`;
+    if (!Number.isInteger(port) || port !== service.port || service.url !== url)
+      throw new TnlError("sdk.runtime_invalid");
     let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
     if (service.paths !== undefined) {
+      if (service.protocol !== "http") throw new TnlError("sdk.runtime_invalid");
       const pathsObject = record(
         service.paths,
         `${description} service ${JSON.stringify(name)} paths`,
@@ -146,21 +220,27 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       }
       paths = Object.freeze(parsedPaths);
     }
+    if (service.protocol === "kubernetes") {
+      services[name] = Object.freeze({
+        protocol: "kubernetes",
+        namespace: serviceNamespace,
+        hostname,
+        port: service.port,
+        public: service.public,
+        url,
+      });
+      continue;
+    }
     services[name] = Object.freeze({
+      protocol: "http",
       namespace: serviceNamespace,
       hostname,
+      port: service.port,
+      public: service.public,
       url,
       ...(paths === undefined ? {} : { paths }),
     });
   }
-  for (const service of Object.values(services)) {
-    for (const mount of Object.values(service.paths ?? {})) {
-      if (mount !== undefined && !Object.hasOwn(services, mount.service)) {
-        throw new TnlError("sdk.runtime_invalid");
-      }
-    }
-  }
-
   let oauth: IntegrationOrigin | undefined;
   if (object.oauth !== undefined) {
     oauth = parseIntegrationOrigin(object.oauth, `${description} oauth`);
@@ -189,7 +269,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
         endpoint.url !== `https://${hostname}${endpoint.path}` ||
         !(
           (endpoint.service === "" && entries.length === 0) ||
-          (validServiceName(endpoint.service) && Object.hasOwn(services, endpoint.service))
+          (validServiceName(endpoint.service) && services[endpoint.service]?.protocol === "http")
         ) ||
         !Array.isArray(endpoint.methods) ||
         endpoint.methods.length === 0 ||
@@ -225,7 +305,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       if (
         !validServiceName(name) ||
         !validServiceName(alias.service) ||
-        !Object.hasOwn(services, alias.service) ||
+        services[alias.service]?.protocol !== "http" ||
         hostnames.has(origin.hostname)
       ) {
         throw new TnlError("sdk.runtime_invalid");
@@ -363,15 +443,20 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
 }
 
 export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean): string {
-  const serialized = JSON.stringify({
-    namespace: project.namespace,
-    dev,
-    services: project.services,
-    ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
-    ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
-    ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
-    ...(project.aliases === undefined ? {} : { aliases: project.aliases }),
-  });
+  const serialized = JSON.stringify(
+    parseProjectRuntime(
+      {
+        namespace: project.namespace,
+        dev,
+        services: project.services,
+        ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
+        ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
+        ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
+        ...(project.aliases === undefined ? {} : { aliases: project.aliases }),
+      },
+      "tnl runtime payload",
+    ),
+  );
   if (byteLength(serialized) > maximumRuntimeBytes) {
     throw new TnlError("sdk.runtime_invalid");
   }

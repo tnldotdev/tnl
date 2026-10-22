@@ -1,73 +1,131 @@
-import { tnl } from "@tnldotdev/tnl";
+import { tnl, type TnlProjectFromConfig, type TnlConnectionRegistry } from "@tnldotdev/tnl";
 import { defineConfig } from "@tnldotdev/tnl/config";
 
+const configuration = defineConfig(({ worktree }) => ({
+  services: {
+    api: { protocol: "http", publicURL: {} },
+    db: { protocol: "postgres", target: { type: "rds", instance: "orders", region: "us-east-1" } },
+    mysql: { protocol: "mysql", target: { type: "address", address: "db.internal:3306" } },
+    cluster: {
+      protocol: "kubernetes",
+      target: { type: "eks", cluster: "development", region: "us-east-1" },
+    },
+    ...(worktree.label.checkout
+      ? {
+          worker: {
+            protocol: "tcp" as const,
+            target: { type: "address" as const, address: "worker:9000" },
+          },
+        }
+      : {}),
+  },
+}));
+
 declare module "@tnldotdev/tnl" {
-  interface TnlProjectMetadata {
-    readonly worktree: {
-      readonly label: {
-        readonly project: "shop";
-        readonly id: "k7n2p9";
-        readonly fullLabel: "shop-k7n2p9";
-      };
-    };
-    readonly namespace: "member.example";
-    readonly services: {
-      readonly api: {
-        readonly hostname: "api.member.example";
-        readonly namespace: "member.example";
-        readonly url: "https://api.member.example";
-      };
-      readonly web: {
-        readonly hostname: "web.member.example";
-        readonly namespace: "member.example";
-        readonly url: "https://web.member.example";
-      };
-    };
+  interface TnlProjectConfig {
+    config: typeof configuration;
   }
 }
 
-defineConfig(({ worktree, project }) => {
-  worktree.label.project satisfies "shop";
-  worktree.label.id satisfies "k7n2p9";
-  worktree.label.fullLabel satisfies "shop-k7n2p9";
-  project.relativeDirectory satisfies string;
-  // @ts-expect-error the generated primary-checkout label has no checkout property.
-  void worktree.label.checkout;
+defineConfig(({ worktree }) => {
+  worktree.label.project satisfies string;
+  worktree.label.checkout satisfies string | undefined;
   return {};
 });
+tnl.services.api.url satisfies `https://${string}`;
+tnl.services.db.protocol satisfies "postgres";
+tnl.services.db.hostname satisfies string;
+tnl.services.db.port satisfies number;
+tnl.services.db.public satisfies boolean;
+tnl.services.cluster.url satisfies `https://${string}`;
+// @ts-expect-error optional factory services stay optional in every checkout.
+void tnl.services.worker.protocol;
+if (tnl.services.worker) tnl.services.worker.protocol satisfies "tcp";
+// @ts-expect-error service names are exact.
+void tnl.services.missing;
+// @ts-expect-error database metadata has no URL.
+void tnl.services.db.url;
+// @ts-expect-error service metadata is exposed directly, without a wrapper.
+void tnl.services.db.metadata;
+// @ts-expect-error unknown connection name.
+tnl.connect("missing");
+const db = await tnl.connect("db");
+db.host satisfies "127.0.0.1";
+db.port satisfies number;
+db.ssl.rejectUnauthorized satisfies true;
+db.ssl.servername satisfies string;
+db.ssl.ca satisfies string | undefined;
+// @ts-expect-error the connector owns application certificates.
+void db.ssl.cert;
+// @ts-expect-error the connector owns application keys.
+void db.ssl.key;
+// @ts-expect-error native settings are read-only.
+db.port = 5432;
+// @ts-expect-error TLS verification is read-only.
+db.ssl.servername = "other.example";
+const mysql = await tnl.connect("mysql");
+mysql.host satisfies string;
+mysql.ssl.servername satisfies string;
+mysql.ssl.rejectUnauthorized satisfies true;
+mysql.ssl.verifyIdentity satisfies true;
+({
+  ...mysql,
+  user: "app",
+  password: "application-owned",
+  database: "app",
+}) satisfies import("mysql2").ConnectionOptions;
+const cluster = await tnl.connect("cluster");
+cluster.server satisfies `https://${string}`;
+cluster.kubeconfig satisfies string;
+cluster.context satisfies string;
+const api = await tnl.connect("api");
+api.fetch satisfies typeof fetch;
+const immediateAPI = tnl.connect("api");
+immediateAPI.fetch("/stock") satisfies Promise<Response>;
+// @ts-expect-error HTTP options are read-only before and after preparation.
+immediateAPI.url = "https://other.example";
+// @ts-expect-error HTTP options never expose a local driver port.
+void api.port;
+// @ts-expect-error HTTP clients do not expose TLS keys as metadata.
+void api.ssl;
+// @ts-expect-error SQL account credentials belong to the application.
+void db.password;
+const privateTLS = { servername: "db.example", rejectUnauthorized: true } as const;
+({ host: "127.0.0.1", port: 5432, ssl: privateTLS }) satisfies TnlConnectionRegistry["postgres"];
+({
+  host: "db.example",
+  port: 3306,
+  ssl: { ...privateTLS, verifyIdentity: true },
+  stream: mysql.stream,
+}) satisfies TnlConnectionRegistry["mysql"];
 
-if (tnl.worktree) {
-  tnl.worktree.label.fullLabel satisfies "shop-k7n2p9";
-  // @ts-expect-error generated primary-checkout metadata omits checkout.
-  void tnl.worktree.label.checkout;
-}
+type Union = TnlProjectFromConfig<{
+  services: { choice: { protocol: "postgres" } | { protocol: "mysql" } };
+}>;
+declare const union: Union;
+union.services.choice.protocol satisfies "postgres" | "mysql";
 
-// @ts-expect-error augmentation does not make metadata always present.
-tnl.namespace satisfies "member.example";
-// @ts-expect-error known services still require narrowing the root value.
-void tnl.services.api;
+const immediate = tnl.connect("db");
+immediate.host satisfies "127.0.0.1";
+immediate satisfies PromiseLike<TnlConnectionRegistry["postgres"]>;
+({ ...immediate, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
+// @ts-expect-error metadata is read-only.
+tnl.services.db.port = 5432;
 
-if (tnl.namespace && tnl.services) {
-  tnl.namespace satisfies "member.example";
-  tnl.services.api.hostname satisfies "api.member.example";
-  tnl.services.api.namespace satisfies "member.example";
-  tnl.services.api.url satisfies "https://api.member.example";
-  tnl.dev satisfies boolean;
-
-  // assign valid literal values so these errors specifically check readonly ownership.
-  // @ts-expect-error project metadata is readonly after augmentation.
-  tnl.namespace = "member.example";
-  // @ts-expect-error the services collection is readonly.
-  tnl.services = { ...tnl.services };
-  // @ts-expect-error generated service entries are readonly.
-  tnl.services.api = { ...tnl.services.api };
-  // @ts-expect-error generated service fields are readonly.
-  tnl.services.api.hostname = "api.member.example";
-  // @ts-expect-error generated service URLs are readonly.
-  tnl.services.api.url = "https://api.member.example";
-  // @ts-expect-error runtime lifecycle metadata is readonly.
-  tnl.dev = false;
-
-  // @ts-expect-error generated project declarations reject unknown services.
-  void tnl.services.worker;
+type Optional = TnlProjectFromConfig<{
+  services: { database: { protocol: "postgres" } | undefined };
+  aliases: { dashboard: { service: "api" } | undefined };
+  webhooks: { events?: { service: "api"; path: "/events"; methods: readonly ["POST"] } };
+}>;
+declare const optional: Optional;
+// @ts-expect-error an explicitly undefined service stays optional.
+void optional.services.database.protocol;
+if (optional.services.database) optional.services.database.protocol satisfies "postgres";
+// @ts-expect-error an explicitly undefined origin stays optional.
+void optional.aliases.dashboard.url;
+if (optional.aliases.dashboard) optional.aliases.dashboard.service satisfies "api";
+if (optional.webhooks.events) {
+  optional.webhooks.events.methods satisfies readonly ["POST"];
+  // @ts-expect-error nested metadata is read-only.
+  optional.webhooks.events.methods[0] = "POST";
 }

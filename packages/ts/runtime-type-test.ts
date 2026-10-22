@@ -1,52 +1,56 @@
 import { tnl } from "@tnldotdev/tnl";
+import type { TnlConnectionRegistry } from "@tnldotdev/tnl";
+
+declare const database: TnlConnectionRegistry["postgres"];
+({
+  ...database,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+}) satisfies import("pg").PoolConfig;
+({
+  dialect: "postgresql",
+  dbCredentials: { ...database, user: "app", database: "app", password: "application-owned" },
+}) satisfies import("drizzle-kit").Config;
+({
+  ...database,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+  max: 5,
+  prepare: false,
+}) satisfies import("postgres").Options<{}>;
+declare const mysql: TnlConnectionRegistry["mysql"];
+({
+  ...mysql,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+}) satisfies import("mysql2").ConnectionOptions;
 
 tnl.port satisfies number;
 tnl.dev satisfies boolean;
-// @ts-expect-error worktree metadata may be absent until narrowed.
-void tnl.worktree.label;
-if (tnl.worktree) {
-  tnl.worktree.label.project satisfies string;
-  tnl.worktree.label.checkout satisfies string | undefined;
-  tnl.worktree.label.id satisfies string;
-  tnl.worktree.label.fullLabel satisfies string;
+const service = tnl.services.anyService;
+// @ts-expect-error ungenerated metadata is read-only too.
+tnl.services.anyService = undefined;
+const connection = tnl.connect("any-service");
+// @ts-expect-error an ungenerated service has a protocol union, never any.
+void connection.ssl;
+if ("ssl" in connection) {
+  connection.host satisfies string;
+  connection.ssl.rejectUnauthorized satisfies true;
+  // @ts-expect-error narrowing a SQL connection does not add HTTP settings.
+  void connection.fetch;
 }
-// @ts-expect-error metadata may be absent until narrowed.
-tnl.namespace satisfies string;
-// @ts-expect-error service metadata also requires narrowing.
-void tnl.services.anyService;
-
-if (tnl.namespace && tnl.services) {
-  tnl.namespace satisfies string;
-  tnl.services.anyService satisfies
-    | import("./dist/internal/runtime.js").ProjectServiceMetadata
-    | undefined;
-  tnl.dev satisfies boolean;
-
-  const service = tnl.services.anyService;
-  // @ts-expect-error arbitrary services may be absent even when metadata exists.
+if (service) {
   service.hostname satisfies string;
-  if (service) {
-    service.hostname satisfies string;
+  service.port satisfies number;
+  service.public satisfies boolean;
+  if (service.protocol === "http" || service.protocol === "kubernetes") {
     service.url satisfies `https://${string}`;
-    // @ts-expect-error service fields are readonly.
-    service.hostname = "other.example";
-    // @ts-expect-error service URLs are readonly.
-    service.url = "https://other.example";
   }
-
-  // @ts-expect-error project metadata is readonly.
-  tnl.namespace = "other.example";
-  // @ts-expect-error the services collection is readonly.
-  tnl.services = {};
-  // @ts-expect-error service entries are readonly.
-  tnl.services.anyService = service;
-  // @ts-expect-error runtime lifecycle metadata is readonly.
-  tnl.dev = false;
-
-  // @ts-expect-error project metadata is exposed directly.
-  void tnl.project;
-  // @ts-expect-error services are properties, not a lookup helper.
-  tnl.service("api");
-  // @ts-expect-error there is no separate public tunnel value.
-  void tnl.tunnel;
+  // @ts-expect-error browser-safe metadata never contains native TLS keys.
+  void service.ssl;
 }
+// @ts-expect-error there is no separate server entrypoint.
+void import("@tnldotdev/tnl/server");

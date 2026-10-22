@@ -3,6 +3,7 @@ import { canonicalLoopbackTarget } from "./internal/target.js";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
 import { prepareService, type PrepareOptions, type PreparedService } from "./internal/app.js";
+import { operation } from "./internal/tracing.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 
@@ -21,7 +22,7 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
 
       const server = userConfig.server ?? {};
       validateAllowedHosts(server.allowedHosts);
-      assignment = await prepareService(options, "vite");
+      assignment = await operation("vite.prepare", () => prepareService(options, "vite"));
       const result = {
         ...runtimeDefine(serializeRuntimePayload(assignment, true)),
         server: {
@@ -47,32 +48,33 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
       }
       const listener = server.httpServer;
       const originalListen = server.listen.bind(server);
-      server.listen = async (port, isRestart) => {
-        let listening;
-        try {
-          listening = await originalListen(port, isRestart);
-        } catch (error) {
-          return await closeAfterFailure(server.close.bind(server), error);
-        }
-        try {
-          const address = server.httpServer?.address();
-          if (address === null || address === undefined || typeof address === "string") {
-            throw new TnlError("sdk.listener_failed");
+      server.listen = (port, isRestart) =>
+        operation(isRestart === true ? "vite.restart" : "vite.register", async () => {
+          let listening;
+          try {
+            listening = await originalListen(port, isRestart);
+          } catch (error) {
+            return await closeAfterFailure(server.close.bind(server), error);
           }
-          canonicalLoopbackTarget(address.address, address.port);
-          await configured.register(listener);
-        } catch (error) {
-          return await closeAfterFailure(server.close.bind(server), error);
-        }
-        return listening;
-      };
+          try {
+            const address = server.httpServer?.address();
+            if (address === null || address === undefined || typeof address === "string") {
+              throw new TnlError("sdk.listener_failed");
+            }
+            canonicalLoopbackTarget(address.address, address.port);
+            await configured.register(listener);
+          } catch (error) {
+            return await closeAfterFailure(server.close.bind(server), error);
+          }
+          return listening;
+        });
     },
   };
 }
 
 async function closeAfterFailure(close: () => Promise<void>, error: unknown): Promise<never> {
   try {
-    await close();
+    await operation("vite.cleanup", close);
   } catch (closeError) {
     throw new TnlCleanupError(error, closeError);
   }

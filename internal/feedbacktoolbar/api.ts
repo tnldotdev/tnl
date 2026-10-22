@@ -71,7 +71,7 @@ export function createFeedbackAPI(fetcher: typeof fetch = fetch): FeedbackAPI {
     }
     if (!response.ok) {
       if (response.status === 403) throw new FeedbackError("access_expired");
-      if (response.status === 401) throw new FeedbackError("access_expired");
+      if (response.status === 401) throw new FeedbackError("sign_in_required");
       if (response.status === 404) throw new FeedbackError("not_found");
       if (response.status === 400) throw new FeedbackError("input_invalid");
       if (response.status === 409) throw new FeedbackError("conflict");

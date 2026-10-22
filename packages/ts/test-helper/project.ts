@@ -12,10 +12,10 @@ export async function temporaryDirectory(prefix: string): Promise<string> {
 export async function createProjectFixture(prefix: string) {
   const root = await temporaryDirectory(prefix);
   const serviceDirectory = path.join(root, "apps", "api");
-  await mkdir(path.join(root, ".tnl"), { recursive: true });
+  await mkdir(path.join(root, ".tnl", "local"), { recursive: true });
   await mkdir(serviceDirectory, { recursive: true });
   await writeFile(
-    path.join(root, ".tnl", "project.json"),
+    path.join(root, ".tnl", "local", "project.json"),
     `${JSON.stringify(testProjectDocument())}\n`,
   );
   return { root, serviceDirectory };
@@ -25,14 +25,19 @@ export function testProjectDocument() {
   return {
     namespace: "member.example",
     dev: false,
-    serviceDirectories: { api: "apps/api", web: "apps/web" },
     services: {
       api: {
+        protocol: "http",
+        port: 443,
+        public: true,
         hostname: "api.member.example",
         namespace: "member.example",
         url: "https://api.member.example",
       },
       web: {
+        protocol: "http",
+        port: 443,
+        public: true,
         hostname: "web.member.example",
         namespace: "member.example",
         url: "https://web.member.example",
@@ -64,6 +69,9 @@ export function testAliasAssignment() {
           },
         },
         worker: {
+          protocol: "http",
+          port: 443,
+          public: true,
           namespace: "member.example",
           hostname: "worker.member.example",
           url: "https://worker.member.example",

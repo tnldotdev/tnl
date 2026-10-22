@@ -2,11 +2,13 @@
 package projectmeta
 
 import (
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
-	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -17,15 +19,136 @@ import (
 
 const Version = 2
 
+// Parse reads the complete local metadata file.
+func Parse(data []byte) (Metadata, error) {
+	if len(data) > MaxFileBytes {
+		return Metadata{}, errors.New("project metadata exceeds size limit")
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return Metadata{}, err
+	}
+	if err := config.RejectNullValues(fields); err != nil {
+		return Metadata{}, err
+	}
+	for _, key := range []string{"namespace", "dev", "version", "services"} {
+		if _, found := fields[key]; !found {
+			return Metadata{}, fmt.Errorf("project metadata %s is required", key)
+		}
+	}
+	var metadata Metadata
+	if err := json.Unmarshal(data, &metadata, json.RejectUnknownMembers(true)); err != nil {
+		return Metadata{}, fmt.Errorf("decode project metadata: %w", err)
+	}
+	if err := metadata.Validate(); err != nil {
+		return Metadata{}, err
+	}
+	return metadata, nil
+}
+
 type Worktree struct {
 	Label projectconfig.WorktreeLabel `json:"label"`
 }
 
 type Service struct {
+	Protocol  string          `json:"protocol"`
 	Namespace string          `json:"namespace"`
 	Hostname  string          `json:"hostname"`
-	URL       string          `json:"url"`
+	Port      int             `json:"port"`
+	Public    bool            `json:"public"`
+	URL       string          `json:"url,omitempty"`
 	Paths     map[string]Path `json:"paths,omitempty"`
+}
+
+func (service *Service) UnmarshalJSON(data []byte) error {
+	type object Service
+	var value object
+	if err := json.Unmarshal(data, &value, json.RejectUnknownMembers(true)); err != nil {
+		return err
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if err := config.RejectNullValues(fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"namespace", "hostname", "protocol", "port", "public"} {
+		if _, found := fields[key]; !found {
+			return fmt.Errorf("service %s is required", key)
+		}
+	}
+	if _, found := fields["url"]; !found && (value.Protocol == "http" || value.Protocol == "kubernetes") {
+		return errors.New("HTTP service url is required")
+	}
+	*service = Service(value)
+	return nil
+}
+
+// NewService builds browser-safe endpoint metadata. target addresses, trust,
+// and credentials never enter this type. private protocols need an assigned port.
+func NewService(namespace, hostname, protocol string, port *int) (Service, error) {
+	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Public: protocol == "http"}
+	if port != nil {
+		service.Port = *port
+	} else if protocol == "http" {
+		service.Port = 443
+	}
+	if protocol == "http" || protocol == "kubernetes" {
+		service.URL = "https://" + hostname
+		if service.Port != 443 {
+			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(service.Port))
+		}
+	}
+	if err := validateServiceAddress(service); err != nil {
+		return Service{}, err
+	}
+	return service, nil
+}
+
+// NewEndpoint requires the runtime's current exposure fact, independent of
+// protocol. native database and Kubernetes endpoints may be directly exposed.
+func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (Service, error) {
+	service, err := NewService(namespace, hostname, protocol, &port)
+	if err != nil {
+		return Service{}, err
+	}
+	service.Public = public
+	return service, nil
+}
+
+func validateServiceAddress(service Service) error {
+	if err := canonicalHostname("service namespace", service.Namespace); err != nil {
+		return err
+	}
+	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
+		return err
+	}
+	if !config.ValidProtocol(service.Protocol) || service.Port < 1 || service.Port > 65535 {
+		return errors.New("service metadata needs a supported protocol, allocated port, and valid public exposure")
+	}
+	if service.Protocol != "http" && len(service.Paths) != 0 {
+		return errors.New("path metadata requires protocol http")
+	}
+	if service.Protocol != "http" && service.Protocol != "kubernetes" {
+		if service.URL != "" {
+			return errors.New("native database and TCP metadata cannot have a URL")
+		}
+		return nil
+	}
+	u, err := url.Parse(service.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() != service.Hostname || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("HTTP service needs its exact HTTPS URL")
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port != service.Port || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
+			return errors.New("managed HTTP port is invalid")
+		}
+	} else if service.URL != "https://"+service.Hostname || service.Port != 443 {
+		return errors.New("HTTP service needs its exact HTTPS URL")
+	}
+	return nil
 }
 
 type Path struct {
@@ -53,18 +176,16 @@ type Alias struct {
 	Service  string `json:"service"`
 }
 
-// Metadata is the generated .tnl/project.json contract. ServiceDirectories is
-// private discovery data and is deliberately omitted from public declarations.
+// Metadata is the generated .tnl/local/project.json contract.
 type Metadata struct {
-	Worktree           *Worktree          `json:"worktree,omitempty"`
-	Namespace          string             `json:"namespace"`
-	Dev                bool               `json:"dev"`
-	ServiceDirectories map[string]string  `json:"serviceDirectories"`
-	Services           map[string]Service `json:"services"`
-	OAuth              *IntegrationOrigin `json:"oauth,omitempty"`
-	Webhooks           map[string]Webhook `json:"webhooks,omitempty"`
-	Aliases            map[string]Alias   `json:"aliases,omitempty"`
-	Version            int                `json:"version"`
+	Worktree  *Worktree          `json:"worktree,omitempty"`
+	Namespace string             `json:"namespace"`
+	Dev       bool               `json:"dev"`
+	Services  map[string]Service `json:"services"`
+	OAuth     *IntegrationOrigin `json:"oauth,omitempty"`
+	Webhooks  map[string]Webhook `json:"webhooks,omitempty"`
+	Aliases   map[string]Alias   `json:"aliases,omitempty"`
+	Version   int                `json:"version"`
 }
 
 // PublicMetadata is the value exposed by @tnldotdev/tnl.
@@ -120,7 +241,7 @@ func (m Metadata) Validate() error {
 			}
 		}
 	}
-	if err := canonicalHostname("namespace", m.Namespace); err != nil {
+	if err := canonicalHostname("namespace", m.Namespace); err != nil && (m.Namespace != "" || len(m.Services) != 0 || m.OAuth != nil || len(m.Webhooks) != 0 || len(m.Aliases) != 0) {
 		return err
 	}
 	if m.OAuth != nil {
@@ -145,7 +266,7 @@ func (m Metadata) Validate() error {
 			return fmt.Errorf("webhook %q URL does not match hostname and path", name)
 		}
 		if endpoint.Service != "" {
-			if _, found := m.Services[endpoint.Service]; !found {
+			if service, found := m.Services[endpoint.Service]; !found || service.Protocol != "http" {
 				return fmt.Errorf("webhook %q names an unknown service", name)
 			}
 		} else if len(m.Services) != 0 {
@@ -161,9 +282,6 @@ func (m Metadata) Validate() error {
 			}
 			seen[method] = true
 		}
-	}
-	if len(m.ServiceDirectories) != len(m.Services) {
-		return errors.New("project metadata requires one directory for every service")
 	}
 	seenHostnames := make(map[string]string, len(m.Services))
 	names := make([]string, 0, len(m.Services))
@@ -186,10 +304,8 @@ func (m Metadata) Validate() error {
 			return fmt.Errorf("services %q and %q resolve to duplicate hostname %s", previous, name, service.Hostname)
 		}
 		seenHostnames[service.Hostname] = name
-		parsed, err := url.Parse(service.URL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host != service.Hostname || parsed.Path != "" ||
-			parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
-			return fmt.Errorf("service %q URL must be exactly https://%s", name, service.Hostname)
+		if err := validateServiceAddress(service); err != nil {
+			return fmt.Errorf("service %q: %w", name, err)
 		}
 		if len(service.Paths) > 32 {
 			return fmt.Errorf("service %q may contain at most 32 path mounts", name)
@@ -204,20 +320,12 @@ func (m Metadata) Validate() error {
 			if !localproxy.ValidMountPrefix(prefix) || mount.Service == name {
 				return fmt.Errorf("service %q path mount %q is invalid", name, prefix)
 			}
-			if _, found := m.Services[mount.Service]; !found {
-				return fmt.Errorf("service %q path mount %q names an unknown service", name, prefix)
+			if !naming.ValidServiceName(mount.Service) {
+				return fmt.Errorf("service %q path mount %q has an invalid service name", name, prefix)
 			}
 			if mount.URL != service.URL+prefix {
 				return fmt.Errorf("service %q path mount %q URL must be %s", name, prefix, service.URL+prefix)
 			}
-		}
-		directory, found := m.ServiceDirectories[name]
-		if !found || directory == "" || filepath.IsAbs(directory) || strings.ContainsRune(directory, '\x00') {
-			return fmt.Errorf("service %q directory must be a non-empty relative path", name)
-		}
-		clean := filepath.Clean(filepath.FromSlash(directory))
-		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.ToSlash(clean) != directory {
-			return fmt.Errorf("service %q directory must be a clean relative path", name)
 		}
 	}
 	if len(m.Aliases) > 32 {
@@ -227,7 +335,7 @@ func (m Metadata) Validate() error {
 		if !naming.ValidServiceName(name) || alias.URL != "https://"+alias.Hostname {
 			return fmt.Errorf("invalid alias %q", name)
 		}
-		if _, found := m.Services[alias.Service]; !found {
+		if service, found := m.Services[alias.Service]; !found || service.Protocol != "http" {
 			return fmt.Errorf("alias %q names an unknown service", name)
 		}
 		if err := canonicalHostname("alias "+name+" hostname", alias.Hostname); err != nil {
