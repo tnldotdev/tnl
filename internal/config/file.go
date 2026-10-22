@@ -9,15 +9,13 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -35,6 +33,13 @@ func LoadDocument(path string) (Document, error) {
 	var document Document
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json":
+		var raw any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return Document{}, fmt.Errorf("load config %s: %w", path, err)
+		}
+		if err := RejectNullValues(raw); err != nil {
+			return Document{}, fmt.Errorf("load config %s: %w", path, err)
+		}
 		if err := json.Unmarshal(data, &document, json.RejectUnknownMembers(true)); err != nil {
 			return Document{}, fmt.Errorf("load config %s: %w", path, err)
 		}
@@ -75,6 +80,12 @@ func validateYAMLTags(data []byte) error {
 	if err := rejectCustomYAMLTags(&document); err != nil {
 		return err
 	}
+	if len(document.Content) == 0 {
+		return errors.New("configuration document is required")
+	}
+	if err := validateYAMLValueTypes(document.Content[0], reflect.TypeOf(Document{}), map[*yaml.Node]bool{}); err != nil {
+		return err
+	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -86,19 +97,28 @@ func validateYAMLTags(data []byte) error {
 }
 
 func rejectCustomYAMLTags(node *yaml.Node) error {
+	return checkYAMLTags(node, map[*yaml.Node]bool{})
+}
+
+func checkYAMLTags(node *yaml.Node, active map[*yaml.Node]bool) error {
 	if node == nil {
 		return nil
 	}
+	if active[node] {
+		return errors.New("recursive YAML aliases are not supported")
+	}
+	active[node] = true
+	defer delete(active, node)
 	switch node.Tag {
 	case "", "!!null", "!!bool", "!!str", "!!int", "!!float", "!!timestamp", "!!seq", "!!map", "!!binary", "!!merge":
 	default:
 		return fmt.Errorf("custom YAML tag %q is not supported", node.Tag)
 	}
-	if err := rejectCustomYAMLTags(node.Alias); err != nil {
+	if err := checkYAMLTags(node.Alias, active); err != nil {
 		return err
 	}
 	for _, child := range node.Content {
-		if err := rejectCustomYAMLTags(child); err != nil {
+		if err := checkYAMLTags(child, active); err != nil {
 			return err
 		}
 	}
@@ -137,7 +157,7 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
-	if err := validateReadiness(config.Readiness); err != nil {
+	if err := ValidateWorkloads(config); err != nil {
 		return err
 	}
 	if err := ValidateInspection(config.Inspection); err != nil {
@@ -146,19 +166,43 @@ func ValidateTNL(config TNL) error {
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
-	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
+	if config.Name != nil && !naming.ValidServiceName(*config.Name) {
+		return errors.New("name must be one lowercase DNS label beginning with a letter")
+	}
+	if err := validateTunnel(config.Tunnel); err != nil {
 		return err
 	}
-	if err := validateRatePair(config.Tunnel, nil); err != nil {
+	if err := validateLimits(tunnelLimits(config.Tunnel), nil, ""); err != nil {
 		return err
 	}
-	if len(config.Services) != 0 && config.Tunnel != nil {
-		if config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil {
-			return errors.New("tunnel.name and tunnel.public_url belong under services.NAME.tunnel when services are configured")
-		}
+	if config.Name != nil && config.Tunnel != nil && config.Tunnel.PublicURL != nil {
+		return errors.New("name and public_url.hostname are mutually exclusive")
+	}
+	if len(config.Services) != 0 && (config.Name != nil || config.Tunnel != nil && (config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil)) {
+		return errors.New("name and public_url.hostname belong under services.NAME when services are configured")
 	}
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
+	}
+	if len(config.Publishers) > 32 {
+		return errors.New("publishers may contain at most 32 entries")
+	}
+	for name, group := range config.Publishers {
+		if group.AWS != nil && (group.AWS.ReplicaCount() < 1 || group.AWS.ReplicaCount() > MaxPublisherReplicas) {
+			return fmt.Errorf("publishers.%s.aws.replicas must be between 1 and %d", name, MaxPublisherReplicas)
+		}
+		if name == "local" || !naming.ValidServiceName(name) {
+			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
+		}
+		if group.Description != nil && (len(*group.Description) > 1024 || !utf8.ValidString(*group.Description)) {
+			return fmt.Errorf("publishers.%s.description must be valid UTF-8 of at most 1024 bytes", name)
+		}
+		if group.Domain != nil {
+			domain, err := naming.CanonicalizeHostname(*group.Domain)
+			if err != nil || domain != *group.Domain {
+				return fmt.Errorf("publishers.%s.domain must be a canonical team domain", name)
+			}
+		}
 	}
 	if err := ValidateWebhooks(config.Services, config.Webhooks); err != nil {
 		return err
@@ -171,71 +215,98 @@ func ValidateTNL(config TNL) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	savedNames := make(map[string]string)
+	publicHostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
-		effectivePublish := MergePublish(config.Publish, service.Publish)
-		if err := validateReadiness(service.Readiness); err != nil {
-			return fmt.Errorf("services.%s: %w", name, err)
-		}
-		if err := ValidateInspection(service.Inspection); err != nil {
-			return fmt.Errorf("services.%s.inspection: %w", name, err)
+		if service.Access != nil && !service.Access.Team {
+			return fmt.Errorf("services.%s.access requires team: true", name)
 		}
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
 		}
-		if err := validateServiceDirectory(service.Directory); err != nil {
-			return fmt.Errorf("services.%s.directory: %w", name, err)
-		}
-		if err := validateServiceValues(service.Tunnel, effectivePublish); err != nil {
+		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		protocol := ServiceProtocol(effectivePublish)
-		if protocol != "http" {
-			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
-				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
-				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
-				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
+		if group := PublisherName(service); group != "local" {
+			if _, found := config.Publishers[group]; !found {
+				return fmt.Errorf("services.%s.publisher: group %q is not configured", name, group)
 			}
-			selected := MergeInspection(config.Inspection, service.Inspection)
-			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
-				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
+			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
+				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
 			}
-			for _, definition := range config.Webhooks {
-				if definition.Service == name {
-					return fmt.Errorf("services.%s: TCP services cannot receive HTTP webhooks", name)
-				}
-			}
-			for _, definition := range config.Aliases {
-				if definition.Service == name {
-					return fmt.Errorf("services.%s: TCP services cannot serve HTTP aliases", name)
-				}
-			}
-			for _, sibling := range config.Services {
-				for _, mount := range sibling.Paths {
-					if mount.Service == name {
-						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
-					}
-				}
+			if service.HTTP != nil {
+				return fmt.Errorf("services.%s.http: remote publisher assignments do not support HTTP settings; use a local service", name)
 			}
 		}
-		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
+		if service.Publisher != nil && *service.Publisher == "" {
+			return fmt.Errorf("services.%s.publisher must not be empty", name)
+		}
+		savedName := ServiceName(name, service)
+		if !naming.ValidServiceName(savedName) {
+			return fmt.Errorf("services.%s: name must be one lowercase DNS label beginning with a letter", name)
+		}
+		if existing := savedNames[savedName]; existing != "" {
+			return fmt.Errorf("services.%s: saved name %q is already used by services.%s", name, savedName, existing)
+		}
+		savedNames[savedName] = name
+		if service.Name != nil && service.Tunnel != nil && service.Tunnel.PublicURL != nil {
+			return fmt.Errorf("services.%s: name and public_url.hostname are mutually exclusive", name)
+		}
+		if Protocol(service) != "http" {
+			if service.Tunnel != nil {
+				return fmt.Errorf("services.%s: private services cannot use public_url settings", name)
+			}
+		}
+		if service.HTTP != nil && Protocol(service) != "http" {
+			return fmt.Errorf("services.%s: http settings require protocol http", name)
+		}
+		if service.HTTP != nil {
+			if err := validateReadiness(service.HTTP.Readiness); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
+			}
+		}
+		if err := ValidateInspection(service.Inspection); err != nil {
+			return fmt.Errorf("services.%s.inspection: %w", name, err)
+		}
+		if err := validateTunnel(service.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if len(service.Paths) > 32 {
-			return fmt.Errorf("services.%s.paths may contain at most 32 mounts", name)
+		if service.Tunnel != nil && service.Tunnel.PublicURL != nil {
+			hostname, _ := naming.ParseExactPublicURL(*service.Tunnel.PublicURL)
+			if existing := publicHostnames[hostname]; existing != "" {
+				return fmt.Errorf("services.%s: public_url.hostname is already used by services.%s", name, existing)
+			}
+			publicHostnames[hostname] = name
 		}
-		prefixes := make([]string, 0, len(service.Paths))
-		for prefix := range service.Paths {
+		protocol := Protocol(service)
+		if IsPublicService(service) {
+			if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
+			}
+		}
+		paths := ServicePaths(service)
+		if len(paths) != 0 && !IsPublicService(service) {
+			return fmt.Errorf("services.%s.http.paths requires an explicit public_url block", name)
+		}
+		if len(paths) > 32 {
+			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
+		}
+		prefixes := make([]string, 0, len(paths))
+		for prefix := range paths {
 			prefixes = append(prefixes, prefix)
 		}
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
-			mount := service.Paths[prefix]
+			mount := paths[prefix]
 			if !localproxy.ValidMountPrefix(prefix) {
-				return fmt.Errorf("services.%s.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
+				return fmt.Errorf("services.%s.http.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
 			}
-			if _, found := config.Services[mount.Service]; !found || mount.Service == name {
-				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
+			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
+				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured HTTP service", name, prefix, mount.Service)
+			}
+			if PublisherName(config.Services[mount.Service]) != "local" {
+				return fmt.Errorf("services.%s.http.paths[%q]: mounted service must use the local publisher", name, prefix)
 			}
 		}
 	}
@@ -267,101 +338,33 @@ func validateServerAndTeam(server, team *string) error {
 	return nil
 }
 
-func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
+func validateTunnel(tunnel *Tunnel) error {
 	if tunnel != nil {
-		if limits := tunnel.Limits; limits != nil {
-			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
-				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")
-			}
-			if limits.Rate != nil && (limits.Rate.Requests != nil && *limits.Rate.Requests <= 0 || limits.Rate.Per != nil && limits.Rate.Per.Value() <= 0) {
-				return errors.New("tunnel.limits.rate requests and per must be positive")
-			}
-		}
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
-			return errors.New("tunnel.name and tunnel.public_url are mutually exclusive")
+			return errors.New("name and public_url.hostname are mutually exclusive")
 		}
 		if tunnel.Domain != nil {
 			canonical, err := naming.CanonicalizeHostname(*tunnel.Domain)
 			if err != nil || canonical != *tunnel.Domain {
-				return errors.New("tunnel.domain must be a canonical domain name")
+				return errors.New("public_url.domain must be a canonical domain name")
 			}
 		}
 		if tunnel.Name != nil {
 			canonical, err := naming.CanonicalizeHostname(*tunnel.Name)
 			if err != nil || canonical != *tunnel.Name || strings.Contains(*tunnel.Name, ".") {
-				return errors.New("tunnel.name must be one lowercase ASCII DNS label")
+				return errors.New("name must be one lowercase ASCII DNS label")
 			}
 		}
 		if tunnel.PublicURL != nil {
 			if _, err := naming.ParseExactPublicURL(*tunnel.PublicURL); err != nil {
-				return errors.New("tunnel.public_url must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
+				return errors.New("public_url.hostname must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
-		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
-			return errors.New("tunnel.allow_all_ips cannot be combined with tunnel.allow_ip")
-		}
-		seen := make(map[string]struct{}, len(tunnel.AllowIP))
-		for _, value := range tunnel.AllowIP {
-			canonical, err := authorization.CanonicalizeIPPrefixes([]string{value})
-			if err != nil || len(canonical) != 1 || !canonicalIPText(value) {
-				return fmt.Errorf("tunnel.allow_ip value %q must be a canonical IP address or prefix", value)
-			}
-			if _, found := seen[canonical[0]]; found {
-				return fmt.Errorf("tunnel.allow_ip value %q is duplicated", value)
-			}
-			seen[canonical[0]] = struct{}{}
-		}
-	}
-	if publish != nil {
-		protocol := ServiceProtocol(publish)
-		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
-			return errors.New("publish.protocol must be a supported service protocol")
-		}
-		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a TCP service protocol")
-		}
-		if publish.Target != nil {
-			target := string(*publish.Target)
-			if protocol == "http" {
-				if _, err := localproxy.NormalizeTarget(target); err != nil {
-					return fmt.Errorf("publish.target: %w", err)
-				}
-			} else if _, err := tcptarget.Normalize(target); err != nil {
-				return fmt.Errorf("publish.target: %w", err)
+		if tunnel.Access != nil {
+			if err := tunnel.Access.Validate(); err != nil {
+				return fmt.Errorf("public_url.access: %w", err)
 			}
 		}
-		if publish.TargetTLSName != nil {
-			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
-			}
-		}
-		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
-			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
-		}
-		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
-			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
-		}
-	}
-	return nil
-}
-
-func validateRatePair(tunnel, base *Tunnel) error {
-	if tunnel == nil || tunnel.Limits == nil || tunnel.Limits.Rate == nil {
-		return nil
-	}
-	rate := tunnel.Limits.Rate
-	requests, per := rate.Requests, rate.Per
-	if base != nil && base.Limits != nil && base.Limits.Rate != nil {
-		if requests == nil {
-			requests = base.Limits.Rate.Requests
-		}
-		if per == nil {
-			per = base.Limits.Rate.Per
-		}
-	}
-	if requests == nil || per == nil {
-		return errors.New("tunnel.limits.rate requires positive requests and per")
 	}
 	return nil
 }
@@ -377,24 +380,21 @@ func canonicalIPText(value string) bool {
 	return prefix.Masked().String() == value
 }
 
-func validateServiceDirectory(directory *string) error {
-	if directory == nil {
-		return nil
-	}
-	if *directory == "" || strings.ContainsRune(*directory, '\x00') {
+func validateRelativeFilePath(value string) error {
+	if value == "" || strings.ContainsRune(value, '\x00') {
 		return errors.New("must not be empty or contain NUL")
 	}
-	if filepath.IsAbs(*directory) {
+	if filepath.IsAbs(value) {
 		return errors.New("must be relative to the project configuration")
 	}
-	for _, part := range strings.FieldsFunc(*directory, func(character rune) bool {
+	for _, part := range strings.FieldsFunc(value, func(character rune) bool {
 		return character == '/' || character == '\\'
 	}) {
 		if part == ".." {
 			return errors.New("must not contain a parent-directory traversal")
 		}
 	}
-	clean := filepath.Clean(*directory)
+	clean := filepath.Clean(value)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return errors.New("must not contain a parent-directory traversal")
 	}

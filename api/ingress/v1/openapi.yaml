@@ -11,6 +11,254 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/ingresses/{ingress_id}/direct-services/admit:
+    post:
+      operationId: admitDirectServiceVisitor
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectServiceVisitorClaim" }
+      responses:
+        "200":
+          description: Bounded pre-authentication admission and ready publisher selection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectServiceVisitorAdmission" }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/direct-services/status:
+    post:
+      operationId: directServiceVisitorStatus
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectServiceVisitorLookup" }
+      responses:
+        "200":
+          description: Current pending or authenticated admission, without extending a pending deadline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectServiceVisitorStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/direct-services/promote:
+    post:
+      operationId: promoteDirectServiceVisitor
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectServiceVisitorLookup" }
+      responses:
+        "204":
+          { description: Ingress has reserved ordinary capacity for this authenticated visitor }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/direct-services/close:
+    post:
+      operationId: closeDirectServiceVisitor
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DirectServiceVisitorLookup" }
+      responses:
+        "204": { description: Exact visitor reservation released; duplicate closure is harmless }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/service-observations:
+    post:
+      operationId: reportIngressServiceObservations
+      parameters:
+        - { $ref: "#/components/parameters/IngressID" }
+        - { $ref: "#/components/parameters/IngressRunID" }
+        - { $ref: "#/components/parameters/IngressLeaseRevision" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [events]
+              properties:
+                events:
+                  {
+                    type: array,
+                    minItems: 1,
+                    maxItems: 256,
+                    items:
+                      {
+                        $ref: "../../control/v1/openapi.yaml#/components/schemas/ServiceObservation",
+                      },
+                  }
+      responses:
+        "200":
+          {
+            description: Accepted and duplicate observation counters,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        $ref: "../../control/v1/openapi.yaml#/components/schemas/ServiceObservationResult",
+                      },
+                  },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/transport-certificate:
+    post:
+      operationId: getIngressTransportCertificate
+      description: Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ingress_run_id, ingress_lease_revision]
+              properties:
+                ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+                ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Current lease-bound certificate and private key; refresh after lease renewal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressTransportCertificate" }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-services/streams/{visitor_connection_id}:
+    delete:
+      operationId: closePrivateServiceStream
+      parameters:
+        - { $ref: "#/components/parameters/IngressID" }
+        - name: visitor_connection_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/VisitorConnectionID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ingress_run_id, ingress_lease_revision, connector_session_id]
+              properties:
+                ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+                ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+                connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+      responses:
+        "204": { description: Exact stream capacity released; duplicate closure is harmless }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim:
+    post:
+      operationId: claimPrivateConnectorSession
+      description: Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateConnectorSessionClaim" }
+      responses:
+        "200":
+          description: Authenticated mux session, without visitor stream permission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateConnectorSessionResult" }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-services/snapshot:
+    get:
+      operationId: getPrivateServiceSnapshot
+      description: Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - $ref: "#/components/parameters/IngressRunID"
+        - $ref: "#/components/parameters/IngressLeaseRevision"
+      responses:
+        "200":
+          {
+            description: Current private service projections,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceSnapshot" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-services/events:
+    get:
+      operationId: getPrivateServiceEvents
+      parameters:
+        - $ref: "#/components/parameters/IngressID"
+        - $ref: "#/components/parameters/IngressRunID"
+        - $ref: "#/components/parameters/IngressLeaseRevision"
+        - {
+            name: after,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 0 },
+          }
+      responses:
+        "200":
+          {
+            description: Ordered private projections and tombstones,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceSnapshot" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-services/claim:
+    post:
+      operationId: authorizePrivateServiceStream
+      description: Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PrivateServiceStreamClaim" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Authorized run and visitor connection,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceStreamResult" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/private-services/recheck:
+    post:
+      operationId: recheckPrivateServiceVisitor
+      description: Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
+      parameters: [{ $ref: "#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceVisitorRecheck" }
+      responses:
+        "200":
+          description: Current permission for one already admitted visitor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceVisitorRecheckResult" }
+        default: { $ref: "#/components/responses/Problem" }
   /internal/v1/ingresses/register:
     post:
       operationId: registerIngress
@@ -213,6 +461,294 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    IngressTransportCertificate:
+      type: object
+      additionalProperties: false
+      required: [trust, private_key_pem]
+      properties:
+        trust: { $ref: "../../control/v1/openapi.yaml#/components/schemas/IngressTransportTrust" }
+        private_key_pem: { type: string, minLength: 1, maxLength: 16384 }
+    PrivateServiceID:
+      type: string
+      pattern: "^psvc_[A-Za-z0-9]{22}$"
+    PrivateRunID:
+      type: string
+      pattern: "^psrun_[A-Za-z0-9]{22}$"
+    PrivateConnectorSessionID:
+      type: string
+      pattern: "^pcs_[A-Za-z0-9]{22}$"
+    VisitorConnectionID:
+      type: string
+      pattern: "^vc_[A-Za-z0-9]{22}$"
+    PrivateConnectorSessionClaim:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          ingress_run_id,
+          ingress_lease_revision,
+          private_service_id,
+          connector_session_id,
+          session_credential,
+          observed_source_ip,
+          subject,
+          nonce,
+          signature,
+        ]
+      properties:
+        ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        session_credential: { type: string, minLength: 32, maxLength: 512 }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+        nonce: { type: string, pattern: "^[0-9a-f]{64}$" }
+        signature: { type: string, pattern: "^[A-Za-z0-9_-]{86}$" }
+        observed_source_ip:
+          {
+            type: string,
+            minLength: 3,
+            maxLength: 45,
+            description: Trusted original source observed by ingress on this mux socket. The connector never supplies this value.,
+          }
+    PrivateConnectorSessionResult:
+      type: object
+      additionalProperties: false
+      required: [connector_session_id, private_service_id, subject, observed_source_ip, expires_at]
+      properties:
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+        observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
+        expires_at: { type: string, format: date-time }
+    DirectServiceVisitorClaim:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          ingress_run_id,
+          ingress_lease_revision,
+          ingress_pool_id,
+          destination_port,
+          observed_source_ip,
+          visitor_connection_id,
+        ]
+      properties:
+        ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        ingress_pool_id: { type: string, minLength: 1, maxLength: 128 }
+        destination_port: { type: integer, minimum: 1024, maximum: 65535 }
+        observed_source_ip: { type: string, minLength: 1, maxLength: 64 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+    DirectServiceVisitorLookup:
+      type: object
+      additionalProperties: false
+      required: [ingress_run_id, ingress_lease_revision, visitor_connection_id]
+      properties:
+        ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+    DirectServiceVisitorAdmission:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          visitor_connection_id,
+          expires_at,
+          connected_relays,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+        expires_at: { type: string, format: date-time }
+        connected_relays:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { $ref: "#/components/schemas/PrivateServiceRelay" }
+    DirectServiceVisitorStatus:
+      type: object
+      additionalProperties: false
+      required: [state, valid_until]
+      properties:
+        state:
+          {
+            type: string,
+            enum: [pending, authenticated, allowed, denied],
+            x-enum-varnames:
+              [
+                DirectVisitorPending,
+                DirectVisitorAuthenticated,
+                DirectVisitorAllowed,
+                DirectVisitorDenied,
+              ],
+          }
+        valid_until: { type: string, format: date-time }
+    PrivateServiceProjection:
+      type: object
+      additionalProperties: false
+      required: [revision, private_service_id, kind, expires_at]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        kind: { type: string, enum: [upsert, tombstone] }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        expires_at: { type: string, format: date-time }
+        connected_relays:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 2,
+            items: { $ref: "#/components/schemas/PrivateServiceRelay" },
+          }
+    PrivateServiceRelay:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          publisher_connection_id,
+          connection_slot,
+          connection_assignment_revision,
+          internal_relay_address,
+          tls_server_name,
+          relay_service_id,
+          relay_id,
+          relay_run_id,
+          relay_lease_revision,
+          lease_expires_at,
+        ]
+      properties:
+        publisher_connection_id: { $ref: "#/components/schemas/Identifier" }
+        connection_slot: { type: integer, minimum: 0, maximum: 1 }
+        connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+        internal_relay_address: { type: string, minLength: 1 }
+        tls_server_name: { type: string, minLength: 1, maxLength: 253 }
+        relay_service_id: { $ref: "#/components/schemas/Identifier" }
+        relay_id: { $ref: "#/components/schemas/Identifier" }
+        relay_run_id: { $ref: "#/components/schemas/Identifier" }
+        relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+        lease_expires_at: { type: string, format: date-time }
+    PrivateServiceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [revision, entries]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        entries: { type: array, items: { $ref: "#/components/schemas/PrivateServiceProjection" } }
+    PrivateServiceStreamClaim:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          ingress_run_id,
+          ingress_lease_revision,
+          private_service_id,
+          private_run_id,
+          run_number,
+          connector_session_id,
+          observed_source_ip,
+          visitor_connection_id,
+        ]
+      properties:
+        ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        observed_source_ip:
+          {
+            type: string,
+            minLength: 3,
+            maxLength: 45,
+            description: Copied by ingress from the authenticated mux socket,
+            not parsed from the visitor stream.,
+          }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+    PrivateServiceStreamResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          connector_session_id,
+          subject,
+          observed_source_ip,
+          visitor_connection_id,
+          expires_at,
+          valid_until,
+          grant_revision,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+        observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+        expires_at: { type: string, format: date-time }
+        valid_until:
+          type: string
+          format: date-time
+          description: Hard deadline bounded by the current grant, connector session, publisher run, ingress and live relay leases, and at most two minutes from this decision.
+        grant_revision: { type: integer, format: int64, minimum: 1 }
+    PrivateServiceVisitorRecheck:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          ingress_run_id,
+          ingress_lease_revision,
+          private_service_id,
+          private_run_id,
+          run_number,
+          connector_session_id,
+          subject,
+          observed_source_ip,
+          visitor_connection_id,
+        ]
+      properties:
+        ingress_run_id: { $ref: "#/components/schemas/Identifier" }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+        observed_source_ip:
+          {
+            type: string,
+            minLength: 3,
+            maxLength: 45,
+            description: Copied from the original ingress-observed mux source; never supplied by a visitor.,
+          }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+    PrivateServiceVisitorRecheckResult:
+      type: object
+      additionalProperties: false
+      required: [allowed, recheck_at, valid_until]
+      properties:
+        allowed: { type: boolean }
+        recheck_at:
+          {
+            type: string,
+            format: date-time,
+            description: Ingress must check again no later than this time,
+            and must cap loss of control at two minutes after the last successful check.,
+          }
+        valid_until:
+          type: string
+          format: date-time
+          description: Current hard deadline, including grant and run expiration; never later than two minutes from this decision.
     Identifier:
       type: string
       minLength: 1
@@ -221,8 +757,35 @@ components:
     IngressRegistration:
       type: object
       additionalProperties: false
-      required: [ingress_id, ingress_run_id, protocol_version, connection_capacity]
+      required:
+        [
+          ingress_id,
+          ingress_run_id,
+          protocol_version,
+          connection_capacity,
+          ingress_pool_id,
+          service_ports,
+        ]
       properties:
+        ingress_pool_id:
+          $ref: "#/components/schemas/Identifier"
+        service_ports:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          description: Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+          items:
+            type: integer
+            minimum: 1024
+            maximum: 65535
+        private_connector_address:
+          type: string
+          maxLength: 512
+          description: Direct reachable endpoint for this ingress process; required for private visitor placement.
+        private_connector_tls_server_name:
+          type: string
+          maxLength: 253
+          description: Infrastructure TLS identity presented on the direct connector endpoint.
         ingress_id:
           $ref: "#/components/schemas/Identifier"
         ingress_run_id:
@@ -350,6 +913,11 @@ components:
         - tls_server_name
         - lease_expires_at
       properties:
+        available_streams:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Last relay-reported free stream capacity; the relay enforces its current capacity at open.
         connection_slot:
           type: integer
           minimum: 0
@@ -386,6 +954,7 @@ components:
         - publish_run_number
         - canonical_hostname
         - policy_revision
+        - access_mode
         - ip_policy
         - allowed_ip_hashes
         - public_url_expires_at
@@ -407,15 +976,14 @@ components:
           $ref: "#/components/schemas/Identifier"
         service_protocol:
           type: string
-          enum: [http, postgres, mysql, redis, ssh]
-        public_port:
-          type: integer
-          minimum: 1024
-          maximum: 65535
+          enum: [http]
         policy_revision:
           type: integer
           format: int64
           minimum: 1
+        access_mode:
+          type: string
+          enum: [restricted, anonymous]
         ip_policy:
           type: string
           enum: [allow_all, hashed_allowlist]
@@ -440,6 +1008,53 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/IngressRoutingPublisherConnection"
+        traffic:
+          $ref: "#/components/schemas/IngressTrafficLimits"
+    IngressTrafficLimits:
+      type: object
+      additionalProperties: false
+      description: Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+      required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+      properties:
+        connections:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        rate_per_ns:
+          type: integer
+          format: int64
+          minimum: 1000000
+          maximum: 86400000000000
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        upload_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        download_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        total_connections:
+          type: integer
+          format: int64
+          minimum: 1
+        total_upload_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+        total_download_bytes:
+          type: integer
+          format: int64
+          minimum: 1
     HashedIPPrefix:
       type: object
       additionalProperties: false
@@ -474,7 +1089,7 @@ components:
           minimum: 1
         kind:
           type: string
-          enum: [public_url_upsert, public_url_tombstone, challenge_upsert, challenge_tombstone]
+          enum: [public_url_upsert, public_url_tombstone]
         public_url_id:
           $ref: "#/components/schemas/Identifier"
         publish_run_number:

@@ -10,13 +10,11 @@ const (
 )
 
 // NamespaceFacts are the authority-owned names used to place public URLs.
-// builtin is true only for the built-in administrator's personal team.
 type NamespaceFacts struct {
 	Domain       string
 	Managed      bool
 	Mode         ManagedURLMode
 	Personal     bool
-	Builtin      bool
 	TeamName     string
 	MemberSlug   string
 	ManagedLabel string
@@ -25,7 +23,7 @@ type NamespaceFacts struct {
 // PublicURLNamespace returns the default naming suffix and whether URLs made
 // beneath it belong to the team instead of one membership.
 func PublicURLNamespace(facts NamespaceFacts) (string, bool) {
-	if facts.Personal && (!facts.Managed || facts.Mode == ManagedURLModeSimple && facts.Builtin) {
+	if facts.Personal && !facts.Managed {
 		return facts.Domain, true
 	}
 	if !facts.Managed {
@@ -38,6 +36,18 @@ func PublicURLNamespace(facts NamespaceFacts) (string, bool) {
 		return facts.MemberSlug + "." + facts.TeamName + "." + facts.Domain, false
 	}
 	return facts.ManagedLabel + "." + facts.Domain, false
+}
+
+// SharedPublicURLNamespace keeps team-owned managed URLs beneath that team's
+// reserved label. administrator privilege never selects the server-wide suffix.
+func SharedPublicURLNamespace(domain string, managed bool, mode ManagedURLMode, teamName, teamLabel string) string {
+	if !managed {
+		return domain
+	}
+	if mode == ManagedURLModeSimple {
+		return teamName + "." + domain
+	}
+	return teamLabel + "." + domain
 }
 
 // MemberNamespace returns the suffix assigned to one membership on a ready

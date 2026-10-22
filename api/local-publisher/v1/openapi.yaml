@@ -1,0 +1,358 @@
+openapi: 3.0.3
+info:
+  title: tnl local publisher API
+  version: 1.0.0
+  description: Private capability-authenticated HTTP API. Host placement binds a numeric loopback address. Every request rejects Origin and requires the exact endpoint authority. Capabilities and readiness proofs never enter project metadata or the journal.
+security:
+  - capability: []
+paths:
+  /v1/health:
+    get:
+      operationId: health
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "204": { description: authenticated owner is available }
+  /v1/capabilities:
+    post:
+      operationId: issueCapability
+      description: Owner only. Issue an app capability for one service or an invocation capability for one invocation ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CapabilityRequest" }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: private endpoint descriptor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Endpoint" }
+  /v1/prepare:
+    post:
+      operationId: prepare
+      description: App capability only; service must equal the capability service. Idempotent for the live owner and PID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Prepare" }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: saved HTTP address and browser-safe metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assignment" }
+  /v1/register:
+    post:
+      operationId: register
+      description: App capability only. Acknowledge or replace its bound HTTP listener before asynchronous provisioning.
+      requestBody:
+        $ref: "#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "204": { description: listener acknowledged }
+  /v1/renew:
+    post:
+      operationId: renew
+      description: Renew the exact registration and bound target. Target is required after register; an old target cannot keep a replacement listener alive.
+      requestBody:
+        $ref: "#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "204": { description: lease renewed for 20 seconds }
+  /v1/unregister:
+    post:
+      operationId: unregister
+      description: Stop and join the exact registration and bound target. Target is required after register.
+      requestBody:
+        $ref: "#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "204": { description: publication stopped and joined }
+  /v1/status:
+    get:
+      operationId: status
+      description: Owner sees the transactional project snapshot; app sees only its service; invocation sees only its publication. Does not probe.
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: snapshot with one opaque exclusive event cursor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+  /v1/events:
+    get:
+      operationId: events
+      description: Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: bounded retained events
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Event" } }
+  /v1/check:
+    post:
+      operationId: check
+      description: Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Check" }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: fresh project snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+  /v1/leases:
+    post:
+      operationId: acquireLease
+      description: Owner only. Acquire one configured non-app service for a CLI invocation. Uses the same publication workers as app registrations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Lease" }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: lease registration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Registration" }
+  /v1/ad-hoc/register:
+    post:
+      operationId: registerInvocation
+      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Invocation" }
+      responses:
+        default: { $ref: "#/components/responses/Problem" }
+        "200":
+          description: invocation registration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Registration" }
+components:
+  responses:
+    Problem:
+      description: Authored local failure. 400 invalid request; 401 invalid capability or authentication required; 403 wrong capability scope; 409 conflicting or stale registration; 410 expired event cursor.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  securitySchemes:
+    capability: { type: http, scheme: bearer }
+  requestBodies:
+    Registration:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Registration" }
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Snapshot:
+      type: object
+      additionalProperties: false
+      required: [schema_version, project, cursor, observed_at, services]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        project: { type: string }
+        cursor: { type: string, maxLength: 128 }
+        observed_at: { type: string, format: date-time }
+        services: { type: array, items: { $ref: "#/components/schemas/Service" } }
+        publications: { type: array, items: { $ref: "#/components/schemas/Publication" } }
+    Service:
+      type: object
+      additionalProperties: false
+      required: [service, directory, registered, routable, ready, readiness]
+      properties:
+        project: { type: string }
+        service: { type: string }
+        service_protocol:
+          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PublicURLServiceProtocol" }
+        directory: { type: string }
+        tunnel_id: { type: string }
+        public_url: { type: string }
+        registration_id: { type: string }
+        target: { type: string }
+        framework: { type: string }
+        registered: { type: boolean }
+        routable: { type: boolean }
+        ready: { type: boolean }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        provisioning_stage: { type: string }
+        readiness: { $ref: "#/components/schemas/Readiness" }
+        observation: { $ref: "#/components/schemas/Observation" }
+        failure: { type: string }
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string }
+    Observation:
+      type: object
+      additionalProperties: false
+      required: [registration_id, publish_run_number, checked_at, ready, readiness]
+      properties:
+        registration_id: { type: string }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        checked_at: { type: string, format: date-time }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        ready: { type: boolean }
+        reason: { type: string }
+        readiness: { $ref: "#/components/schemas/Readiness" }
+    Publication:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          tunnel_id,
+          command,
+          state,
+          process_id,
+          server,
+          project,
+          started_at,
+          updated_at,
+          heartbeat_at,
+          lease_expires_at,
+        ]
+      properties:
+        tunnel_id: { type: string }
+        command: { type: string, enum: [publish, dev] }
+        state:
+          { type: string, enum: [starting, provisioning, ready, draining, stopped, failed, stale] }
+        process_id: { type: integer }
+        server: { type: string }
+        project: { type: string }
+        service: { type: string }
+        service_protocol: { type: string, enum: [http, tcp, mysql, postgres] }
+        public_url_id: { type: string }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        private_service_id:
+          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        hostname: { type: string }
+        public_url: { type: string }
+        target: { type: string }
+        framework: { type: string }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        heartbeat_at: { type: string, format: date-time }
+        lease_expires_at: { type: string, format: date-time }
+        failure: { type: string }
+    Event:
+      type: object
+      additionalProperties: false
+      required: [cursor, type, at]
+      properties:
+        cursor: { type: string, maxLength: 128 }
+        type: { type: string }
+        at: { type: string, format: date-time }
+        service: { $ref: "#/components/schemas/Service" }
+        snapshot: { $ref: "#/components/schemas/Snapshot" }
+        publication: { $ref: "#/components/schemas/Publication" }
+    Endpoint:
+      type: object
+      additionalProperties: false
+      required: [version, url, capability, owner_id, scope]
+      properties:
+        version: { type: integer, enum: [1] }
+        url: { type: string, maxLength: 128 }
+        capability: { type: string, minLength: 64, maxLength: 64 }
+        owner_id: { type: string, minLength: 32, maxLength: 32 }
+        scope: { type: string, enum: [owner, app, invocation] }
+        service: { type: string, maxLength: 63 }
+        invocation_id: { type: string, maxLength: 128 }
+    CapabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [scope]
+      properties:
+        scope: { type: string, enum: [app, invocation] }
+        service: { type: string, maxLength: 63 }
+        invocation_id: { type: string, maxLength: 128 }
+    Prepare:
+      type: object
+      additionalProperties: false
+      required: [version, directory, framework, owner, pid]
+      properties:
+        version: { type: integer, enum: [1] }
+        directory: { type: string, maxLength: 4096 }
+        service: { type: string, maxLength: 63, x-go-type-skip-optional-pointer: true }
+        framework: { type: string, enum: [node, bun, vite, next, python] }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1, x-go-name: PID }
+    Assignment:
+      type: object
+      additionalProperties: false
+      required: [version, registration_id, service, hostname, public_url, project]
+      properties:
+        version: { type: integer, enum: [1] }
+        registration_id: { type: string }
+        service: { type: string }
+        hostname: { type: string }
+        public_url: { type: string }
+        project: { type: object, additionalProperties: true }
+    Registration:
+      type: object
+      additionalProperties: false
+      required: [version, registration_id, owner]
+      properties:
+        version: { type: integer, enum: [1] }
+        registration_id: { type: string, maxLength: 128, x-go-name: RegistrationID }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        target: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+    Lease:
+      type: object
+      additionalProperties: false
+      required: [service, owner, pid, configuration_digest]
+      properties:
+        service: { type: string, maxLength: 63 }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1 }
+        configuration_digest:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: Digest of the complete selected native project snapshot, including configuration provenance and resolved server/team selection. The owner rejects another snapshot before reserving a service.
+    Invocation:
+      type: object
+      additionalProperties: false
+      required: [version, invocation_id, owner, pid, target]
+      properties:
+        version: { type: integer, enum: [1] }
+        invocation_id: { type: string, maxLength: 128 }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1 }
+        target: { type: string, maxLength: 4096 }
+        server_url: { type: string, maxLength: 4096 }
+        publisher_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
+        publisher_file: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+        access_mode: { type: string, enum: [restricted, anonymous] }
+        ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
+    Check:
+      type: object
+      additionalProperties: false
+      properties:
+        services: { type: array, maxItems: 32, items: { type: string, maxLength: 63 } }

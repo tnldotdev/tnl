@@ -16,24 +16,19 @@ func TestServicesShareOneModelAndInheritRootDefaults(t *testing.T) {
 tnl:
   server: https://root.example
   team: Root Team
-  tunnel:
+  public_url:
     domain: routes.example.test
-    open: true
-    allow_ip: [192.0.2.0/24]
+    access: {ip: [192.0.2.0/24]}
     ephemeral: true
-  publish:
-    target: 3000
-  readiness:
-    path: /health
   services:
     web:
-      tunnel:
-        name: web
-        allow_all_ips: true
-      publish:
-        target: 4000
-      readiness:
-        path: /status
+      name: website
+      public_url:
+        access: anonymous
+      target: {type: address, address: 4000}
+      http:
+        open: true
+        readiness: {path: /status}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -49,10 +44,10 @@ tnl:
 	}
 	if effective.Server == nil || *effective.Server != "https://root.example" ||
 		effective.Team == nil || *effective.Team != "Root Team" ||
-		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "web" ||
+		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "website" ||
 		effective.Tunnel.Domain == nil || *effective.Tunnel.Domain != "routes.example.test" ||
 		effective.Tunnel.Open == nil || !*effective.Tunnel.Open ||
-		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
+		effective.Tunnel.Access == nil || effective.Tunnel.Access.VisitorMode() != "anonymous" || len(effective.Tunnel.Access.IP) != 0 ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
 		effective.Readiness == nil || effective.Readiness.Path != "/status" {
@@ -63,30 +58,96 @@ tnl:
 	}
 }
 
-func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
-	all := true
+func TestServiceAccessPolicyReplacesProjectDefault(t *testing.T) {
 	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{AllowIP: []string{"192.0.2.1"}},
+		Tunnel: &config.Tunnel{Access: &config.Access{IP: []string{"192.0.2.1"}}},
 		Services: config.Services{
-			"api":    {Tunnel: &config.Tunnel{AllowIP: []string{"198.51.100.1"}}},
-			"none":   {Tunnel: &config.Tunnel{AllowIP: []string{}}},
-			"public": {Tunnel: &config.Tunnel{AllowAllIPs: &all}},
+			"api":    {Tunnel: &config.Tunnel{Access: &config.Access{IP: []string{"198.51.100.1"}}}},
+			"none":   {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "restricted"}}},
+			"public": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}},
 		},
 	}}
 	for _, test := range []struct {
 		name string
 		want []string
-		all  bool
+		mode string
 	}{
-		{"api", []string{"198.51.100.1"}, false},
-		{"none", []string{}, false},
-		{"public", nil, true},
+		{"api", []string{"198.51.100.1"}, "restricted"},
+		{"none", nil, "restricted"},
+		{"public", nil, "anonymous"},
 	} {
 		effective, err := project.EffectiveService(test.name)
-		if err != nil || effective.Tunnel == nil || !slices.Equal(effective.Tunnel.AllowIP, test.want) ||
-			(effective.Tunnel.AllowIP == nil) != (test.want == nil) ||
-			(effective.Tunnel.AllowAllIPs != nil && *effective.Tunnel.AllowAllIPs) != test.all {
+		if err != nil || effective.Tunnel == nil || effective.Tunnel.Access == nil || !slices.Equal(effective.Tunnel.Access.IP, test.want) ||
+			effective.Tunnel.Access.VisitorMode() != test.mode {
 			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
+		}
+	}
+}
+
+func TestPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
+	ephemeral := true
+	domain, dbTarget := "member.example", config.Target("db.internal:5432")
+	tcp := "tcp"
+	none := config.InspectionNone
+	connections := 4
+	project := Project{Config: config.TNL{
+		Feedback: &ephemeral, OAuth: true, Inspection: &config.Inspection{Mode: &none},
+		Tunnel: &config.Tunnel{Domain: &domain, Access: &config.Access{Mode: "anonymous"}, Ephemeral: &ephemeral,
+			Limits: &config.Limits{Traffic: &config.TrafficLimits{Connections: &connections}}},
+		Services: config.Services{
+			"web":          {Tunnel: &config.Tunnel{}},
+			"private-http": {},
+			"orders":       {Protocol: &tcp, Target: &config.ServiceTarget{Type: "address", Address: &dbTarget}},
+		},
+	}}
+	if err := config.ValidateTNL(project.Config); err != nil {
+		t.Fatalf("mixed HTTP and private TCP project: %v", err)
+	}
+	for _, name := range []string{"web"} {
+		service, err := project.EffectiveService(name)
+		if err != nil || service.Tunnel == nil || service.Tunnel.Access == nil || service.Tunnel.Access.VisitorMode() != "anonymous" ||
+			service.Tunnel.Domain == nil || *service.Tunnel.Domain != domain || service.Tunnel.Limits == nil ||
+			service.Tunnel.Limits.Traffic == nil || service.Tunnel.Limits.Traffic.Connections == nil ||
+			*service.Tunnel.Limits.Traffic.Connections != connections {
+			t.Fatalf("public %s lost root defaults: %+v: %v", name, service.Tunnel, err)
+		}
+	}
+	private, err := project.EffectiveService("orders")
+	if err != nil || private.Tunnel != nil || private.Feedback != nil || private.OAuth || private.Inspection != nil || private.Publish == nil || config.ServiceProtocol(private.Publish) != "tcp" ||
+		private.Publish.Target != &dbTarget || config.PrivateServiceName("orders", project.Config.Services["orders"]) != "orders" {
+		t.Fatalf("private orders inherited public access or lost target: %+v: %v", private, err)
+	}
+	if project.Config.Tunnel.Access == nil || project.Config.Tunnel.Access.VisitorMode() != "anonymous" {
+		t.Fatal("resolving private service mutated public defaults")
+	}
+	privateHTTP, err := project.EffectiveService("private-http")
+	if err != nil || privateHTTP.Tunnel != nil || privateHTTP.OAuth || privateHTTP.Feedback != nil {
+		t.Fatalf("private HTTP inherited public defaults: %+v: %v", privateHTTP, err)
+	}
+	orders := project.Config.Services["orders"]
+	orders.Tunnel = &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}
+	project.Config.Services["orders"] = orders
+	if _, err := project.EffectiveService("orders"); err == nil {
+		t.Fatal("private TCP service accepted per-service public access")
+	}
+}
+
+func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
+	group, protocol := "cloud", "postgres"
+	target := config.Target("db.internal:5432")
+	project := Project{Config: config.TNL{
+		Publishers: map[string]config.Publisher{"cloud": {}},
+		Services: config.Services{
+			"default": {},
+			"db":      {Publisher: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+		},
+	}}
+	for _, test := range []struct {
+		name     string
+		expected string
+	}{{"default", "local"}, {"db", "cloud"}} {
+		if actual := config.PublisherName(project.Config.Services[test.name]); actual != test.expected {
+			t.Fatalf("service %q group=%s", test.name, actual)
 		}
 	}
 }
@@ -97,10 +158,10 @@ func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	override := config.Duration(2 * time.Minute)
 	project := Project{Config: config.TNL{
 		Tunnel: &config.Tunnel{Limits: &config.Limits{
-			Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}, Concurrency: &concurrency,
+			HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}, Concurrency: &concurrency},
 		}},
 		Services: config.Services{"api": {Tunnel: &config.Tunnel{Limits: &config.Limits{
-			Rate: &config.Rate{Per: &override},
+			HTTP: &config.WorkLimits{Rate: &config.Rate{Per: &override}},
 		}}}},
 	}}
 	if err := config.ValidateTNL(project.Config); err != nil {
@@ -110,40 +171,11 @@ func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := service.Tunnel.Limits
-	if limits.Requests != &requests || limits.Concurrency != &concurrency || limits.Rate.Requests != &rateRequests || limits.Rate.Per != &override {
+	limits := service.Tunnel.Limits.HTTP
+	if limits.Total != &requests || limits.Concurrency != &concurrency || limits.Rate.Count != &rateRequests || limits.Rate.Per != &override {
 		t.Fatalf("service limits = %#v", limits)
 	}
-	if project.Config.Tunnel.Limits.Rate.Per != &period {
+	if project.Config.Tunnel.Limits.HTTP.Rate.Per != &period {
 		t.Fatal("service override changed root rate period")
-	}
-}
-
-func TestServiceDirectoryRejectsTraversalAndSymlinkEscape(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(root, "outside")); err != nil {
-		t.Fatal(err)
-	}
-	for name, directory := range map[string]string{
-		"absolute":  outside,
-		"traversal": "apps/../web",
-		"nul":       "web\x00app",
-		"symlink":   "outside",
-	} {
-		t.Run(name, func(t *testing.T) {
-			value := config.TNL{Services: config.Services{"web": {Directory: &directory}}}
-			if err := config.ValidateTNL(value); err == nil {
-				if _, _, err := (Project{Config: value, Root: root}).ServiceDirectory("web"); err == nil {
-					t.Fatalf("directory %q was accepted", directory)
-				}
-			}
-		})
-	}
-	directory := "."
-	project := Project{Config: config.TNL{Services: config.Services{"web": {Directory: &directory}}}, Root: root}
-	resolved, relative, err := project.ServiceDirectory("web")
-	if err != nil || resolved != root || relative != "." {
-		t.Fatalf("default directory = %q, %q, %v", resolved, relative, err)
 	}
 }

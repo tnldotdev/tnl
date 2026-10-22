@@ -7,3 +7,5 @@ generate:
   std-http-server: true
 output-options:
   skip-prune: true
+import-mapping:
+  ../../control/v1/openapi.yaml: github.com/tnldotdev/tnl/pkg/api/controlv1

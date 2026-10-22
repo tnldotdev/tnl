@@ -2,25 +2,337 @@
   "version": 2,
   "cases": [
     {
-      "name": "primary worktree label",
+      "name": "http endpoint",
       "valid": true,
       "metadata": {
-        "namespace": "member.example",
-        "dev": false,
         "version": 2,
-        "serviceDirectories": {},
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 443,
+            "public": true,
+            "url": "https://web.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "allocated http port",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 20001,
+            "public": false,
+            "url": "https://web.member.example:20001"
+          }
+        }
+      }
+    },
+    {
+      "name": "postgres endpoint",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mysql endpoint",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "mysql",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 13306,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "tcp endpoint",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "native": {
+            "protocol": "tcp",
+            "namespace": "member.example",
+            "hostname": "native.member.example",
+            "port": 10022,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "kubernetes endpoint",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "cluster": {
+            "protocol": "kubernetes",
+            "namespace": "member.example",
+            "hostname": "cluster.member.example",
+            "port": 10443,
+            "public": false,
+            "url": "https://cluster.member.example:10443"
+          }
+        }
+      }
+    },
+    {
+      "name": "port required",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "public": true,
+            "url": "https://web.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "exposure required",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 443,
+            "url": "https://web.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "http empty explicit port",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 443,
+            "public": true,
+            "url": "https://web.member.example:"
+          }
+        }
+      }
+    },
+    {
+      "name": "http port mismatch",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "web": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "web.member.example",
+            "port": 20001,
+            "public": true,
+            "url": "https://web.member.example:20002"
+          }
+        }
+      }
+    },
+    {
+      "name": "port below range",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 0,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "port above range",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 65536,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "native URL forbidden",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "public": false,
+            "url": "https://db.member.example:15432"
+          }
+        }
+      }
+    },
+    {
+      "name": "native public exposure is a runtime fact",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "public": true
+          }
+        }
+      }
+    },
+    {
+      "name": "private target forbidden",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "public": false,
+            "target": "db.internal:5432"
+          }
+        }
+      }
+    },
+    {
+      "name": "private trust forbidden",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "public": false,
+            "ssl": { "key": "private" }
+          }
+        }
+      }
+    },
+    {
+      "name": "removed ssh protocol",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "ssh": {
+            "protocol": "ssh",
+            "namespace": "member.example",
+            "hostname": "ssh.member.example",
+            "port": 10022,
+            "public": false
+          }
+        }
+      }
+    },
+    {
+      "name": "primary worktree",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
         "services": {},
         "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "shop-k7n2p9" } }
       }
     },
     {
-      "name": "linked worktree label",
+      "name": "linked worktree",
       "valid": true,
       "metadata": {
-        "namespace": "member.example",
-        "dev": false,
         "version": 2,
-        "serviceDirectories": {},
+        "dev": false,
+        "namespace": "member.example",
         "services": {},
         "worktree": {
           "label": {
@@ -33,297 +345,225 @@
       }
     },
     {
-      "name": "inconsistent label components",
+      "name": "inconsistent worktree",
       "valid": false,
       "metadata": {
-        "namespace": "member.example",
-        "dev": false,
         "version": 2,
-        "serviceDirectories": {},
+        "dev": false,
+        "namespace": "member.example",
         "services": {},
         "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "other-k7n2p9" } }
-      }
-    },
-    {
-      "name": "stable webhook origin with exact path",
-      "valid": true,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "version": 2,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "webhooks": {
-          "stripe": {
-            "hostname": "hooks-shop-ab1234.member.example",
-            "url": "https://hooks-shop-ab1234.member.example/api/webhooks/stripe",
-            "service": "api",
-            "path": "/api/webhooks/stripe",
-            "methods": ["POST"]
-          }
-        }
-      }
-    },
-    {
-      "name": "webhook URL differs from hostname",
-      "valid": false,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "version": 2,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "webhooks": {
-          "stripe": {
-            "hostname": "hooks-shop-ab1234.member.example",
-            "url": "https://other.example/api/webhooks/stripe",
-            "service": "api",
-            "path": "/api/webhooks/stripe",
-            "methods": ["POST"]
-          }
-        }
-      }
-    },
-    {
-      "name": "webhook methods are unique",
-      "valid": false,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "version": 2,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "webhooks": {
-          "stripe": {
-            "hostname": "hooks-shop-ab1234.member.example",
-            "url": "https://hooks-shop-ab1234.member.example/api/webhooks/stripe",
-            "service": "api",
-            "path": "/api/webhooks/stripe",
-            "methods": ["POST", "POST"]
-          }
-        }
-      }
-    },
-    {
-      "name": "shared oauth origin and service context",
-      "valid": true,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "oauth": {
-          "hostname": "oauth-shop-ab1234.member.example",
-          "url": "https://oauth-shop-ab1234.member.example"
-        },
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "other.example",
-            "hostname": "api.other.example",
-            "url": "https://api.other.example"
-          }
-        },
-        "version": 2
-      }
-    },
-    {
-      "name": "oauth URL differs from hostname",
-      "valid": false,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "oauth": {
-          "hostname": "oauth-shop-ab1234.member.example",
-          "url": "https://different.example"
-        },
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "version": 2
-      }
-    },
-    {
-      "name": "one service",
-      "valid": true,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "serviceDirectories": { "api": "apps/api" },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "version": 2
       }
     },
     {
       "name": "valid A-label",
       "valid": true,
       "metadata": {
-        "namespace": "xn--bcher-kva.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "xn--bcher-kva.example",
-            "hostname": "api.xn--bcher-kva.example",
-            "url": "https://api.xn--bcher-kva.example"
-          }
-        },
-        "version": 2
+        "namespace": "xn--bcher-kva.example",
+        "services": {}
       }
     },
     {
       "name": "invalid A-label",
       "valid": false,
+      "metadata": { "version": 2, "dev": false, "namespace": "xn--a.example", "services": {} }
+    },
+    {
+      "name": "protocol required",
+      "valid": false,
       "metadata": {
-        "namespace": "xn--a.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api": "." },
+        "namespace": "member.example",
         "services": {
           "api": {
             "namespace": "member.example",
             "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
             "url": "https://api.member.example"
           }
-        },
-        "version": 2
+        }
       }
     },
     {
       "name": "invalid service name",
       "valid": false,
       "metadata": {
-        "namespace": "member.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api-": "." },
+        "namespace": "member.example",
         "services": {
           "api-": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
             "url": "https://api.member.example"
           }
-        },
-        "version": 2
+        }
       }
     },
     {
-      "name": "duplicate service hostname",
+      "name": "duplicate hostname",
       "valid": false,
       "metadata": {
-        "namespace": "member.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api": ".", "web": "." },
+        "namespace": "member.example",
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
             "url": "https://api.member.example"
           },
           "web": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
+            "url": "https://api.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "incorrect URL",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "api": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
+            "url": "https://other.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "oauth origin",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {},
+        "oauth": { "hostname": "oauth.member.example", "url": "https://oauth.member.example" }
+      }
+    },
+    {
+      "name": "oauth mismatch",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {},
+        "oauth": { "hostname": "oauth.member.example", "url": "https://other.example" }
+      }
+    },
+    {
+      "name": "webhook exact path",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {
+          "api": {
+            "protocol": "http",
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "port": 443,
+            "public": true,
             "url": "https://api.member.example"
           }
         },
-        "version": 2
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks.member.example",
+            "url": "https://hooks.member.example/hooks/stripe",
+            "path": "/hooks/stripe",
+            "service": "api",
+            "methods": ["POST"]
+          }
+        }
       }
     },
     {
-      "name": "incorrect service url",
+      "name": "webhook duplicate method",
       "valid": false,
       "metadata": {
-        "namespace": "member.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://other.example"
+        "namespace": "member.example",
+        "services": {},
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks.member.example",
+            "url": "https://hooks.member.example/hooks/stripe",
+            "path": "/hooks/stripe",
+            "service": "",
+            "methods": ["POST", "POST"]
           }
-        },
-        "version": 2
+        }
       }
     },
     {
-      "name": "unclean service directory",
+      "name": "webhook URL mismatch",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "dev": false,
+        "namespace": "member.example",
+        "services": {},
+        "webhooks": {
+          "stripe": {
+            "hostname": "hooks.member.example",
+            "url": "https://other.example/hooks/stripe",
+            "path": "/hooks/stripe",
+            "service": "",
+            "methods": ["POST"]
+          }
+        }
+      }
+    },
+    {
+      "name": "removed service directories",
       "valid": false,
       "runtimeValid": true,
       "metadata": {
-        "namespace": "member.example",
+        "version": 2,
         "dev": false,
-        "serviceDirectories": { "api": "../api" },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "version": 2
+        "namespace": "member.example",
+        "services": {},
+        "serviceDirectories": { "api": "." }
       }
     },
     {
       "name": "unsupported version",
       "valid": false,
       "runtimeValid": true,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": false,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "version": 3
-      }
+      "metadata": { "version": 3, "dev": false, "namespace": "member.example", "services": {} }
     },
     {
-      "name": "generated metadata marked as dev",
+      "name": "runtime dev is not saved",
       "valid": false,
       "runtimeValid": true,
-      "metadata": {
-        "namespace": "member.example",
-        "dev": true,
-        "serviceDirectories": { "api": "." },
-        "services": {
-          "api": {
-            "namespace": "member.example",
-            "hostname": "api.member.example",
-            "url": "https://api.member.example"
-          }
-        },
-        "version": 2
-      }
+      "metadata": { "version": 2, "dev": true, "namespace": "member.example", "services": {} }
     }
   ]
 }

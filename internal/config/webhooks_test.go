@@ -7,7 +7,7 @@ import (
 )
 
 func TestWebhookPolicyValidation(t *testing.T) {
-	services := Services{"api": {}}
+	services := Services{"api": {Tunnel: &Tunnel{}}}
 	valid := Webhook{Service: "api", Path: "/hooks/payments", Provider: "stripe"}
 	for _, test := range []struct {
 		name, want string
