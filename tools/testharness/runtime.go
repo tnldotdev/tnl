@@ -48,6 +48,10 @@ var runtimePublishers = []string{"publishers", "publishers-2", "publishers-3", "
 var runtimeApps = []string{"app", "app-2", "app-3", "app-4"}
 
 func runRuntime(ctx context.Context, root string) (retErr error) {
+	workload := os.Getenv("RUNTIME_WORKLOAD")
+	if workload != "" && workload != "public-url" && workload != "connect" {
+		return errors.New("RUNTIME_WORKLOAD must be public-url or connect")
+	}
 	results := os.Getenv("RESULTS")
 	if results == "" {
 		return errors.New("RESULTS directory is required")

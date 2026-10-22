@@ -171,7 +171,7 @@ func validateBlackholeCounters(counters string, expected int) error {
 
 func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 	path := os.Getenv("NETWORK_PATH")
-	if path != "forwarding" && path != "publisher" {
+	if path != "forwarding" && path != "publisher" && !(path == "connector" && os.Getenv("RUNTIME_WORKLOAD") == "connect") {
 		return errors.New("invalid network path")
 	}
 	options, err := netemOptions(h.selected, os.Getenv("RTT"), os.Getenv("LOSS"), os.Getenv("SEED"))
@@ -179,13 +179,21 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 		return err
 	}
 	addresses := make(map[string]string)
-	for _, service := range append(append([]string{}, h.ingresses...), append(h.activePublish, "relay-a", "relay-b")...) {
+	visitors := []string{"visitor-1", "visitor-2", "visitor-3", "visitor-4"}
+	for _, service := range append(append(append([]string{}, h.ingresses...), visitors...), append(h.activePublish, "relay-a", "relay-b")...) {
 		addresses[service], err = h.containerIP(ctx, service)
 		if err != nil {
 			return err
 		}
 	}
-	endpoints, err := impairmentEndpoints(path, addresses, h.ingresses, h.activePublish)
+	sources, destinations := h.ingresses, []string{"relay-a", "relay-b"}
+	if path == "publisher" {
+		sources = h.activePublish
+	}
+	if path == "connector" {
+		sources, destinations = visitors, h.ingresses
+	}
+	endpoints, err := impairmentEndpoints(path, addresses, h.ingresses, h.activePublish, visitors)
 	if err != nil {
 		return err
 	}
@@ -260,16 +268,16 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 				return err
 			}
 		}
-		sources := h.activePublish
-		if path == "forwarding" {
-			sources = h.ingresses
-		}
 		for _, source := range sources {
 			if !matched[source] {
 				return errors.New("netem did not impair both directions of a visitor path")
 			}
 		}
-		if !matched["relay-a"] && !matched["relay-b"] {
+		destinationMatched := false
+		for _, destination := range destinations {
+			destinationMatched = destinationMatched || matched[destination]
+		}
+		if !destinationMatched {
 			return errors.New("netem did not impair both directions of a visitor path")
 		}
 		return nil
@@ -308,21 +316,27 @@ func netemOptions(scenario, rtt, loss, rawSeed string) ([]string, error) {
 	return result, nil
 }
 
-func impairmentEndpoints(path string, addresses map[string]string, ingresses, publishers []string) ([]impairmentEndpoint, error) {
-	sources, port, protocols := ingresses, "8443", []string{"6"}
+func impairmentEndpoints(path string, addresses map[string]string, ingresses, publishers, visitors []string) ([]impairmentEndpoint, error) {
+	sources, destinations, port, protocols := ingresses, []string{"relay-a", "relay-b"}, "8443", []string{"6"}
 	if path == "publisher" {
 		sources, port, protocols = publishers, "443", []string{"6", "17"}
+	} else if path == "connector" {
+		sources, destinations, port, protocols = visitors, ingresses, "443", []string{"6", "17"}
 	} else if path != "forwarding" {
 		return nil, errors.New("invalid network path")
 	}
-	if len(sources) == 0 {
+	return targetedImpairmentEndpoints(addresses, sources, destinations, port, protocols)
+}
+
+func targetedImpairmentEndpoints(addresses map[string]string, sources, destinations []string, port string, protocols []string) ([]impairmentEndpoint, error) {
+	if len(sources) == 0 || len(destinations) == 0 {
 		return nil, errors.New("network path requires a source")
 	}
-	endpoints := make([]impairmentEndpoint, 0, len(sources)+2)
+	endpoints := make([]impairmentEndpoint, 0, len(sources)+len(destinations))
 	for _, source := range sources {
 		endpoints = append(endpoints, impairmentEndpoint{Service: source, Filters: [][]string{}})
 	}
-	for _, relay := range []string{"relay-a", "relay-b"} {
+	for _, relay := range destinations {
 		reverse := impairmentEndpoint{Service: relay, Filters: [][]string{}}
 		for index := range sources {
 			for _, protocol := range protocols {
