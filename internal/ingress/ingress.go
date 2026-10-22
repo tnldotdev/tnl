@@ -1,5 +1,5 @@
-// package ingress routes HTTPS by exact SNI and TCP connections by the
-// trusted destination port without terminating visitor TLS.
+// package ingress routes HTTPS by exact SNI and authenticates private connectors.
+// public visitor TLS terminates at the publisher.
 package ingress
 
 import (
@@ -20,6 +20,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const defaultOpenTimeout = 10 * time.Second
@@ -37,7 +39,10 @@ type PublicURL struct {
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
 	Backends          []routebackend.Backend
-	PublicPort        *uint16
+	PublishRunID      string
+	ServiceProtocol   string
+	AccessMode        string
+	Traffic           *TrafficLimits
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
@@ -59,7 +64,6 @@ type UsageConnection interface {
 type Metrics interface {
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
-	IncChallengeRejection(string)
 	ObserveVisitor(observability.VisitorOutcome)
 	ObserveVisitorOpen(bool, time.Duration)
 	SetIngressConnections(string, int)
@@ -69,29 +73,36 @@ type Metrics interface {
 }
 
 type Config struct {
-	Lookup                          LookupFunc
-	LookupPort                      func(uint16) (PublicURL, LookupReason)
-	LookupChallenge                 func(string) ([]routebackend.Backend, LookupReason)
-	ServerHostname                  string
-	HandleControl                   func(net.Conn) bool
-	RelayHostname                   string
-	HandleRelay                     func(net.Conn) bool
-	HandleRelayChallenge            func(net.Conn) bool
-	RequireProxyHeader              bool
-	MaxConnections                  int
-	MaxDeniedConnections            int
-	MaxClientHelloConnections       int
-	MaxChallengeConnections         int
-	MaxHostnameChallengeConnections int
-	MaxControlConnections           int
-	MaxRelayConnections             int
-	OpenTimeout                     time.Duration
-	Metrics                         Metrics
-	Observer                        OperationObserver
-	OpenUsage                       func(string, uint64, netip.Addr, time.Time) UsageConnection
-	ObserveRecovery                 func(string, uint64, uint64, time.Time)
-	OnError                         func(error)
-	OnForwardingFailure             func(string, uint64, string, ForwardingFailureReason, int)
+	AuditSink                 serviceaudit.Sink
+	Lookup                    LookupFunc
+	LookupPool                func(string) ([]PublicURL, LookupReason)
+	ServerHostname            string
+	HandleControl             func(net.Conn) bool
+	RelayHostname             string
+	HandleRelay               func(net.Conn) bool
+	PrivateHostname           string
+	PrivateConnector          *PrivateConnector
+	PrivateConnectors         map[string]*PrivateConnector
+	DirectConnector           *PrivateConnector
+	ServicePortRanges         []tcpport.Range
+	DirectOnly                bool
+	RequireProxyHeader        bool
+	TrustedProxyPeers         []netip.Prefix
+	MaxConnections            int
+	MaxClientHelloConnections int
+	MaxControlConnections     int
+	MaxRelayConnections       int
+	MaxPrivateConnections     int
+	OpenTimeout               time.Duration
+	Metrics                   Metrics
+	Observer                  OperationObserver
+	OpenUsage                 func(string, uint64, netip.Addr, time.Time) UsageConnection
+	ObserveRecovery           func(string, uint64, uint64, time.Time)
+	OnError                   func(error)
+	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)
+	Traffic                   TrafficConfig
+	Pending                   PendingConfig
+	CurrentTrafficRuns        func() (map[TrafficRun]struct{}, bool)
 }
 
 type Server struct {
@@ -100,29 +111,43 @@ type Server struct {
 	openContext context.Context
 	cancelOpens context.CancelFunc
 
-	mu          sync.Mutex
-	connections map[net.Conn]struct{}
-	backends    map[net.Conn]struct{}
-	byPublicURL map[string]int
-	byDenied    map[string]int
-	byChallenge map[string]int
-	pending     int
-	admitted    [connectionKinds]int
-	serving     bool
-	closing     bool
-	done        chan struct{}
-	active      sync.WaitGroup
-	nextBackend atomic.Uint64
+	mu              sync.Mutex
+	connections     map[net.Conn]struct{}
+	backends        map[net.Conn]struct{}
+	byPublicURL     map[string]int
+	byDenied        map[string]int
+	poolRuns        map[string]int
+	pending         int
+	admitted        [connectionKinds]int
+	serving         bool
+	closing         bool
+	done            chan struct{}
+	active          sync.WaitGroup
+	nextBackend     atomic.Uint64
+	traffic         *trafficAdmission
+	pendingVisitors map[string]*visitorAdmission
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || config.Lookup == nil {
+	if listener == nil || !config.DirectOnly && config.Lookup == nil && config.LookupPool == nil || config.DirectOnly && config.DirectConnector == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
+	if config.RequireProxyHeader && len(config.TrustedProxyPeers) == 0 {
+		return nil, errors.New("PROXY metadata requires explicit trusted ingress peers")
+	}
 	if err := admissionDefaults(&config); err != nil {
+		return nil, err
+	}
+	var err error
+	config.Traffic, err = config.Traffic.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	config.Pending, err = config.Pending.Resolve()
+	if err != nil {
 		return nil, err
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
@@ -131,27 +156,54 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.RelayHostname == "" != (config.HandleRelay == nil) {
 		return nil, errors.New("ingress: relay hostname and handler must be configured together")
 	}
-	if config.HandleRelayChallenge != nil && config.RelayHostname == "" {
-		return nil, errors.New("ingress: relay challenge handling requires a relay hostname")
-	}
 	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
 		return nil, errors.New("ingress: control and relay hostnames must be distinct")
 	}
+	if config.PrivateHostname != "" {
+		host, err := naming.CanonicalizeHostname(config.PrivateHostname)
+		if err != nil || host != config.PrivateHostname || host == config.ServerHostname || host == config.RelayHostname {
+			return nil, errors.New("ingress: private infrastructure hostname is invalid or shared with another handler")
+		}
+	}
+	if config.PrivateConnector != nil && (config.PrivateHostname == "" || config.PrivateConnector.config.Hostname != config.PrivateHostname) {
+		return nil, errors.New("ingress: private connector and infrastructure hostname must match")
+	}
+	private := make(map[string]*PrivateConnector, len(config.PrivateConnectors)+1)
+	for hostname, connector := range config.PrivateConnectors {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || canonical != hostname || hostname == config.ServerHostname || hostname == config.RelayHostname || connector != nil && connector.config.Hostname != hostname {
+			return nil, errors.New("ingress: private infrastructure hostname and connector must match")
+		}
+		private[hostname] = connector
+	}
+	if config.PrivateHostname != "" {
+		if existing, ok := private[config.PrivateHostname]; ok && existing != config.PrivateConnector {
+			return nil, errors.New("ingress: private infrastructure hostname has two handlers")
+		}
+		private[config.PrivateHostname] = config.PrivateConnector
+	}
+	config.PrivateConnectors = private
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
+	if metrics, ok := config.Metrics.(*observability.Metrics); ok {
+		openContext = observability.WithMetrics(openContext, metrics)
+	}
+	traffic := newTrafficAdmission(config.Traffic, config.Pending)
+	traffic.currentRuns = config.CurrentTrafficRuns
 	return &Server{
-		listener:    listener,
-		config:      config,
-		openContext: openContext,
-		cancelOpens: cancelOpens,
-		connections: make(map[net.Conn]struct{}),
-		backends:    make(map[net.Conn]struct{}),
-		byPublicURL: make(map[string]int),
-		byDenied:    make(map[string]int),
-		byChallenge: make(map[string]int),
-		done:        make(chan struct{}),
+		listener:        listener,
+		config:          config,
+		openContext:     openContext,
+		cancelOpens:     cancelOpens,
+		connections:     make(map[net.Conn]struct{}),
+		backends:        make(map[net.Conn]struct{}),
+		byPublicURL:     make(map[string]int),
+		byDenied:        make(map[string]int),
+		done:            make(chan struct{}),
+		traffic:         traffic,
+		pendingVisitors: make(map[string]*visitorAdmission),
 	}, nil
 }
 
@@ -241,15 +293,31 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		return nil
 	}
-	_ = public.SetReadDeadline(time.Time{})
-	// fly sends the visitor's original destination in the trusted outer header.
-	// TCP clients can send protocol bytes before any TLS ClientHello.
-	if s.config.RequireProxyHeader && destination.Port() != 443 {
-		finishInspection()
-		if s.config.LookupPort == nil {
+	if s.traffic != nil {
+		release, reason := s.traffic.source(source.Addr())
+		if reason != "" {
+			s.rejectCapacity(reason)
+			s.observeTraffic("source", "capacity")
 			return nil
 		}
-		return s.forwardPort(public, source, destination, reader)
+		s.observeTraffic("source", "accepted")
+		defer release()
+	}
+	_ = public.SetReadDeadline(time.Time{})
+	// native database negotiation is not a TLS ClientHello. select a managed
+	// service by its trusted destination before attempting HTTPS inspection.
+	if s.config.DirectOnly || tcpport.Contains(s.config.ServicePortRanges, int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+		if s.config.DirectConnector == nil || !tcpport.Contains(s.config.ServicePortRanges, int(destination.Port())) {
+			return nil
+		}
+		finishInspection()
+		release, rejected := s.admitClass(privateConnection, "")
+		if release == nil {
+			s.rejectCapacity(rejected)
+			return nil
+		}
+		defer release()
+		return s.config.DirectConnector.AcceptDirect(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := router.InspectClientHello(inspected)
@@ -268,6 +336,18 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	hello.ServerName = serverName
 	finishInspection()
+	if connector, reserved := s.config.PrivateConnectors[hello.ServerName]; reserved {
+		if connector == nil {
+			return nil
+		}
+		release, rejected := s.admitClass(privateConnection, "")
+		if release == nil {
+			s.rejectCapacity(rejected)
+			return nil
+		}
+		defer release()
+		return connector.Accept(s.openContext, &readerConn{Conn: &addressConn{Conn: public, remote: source, local: destination}, reader: hello.Replay()}, source, destination)
+	}
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil
@@ -278,9 +358,6 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	if hello.ServerName == s.config.RelayHostname {
 		handler := s.config.HandleRelay
-		if hello.ACMETLSALPN && s.config.HandleRelayChallenge != nil {
-			handler = s.config.HandleRelayChallenge
-		}
 		if !s.handoff(public, source, destination, hello, relayConnection, handler) {
 			return nil
 		}
@@ -316,6 +393,9 @@ func (s *Server) handoff(
 
 func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.AddrPort, io.Reader, error) {
 	if s.config.RequireProxyHeader {
+		if !proxyproto.Trusted(public.RemoteAddr(), s.config.TrustedProxyPeers) {
+			return netip.AddrPort{}, netip.AddrPort{}, nil, errors.New("untrusted ingress PROXY peer")
+		}
 		header, replay, err := proxyproto.Decode(public)
 		if err != nil {
 			return netip.AddrPort{}, netip.AddrPort{}, nil, err
@@ -334,6 +414,11 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 }
 
 func (s *Server) admit(connection net.Conn) bool {
+	if s.traffic != nil && !s.traffic.process() {
+		s.rejectCapacity("process_connection_rate")
+		s.observeTraffic("source", "capacity")
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.pending >= s.config.MaxClientHelloConnections {

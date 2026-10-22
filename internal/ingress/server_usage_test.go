@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/routebackend"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
@@ -53,71 +54,11 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 }
 
-func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
-	backend := newTLSBackend(t, "acme-tls/1")
-	var opened atomic.Bool
-	config := Config{
-		Lookup: func(string) (PublicURL, LookupReason) {
-			return PublicURL{HashedIPPolicy: hashedPolicyForTest(t, "192.0.2.0/24")}, ""
-		},
-		LookupChallenge: func(host string) ([]routebackend.Backend, LookupReason) {
-			if host != "route.example" {
-				return nil, "missing"
-			}
-			return []routebackend.Backend{backend}, ""
-		},
-		OpenUsage: func(string, uint64, netip.Addr, time.Time) UsageConnection { opened.Store(true); return nil },
-	}
-	_, address := startIngress(t, config)
-	client := ingressClient(t, address, "route.example", "", "acme-tls/1")
-	if err := client.Handshake(); err != nil {
-		t.Fatal(err)
-	}
-	if client.ConnectionState().NegotiatedProtocol != "acme-tls/1" {
-		t.Fatal("ACME ALPN not negotiated")
-	}
-	exchangePing(t, client)
-	if result := ingressAwait(t, backend.result); result.err != nil {
-		t.Fatal(result.err)
-	}
-	if opened.Load() {
-		t.Fatal("challenge opened usage accounting")
-	}
-	ordinary := ingressClient(t, address, "route.example", "")
-	if err := ordinary.Handshake(); err == nil {
-		t.Fatal("ordinary visitor used provisioning route")
-	}
-	if backend.opens.Load() != 1 {
-		t.Fatal("ordinary visitor opened challenge backend")
-	}
-}
-
-func TestIngressReportsUnavailableChallengeBeforeForwarding(t *testing.T) {
-	metrics := new(testMetrics)
-	_, address := startIngress(t, Config{
-		Metrics: metrics,
-		Lookup:  func(string) (PublicURL, LookupReason) { return PublicURL{}, LookupNotFound },
-		LookupChallenge: func(string) ([]routebackend.Backend, LookupReason) {
-			return nil, "missing"
-		},
-	})
-	client := ingressClient(t, address, "route.example", "", "acme-tls/1")
-	if err := client.Handshake(); err == nil {
-		t.Fatal("missing challenge reached a backend")
-	}
-	if got := metrics.challengeMissing.Load(); got != 1 {
-		t.Fatalf("missing challenge rejections = %d, want 1", got)
-	}
-	if got := metrics.challengeUnavailable.Load(); got != 0 {
-		t.Fatalf("duplicate generic challenge rejections = %d", got)
-	}
-}
-
 func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, LookupReason) {
+	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, LookupReason) {
 		lookups.Add(1)
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
@@ -169,7 +110,7 @@ type gatedDeniedBackend struct {
 	*gatedOpenBackend
 }
 
-func (b gatedDeniedBackend) OpenDenied(ctx context.Context, id string) (net.Conn, error) {
+func (b gatedDeniedBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
 	return b.Open(ctx, id)
 }
 
@@ -180,20 +121,20 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	backend := gatedDeniedBackend{&gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("relay unavailable")}}
 	usage := newUsageRecorder()
 	config := Config{
-		RequireProxyHeader: true, MaxDeniedConnections: 2, OpenUsage: usage.Open,
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, OpenUsage: usage.Open,
 		Lookup: func(host string) (PublicURL, LookupReason) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
 			}
-			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend},
+			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []routebackend.Backend{backend},
 				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 		},
 	}
 	_, address := startIngress(t, config)
-	first := ingressClient(t, address, "route.example", "203.0.113.1:40001")
+	first := ingressClient(t, address, "route.example", "198.51.100.1:40001")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
 	ingressAwait(t, backend.entered)
-	second := ingressClient(t, address, "route.example", "203.0.113.2:40002")
+	second := ingressClient(t, address, "route.example", "198.51.100.2:40002")
 	if err := second.Handshake(); err == nil {
 		t.Fatal("denied connection bypassed capacity")
 	}
@@ -204,7 +145,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	for range 2 {
 		observed := ingressAwait(t, usage.opened)
 		ingressAwait(t, observed.closed)
-		if observed.policyDenials != 1 || observed.streams != 0 {
+		if observed.policyDenials != 0 || observed.streams != 0 || observed.publisherFailures+observed.capacityDenials != 1 {
 			t.Fatalf("denial usage = %+v", observed)
 		}
 	}
@@ -228,7 +169,9 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	usage := newUsageRecorder()
 	config := publicURLConfig(backend)
 	config.OpenUsage = usage.Open
-	config.MaxConnections = 2 // one public URL receives half of this ingress budget.
+	config.MaxConnections = 2
+	config.Traffic.Default = trafficlimits.Default()
+	config.Traffic.Default.Connections = 1
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)

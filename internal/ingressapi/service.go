@@ -13,6 +13,13 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 type service struct {
 	store               Store
 	leaseDuration       time.Duration
@@ -41,6 +48,14 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
+	if !serviceapi.ValidIdentifiers(body.IngressPoolId) || body.ServicePorts == nil || len(body.ServicePorts) > 256 {
+		return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress service port inventory is invalid")
+	}
+	for index, port := range body.ServicePorts {
+		if port < 1024 || port > 65535 || index > 0 && port <= body.ServicePorts[index-1] {
+			return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress service port inventory is invalid")
+		}
+	}
 	if !serviceapi.ValidIdentifiers(body.IngressId, body.IngressRunId) {
 		return ingressv1.IngressLease{}, serviceapi.NewProblemError(
 			http.StatusBadRequest, "invalid_request", "Ingress registration identifiers are invalid",
@@ -56,11 +71,21 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 	lease, err := s.store.RegisterIngress(ctx, controlstate.IngressRegistration{
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
+		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
+		PrivateConnectorAddress: optionalString(body.PrivateConnectorAddress), PrivateConnectorTLSServerName: optionalString(body.PrivateConnectorTlsServerName),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)
 	}
 	return ingressLease(lease), nil
+}
+
+func servicePorts(values []int) []int32 {
+	result := make([]int32, len(values))
+	for index, port := range values {
+		result[index] = int32(port)
+	}
+	return result
 }
 
 func (s *service) RenewIngress(

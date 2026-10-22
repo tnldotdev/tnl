@@ -28,14 +28,27 @@ type QUICConnector struct {
 }
 
 func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN)
+}
+
+type PrivateQUICConnector struct {
+	TLSConfig *tls.Config
+	Config    QUICConfig
+}
+
+func (c PrivateQUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, PrivateALPN)
+}
+
+func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string) (Session, error) {
 	if endpoint.Address == "" || endpoint.ServerName == "" {
 		return nil, errors.New("muxsession: QUIC endpoint requires address and server name")
 	}
-	tlsConfig, err := transportTLSConfig(c.TLSConfig, endpoint.ServerName, false)
+	tlsConfig, err := transportTLSConfigForALPN(roots, endpoint.ServerName, false, alpn)
 	if err != nil {
 		return nil, err
 	}
-	config := quicConnectorConfig(c.Config.Config)
+	config := quicConnectorConfig(transport.Config)
 	if config.KeepAlivePeriod == 0 {
 		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
 	}
@@ -43,7 +56,7 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}
-	if err := requireALPN(connection.ConnectionState().TLS); err != nil {
+	if err := requireTransportALPN(connection.ConnectionState().TLS, alpn); err != nil {
 		_ = connection.CloseWithError(1, "unexpected publisher transport protocol")
 		return nil, err
 	}
@@ -57,11 +70,37 @@ type QUICListener struct {
 	packetConn net.PacketConn
 	closeOnce  sync.Once
 	closeErr   error
+	alpn       string
+	protocols  map[string]struct{}
 }
 
 // ListenQUIC starts a QUIC listener. the returned listener never accepts 0-RTT.
 func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
-	serverConfig, err := transportTLSConfig(tlsConfig, "", true)
+	return listenQUICWithALPN(address, tlsConfig, config, ALPN)
+}
+
+func ListenPrivateQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
+	return listenQUICWithALPN(address, tlsConfig, config, PrivateALPN)
+}
+
+// ListenQUICProtocols shares one infrastructure socket across the two tunnel
+// ALPNs. the owner selects the role by the verified handshake's SNI and ALPN.
+func ListenQUICProtocols(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
+	if tlsConfig == nil {
+		return nil, errors.New("muxsession: TLS configuration is required")
+	}
+	serverConfig := tlsConfig.Clone()
+	serverConfig.MinVersion = tls.VersionTLS13
+	serverConfig.NextProtos = []string{ALPN, PrivateALPN}
+	listener, transport, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
+	if err != nil {
+		return nil, fmt.Errorf("muxsession: listen shared QUIC: %w", err)
+	}
+	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, protocols: map[string]struct{}{ALPN: {}, PrivateALPN: {}}}, nil
+}
+
+func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig, alpn string) (*QUICListener, error) {
+	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, alpn)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +108,7 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
 	}
-	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn}, nil
+	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, alpn: alpn}, nil
 }
 
 func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
@@ -133,7 +172,18 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 	if err != nil {
 		return nil, normalizeQUICError(err)
 	}
-	if err := requireALPN(connection.ConnectionState().TLS); err != nil {
+	if l.protocols != nil {
+		if _, ok := l.protocols[connection.ConnectionState().TLS.NegotiatedProtocol]; !ok {
+			_ = connection.CloseWithError(1, "unexpected transport protocol")
+			return nil, errors.New("muxsession: unexpected shared QUIC ALPN")
+		}
+		return &quicSession{connection: connection}, nil
+	}
+	alpn := l.alpn
+	if alpn == "" {
+		alpn = ALPN
+	}
+	if err := requireTransportALPN(connection.ConnectionState().TLS, alpn); err != nil {
 		_ = connection.CloseWithError(1, "unexpected publisher transport protocol")
 		return nil, err
 	}
@@ -176,6 +226,12 @@ func quicConfig(config *quic.Config) *quic.Config {
 
 type quicSession struct {
 	connection *quic.Conn
+}
+
+func (s *quicSession) LocalAddr() net.Addr  { return s.connection.LocalAddr() }
+func (s *quicSession) RemoteAddr() net.Addr { return s.connection.RemoteAddr() }
+func (s *quicSession) TLSConnectionState() tls.ConnectionState {
+	return s.connection.ConnectionState().TLS
 }
 
 func (s *quicSession) OpenStream(ctx context.Context) (Stream, error) {

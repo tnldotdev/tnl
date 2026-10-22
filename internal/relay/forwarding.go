@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -27,6 +28,7 @@ type ForwardingAcceptorConfig struct {
 	Now              func() time.Time
 	Report           func(error)
 	Observer         OperationObserver
+	PrivateRegistry  *PrivateRegistry
 }
 
 // ForwardingAcceptor carries internal visitor streams from ingress to locally
@@ -42,6 +44,7 @@ type ForwardingAcceptor struct {
 	now              func() time.Time
 	report           func(error)
 	observer         OperationObserver
+	private          *PrivateRegistry
 }
 
 func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor, error) {
@@ -68,6 +71,7 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected, streamRejected: config.StreamRejected,
 		now: config.Now, report: config.Report,
 		observer: config.Observer,
+		private:  config.PrivateRegistry,
 	}, nil
 }
 
@@ -116,7 +120,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 					return
 				}
 				group.Go(func() {
-					if err := a.forward(acceptCtx, incoming); err != nil && acceptCtx.Err() == nil {
+					if err := a.forward(acceptCtx, incoming, session); err != nil && acceptCtx.Err() == nil {
 						a.report(err)
 					}
 				})
@@ -134,13 +138,24 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
+	if incoming.PrivateHeader != nil {
+		ctx = observability.ExtractWireTrace(ctx, incoming.PrivateHeader.TraceContext)
+	} else {
+		ctx = observability.ExtractWireTrace(ctx, incoming.Header.TraceContext)
+	}
+	if incoming.PrivateHeader != nil {
+		return a.forwardPrivate(ctx, incoming)
+	}
+	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
+	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
 	var rejected error
 	defer func() {
 		if !opened {
 			finishOpen(errors.Join(retErr, rejected))
+			endSpan(errors.Join(retErr, rejected))
 		}
 	}()
 	if !a.acquireStream() {
@@ -155,8 +170,24 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
 	openVisitor := connection.OpenVisitor
-	if incoming.Header.IPPolicyDenied {
-		openVisitor = connection.OpenDeniedVisitor
+	if incoming.Header.AccessPending {
+		var session *tunnel.Session
+		if len(ingressSessions) > 0 {
+			session = ingressSessions[0]
+		}
+		remove, ok := connection.registerPending(incoming.Header, session, func() bool {
+			// ingress rechecks the current projection on promotion. a copied
+			// deadline from stream open may have been extended by a refresh.
+			current, ok := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
+			return ok && current == connection
+		})
+		if !ok {
+			a.streamRejected("stale_assignment")
+			rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		}
+		defer remove()
+		openVisitor = connection.OpenPendingVisitor
 	}
 	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
 	if err != nil {
@@ -174,8 +205,17 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	}
 	opened = true
 	finishOpen(nil)
+	endSpan(nil)
 	defer incoming.Stream.Close()
-	if _, err := streamcopy.Copy(incoming.Stream, publisher); err != nil {
+	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
+	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	finishForward(err)
+	if observer, ok := a.observer.(interface {
+		ObserveRelayTransfer(string, int64, int64, error)
+	}); ok {
+		observer.ObserveRelayTransfer("public_url", copied.LeftToRight, copied.RightToLeft, err)
+	}
+	if err != nil {
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)
 	}
 	return nil

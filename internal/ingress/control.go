@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/ingresspool"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -43,30 +42,34 @@ type OperationObserver interface {
 }
 
 type ControllerConfig struct {
-	Client          ControlClient
-	RoutingTable    *RoutingTable
-	Registration    ingressv1.IngressRegistration
-	RenewalInterval time.Duration
-	RetryInterval   time.Duration
-	RoutingWait     time.Duration
-	Load            IngressLoadFunc
-	Now             func() time.Time
-	Report          func(error)
-	Observer        OperationObserver
+	// lease established runs before the first lease becomes visible to visitors.
+	// renewal never replaces a process run's accounting or audit identity.
+	LeaseEstablished func(ingressv1.IngressLease) error
+	Client           ControlClient
+	RoutingTable     *RoutingTable
+	Registration     ingressv1.IngressRegistration
+	RenewalInterval  time.Duration
+	RetryInterval    time.Duration
+	RoutingWait      time.Duration
+	Load             IngressLoadFunc
+	Now              func() time.Time
+	Report           func(error)
+	Observer         OperationObserver
 }
 
 // Controller maintains one exact ingress lease and its routing table.
 type Controller struct {
-	client          ControlClient
-	routingTable    *RoutingTable
-	registration    ingressv1.IngressRegistration
-	renewalInterval time.Duration
-	retryInterval   time.Duration
-	routingWait     string
-	load            IngressLoadFunc
-	now             func() time.Time
-	report          func(error)
-	observer        OperationObserver
+	client           ControlClient
+	routingTable     *RoutingTable
+	registration     ingressv1.IngressRegistration
+	renewalInterval  time.Duration
+	retryInterval    time.Duration
+	routingWait      string
+	load             IngressLoadFunc
+	now              func() time.Time
+	report           func(error)
+	observer         OperationObserver
+	leaseEstablished func(ingressv1.IngressLease) error
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
@@ -99,11 +102,12 @@ func NewController(config ControllerConfig) (*Controller, error) {
 			operatorlog.Report("renew ingress lease", failure.ServerControlConnectionFailed, "", err)
 		}
 	}
+	config.Registration.ServicePorts = slices.Clone(config.Registration.ServicePorts)
 	return &Controller{
 		client: config.Client, routingTable: config.RoutingTable, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
-		observer: config.Observer,
+		observer: config.Observer, leaseEstablished: config.LeaseEstablished,
 	}, nil
 }
 
@@ -183,13 +187,12 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	if err := c.register(ctx); err != nil {
 		return err
 	}
-	acknowledge := make(chan struct{}, 1)
-	if err := c.loadSnapshot(ctx, acknowledge); err != nil {
+	if err := c.loadSnapshot(ctx); err != nil {
 		return err
 	}
 	return runUntilEitherStops(ctx,
-		func(cycleCtx context.Context) error { return c.renewLoop(cycleCtx, acknowledge) },
-		func(cycleCtx context.Context) error { return c.routingLoop(cycleCtx, acknowledge) },
+		c.renewLoop,
+		c.routingLoop,
 	)
 }
 
@@ -206,41 +209,20 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 	return c.setLease(lease)
 }
 
-func (c *Controller) renewLoop(ctx context.Context, acknowledge <-chan struct{}) error {
+func (c *Controller) renewLoop(ctx context.Context) error {
 	periodic := time.NewTimer(c.renewalInterval)
 	defer periodic.Stop()
 	acknowledged := c.Lease().RoutingTableRevision
 	for {
-		urgent := false
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-acknowledge:
-			// combine challenge bursts without delaying lease renewal. routing
-			// continues applying pages while this renewal path waits.
-			batch := time.NewTimer(min(100*time.Millisecond, c.renewalInterval))
-			select {
-			case <-ctx.Done():
-				batch.Stop()
-				return nil
-			case <-batch.C:
-				urgent = true
-			case <-periodic.C:
-			}
-			batch.Stop()
 		case <-periodic.C:
-		}
-		select {
-		case <-acknowledge:
-		default:
 		}
 		lease := c.Lease()
 		revision, initialized := c.routingTable.Revision()
 		if !initialized {
 			return ErrRoutingTableNotInitialized
-		}
-		if urgent && revision <= acknowledged {
-			continue
 		}
 		connections := c.load()
 		if connections < 0 {
@@ -273,7 +255,7 @@ func (c *Controller) renewLoop(ctx context.Context, acknowledge <-chan struct{})
 	}
 }
 
-func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{}) error {
+func (c *Controller) routingLoop(ctx context.Context) error {
 	for {
 		revision, initialized := c.routingTable.Revision()
 		if !initialized {
@@ -303,7 +285,7 @@ func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{
 				c.routingStatus.CaughtUp = false
 				c.mu.Unlock()
 				c.markRoutingTableCurrent(false)
-				if err := c.loadSnapshot(ctx, acknowledge); err != nil {
+				if err := c.loadSnapshot(ctx); err != nil {
 					return err
 				}
 				continue
@@ -319,20 +301,10 @@ func (c *Controller) routingLoop(ctx context.Context, acknowledge chan<- struct{
 			return fmt.Errorf("ingress: apply routing-table page: %w", err)
 		}
 		c.routingChecked(page.ThroughRevision, page.NextRevision, !page.More)
-		requestChallengeAcknowledgment(page.Events, acknowledge)
 	}
 }
 
-func requestChallengeAcknowledgment(events []ingressv1.IngressRoutingTableEvent, acknowledge chan<- struct{}) {
-	if slices.ContainsFunc(events, func(event ingressv1.IngressRoutingTableEvent) bool { return event.Kind == ingressv1.ChallengeUpsert }) {
-		select {
-		case acknowledge <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (c *Controller) loadSnapshot(ctx context.Context, acknowledge chan<- struct{}) error {
+func (c *Controller) loadSnapshot(ctx context.Context) error {
 	lease := c.Lease()
 	started := time.Now()
 	snapshot, err := c.client.GetIngressRoutingTableSnapshot(
@@ -356,7 +328,6 @@ func (c *Controller) loadSnapshot(ctx context.Context, acknowledge chan<- struct
 		c.routingUpdateFailed()
 		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
 	}
-	requestChallengeAcknowledgment(snapshot.Entries, acknowledge)
 	c.routingChecked(snapshot.ThroughRevision, snapshot.ThroughRevision, false)
 	c.markRoutingTableCurrent(true)
 	return nil
@@ -422,23 +393,11 @@ func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (
 	return entry, LookupCurrent
 }
 
-func (c *Controller) LookupPortWithReason(pool ingresspool.ID, port uint16, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
+func (c *Controller) LookupAllWithReason(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
+		return nil, LookupIngressUnavailable
 	}
-	return c.routingTable.LookupPortWithReason(pool, port, now)
-}
-
-func (c *Controller) LookupChallenge(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
-	entry, reason := c.LookupChallengeWithReason(canonicalHostname, now)
-	return entry, reason == LookupCurrent
-}
-
-func (c *Controller) LookupChallengeWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
-	if !c.Ready(now) {
-		return ingressv1.IngressRoutingTableEntry{}, LookupIngressUnavailable
-	}
-	return c.routingTable.LookupChallengeWithReason(canonicalHostname, now)
+	return c.routingTable.LookupAllWithReason(host, now)
 }
 
 func (c *Controller) Lease() ingressv1.IngressLease {
@@ -543,6 +502,11 @@ func (c *Controller) setLease(lease ingressv1.IngressLease) error {
 	if c.lease.IngressLeaseRevision == lease.IngressLeaseRevision && c.lease.IngressLeaseRevision != 0 &&
 		(lease.RenewedAt.Before(c.lease.RenewedAt) || c.lease.Draining && !lease.Draining) {
 		return nil
+	}
+	if c.lease.IngressLeaseRevision == 0 && c.leaseEstablished != nil {
+		if err := c.leaseEstablished(cloneIngressLease(lease)); err != nil {
+			return err
+		}
 	}
 	c.lease = cloneIngressLease(lease)
 	return nil

@@ -335,7 +335,7 @@ func operationSamples(t *testing.T, metrics *observability.Metrics, operation, o
 			for _, label := range metric.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
-			if labels["operation"] == operation && labels["outcome"] == outcome {
+			if labels["tnl_operation"] == operation && labels["tnl_outcome"] == outcome {
 				return metric.GetHistogram().GetSampleCount()
 			}
 		}

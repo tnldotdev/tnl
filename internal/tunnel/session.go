@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -20,6 +21,9 @@ type ProtocolError struct {
 }
 
 func (e *ProtocolError) Error() string { return "tunnel: " + string(e.Code) }
+
+// TunnelCode exposes the owned wire classification without parsing Error text.
+func (e *ProtocolError) TunnelCode() tunnelv1.ErrorCode { return e.Code }
 
 // StreamHeaderError belongs to one rejected stream, not its authenticated
 // publisher connection. the acceptor may keep serving other streams.
@@ -39,8 +43,11 @@ type AuthenticateFunc func(context.Context, tunnelv1.Message) error
 
 // Session is an authenticated tunnelv1 session over an arbitrary transport.
 type Session struct {
-	transport muxsession.Session
-	control   muxsession.Stream
+	transport           muxsession.Session
+	control             muxsession.Stream
+	role                tunnelv1.PeerRole
+	publisherConnection *tunnelv1.PublisherConnectionRef
+	privateConnection   *tunnelv1.PrivatePublisherConnectionRef
 
 	closeOnce sync.Once
 	closeErr  error
@@ -86,7 +93,7 @@ func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	if response.Type != tunnelv1.HelloAccepted {
 		return nil, errors.New("tunnel: unexpected hello response")
 	}
-	return &Session{transport: transport, control: control}, nil
+	return authenticatedSession(transport, control, hello), nil
 }
 
 // Accept performs the server side of the shared tunnelv1 handshake.
@@ -137,12 +144,26 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 	}); err != nil {
 		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: write hello response: %w", err)
 	}
-	return &Session{transport: transport, control: control}, hello, nil
+	return authenticatedSession(transport, control, hello), hello, nil
+}
+
+func authenticatedSession(transport muxsession.Session, control muxsession.Stream, hello tunnelv1.Message) *Session {
+	s := &Session{transport: transport, control: control, role: hello.Role}
+	if hello.PublisherConnection != nil {
+		ref := *hello.PublisherConnection
+		s.publisherConnection = &ref
+	}
+	if hello.PrivateConnection != nil {
+		ref := *hello.PrivateConnection
+		s.privateConnection = &ref
+	}
+	return s
 }
 
 // OpenVisitorStream opens a visitor stream and waits for the publisher to
 // accept it. it returns before sending PROXY v2 metadata or visitor bytes.
 func (s *Session) OpenVisitorStream(ctx context.Context, header tunnelv1.VisitorStreamHeader) (muxsession.Stream, error) {
+	header.TraceContext = observability.WireTrace(ctx)
 	return s.openAcknowledgedStream(ctx, "visitor", func(stream muxsession.Stream) error {
 		return tunnelv1.WriteVisitorStreamHeader(stream, header)
 	})
@@ -154,8 +175,16 @@ func (s *Session) OpenInternalForwardingStream(
 	ctx context.Context,
 	header tunnelv1.InternalForwardingHeader,
 ) (muxsession.Stream, error) {
+	header.TraceContext = observability.WireTrace(ctx)
 	return s.openAcknowledgedStream(ctx, "internal forwarding", func(stream muxsession.Stream) error {
 		return tunnelv1.WriteInternalForwardingHeader(stream, header)
+	})
+}
+
+func (s *Session) OpenPrivateForwardingStream(ctx context.Context, header tunnelv1.PrivateForwardingHeader) (muxsession.Stream, error) {
+	header.TraceContext = observability.WireTrace(ctx)
+	return s.openAcknowledgedStream(ctx, "private forwarding", func(stream muxsession.Stream) error {
+		return tunnelv1.WritePrivateForwardingHeader(stream, header)
 	})
 }
 
@@ -264,6 +293,7 @@ func (s *Session) openAcknowledgedStream(
 
 // IncomingVisitorStream is a visitor stream awaiting an accept or reject response.
 type IncomingVisitorStream struct {
+	owner  context.Context
 	Stream muxsession.Stream
 	Header tunnelv1.VisitorStreamHeader
 
@@ -285,6 +315,7 @@ func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStre
 		return nil, &StreamHeaderError{Kind: "visitor", Err: err}
 	}
 	return &IncomingVisitorStream{
+		owner:  ctx,
 		Stream: stream, Header: header, response: incomingStreamResponse{stream: stream},
 	}, nil
 }
@@ -301,8 +332,10 @@ func (r *IncomingVisitorStream) Reject(code tunnelv1.ErrorCode) error {
 
 // IncomingInternalForwardingStream is an ingress stream awaiting acceptance by a relay.
 type IncomingInternalForwardingStream struct {
-	Stream muxsession.Stream
-	Header tunnelv1.InternalForwardingHeader
+	owner         context.Context
+	Stream        muxsession.Stream
+	Header        tunnelv1.InternalForwardingHeader
+	PrivateHeader *tunnelv1.PrivateForwardingHeader
 
 	response incomingStreamResponse
 }
@@ -312,7 +345,7 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 	if err != nil {
 		return nil, err
 	}
-	header, err := tunnelv1.ReadInternalForwardingHeader(stream)
+	header, private, err := tunnelv1.ReadForwardingHeader(stream)
 	if err != nil {
 		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{
 			Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage,
@@ -321,7 +354,8 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
 	}
 	return &IncomingInternalForwardingStream{
-		Stream: stream, Header: header, response: incomingStreamResponse{stream: stream},
+		owner:  ctx,
+		Stream: stream, Header: header, PrivateHeader: private, response: incomingStreamResponse{stream: stream},
 	}, nil
 }
 
@@ -330,6 +364,74 @@ func (r *IncomingInternalForwardingStream) Accept() error {
 }
 
 func (r *IncomingInternalForwardingStream) Reject(code tunnelv1.ErrorCode) error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
+}
+
+// IncomingPrivateForwardingStream belongs to one authenticated private
+// publisher connection. the caller checks the relay lease and PROXY source
+// before permitting application bytes onto the stream.
+type IncomingPrivateForwardingStream struct {
+	owner    context.Context
+	Stream   muxsession.Stream
+	Header   tunnelv1.PrivateForwardingHeader
+	response incomingStreamResponse
+}
+
+func (s *Session) AcceptPrivateForwardingStream(ctx context.Context) (*IncomingPrivateForwardingStream, error) {
+	if s == nil || s.role != tunnelv1.Publisher || s.privateConnection == nil {
+		return nil, errors.New("tunnel: claimed private publisher connection is required")
+	}
+	stream, err := s.acceptStream(ctx, "private forwarding")
+	if err != nil {
+		return nil, err
+	}
+	header, err := tunnelv1.ReadPrivateForwardingHeader(stream)
+	if err != nil {
+		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage})
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "private forwarding", Err: err}
+	}
+	ref := s.privateConnection
+	if header.PrivateServiceID != ref.PrivateServiceID || header.PrivateRunID != ref.PrivateRunID ||
+		header.RunNumber != ref.RunNumber || header.PublisherConnectionID != ref.PublisherConnectionID ||
+		header.ConnectionSlot != ref.ConnectionSlot || header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision ||
+		header.RelayServiceID != ref.RelayServiceID {
+		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.StaleConnectionAssignment})
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "private forwarding", Err: errors.New("claimed assignment changed")}
+	}
+	return &IncomingPrivateForwardingStream{owner: ctx, Stream: stream, Header: header, response: incomingStreamResponse{stream: stream}}, nil
+}
+
+// Context retains the receiver's process context and adopts only the untrusted
+// telemetry parent of this visitor, independently of every other mux stream.
+func (r *IncomingVisitorStream) Context() context.Context {
+	return incomingContext(r.owner, r.Header.TraceContext)
+}
+
+func (r *IncomingInternalForwardingStream) Context() context.Context {
+	if r.PrivateHeader != nil {
+		return incomingContext(r.owner, r.PrivateHeader.TraceContext)
+	}
+	return incomingContext(r.owner, r.Header.TraceContext)
+}
+
+func (r *IncomingPrivateForwardingStream) Context() context.Context {
+	return incomingContext(r.owner, r.Header.TraceContext)
+}
+
+func incomingContext(owner context.Context, tc tunnelv1.TraceContext) context.Context {
+	if owner == nil {
+		owner = context.Background()
+	}
+	return observability.ExtractWireTrace(owner, tc)
+}
+
+func (r *IncomingPrivateForwardingStream) Accept() error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
+}
+
+func (r *IncomingPrivateForwardingStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }
 

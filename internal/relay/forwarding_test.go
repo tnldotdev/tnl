@@ -200,7 +200,8 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 	if cancelRejection {
 		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "canceled", 1)
 	} else {
-		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 1)
+		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "rejected", 1)
+		assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 0)
 	}
 }
 

@@ -69,6 +69,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}}
 	body := ingressv1.IngressRegistration{
 		IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100,
+		IngressPoolId: "ingress-a", ServicePorts: []int{20000, 20001},
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
@@ -78,7 +79,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if got.IngressID != body.IngressId || got.IngressRunID != body.IngressRunId ||
-		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 {
+		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" || len(got.ServicePorts) != 2 || got.ServicePorts[1] != 20001 {
 		t.Fatalf("registration = %#v", got)
 	}
 	if !gotNow.Equal(now) || gotDuration != 30*time.Second {
@@ -88,6 +89,28 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	decodeIngressResponse(t, response, &lease)
 	if lease.IngressId != "ingress-1" || lease.IngressLeaseRevision != 7 {
 		t.Fatalf("lease = %#v", lease)
+	}
+}
+
+func TestIngressRegistrationRequiresExplicitBoundedPortInventory(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		ports []int
+		pool  string
+	}{
+		{"missing ports", nil, "ingress-a"},
+		{"missing pool", []int{20000}, ""},
+		{"duplicate", []int{20000, 20000}, "ingress-a"},
+		{"unsorted", []int{20001, 20000}, "ingress-a"},
+		{"out of range", []int{65536}, "ingress-a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := ingressv1.IngressRegistration{IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: test.pool, ServicePorts: test.ports}
+			response := serveIngressJSON(t, testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("inventory status = %d", response.Code)
+			}
+		})
 	}
 }
 
