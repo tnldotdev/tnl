@@ -1,25 +1,31 @@
 name: Set up pnpm and Node
-description: Install the pinned package manager and selected Node runtime, with one bounded setup retry
+description: Install the project's pinned pnpm, exact Node version, and frozen dependencies
 inputs:
-  runtime:
-    description: Exact Node runtime selection
+  node-version:
+    description: Exact Node version
     required: true
+  cache:
+    description: Cache the pnpm store
+    default: "false"
 runs:
   using: composite
   steps:
-    - name: Install pnpm, Node, and frozen dependencies
-      id: install
-      continue-on-error: true
-      uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+    - name: Install pinned pnpm
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       with:
-        runtime: ${{ inputs.runtime }}
-        cache: true
-        require-lockfile: true
+        run_install: false
+        cache: ${{ inputs.cache }}
 
-    - name: Retry package manager setup once
-      if: steps.install.outcome == 'failure'
-      uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+    - name: Install selected Node version
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
-        runtime: ${{ inputs.runtime }}
-        cache: true
-        require-lockfile: true
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+
+    - name: Install frozen dependencies
+      shell: bash
+      env:
+        PNPM_CONFIG_GLOBAL_SHIMS: '{"node":false}'
+      run: |
+        printf '%s\n' 'PNPM_CONFIG_GLOBAL_SHIMS={"node":false}' >> "$GITHUB_ENV"
+        pnpm install --frozen-lockfile --no-runtime
