@@ -89,10 +89,10 @@ func TestPrivateServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testin
 	if _, err := client.StartManagedServiceRun(ctx, "psvc_service", "psrun_one", "publisher-token", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.HeartbeatPrivateServiceRun(ctx, "psvc_service", "psrun_one", credentials.PublishRunToken("run-token")); err != nil {
+	if _, err := client.HeartbeatPrivateServiceRun(ctx, "psvc_service", "psrun_one", credentials.ManagedRunToken("run-token")); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ClosePrivateServiceRun(ctx, "psvc_service", "psrun_one", credentials.PublishRunToken("run-token")); err != nil {
+	if err := client.ClosePrivateServiceRun(ctx, "psvc_service", "psrun_one", credentials.ManagedRunToken("run-token")); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 7 {

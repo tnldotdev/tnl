@@ -39,17 +39,33 @@ func TestFeedbackConversationTransitions(t *testing.T) {
 			{FeedbackOpen, FeedbackThreadReopened, ""},
 			{FeedbackResolved, FeedbackThreadResolved, ""},
 		} {
-			got, err := nextFeedbackState(transition.state, transition.event, actor)
+			got, err := transition.state.transition(transition.event)
 			if got != transition.want || (transition.want == "" && !errors.Is(err, ErrFeedbackState)) || (transition.want != "" && err != nil) {
 				t.Fatalf("%s: %s + %s = %s, %v", actor, transition.state, transition.event, got, err)
 			}
 		}
 	}
-	if got, err := nextFeedbackState(FeedbackOpen, FeedbackUpdate, "implementer"); err != nil || got != FeedbackOpen {
+	if got, err := FeedbackOpen.transition(FeedbackUpdate); err != nil || got != FeedbackOpen {
 		t.Fatalf("source update changed state: %s, %v", got, err)
 	}
 	if validFeedbackEventPayload(AppendFeedbackRequest{Type: FeedbackUpdate, Text: "forged", SourceState: feedbackTestSource(t), Actor: FeedbackActor{Kind: "reviewer"}}) {
 		t.Fatal("preview access can forge an implementer source update")
+	}
+}
+
+func TestFeedbackAuthorizedActorPermissions(t *testing.T) {
+	for _, event := range []FeedbackEventType{FeedbackCreated, FeedbackReply, FeedbackUpdate, FeedbackThreadResolved, FeedbackThreadReopened, "unknown"} {
+		if (authorizedFeedbackActor{}).permits(event) {
+			t.Fatalf("unresolved actor authorized %s", event)
+		}
+		reviewer := authorizedFeedbackActor{kind: feedbackReviewer, permissions: reviewerFeedbackPermissions}
+		implementer := authorizedFeedbackActor{kind: feedbackImplementer, permissions: implementerFeedbackPermissions}
+		if reviewer.permits(event) != (event != FeedbackUpdate && event != "unknown") || implementer.permits(event) != (event != FeedbackCreated && event != "unknown") {
+			t.Fatalf("actor operation permissions crossed for %s", event)
+		}
+	}
+	if _, err := FeedbackThreadState("unknown").transition(FeedbackReply); !errors.Is(err, ErrFeedbackState) {
+		t.Fatal("unknown persisted thread state accepted", err)
 	}
 }
 

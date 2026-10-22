@@ -42,7 +42,7 @@ func (d *Database) SetTeamFeedbackPolicy(ctx context.Context, identityID, teamID
 	}
 	return TeamFeedbackPolicy{Authors: authors}, tx.Commit(ctx)
 }
-func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamID string, actor FeedbackActor) error {
+func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamID string, actor authorizedFeedbackActor) error {
 	authors, err := q.VisitorFeedbackPolicy(ctx, teamID)
 	if err != nil {
 		return err
@@ -50,11 +50,11 @@ func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamI
 	if authors == "anyone" {
 		return nil
 	}
-	if actor.IdentityID == "" {
+	if actor.identityID == "" {
 		return ErrVisitorSignIn
 	}
 	if authors == "team_members" {
-		_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: teamID, IdentityID: actor.IdentityID})
+		_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: teamID, IdentityID: actor.identityID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrFeedbackAccess
 		}
@@ -65,7 +65,7 @@ func requireFeedbackAuthor(ctx context.Context, q *controlstatedb.Queries, teamI
 
 // a guest demo has no team feedback policy. its exact URL/run and visitor IP
 // checks still apply, but its feedback toolbar permits a named guest report.
-func requireFeedbackAuthorForURL(ctx context.Context, q *controlstatedb.Queries, teamID, urlID string, actor FeedbackActor) error {
+func requireFeedbackAuthorForURL(ctx context.Context, q *controlstatedb.Queries, teamID, urlID string, actor authorizedFeedbackActor) error {
 	if _, err := q.GuestForPublicURL(ctx, urlID); err == nil {
 		return nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {

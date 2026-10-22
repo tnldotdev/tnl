@@ -97,6 +97,49 @@ func (q *Queries) GetDNSChallengeContext(ctx context.Context, arg GetDNSChalleng
 	return i, err
 }
 
+const getDNSChallengeSubject = `-- name: GetDNSChallengeSubject :one
+SELECT
+    COALESCE(orders.public_url_id, '')::text AS public_url_id,
+    COALESCE(orders.publish_run_id, '')::text AS publish_run_id,
+    COALESCE(orders.publish_run_number, 0)::bigint AS publish_run_number,
+    COALESCE(orders.private_service_id, '')::text AS private_service_id,
+    COALESCE(orders.private_run_id, '')::text AS private_run_id,
+    COALESCE(orders.private_run_number, 0)::bigint AS private_run_number
+FROM control.acme_orders AS orders
+JOIN control.acme_authorizations AS authorizations ON authorizations.order_id = orders.id
+WHERE authorizations.id = $1
+  AND authorizations.challenge_type = 'dns-01'
+  AND (orders.public_url_id = $2 OR orders.private_service_id = $2)
+`
+
+type GetDNSChallengeSubjectParams struct {
+	AuthorizationID string
+	OwnerID         string
+}
+
+type GetDNSChallengeSubjectRow struct {
+	PublicURLID      string
+	PublishRunID     string
+	PublishRunNumber int64
+	PrivateServiceID string
+	PrivateRunID     string
+	PrivateRunNumber int64
+}
+
+func (q *Queries) GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error) {
+	row := q.db.QueryRow(ctx, getDNSChallengeSubject, arg.AuthorizationID, arg.OwnerID)
+	var i GetDNSChallengeSubjectRow
+	err := row.Scan(
+		&i.PublicURLID,
+		&i.PublishRunID,
+		&i.PublishRunNumber,
+		&i.PrivateServiceID,
+		&i.PrivateRunID,
+		&i.PrivateRunNumber,
+	)
+	return i, err
+}
+
 const listDNSChallengePresentations = `-- name: ListDNSChallengePresentations :many
 SELECT challenge_digest, state
 FROM control.acme_authorizations

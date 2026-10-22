@@ -90,7 +90,7 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 		if err != nil {
 			return err
 		}
-		saved, found, err := profile.PublisherSigningIdentity(ctx, "default-namespace")
+		saved, found, err := profile.SelectedPublisherIdentity(ctx, "default_namespace", "")
 		if err != nil {
 			return err
 		}
@@ -98,7 +98,7 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 			return nativeauth.ErrSetupRequired
 		}
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicValue, &identity) != nil || identity.ClientId == "" || saved.ID != identity.ClientId || identity.Namespace == nil || identity.Kind != "namespace" {
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId == "" || saved.ID != identity.ClientId || identity.Namespace == nil || identity.Kind != "namespace" {
 			return nativeauth.ErrScope
 		}
 		result = publisherCurrentResult{Source: "local profile", ControlURL: server, PublisherID: identity.ClientId, GrantID: identity.GrantId, Scope: *identity.Namespace}

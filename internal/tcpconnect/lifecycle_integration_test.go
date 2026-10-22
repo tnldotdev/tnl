@@ -423,7 +423,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if _, err := f.client.PreparePrivateServiceRun(conflict, f.service.Id, "different-invocation", token); !errors.Is(err, controlclient.ErrStatusConflict) {
 		t.Fatalf("a distinct preparation did not return its permanent conflict: %v", err)
 	}
-	if err := f.client.ClosePrivateServiceRun(t.Context(), f.service.Id, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken)); err != nil {
+	if err := f.client.ClosePrivateServiceRun(t.Context(), f.service.Id, setup.PrivateRunId, credentials.ManagedRunToken(setup.RunToken)); err != nil {
 		t.Fatal(err)
 	}
 }

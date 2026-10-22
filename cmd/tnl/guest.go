@@ -174,29 +174,44 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 		return nil, err
 	}
 	defer lock.Close()
-	saved, found, err := store.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := store.SelectedPublisherIdentity(ctx, "project", scope)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		native, _, err := nativeauth.LoadNative(ctx, store, control, authority, saved.ID)
+		if err != nil {
+			return nil, err
+		}
+		return native, native.SelectRoute(route)
+	}
+	pending, found, err := store.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		_, private, err := ed25519.GenerateKey(rand.Reader)
+		public, private, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: route.Id, PrivateValue: private, PublicValue: []byte("{}")}
-		if err := store.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		pending = clientstate.PendingPublisherEnrollment{EnrollmentID: route.Id, SelectionKind: "project", SelectionKey: scope, PublicKey: public, SigningKey: private, ExpiresAt: time.Now().Add(24 * time.Hour)}
+		if err := store.SavePendingPublisherEnrollment(ctx, pending); err != nil {
 			return nil, err
 		}
 	}
-	if len(saved.PrivateValue) != ed25519.PrivateKeySize {
+	if len(pending.SigningKey) != ed25519.PrivateKeySize || !pending.ExpiresAt.After(time.Now()) {
 		return nil, nativeauth.ErrScope
 	}
-	private := ed25519.PrivateKey(saved.PrivateValue)
-	var identity authorityv1.PublisherEnrollmentResult
-	if err := json.Unmarshal(saved.PublicValue, &identity); err != nil {
-		return nil, err
+	private := ed25519.PrivateKey(pending.SigningKey)
+	if !private.Equal(ed25519.NewKeyFromSeed(private.Seed())) || !private.Public().(ed25519.PublicKey).Equal(ed25519.PublicKey(pending.PublicKey)) {
+		return nil, nativeauth.ErrScope
 	}
-	if identity.ClientId == "" {
+	var identity authorityv1.PublisherEnrollmentResult
+	if len(pending.ResultJSON) != 0 {
+		if err := json.Unmarshal(pending.ResultJSON, &identity); err != nil {
+			return nil, err
+		}
+	} else {
 		issued, err := bootstrap.EnrollGuestPublisher(ctx, route.Id, private.Public().(ed25519.PublicKey))
 		if err != nil {
 			return nil, err
@@ -205,12 +220,8 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 			return nil, failure.Wrap("enroll guest publisher", failure.ServerResponseInvalid, nativeauth.ErrScope)
 		}
 		identity = authorityv1.PublisherEnrollmentResult{ClientId: issued.ClientId, KeyId: issued.KeyId, GrantId: issued.GrantId, TeamId: issued.TeamId, PublicUrlId: &issued.PublicUrlId, Kind: authorityv1.SavedUrl}
-		saved.ID = identity.ClientId
-		saved.PublicValue, err = json.Marshal(identity)
+		pending.ResultJSON, err = json.Marshal(identity)
 		if err != nil {
-			return nil, err
-		}
-		if err := store.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
 			return nil, err
 		}
 	}
@@ -218,5 +229,14 @@ func enrollGuestNativeWithClients(ctx context.Context, store *clientstate.Store,
 	if err != nil {
 		return nil, err
 	}
-	return native, native.SelectRoute(route)
+	if err := native.SelectRoute(route); err != nil {
+		return nil, err
+	}
+	if err := store.RecordPublisherEnrollmentResult(ctx, pending.EnrollmentID, pending.ResultJSON); err != nil {
+		return nil, err
+	}
+	if err := store.PromotePublisherEnrollment(ctx, pending.EnrollmentID, clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: pending.ResultJSON, SigningKey: private}); err != nil {
+		return nil, err
+	}
+	return native, nil
 }

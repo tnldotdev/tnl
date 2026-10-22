@@ -583,7 +583,7 @@ func startManagedHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, ap
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, b *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+		done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: native.ManagedRunControl(), State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: target, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, b *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
 			return b.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 		}})
 	}()

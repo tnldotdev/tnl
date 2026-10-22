@@ -93,7 +93,7 @@ func TestIntegrationManagedTLSProductionPath(t *testing.T) {
 			publisherCtx, stopPublisher := context.WithCancel(t.Context())
 			publisherReady, publisherDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				publisherDone <- privatepublisher.Publish(publisherCtx, privatepublisher.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: targetAddress, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
+				publisherDone <- privatepublisher.Publish(publisherCtx, privatepublisher.RunConfig{Control: native.ManagedRunControl(), State: f.identity.state, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: targetAddress, Metadata: nativeauth.PrivateServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, Connect: func(ctx context.Context, bound *privatepublisher.Bound, slot uint8) (privatepublisher.SlotSession, error) {
 					return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
 				}})
 			}()

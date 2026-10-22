@@ -234,7 +234,7 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 		return controlv1.PublishRunHeartbeat{}, controlclient.ErrUnavailable
 	}}
 	response, observed, err := heartbeatResponseOnce(
-		t.Context(), control, "session_1", 1, "session-token", time.Now().Add(time.Minute),
+		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(time.Minute),
 	)
 	if err != nil || observed || response.PolicyDenials != 0 {
 		t.Fatalf("fallback = %#v, observed = %t, error = %v", response, observed, err)
@@ -249,15 +249,15 @@ func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
 	// alone is not accepted until the session validates its connection updates.
 	observability.PublisherLease(ctx, confirmed)
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed}}, nil
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{Id: "run-secret", PublishRunNumber: 1, ExpiresAt: confirmed}}, nil
 	}}
-	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || !observed {
+	if _, observed, err := heartbeatResponseOnce(ctx, heartbeatTestAuthority(control, "run-secret", "token-secret"), confirmed); err != nil || !observed {
 		t.Fatal(observed, err)
 	}
 	control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed.Add(time.Hour)}}, controlclient.ErrUnavailable
 	}
-	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || observed {
+	if _, observed, err := heartbeatResponseOnce(ctx, heartbeatTestAuthority(control, "run-secret", "token-secret"), confirmed); err != nil || observed {
 		t.Fatal(observed, err)
 	}
 	families, err := metrics.Gather()
@@ -303,7 +303,7 @@ func TestHeartbeatCallDeadlineUsesConfirmedSessionUntilExpiry(t *testing.T) {
 					return controlv1.PublishRunHeartbeat{}, ctx.Err()
 				}}
 				expiresAt := time.Now().Add(test.expires)
-				response, observed, err := heartbeatResponseOnce(t.Context(), control, "session_1", 1, "session-token", expiresAt)
+				response, observed, err := heartbeatResponseOnce(t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), expiresAt)
 				if !errors.Is(err, test.wantErr) || observed || !response.PublishRun.ExpiresAt.Equal(expiresAt) {
 					t.Fatalf("fallback = %#v, observed = %t, error = %v; want %v", response, observed, err, test.wantErr)
 				}
@@ -316,7 +316,7 @@ func TestHeartbeatDoesNotHideUnrelatedDeadline(t *testing.T) {
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 		return controlv1.PublishRunHeartbeat{}, context.DeadlineExceeded
 	}}
-	_, _, err := heartbeatResponseOnce(t.Context(), control, "session_1", 1, "session-token", time.Now().Add(time.Minute))
+	_, _, err := heartbeatResponseOnce(t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(time.Minute))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unrelated heartbeat deadline = %v, want deadline exceeded", err)
 	}
@@ -327,7 +327,7 @@ func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
 		return controlv1.PublishRunHeartbeat{}, controlclient.ErrUnavailable
 	}}
 	_, _, err := heartbeatResponseOnce(
-		t.Context(), control, "session_1", 1, "session-token", time.Now().Add(-time.Second),
+		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(-time.Second),
 	)
 	if !errors.Is(err, controlclient.ErrStatusConflict) {
 		t.Fatalf("heartbeat error = %v", err)
@@ -341,7 +341,7 @@ func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 			return controlv1.PublishRunHeartbeat{
-				PublishRun:           controlv1.PublishRun{ExpiresAt: time.Now().Add(time.Minute)},
+				PublishRun:           controlv1.PublishRun{Id: "publish_run_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Minute)},
 				PublisherConnections: []controlv1.ConnectionAssignment{{PublisherConnectionId: "publisher_connection_1"}},
 			}, nil
 		}}
@@ -356,7 +356,7 @@ func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
 		go func() {
 			defer close(joined)
 			done <- heartbeatSessionAfterUpdate(
-				ctx, control, "publish_run_1", 1, "publish-run-token", time.Now().Add(time.Minute),
+				ctx, heartbeatTestAuthority(control, "publish_run_1", "publish-run-token"), time.Now().Add(time.Minute),
 				func([]controlv1.ConnectionAssignment) error {
 					close(updateStarted)
 					<-releaseUpdate

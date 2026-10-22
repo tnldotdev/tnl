@@ -185,14 +185,14 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 	if _, err := n.Access(ctx); err != nil {
 		return err
 	}
-	saved, found, err := session.store.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
+	saved, found, err := session.store.PublisherIdentity(ctx, identity.ClientId)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return nativeauth.ErrScope
 	}
-	fCred, err := credentialfile.New(session.authenticated.ServerEndpoint, identity, saved.PrivateValue)
+	fCred, err := credentialfile.New(session.authenticated.ServerEndpoint, identity, saved.SigningKey)
 	if err != nil {
 		return err
 	}

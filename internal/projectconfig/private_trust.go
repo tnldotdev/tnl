@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 )
 
@@ -50,7 +50,7 @@ func (p Project) captureTrust(ctx context.Context, cache *privatetrust.Cache, na
 		return &snapshot, err
 	}
 	if config.Protocol(service) == "http" || config.Protocol(service) == "kubernetes" {
-		origin, err := localproxy.ParseCanonicalTarget(target)
+		origin, err := targetsyntax.ParseCanonicalTarget(target)
 		if err != nil || origin.Scheme != "https" {
 			return nil, fmt.Errorf("service %q target TLS requires a resolved HTTPS origin", name)
 		}

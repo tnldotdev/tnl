@@ -67,7 +67,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 					installed = true
 					return nil
 				}
-				if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); !errors.Is(err, controlclient.ErrUnavailable) {
+				if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); !errors.Is(err, controlclient.ErrUnavailable) {
 					t.Fatalf("injected response loss = %v", err)
 				}
 				if !lost {
@@ -82,7 +82,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 				}
 				_ = route.Close()
 				route = certificateTestPublicURL(t, "route.example", control.setup.CertificatePlan)
-				material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+				material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 				if err != nil || material.IssuanceID == "" || !installed {
 					t.Fatalf("response-loss recovery: server_installed=%t error=%v", installed, err)
 				}
@@ -111,7 +111,7 @@ func TestCertificateTransactionPendingPollingIsBounded(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 7*time.Second)
 		defer cancel()
-		_, err := issueInitialCertificate(ctx, control, route, state, control.setup)
+		_, err := issueInitialCertificate(ctx, testRunAuthority(t, control, control.setup), route, state)
 		if !errors.Is(err, context.DeadlineExceeded) || calls != 3 {
 			t.Fatalf("pending polling: calls=%d error=%v; want 3 calls then deadline", calls, err)
 		}
@@ -141,11 +141,11 @@ func TestCertificateTransactionTerminalDNSOrderAfterLostResponse(t *testing.T) {
 				}
 				return issuance, nil
 			}
-			_, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+			_, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 			if !errors.Is(err, controlclient.ErrUnavailable) {
 				t.Fatalf("lost ready response = %v", err)
 			}
-			_, err = attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+			_, err = attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 			var terminalError *terminalCertificateIssuanceError
 			if !errors.As(err, &terminalError) {
 				t.Fatalf("terminal response = %v", err)
@@ -179,7 +179,7 @@ func TestInitialCertificateTerminalFailureIsBounded(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
-		_, err := issueInitialCertificate(ctx, control, route, state, control.setup)
+		_, err := issueInitialCertificate(ctx, testRunAuthority(t, control, control.setup), route, state)
 		var terminal *terminalCertificateIssuanceError
 		if !errors.As(err, &terminal) || calls != 2 {
 			t.Fatalf("terminal issuance retry: calls=%d error=%v, want 2 calls and terminal failure", calls, err)
@@ -189,7 +189,7 @@ func TestInitialCertificateTerminalFailureIsBounded(t *testing.T) {
 
 func TestInitialCertificateUsesCurrentMaterialBeforeContendedLock(t *testing.T) {
 	control, firstPublicURL, state := newCertificateTransactionTest(t)
-	material, err := attemptCertificateTransaction(t.Context(), control, firstPublicURL, state, control.setup, false)
+	material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), firstPublicURL, state, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestInitialCertificateUsesCurrentMaterialBeforeContendedLock(t *testing.T) 
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := issueInitialCertificate(ctx, control, route, state, setup)
+		_, err := issueInitialCertificate(ctx, testRunAuthority(t, control, setup), route, state)
 		done <- err
 	}()
 	select {
@@ -236,7 +236,7 @@ func TestInitialCertificateUsesCurrentMaterialBeforeContendedLock(t *testing.T) 
 func TestCertificateRenewalPreservesOldCertificateUntilExpiration(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		control, route, state := newCertificateTransactionTest(t)
-		initial, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+		initial, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -253,7 +253,7 @@ func TestCertificateRenewalPreservesOldCertificateUntilExpiration(t *testing.T) 
 			i.State, i.CertificatePem, i.NotBefore, i.NotAfter = controlv1.CertificateIssuanceStatePending, nil, nil, nil
 			return i, err
 		}
-		_, err = attemptCertificateTransaction(t.Context(), control, route, state, control.setup, true)
+		_, err = attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, true)
 		var pending *pendingCertificateIssuanceError
 		if !errors.As(err, &pending) {
 			t.Fatalf("pending renewal = %v", err)
@@ -281,13 +281,13 @@ func TestCertificateRenewalAcknowledgementPreservesCurrent(t *testing.T) {
 		t.Run(failure.Error(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				control, route, cache := newCertificateTransactionTest(t)
-				initial, err := attemptCertificateTransaction(t.Context(), control, route, cache, control.setup, false)
+				initial, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, cache, false)
 				if err != nil {
 					t.Fatal(err)
 				}
 				time.Sleep(time.Until(initial.RenewAt))
 				control.installed = func(string, uint64, string, time.Time) error { return failure }
-				if _, err := attemptCertificateTransaction(t.Context(), control, route, cache, control.setup, true); !errors.Is(err, failure) {
+				if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, cache, true); !errors.Is(err, failure) {
 					t.Fatalf("lost renewal ACK: %v", err)
 				}
 				current, found, err := cache.Current(t.Context(), "route.example")
@@ -306,7 +306,7 @@ func TestCertificateRenewalAcknowledgementPreservesCurrent(t *testing.T) {
 					return controlv1.CertificateIssuance{}, errors.New("staged renewal requested another issuance")
 				}
 				control.installed = nil
-				material, err := attemptCertificateTransaction(t.Context(), control, route, cache, control.setup, true)
+				material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, cache, true)
 				if err != nil || material.IssuanceID != staged.IssuanceID {
 					t.Fatalf("staged renewal did not recover: %v", err)
 				}

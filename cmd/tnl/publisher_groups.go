@@ -139,7 +139,7 @@ func runFixedPublisherGroups(ctx context.Context, flags publisherServeCommand, d
 		if status.Failure != "" {
 			fields = append(fields, clioutput.Field{Label: "failure", Value: status.Failure})
 		}
-		return writeHumanFrame(diagnostics, "tnl publisher serve", status.State, "", clioutput.Fields(fields...))
+		return writeHumanFrame(diagnostics, "tnl publisher serve", string(status.State), "", clioutput.Fields(fields...))
 	}}
 	return engine.Serve(ctx)
 }

@@ -117,7 +117,7 @@ func TestFileProtectorNeverReplacesMissingInvalidOrWrongKey(t *testing.T) {
 	}
 }
 
-func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
+func TestEncryptedSessionCertificateIdentityAndJobRegistryReopen(t *testing.T) {
 	database := openFileDatabase(t, filepath.Join(t.TempDir(), "state"))
 	store, err := database.Server(t.Context(), "https://server.example")
 	if err != nil {
@@ -143,8 +143,8 @@ func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := PublisherSigningIdentity{ID: "publisher-1", PublicValue: []byte(`{"client_id":"publisher-1"}`), PrivateValue: []byte("opaque-signing-private-value")}
-	if err := store.SavePublisherSigningIdentity(t.Context(), "owner-url:project-a", identity); err != nil {
+	identity := PublisherIdentity{ID: "publisher-1", PublicDocument: []byte(`{"client_id":"publisher-1"}`), SigningKey: []byte("opaque-signing-private-value")}
+	if err := store.InstallPublisherIdentity(t.Context(), identity, PublisherSelection{Kind: "project", Key: "owner-url:project-a"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.SavePublisherJobRegistry(t.Context(), []byte("opaque-system-credential")); err != nil {
@@ -183,15 +183,15 @@ func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
 	if err != nil || !gotPending.Key.Equal(pending.Key) {
 		t.Fatalf("certificate reopen: %v", err)
 	}
-	gotIdentity, found, err := store.PublisherSigningIdentity(t.Context(), "owner-url:project-a")
-	if err != nil || !found || !bytes.Equal(gotIdentity.PrivateValue, identity.PrivateValue) {
+	gotIdentity, found, err := store.SelectedPublisherIdentity(t.Context(), "project", "owner-url:project-a")
+	if err != nil || !found || gotIdentity.ID != identity.ID || !bytes.Equal(gotIdentity.PublicDocument, identity.PublicDocument) || !bytes.Equal(gotIdentity.SigningKey, identity.SigningKey) {
 		t.Fatalf("identity reopen: %v, %v", found, err)
 	}
 	value, found, err := reopened.PublisherJobRegistry(t.Context())
 	if err != nil || !found || string(value) != "opaque-system-credential" {
 		t.Fatalf("system state reopen: %v, %v", found, err)
 	}
-	if err := reopened.RemoveSystemState(t.Context(), "publisher-jobs-v1"); err != nil {
+	if err := reopened.RemovePublisherJobRegistry(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := reopened.PublisherJobRegistry(t.Context()); err != nil || found {

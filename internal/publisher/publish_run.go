@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -46,23 +46,12 @@ func runSession(
 	setup controlv1.PublishRunSetup,
 	ready func() error,
 ) (result error) {
-	if setup.PublicUrl.Id == "" || setup.PublishRun.Id == "" || setup.PublishRun.PublishRunNumber <= 0 || setup.PublishRunToken == "" {
-		return errors.New("publisher: server returned incomplete publish run setup")
-	}
-	if err := validateRouteIdentity(setup.PublicUrl, config); err != nil {
+	authority, err := bindPublicRun(config, setup)
+	if err != nil {
 		return err
 	}
-	if setup.PublicUrl.CanonicalHostname != config.Hostname || setup.PublishRun.PublicUrlId != setup.PublicUrl.Id ||
-		setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
-		return errors.New("publisher: server returned a different publish run")
-	}
-	if setup.PublicUrl.ServiceProtocol != controlv1.Http {
-		return errors.New("publisher: public HTTPS requires a certificate plan; private services use private publisher runs")
-	}
-	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
-	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
-		return errors.New("publisher: server returned an invalid certificate plan")
-	}
+	plan := authority.plan
+	observability.PublisherLease(ctx, setup.PublishRun.ExpiresAt)
 	setup.CertificatePlan = plan
 	config.PublisherID, err = configuredPublisherID(config)
 	if err != nil {
@@ -72,11 +61,8 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	publishRunToken := credentials.PublishRunToken(setup.PublishRunToken)
-	if _, _, err := credentials.ParsePublishRunToken(publishRunToken); err != nil {
-		return errors.New("publisher: server returned invalid publish run token")
-	}
-	version := uint64(setup.PublishRun.PublishRunNumber)
+	publishRunToken := authority.token
+	version := authority.identity.Number
 	var auditSink serviceaudit.Sink
 	if reporter, ok := config.Control.(interface {
 		ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
@@ -127,7 +113,7 @@ func runSession(
 		return err
 	}
 	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
-		sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, setup.PublishRun.ExpiresAt,
+		sessionCtx, authority, setup.PublishRun.ExpiresAt,
 	)
 	if err != nil {
 		cancelSession(nil)
@@ -208,7 +194,7 @@ func runSession(
 		defer func() { cancelSession(nil); <-refreshDone }()
 	}
 	var material clientstate.Material
-	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
+	identity := authority.identity
 	var readiness *ReadinessProof
 	if config.ReadinessProof != nil {
 		readiness = config.ReadinessProof(identity)
@@ -286,7 +272,7 @@ func runSession(
 		}
 	})
 	defer stopAdmissions()
-	connections, err := newPublisherConnectionManager(transportCtx, publisherConnectionManagerConfig{
+	connections, err := authority.connections(transportCtx, publisherConnectionManagerConfig{
 		QUICConnector: config.QUICConnector, TCPConnector: config.TCPConnector,
 		FallbackDelay: config.FallbackDelay, ReconnectDelay: activationRetry,
 		Report: func(err error) {
@@ -294,7 +280,7 @@ func runSession(
 				config.Logf("%v", err)
 			}
 		},
-	}, route, setup.PublishRun.Id, setup.PublicUrl.Id, version)
+	}, route)
 	if err != nil {
 		cancelTransports()
 		return err
@@ -339,7 +325,7 @@ func runSession(
 	}
 	go func() {
 		err := heartbeatSessionAfterUpdate(
-			sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, heartbeat.PublishRun.ExpiresAt,
+			sessionCtx, authority, heartbeat.PublishRun.ExpiresAt,
 			connections.Update, observePolicyDenials, config.heartbeatInterval,
 			observePolicy,
 		)
@@ -359,7 +345,7 @@ func runSession(
 	if err := progress("certificate"); err != nil {
 		return err
 	}
-	material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
+	material, err = issueInitialCertificate(ctx, authority, route, state)
 	if err != nil {
 		return err
 	}
@@ -377,25 +363,23 @@ func runSession(
 		}
 	default:
 	}
-	if err := confirmPublishRunReady(ctx, config.Control, setup, route, publishRunToken, ready); err != nil {
+	if err := confirmPublishRunReady(ctx, authority, route, ready); err != nil {
 		return err
 	}
 	cancelProvisioning()
-	return runCertificateRenewals(ctx, config, setup, route, state, material)
+	return runCertificateRenewals(ctx, config, authority, route, state, material)
 }
 
 func confirmPublishRunReady(
 	ctx context.Context,
-	control PublicURLControlClient,
-	setup controlv1.PublishRunSetup,
+	authority publicRunAuthority,
 	route *PublicURLServer,
-	token credentials.PublishRunToken,
 	ready func() error,
 ) error {
 	for {
 		confirmed := false
 		err := route.withValidCertificate(func() error {
-			if err := control.MarkPublishRunReady(ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), token); err != nil {
+			if err := authority.markReady(ctx); err != nil {
 				return err
 			}
 			confirmed = true
@@ -497,7 +481,7 @@ func (s *publishRunCleanup) drain(result error) error {
 func runCertificateRenewals(
 	ctx context.Context,
 	config Config,
-	setup controlv1.PublishRunSetup,
+	authority publicRunAuthority,
 	route *PublicURLServer,
 	state *clientstate.CertificateCache,
 	material clientstate.Material,
@@ -528,7 +512,7 @@ func runCertificateRenewals(
 				renewalLock = lock
 			}
 			replacement, renewalErr := attemptCertificateTransaction(
-				ctx, config.Control, route, state, setup, true,
+				ctx, authority, route, state, true,
 			)
 			if renewalErr == nil {
 				material = replacement

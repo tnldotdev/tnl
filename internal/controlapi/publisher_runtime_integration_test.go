@@ -64,10 +64,15 @@ func (c *runtimeHTTPTransport) set(h http.Handler, peer, source string) {
 // existing heartbeat's runtime renewal while keeping the real signed HTTP/DB path.
 type runtimeNativeControl struct{ *controlclient.Client }
 
+var _ interface {
+	HeartbeatPrivateServiceRun(context.Context, string, string, credentials.ManagedRunToken) (controlv1.PrivateServiceRunState, error)
+	HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.ManagedRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error)
+} = (*runtimeNativeControl)(nil)
+
 func (*runtimeNativeControl) HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 	return controlv1.PublishRunHeartbeat{}, nil
 }
-func (*runtimeNativeControl) HeartbeatPrivateServiceRun(context.Context, string, string, credentials.PublishRunToken) (controlv1.PrivateServiceRunState, error) {
+func (*runtimeNativeControl) HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.ManagedRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
 	return controlv1.PrivateServiceRunState{}, nil
 }
 
@@ -395,7 +400,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	native.WithRuntime(installed)
 	transport.set(proxy, "10.0.0.2:1234", "2606:4700:4700::1111")
-	if _, err = native.HeartbeatPrivateServiceRun(ctx, service.Id, "private-run", credentials.PublishRunToken("test")); err != nil {
+	if _, err = native.ManagedRunControl().HeartbeatPrivateServiceRunHealth(ctx, service.Id, "private-run", credentials.ManagedRunToken("test"), controlv1.PrivateServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal(err)
 	}
 	if s := read(identity.ClientId); s.AddressFamily != "ipv6" || !s.Active {

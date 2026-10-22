@@ -31,7 +31,7 @@ func (r *Registry) verifyManifest(ctx context.Context) error {
 		}
 		want[path] = fileIdentity{Device: uint64(stat.Dev), Inode: uint64(stat.Ino)}
 	}
-	value, found, err := r.database.SystemState(ctx, "publisher-jobs-files-v1")
+	value, found, err := r.database.PublisherJobFileManifest(ctx)
 	if err != nil {
 		return err
 	}
@@ -46,7 +46,7 @@ func (r *Registry) verifyManifest(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.database.SaveSystemState(ctx, "publisher-jobs-files-v1", value)
+	return r.database.SavePublisherJobFileManifest(ctx, value)
 }
 
 func privateInfo(info os.FileInfo, owner int, directory bool) bool {

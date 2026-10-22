@@ -18,7 +18,48 @@ type PrivateRoutingTable struct {
 	mu          sync.RWMutex
 	initialized bool
 	revision    int64
-	services    map[string]ingressv1.PrivateServiceProjection
+	services    map[privateRunKey]privateRunUpsert
+}
+
+type privateRunKey struct {
+	serviceID string
+	runID     string
+}
+
+type privateProjectionEvent interface{ privateProjectionEvent() }
+
+type privateRunUpsert struct {
+	key       privateRunKey
+	number    int64
+	revision  int64
+	expiresAt time.Time
+	relays    []ingressv1.PrivateServiceRelay
+}
+
+type privateRunTombstone struct {
+	key    privateRunKey
+	number int64
+}
+
+type privateServiceTombstone struct{ serviceID string }
+
+func (privateRunUpsert) privateProjectionEvent()        {}
+func (privateRunTombstone) privateProjectionEvent()     {}
+func (privateServiceTombstone) privateProjectionEvent() {}
+
+// parsePrivateProjection confines optional wire fields to the decode boundary.
+func parsePrivateProjection(p ingressv1.PrivateServiceProjection, now time.Time) (privateProjectionEvent, error) {
+	if err := validatePrivateProjection(p, now); err != nil {
+		return nil, err
+	}
+	if p.Kind == ingressv1.Upsert {
+		return privateRunUpsert{key: privateRunKey{p.PrivateServiceId, *p.PrivateRunId}, number: *p.RunNumber,
+			revision: p.Revision, expiresAt: p.ExpiresAt, relays: append([]ingressv1.PrivateServiceRelay(nil), (*p.ConnectedRelays)...)}, nil
+	}
+	if p.PrivateRunId != nil {
+		return privateRunTombstone{key: privateRunKey{p.PrivateServiceId, *p.PrivateRunId}, number: *p.RunNumber}, nil
+	}
+	return privateServiceTombstone{serviceID: p.PrivateServiceId}, nil
 }
 
 func validatePrivateProjection(p ingressv1.PrivateServiceProjection, now time.Time) error {
@@ -87,16 +128,17 @@ func (t *PrivateRoutingTable) ApplySnapshot(snapshot ingressv1.PrivateServiceSna
 	if snapshot.Revision < 0 {
 		return ErrPrivateRoutingStale
 	}
-	services := make(map[string]ingressv1.PrivateServiceProjection, len(snapshot.Entries))
+	services := make(map[privateRunKey]privateRunUpsert, len(snapshot.Entries))
 	for _, entry := range snapshot.Entries {
-		if entry.Kind != ingressv1.Upsert || entry.Revision > snapshot.Revision || validatePrivateProjection(entry, now) != nil {
+		parsed, err := parsePrivateProjection(entry, now)
+		upsert, ok := parsed.(privateRunUpsert)
+		if err != nil || !ok || entry.Revision > snapshot.Revision {
 			return ErrPrivateRoutingStale
 		}
-		key := privateProjectionKey(entry)
-		if _, present := services[key]; present {
+		if _, present := services[upsert.key]; present {
 			return ErrPrivateRoutingStale
 		}
-		services[key] = clonePrivateProjection(entry)
+		services[upsert.key] = upsert
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -113,39 +155,41 @@ func (t *PrivateRoutingTable) ApplyEvents(after int64, page ingressv1.PrivateSer
 	if !t.initialized || after != t.revision || page.Revision < after {
 		return ErrPrivateRoutingStale
 	}
-	services := make(map[string]ingressv1.PrivateServiceProjection, len(t.services))
+	services := make(map[privateRunKey]privateRunUpsert, len(t.services))
 	for id, entry := range t.services {
 		services[id] = entry
 	}
 	previous := after
 	for _, entry := range page.Entries {
-		if entry.Revision <= previous || entry.Revision > page.Revision || validatePrivateProjection(entry, now) != nil {
+		parsed, err := parsePrivateProjection(entry, now)
+		if entry.Revision <= previous || entry.Revision > page.Revision || err != nil {
 			return ErrPrivateRoutingStale
 		}
-		key := privateProjectionKey(entry)
-		if old, exists := services[key]; exists && old.Kind == ingressv1.Upsert && entry.Kind == ingressv1.Upsert {
-			if *entry.RunNumber < *old.RunNumber || *entry.RunNumber == *old.RunNumber &&
-				*entry.PrivateRunId != *old.PrivateRunId {
-				return ErrPrivateRoutingStale
-			}
-			for _, current := range *entry.ConnectedRelays {
-				for _, earlier := range *old.ConnectedRelays {
-					if current.ConnectionSlot == earlier.ConnectionSlot &&
-						(current.ConnectionAssignmentRevision < earlier.ConnectionAssignmentRevision ||
-							current.ConnectionAssignmentRevision == earlier.ConnectionAssignmentRevision && current.PublisherConnectionId != earlier.PublisherConnectionId) {
-						return ErrPrivateRoutingStale
+		switch change := parsed.(type) {
+		case privateRunUpsert:
+			if old, exists := services[change.key]; exists {
+				if change.number < old.number {
+					return ErrPrivateRoutingStale
+				}
+				for _, current := range change.relays {
+					for _, earlier := range old.relays {
+						if current.ConnectionSlot == earlier.ConnectionSlot &&
+							(current.ConnectionAssignmentRevision < earlier.ConnectionAssignmentRevision ||
+								current.ConnectionAssignmentRevision == earlier.ConnectionAssignmentRevision && current.PublisherConnectionId != earlier.PublisherConnectionId) {
+							return ErrPrivateRoutingStale
+						}
 					}
 				}
 			}
-		}
-		if entry.Kind == ingressv1.Tombstone && entry.PrivateRunId == nil {
-			for id, old := range services {
-				if old.PrivateServiceId == entry.PrivateServiceId {
-					delete(services, id)
+			services[change.key] = change
+		case privateRunTombstone:
+			delete(services, change.key)
+		case privateServiceTombstone:
+			for key := range services {
+				if key.serviceID == change.serviceID {
+					delete(services, key)
 				}
 			}
-		} else {
-			services[key] = clonePrivateProjection(entry)
 		}
 		previous = entry.Revision
 	}
@@ -158,16 +202,14 @@ func (t *PrivateRoutingTable) ApplyEvents(after int64, page ingressv1.PrivateSer
 
 func (t *PrivateRoutingTable) Lookup(serviceID, runID string, number int64, now time.Time) (ingressv1.PrivateServiceProjection, bool) {
 	t.mu.RLock()
-	entry, exists := t.services[serviceID+"/"+runID]
-	valid := t.initialized && exists && entry.Kind == ingressv1.Upsert && entry.ExpiresAt.After(now) &&
-		entry.PrivateRunId != nil && *entry.PrivateRunId == runID && entry.RunNumber != nil && *entry.RunNumber == number
+	entry, exists := t.services[privateRunKey{serviceID, runID}]
+	valid := t.initialized && exists && entry.expiresAt.After(now) && entry.number == number
 	t.mu.RUnlock()
 	if !valid {
 		return ingressv1.PrivateServiceProjection{}, false
 	}
-	entry = clonePrivateProjection(entry)
-	live := (*entry.ConnectedRelays)[:0]
-	for _, relay := range *entry.ConnectedRelays {
+	live := make([]ingressv1.PrivateServiceRelay, 0, len(entry.relays))
+	for _, relay := range entry.relays {
 		if relay.LeaseExpiresAt.After(now) {
 			if _, _, err := net.SplitHostPort(relay.InternalRelayAddress); err == nil {
 				live = append(live, relay)
@@ -177,13 +219,6 @@ func (t *PrivateRoutingTable) Lookup(serviceID, runID string, number int64, now 
 	if len(live) == 0 {
 		return ingressv1.PrivateServiceProjection{}, false
 	}
-	entry.ConnectedRelays = &live
-	return entry, true
-}
-
-func privateProjectionKey(entry ingressv1.PrivateServiceProjection) string {
-	if entry.PrivateRunId == nil {
-		return entry.PrivateServiceId + "/"
-	}
-	return entry.PrivateServiceId + "/" + *entry.PrivateRunId
+	return ingressv1.PrivateServiceProjection{Kind: ingressv1.Upsert, PrivateServiceId: serviceID, PrivateRunId: &runID,
+		RunNumber: &entry.number, Revision: entry.revision, ExpiresAt: entry.expiresAt, ConnectedRelays: &live}, true
 }

@@ -19,7 +19,7 @@ type admissionControl struct {
 	err   error
 }
 
-func (c *admissionControl) AuthorizeServiceConnector(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *admissionControl) AuthorizeServiceConnector(context.Context, string, string, credentials.ManagedRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	call := c.calls.Add(1)
 	if c.err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, c.err

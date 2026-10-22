@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -39,6 +40,7 @@ type ACMEAuthorizationWork struct {
 }
 
 type ACMEOrderWork struct {
+	Subject                CertificateSubject `json:"-"`
 	ID                     string
 	Account                ACMEAccount
 	PublishRunID           string
@@ -77,6 +79,13 @@ type ACMEOrderWork struct {
 // ServiceID keeps DNS challenge ownership typed without inventing a public URL
 // for a managed private-service issuance.
 func (w ACMEOrderWork) ServiceID() string {
+	if w.Subject != (CertificateSubject{}) {
+		subject, err := w.CertificateSubject()
+		if err != nil {
+			return ""
+		}
+		return subject.ID
+	}
 	if w.PrivateServiceID != "" {
 		return w.PrivateServiceID
 	}
@@ -177,6 +186,10 @@ func (d *Database) SaveACMEOrderWork(
 	if err := validateACMEOrderWork(work); err != nil {
 		return ACMEOrderWork{}, err
 	}
+	binding, err := checkedACMEWorkBinding(work.OrderRevision, work.WorkEpoch)
+	if err != nil {
+		return ACMEOrderWork{}, err
+	}
 	if err := d.requireOpen(); err != nil {
 		return ACMEOrderWork{}, err
 	}
@@ -193,7 +206,7 @@ func (d *Database) SaveACMEOrderWork(
 		NotBefore: nullableTime(work.NotBefore), NotAfter: nullableTime(work.NotAfter), RenewAt: nullableTime(work.RenewAt),
 		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError),
 		CompletedAt: timestamptz(now), IssuanceID: work.ID, WorkOwner: text(work.WorkerID),
-		WorkEpoch: positive(work.WorkEpoch), ExpectedOrderRevision: positive(work.OrderRevision),
+		WorkEpoch: binding.workerEpoch, ExpectedOrderRevision: binding.orderRevision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ACMEOrderWork{}, ErrACMEWorkStale
@@ -223,12 +236,12 @@ func (d *Database) SaveACMEOrderWork(
 			ChallengeUrl: nullableText(authorization.ChallengeURL), ChallengeToken: nullableText(authorization.ChallengeToken),
 			ChallengeDigest: challengeDigest, PresentationReference: nullableText(authorization.PresentationReference),
 			State:                 string(authorization.State),
-			AuthorizationRevision: positive(max(authorization.Revision, 1)), Attempts: nonnegative(authorization.Attempts),
+			AuthorizationRevision: int64(max(authorization.Revision, 1)), Attempts: int64(authorization.Attempts),
 			AvailableAt: timestamptz(authorization.AvailableAt), PresentedAt: nullableTime(authorization.PresentedAt),
 			ValidatedAt: nullableTime(authorization.ValidatedAt), CleanupCompletedAt: nullableTime(authorization.CleanupCompletedAt),
 			ExpiresAt: nullableTime(authorization.ExpiresAt), LastError: nullableText(authorization.LastError),
 			CreatedAt: timestamptz(createdAt), UpdatedAt: timestamptz(now),
-			ExpectedAuthorizationRevision: nonnegative(authorization.Revision),
+			ExpectedAuthorizationRevision: int64(authorization.Revision),
 		}); errors.Is(err, pgx.ErrNoRows) {
 			return ACMEOrderWork{}, ErrACMEWorkStale
 		} else if err != nil {
@@ -279,14 +292,16 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	if max(order.PublishRunNumber, order.PrivateRunNumber) <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
+	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.PrivateServiceID, order.PrivateRunID, order.PrivateRunNumber)
+	if err != nil || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||
 		len(order.CsrDigest) != 32 {
 		return ACMEOrderWork{}, errors.New("controlstate: invalid ACME order work row")
 	}
 	work := ACMEOrderWork{
-		ID: order.ID, Account: account, PublishRunID: order.PublishRunID,
+		Subject: subject,
+		ID:      order.ID, Account: account, PublishRunID: order.PublishRunID,
 		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
 		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
@@ -307,7 +322,7 @@ func acmeOrderWork(
 	work.NotAfter = optionalTime(order.NotAfter)
 	work.RenewAt = optionalTime(order.RenewAt)
 	for index, authorization := range authorizations {
-		if authorization.ChallengeType.Valid && len(authorization.ChallengeDigest) != 32 ||
+		if authorization.OrderID != order.ID || authorization.ChallengeType.Valid && len(authorization.ChallengeDigest) != 32 ||
 			!authorization.ChallengeType.Valid && len(authorization.ChallengeDigest) != 0 ||
 			authorization.AuthorizationRevision <= 0 || authorization.Attempts < 0 ||
 			!authorization.AvailableAt.Valid || !authorization.CreatedAt.Valid || !authorization.UpdatedAt.Valid {
@@ -334,10 +349,10 @@ func acmeOrderWork(
 }
 
 func validateACMEOrderWork(work ACMEOrderWork) error {
-	_, workEpochOK := positiveInt64(work.WorkEpoch)
-	_, orderRevisionOK := positiveInt64(work.OrderRevision)
+	_, subjectErr := work.CertificateSubject()
+	_, bindingErr := checkedACMEWorkBinding(work.OrderRevision, work.WorkEpoch)
 	_, attemptsOK := nonnegativeInt64(work.Attempts)
-	if !validStateText(work.ID) || !validStateText(work.WorkerID) || !workEpochOK || !orderRevisionOK || !attemptsOK ||
+	if !validStateText(work.ID) || !validStateText(work.WorkerID) || subjectErr != nil || bindingErr != nil || !attemptsOK ||
 		work.WorkExpiresAt.IsZero() ||
 		!work.State.valid() || !work.ChallengeMethod.Valid() ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
@@ -364,7 +379,7 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 func validateACMEAuthorizationWork(authorization ACMEAuthorizationWork) error {
 	_, revisionOK := nonnegativeInt64(authorization.Revision)
 	_, attemptsOK := nonnegativeInt64(authorization.Attempts)
-	if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) ||
+	if !validStateText(authorization.Identifier) || !validStateText(authorization.AuthorizationURL) || authorization.Revision >= math.MaxInt64 ||
 		!revisionOK || !attemptsOK || !authorization.State.valid() || authorization.AvailableAt.IsZero() ||
 		len(authorization.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
@@ -397,11 +412,4 @@ func optionalTime(value pgtype.Timestamptz) *time.Time {
 	}
 	result := value.Time
 	return &result
-}
-
-func nonnegative(value uint64) int64 {
-	if value > uint64(^uint64(0)>>1) {
-		return int64(^uint64(0) >> 1)
-	}
-	return int64(value)
 }

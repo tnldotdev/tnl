@@ -25,13 +25,13 @@ type Runner interface {
 
 type CLI struct{}
 
-type boundedBuffer struct{ bytes.Buffer }
+type boundedBuffer struct{ buffer bytes.Buffer }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > 8<<20 {
+	if len(p) > 8<<20-b.buffer.Len() {
 		return 0, errors.New("docker response exceeds 8 MiB")
 	}
-	return b.Buffer.Write(p)
+	return b.buffer.Write(p)
 }
 
 func (CLI) Run(ctx context.Context, input []byte, args ...string) ([]byte, error) {
@@ -47,7 +47,7 @@ func (CLI) Run(ctx context.Context, input []byte, args ...string) ([]byte, error
 		}
 		return nil, fmt.Errorf("docker command failed: %w", err)
 	}
-	return output.Bytes(), nil
+	return output.buffer.Bytes(), nil
 }
 
 type Binding struct {

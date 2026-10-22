@@ -24,10 +24,10 @@ import (
 
 type ManagedHTTPControl interface {
 	ControlURL() string
-	AuthorizeManagedHTTPVisitor(context.Context, string, string, credentials.PublishRunToken, controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
-	RedeemManagedBrowserHandoff(context.Context, string, string, credentials.PublishRunToken, controlv1.ManagedBrowserRequest) (controlv1.BrowserHandoffResponse, error)
-	CheckManagedBrowserSession(context.Context, string, string, credentials.PublishRunToken, controlv1.ManagedBrowserRequest) (controlv1.BrowserAccessResponse, error)
-	RevokeManagedBrowserSession(context.Context, string, string, credentials.PublishRunToken, controlv1.ManagedBrowserRequest) error
+	AuthorizeManagedHTTPVisitor(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error)
+	RedeemManagedBrowserHandoff(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedBrowserRequest) (controlv1.BrowserHandoffResponse, error)
+	CheckManagedBrowserSession(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedBrowserRequest) (controlv1.BrowserAccessResponse, error)
+	RevokeManagedBrowserSession(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedBrowserRequest) error
 }
 
 // ManagedHTTP is built for each trusted forwarding header, never from HTTP
@@ -37,7 +37,7 @@ type ManagedHTTP struct {
 	Subject  httpsubject.Subject
 	RunID    string
 	Number   int64
-	Token    credentials.PublishRunToken
+	Token    credentials.ManagedRunToken
 	Hostname string
 	Port     uint16
 	Header   tunnelv1.PrivateForwardingHeader
@@ -60,7 +60,9 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 	go func() { defer close(done); guard.run(live) }()
 	defer func() { cancel(); <-done }()
 	authority := net.JoinHostPort(f.Hostname, strconv.Itoa(int(f.Port)))
-	browser := &browserAccess{subject: f.Subject, client: managedBrowserClient{f}, runID: f.RunID, version: uint64(f.Number), token: f.Token, controlURL: strings.TrimSuffix(f.Control.ControlURL(), "/")}
+	// the browser UI's public-run credential is unused; the adapter retains the
+	// managed authority and never converts it to a public URL publish run token.
+	browser := &browserAccess{subject: f.Subject, client: managedBrowserClient{f}, runID: f.RunID, version: uint64(f.Number), controlURL: strings.TrimSuffix(f.Control.ControlURL(), "/")}
 	scheme := "http"
 	if target.Transport.TLS != nil {
 		scheme = "https"
@@ -301,7 +303,7 @@ type managedBrowserClient struct{ frontend ManagedHTTP }
 
 func (a managedBrowserClient) request(run string, number uint64, secret string, token credentials.PublishRunToken) (controlv1.ManagedBrowserRequest, error) {
 	f := a.frontend
-	if run != f.RunID || number != uint64(f.Number) || token != f.Token {
+	if run != f.RunID || number != uint64(f.Number) || token != "" {
 		return controlv1.ManagedBrowserRequest{}, ErrManagedTLS
 	}
 	return controlv1.ManagedBrowserRequest{RunNumber: f.Number, Secret: secret}, nil

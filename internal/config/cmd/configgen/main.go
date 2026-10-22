@@ -14,6 +14,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
@@ -340,14 +341,16 @@ func targetSchema(protocol string) *jsonschema.Schema {
 			properties.Set("container", &jsonschema.Schema{Type: "string", Pattern: `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`})
 			required = append(required, "container", "port")
 		case "eks", "rds":
-			properties.Set("region", &jsonschema.Schema{Type: "string", Pattern: `^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`})
-			properties.Set("cluster", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z][A-Za-z0-9_-]{0,99}$`})
+			properties.Set("region", &jsonschema.Schema{Type: "string", Pattern: config.AWSRegionPattern, MaxLength: integerPointer(32)})
+			properties.Set("cluster", &jsonschema.Schema{Type: "string", Pattern: config.EKSNamePattern})
 			required = append(required, "region")
 			if kind == "eks" {
 				required = append(required, "cluster")
 			} else {
-				properties.Set("instance", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z][A-Za-z0-9_-]{0,99}$`})
-				properties.Set("endpoint", &jsonschema.Schema{Type: "string", Enum: []any{"writer", "reader"}, Default: "writer"})
+				nameSchema := &jsonschema.Schema{Type: "string", Pattern: config.RDSNamePattern, Not: &jsonschema.Schema{Pattern: `--|-$`}}
+				properties.Set("cluster", nameSchema)
+				properties.Set("instance", nameSchema)
+				properties.Set("endpoint", &jsonschema.Schema{Type: "string", Enum: []any{string(config.RDSWriter), string(config.RDSReader)}, Default: string(config.RDSWriter)})
 			}
 		}
 		if kind == "compose" || kind == "docker" {
@@ -376,7 +379,7 @@ func targetSchema(protocol string) *jsonschema.Schema {
 				other := "instance"
 				if selector == "instance" {
 					other = "cluster"
-					copyProperties.Set("endpoint", &jsonschema.Schema{Type: "string", Const: "writer"})
+					copyProperties.Set("endpoint", &jsonschema.Schema{Type: "string", Const: string(config.RDSWriter)})
 				}
 				copyProperties.Set(other, jsonschema.FalseSchema)
 				variants = append(variants, &jsonschema.Schema{Type: "object", Properties: copyProperties, Required: append(append([]string{}, required...), selector), AdditionalProperties: jsonschema.FalseSchema})
@@ -425,6 +428,12 @@ func tnldSchema() *jsonschema.Schema {
 		}
 		if value := field.Tag.Get("default"); value != "" {
 			fieldSchema.Default = defaultValue(value, field.Type, field.Type == durationType)
+		}
+		if name == "service_port_ranges" {
+			fieldSchema.MinItems = integerPointer(1)
+			fieldSchema.MaxItems = integerPointer(tcpport.MaxInventoryDeclarations)
+			fieldSchema.Items.MinLength = integerPointer(1)
+			fieldSchema.Default = strings.Split(field.Tag.Get("default"), ",")
 		}
 		properties.Set(name, fieldSchema)
 	}

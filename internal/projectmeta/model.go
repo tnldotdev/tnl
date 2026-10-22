@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -256,7 +256,7 @@ func (m Metadata) Validate() error {
 		return errors.New("project metadata may contain at most 32 webhooks")
 	}
 	for name, endpoint := range m.Webhooks {
-		if !naming.ValidServiceName(name) || !localproxy.ValidMountPrefix(endpoint.Path) {
+		if !naming.ValidServiceName(name) || !targetsyntax.ValidMountPrefix(endpoint.Path) {
 			return fmt.Errorf("invalid webhook %q", name)
 		}
 		if err := canonicalHostname("webhook "+name+" hostname", endpoint.Hostname); err != nil {
@@ -317,7 +317,7 @@ func (m Metadata) Validate() error {
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
 			mount := service.Paths[prefix]
-			if !localproxy.ValidMountPrefix(prefix) || mount.Service == name {
+			if !targetsyntax.ValidMountPrefix(prefix) || mount.Service == name {
 				return fmt.Errorf("service %q path mount %q is invalid", name, prefix)
 			}
 			if !naming.ValidServiceName(mount.Service) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,97 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
+	for _, operation := range []string{"renew", "attach"} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(*authorityv1.WorkloadSession)
+			accept bool
+		}{
+			{"unchanged", func(*authorityv1.WorkloadSession) {}, true},
+			{"shorter expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = s.ExpiresAt.Add(-time.Minute) }, true},
+			{"fewer rights", func(s *authorityv1.WorkloadSession) { s.ServiceIds = []string{} }, true},
+			{"binding", func(s *authorityv1.WorkloadSession) { s.Binding = strings.Repeat("c", 64) }, false},
+			{"id", func(s *authorityv1.WorkloadSession) {
+				s.Id = "wls_" + strings.Repeat("a", 22)
+				s.Subject.WorkloadSessionId = new(s.Id)
+			}, false},
+			{"credential", func(s *authorityv1.WorkloadSession) { s.Credential = "wlc_" + strings.Repeat("z", 43) }, false},
+			{"longer expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = s.ExpiresAt.Add(time.Minute) }, false},
+			{"team", func(s *authorityv1.WorkloadSession) { s.TeamId = "tm_" + strings.Repeat("a", 22) }, false},
+			{"project", func(s *authorityv1.WorkloadSession) { s.ProjectKey = "other" }, false},
+			{"workload", func(s *authorityv1.WorkloadSession) { s.Workload = "other" }, false},
+			{"provider", func(s *authorityv1.WorkloadSession) { s.Provider = controlv1.WorkloadFly; s.Github = nil }, false},
+			{"repository", func(s *authorityv1.WorkloadSession) { s.Github.RepositoryId = "99" }, false},
+			{"repository owner", func(s *authorityv1.WorkloadSession) { s.Github.RepositoryOwnerId = "99" }, false},
+			{"run", func(s *authorityv1.WorkloadSession) { s.Github.RunId = "99" }, false},
+			{"attempt", func(s *authorityv1.WorkloadSession) { s.Github.RunAttempt = "2" }, false},
+			{"check run", func(s *authorityv1.WorkloadSession) { s.Github.CheckRunId = "99" }, false},
+			{"subject", func(s *authorityv1.WorkloadSession) {
+				s.Subject.WorkloadSessionId = new("wls_" + strings.Repeat("a", 22))
+			}, false},
+			{"expanded rights", func(s *authorityv1.WorkloadSession) {
+				s.ServiceIds = append(s.ServiceIds, "psvc_"+strings.Repeat("a", 22))
+			}, false},
+			{"replaced rights", func(s *authorityv1.WorkloadSession) { s.ServiceIds[0] = "psvc_" + strings.Repeat("a", 22) }, false},
+			{"expired lease", func(s *authorityv1.WorkloadSession) { s.LeaseExpiresAt = time.Now().Add(-time.Second) }, false},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				original := sessionFixture(controlv1.WorkloadGitHub)
+				next := cloneSession(original)
+				tc.mutate(&next)
+				calls := 0
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					value := original
+					if calls > 0 {
+						value = next
+					}
+					calls++
+					_ = json.NewEncoder(w).Encode(value)
+				}))
+				defer server.Close()
+				client, err := New(server.URL, server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := client.Exchange(t.Context(), original.TeamId, original.ProjectKey, strings.Repeat("a", 64), original.Workload, "assertion", nil); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := client.Session()
+				var updated authorityv1.WorkloadSession
+				if operation == "renew" {
+					updated, err = client.Renew(t.Context())
+				} else {
+					updated, err = client.Attach(t.Context(), "new assertion")
+				}
+				if (err == nil) != tc.accept {
+					t.Fatalf("update accepted = %t, want %t: %v", err == nil, tc.accept, err)
+				}
+				saved, _ := client.Session()
+				if !tc.accept {
+					if !reflect.DeepEqual(saved, before) || updated.Id != "" {
+						t.Fatal("failed update changed retained session or returned a usable session")
+					}
+					return
+				}
+				if !reflect.DeepEqual(saved, updated) || !saved.ExpiresAt.Equal(next.ExpiresAt) || len(saved.ServiceIds) != len(next.ServiceIds) {
+					t.Fatal("successful narrowing was not retained")
+				}
+				updated.Github.RunId = "777"
+				if len(updated.ServiceIds) > 0 {
+					updated.ServiceIds[0] = "changed"
+				}
+				*updated.Subject.WorkloadSessionId = "changed"
+				after, _ := client.Session()
+				if !reflect.DeepEqual(saved, after) {
+					t.Fatal("returned update aliased retained session")
+				}
+			})
+		}
+	}
+}
 
 func sessionFixture(provider controlv1.WorkloadProvider) authorityv1.WorkloadSession {
 	id := "wls_" + strings.Repeat("s", 22)

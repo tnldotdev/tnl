@@ -82,7 +82,7 @@ func TestInstalledGroupIdentitySurvivesRuntimeDatabaseDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := profile.PublisherSigningIdentity(t.Context(), "job:"+job.ID); err != nil || found {
+	if _, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", "job:"+job.ID); err != nil || found {
 		t.Fatal("installed group still depends on a SQLite signing key", err)
 	}
 	if err := registry.Close(); err != nil {

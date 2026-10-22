@@ -351,7 +351,7 @@ func execToken(ctx context.Context, command string, args, env []string, info str
 		return Token{}, ErrCredential
 	}
 	var result credentialv1.ExecCredential
-	if json.Unmarshal(output.Bytes(), &result) != nil || result.Kind != "ExecCredential" || result.APIVersion != "client.authentication.k8s.io/v1" && result.APIVersion != "client.authentication.k8s.io/v1beta1" || result.Status == nil || result.Status.ClientCertificateData != "" || result.Status.ClientKeyData != "" {
+	if json.Unmarshal(output.buffer.Bytes(), &result) != nil || result.Kind != "ExecCredential" || result.APIVersion != "client.authentication.k8s.io/v1" && result.APIVersion != "client.authentication.k8s.io/v1beta1" || result.Status == nil || result.Status.ClientCertificateData != "" || result.Status.ClientKeyData != "" {
 		return Token{}, ErrCredential
 	}
 	var expires time.Time
@@ -361,11 +361,11 @@ func execToken(ctx context.Context, command string, args, env []string, info str
 	return checkedToken(result.Status.Token, expires)
 }
 
-type limitedOutput struct{ bytes.Buffer }
+type limitedOutput struct{ buffer bytes.Buffer }
 
 func (b *limitedOutput) Write(data []byte) (int, error) {
-	if b.Len()+len(data) > 1<<20 {
+	if len(data) > 1<<20-b.buffer.Len() {
 		return 0, ErrCredential
 	}
-	return b.Buffer.Write(data)
+	return b.buffer.Write(data)
 }

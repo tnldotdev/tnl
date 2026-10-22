@@ -68,7 +68,7 @@ func New(current, previous string) (*Keyring, error) {
 
 // IPPolicyKey derives a purpose-specific verifier without exposing the storage key.
 func (k *Keyring) IPPolicyKey(keyID, purpose string) ([32]byte, error) {
-	if k == nil || purpose == "" {
+	if k == nil || k.current == nil || k.currentID == "" || keyID == "" || purpose == "" {
 		return [32]byte{}, errors.New("storagekey: invalid IP policy key request")
 	}
 	master := [32]byte{}

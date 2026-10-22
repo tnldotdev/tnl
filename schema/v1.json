@@ -1450,12 +1450,16 @@
                           },
                           "region": {
                             "type": "string",
-                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                            "maxLength": 32,
+                            "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
                           },
                           "cluster": false,
                           "instance": {
+                            "not": {
+                              "pattern": "--|-$"
+                            },
                             "type": "string",
-                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                            "pattern": "^[a-z][a-z0-9-]{0,62}$"
                           },
                           "endpoint": {
                             "type": "string",
@@ -1481,11 +1485,15 @@
                           },
                           "region": {
                             "type": "string",
-                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                            "maxLength": 32,
+                            "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
                           },
                           "cluster": {
+                            "not": {
+                              "pattern": "--|-$"
+                            },
                             "type": "string",
-                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                            "pattern": "^[a-z][a-z0-9-]{0,62}$"
                           },
                           "instance": false,
                           "endpoint": {
@@ -1735,12 +1743,16 @@
                           },
                           "region": {
                             "type": "string",
-                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                            "maxLength": 32,
+                            "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
                           },
                           "cluster": false,
                           "instance": {
+                            "not": {
+                              "pattern": "--|-$"
+                            },
                             "type": "string",
-                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                            "pattern": "^[a-z][a-z0-9-]{0,62}$"
                           },
                           "endpoint": {
                             "type": "string",
@@ -1766,11 +1778,15 @@
                           },
                           "region": {
                             "type": "string",
-                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                            "maxLength": 32,
+                            "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
                           },
                           "cluster": {
+                            "not": {
+                              "pattern": "--|-$"
+                            },
                             "type": "string",
-                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                            "pattern": "^[a-z][a-z0-9-]{0,62}$"
                           },
                           "instance": false,
                           "endpoint": {
@@ -2020,7 +2036,8 @@
                           },
                           "region": {
                             "type": "string",
-                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                            "maxLength": 32,
+                            "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$"
                           },
                           "cluster": {
                             "type": "string",
@@ -2883,11 +2900,14 @@
         },
         "service_port_ranges": {
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "type": "array",
-          "description": "Managed TCP ports exposed by this ingress pool; direct ingress binds every port, proxied ingress requires destination metadata.",
-          "default": "20000-20015"
+          "maxItems": 128,
+          "minItems": 1,
+          "description": "Managed TCP ports exposed by this ingress pool: 1-128 non-overlapping declarations, at most 256 ports from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata.",
+          "default": ["20000-20015"]
         },
         "relay_service_id": {
           "type": "string",

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
 	"github.com/tnldotdev/tnl/internal/publisherruntime"
@@ -45,7 +44,7 @@ type NativeControl interface {
 type Native struct {
 	NativeControl
 	authority AssertionExchanger
-	identity  authorityv1.PublisherEnrollmentResult
+	identity  nativeScope
 	private   ed25519.PrivateKey
 	route     controlv1.PublicURL
 	traffic   *trafficlimits.Selection
@@ -53,39 +52,38 @@ type Native struct {
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {
-	if control == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(identity.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(identity.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(identity.GrantId, opaqueid.PublisherGrantPrefix) || identity.TeamId == "" ||
-		identity.Kind == "saved_url" && (identity.PublicUrlId == nil || !opaqueid.Valid(*identity.PublicUrlId, opaqueid.PublicURLPrefix) || identity.PrivateServiceId != nil || identity.Namespace != nil || identity.DomainId != nil) ||
-		identity.Kind == "namespace" && (identity.Namespace == nil || identity.DomainId == nil || identity.PublicUrlId != nil || identity.PrivateServiceId != nil) ||
-		identity.Kind == "private_service" && (identity.PrivateServiceId == nil || !opaqueid.Valid(*identity.PrivateServiceId, opaqueid.PrivateServicePrefix) || identity.PublicUrlId != nil || identity.Namespace != nil || identity.DomainId != nil) || !identity.Kind.Valid() {
+	if control == nil || authority == nil || !validSigningKey(private) {
 		return nil, ErrScope
 	}
-	if identity.Kind == "namespace" {
-		canonical, err := naming.CanonicalizeHostname(*identity.Namespace)
-		if err != nil || canonical != *identity.Namespace || !opaqueid.Valid(*identity.DomainId, opaqueid.DomainPrefix) {
-			return nil, ErrScope
-		}
+	scope, err := newNativeScope(identity)
+	if err != nil {
+		return nil, err
 	}
-	return &Native{NativeControl: control, authority: authority, identity: identity, private: append(ed25519.PrivateKey(nil), private...)}, nil
+	return &Native{NativeControl: control, authority: authority, identity: scope, private: append(ed25519.PrivateKey(nil), private...)}, nil
+}
+
+func validSigningKey(private ed25519.PrivateKey) bool {
+	return len(private) == ed25519.PrivateKeySize && bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private)
 }
 
 func (n *Native) Access(ctx context.Context) (string, error) {
-	return n.authority.ExchangePublisherAssertion(ctx, n.identity.ClientId, n.identity.GrantId, n.identity.KeyId, n.private)
+	return n.authority.ExchangePublisherAssertion(ctx, n.identity.clientID, n.identity.grantID, n.identity.keyID, append(ed25519.PrivateKey(nil), n.private...))
 }
 
 func (n *Native) PublisherID() string {
 	if n == nil {
 		return ""
 	}
-	return n.identity.ClientId
+	return n.identity.clientID
 }
 
 // ForGrant creates an independent worker adapter for another explicitly issued
 // grant on this identity. token exchange verifies its live ownership on control.
 func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
-	if !opaqueid.Valid(g.Id, opaqueid.PublisherGrantPrefix) || g.RevokedAt != nil || g.ExpiresAt != nil && !g.ExpiresAt.After(time.Now()) {
+	if n == nil || !opaqueid.Valid(g.Id, opaqueid.PublisherGrantPrefix) || g.RevokedAt != nil || g.ExpiresAt != nil && !g.ExpiresAt.After(time.Now()) || g.TeamId != nil && *g.TeamId != n.identity.teamID {
 		return nil, ErrScope
 	}
-	i := n.identity
+	i := n.identity.enrollment()
 	i.GrantId, i.Kind, i.PublicUrlId, i.DomainId, i.Namespace = g.Id, authorityv1.PublisherEnrollmentResultKind(g.Kind), g.PublicUrlId, g.DomainId, g.Namespace
 	i.PrivateServiceId = g.PrivateServiceId
 	copy, err := NewNative(n.NativeControl, n.authority, i, n.private)
@@ -96,25 +94,25 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 }
 
 func (n *Native) SelectRoute(route controlv1.PublicURL) error {
-	if n.identity.Kind != authorityv1.SavedUrl && n.identity.Kind != authorityv1.Namespace {
+	if n.identity.kind != authorityv1.SavedUrl && n.identity.kind != authorityv1.Namespace {
 		return ErrScope
 	}
-	if route.TeamId != n.identity.TeamId || route.LifecycleState != controlv1.Enabled || !opaqueid.Valid(route.Id, opaqueid.PublicURLPrefix) || n.route.Id != "" && n.route.Id != route.Id {
+	if route.TeamId != n.identity.teamID || route.LifecycleState != controlv1.Enabled || !opaqueid.Valid(route.Id, opaqueid.PublicURLPrefix) || n.route.Id != "" && n.route.Id != route.Id {
 		return ErrScope
 	}
-	if n.identity.Kind == "saved_url" {
-		if route.Id != *n.identity.PublicUrlId {
+	if n.identity.kind == "saved_url" {
+		if route.Id != n.identity.publicURLID {
 			return ErrScope
 		}
-	} else if !route.Ephemeral || route.ServiceProtocol != controlv1.Http || route.DomainId != *n.identity.DomainId || !strings.HasSuffix(route.CanonicalHostname, "."+*n.identity.Namespace) {
+	} else if !route.Ephemeral || route.ServiceProtocol != controlv1.Http || route.DomainId != n.identity.domainID || !strings.HasSuffix(route.CanonicalHostname, "."+n.identity.namespace) {
 		return ErrScope
 	}
-	n.route = route
+	n.route = clonePublicURL(route)
 	return nil
 }
 
 func (n *Native) SavedURL(ctx context.Context) (controlv1.PublicURL, error) {
-	if n.identity.Kind != "saved_url" {
+	if n.identity.kind != "saved_url" {
 		return controlv1.PublicURL{}, ErrScope
 	}
 	token, err := n.Access(ctx)
@@ -129,7 +127,7 @@ func (n *Native) SavedURL(ctx context.Context) (controlv1.PublicURL, error) {
 }
 
 func (n *Native) Allocate(ctx context.Context, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
-	if n.identity.Kind != "namespace" {
+	if n.identity.kind != "namespace" {
 		return controlv1.PublicURL{}, ErrScope
 	}
 	token, err := n.Access(ctx)
@@ -152,7 +150,7 @@ func (n *Native) GetPublicURLByHostname(ctx context.Context, team, hostname stri
 	if n.route.TeamId != team || n.route.CanonicalHostname != hostname {
 		return controlv1.PublicURL{}, ErrScope
 	}
-	return n.route, nil
+	return clonePublicURL(n.route), nil
 }
 
 func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
@@ -177,7 +175,7 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 		if !ok {
 			return controlv1.PublishRunSetup{}, ErrTrafficUnsupported
 		}
-		return control.CreatePublisherRunWithTraffic(ctx, id, retry, token, proof, n.traffic)
+		return control.CreatePublisherRunWithTraffic(ctx, id, retry, token, proof, n.traffic.Clone())
 	}
 	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof)
 }
@@ -189,7 +187,7 @@ func (*Native) UpdatePublicURL(context.Context, string, controlv1.UpdatePublicUR
 	return controlv1.PublicURL{}, ErrScope
 }
 func (n *Native) DeletePublicURL(ctx context.Context, id string) error {
-	if n.identity.Kind != "namespace" || n.route.Id != id {
+	if n.identity.kind != "namespace" || n.route.Id != id {
 		return ErrScope
 	}
 	token, err := n.Access(ctx)

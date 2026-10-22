@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -16,6 +17,28 @@ import (
 
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestCertificateRejectsTypedNilECDSAKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"app.example"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, leaf, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+	if _, err := ValidateCertificate(certificate, "app.example", leaf.DNSNames); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []any{nil, (*ecdsa.PrivateKey)(nil)} {
+		certificate.PrivateKey = invalid
+		if _, err := ValidateCertificate(certificate, "app.example", leaf.DNSNames); err == nil {
+			t.Fatal("missing private key was accepted")
+		}
+	}
+}
 
 func TestDNSNamesOnly(t *testing.T) {
 	t.Parallel()

@@ -10,8 +10,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -200,7 +200,7 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	}
 	target := route.Target
 	if flags.Target != "" {
-		target, err = localproxy.NormalizeTarget(flags.Target)
+		target, err = targetsyntax.NormalizeTarget(flags.Target)
 		if err != nil {
 			return err
 		}

@@ -14,9 +14,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 const maximumAppliedInteger = 1<<53 - 1
@@ -60,14 +60,14 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 		if s.Protocol != "http" || s.Publisher != "local" {
 			return ErrProjectConfigurationInvalid
 		}
-		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !localproxy.ValidMountPrefix(r.Path) {
+		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
 			return ErrProjectConfigurationInvalid
 		}
 		if len(s.HTTP.Paths) > 32 || len(s.HTTP.Paths) > 0 && s.PublicURL == nil {
 			return ErrProjectConfigurationInvalid
 		}
 		for prefix := range s.HTTP.Paths {
-			if !localproxy.ValidMountPrefix(prefix) {
+			if !targetsyntax.ValidMountPrefix(prefix) {
 				return ErrProjectConfigurationInvalid
 			}
 		}
@@ -75,8 +75,12 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	descriptor := s.TargetDiscovery != nil
 	var err error
 	if descriptor {
-		if s.Target != "" || s.TargetTLS != nil || s.Publisher == "local" || s.TargetDiscovery.Validate(s.Protocol) != nil {
+		if s.Target != "" || s.TargetTLS != nil || s.Publisher == "local" {
 			return ErrProjectConfigurationInvalid
+		}
+		s.TargetDiscovery, err = s.TargetDiscovery.Normalize(s.Protocol)
+		if err != nil {
+			return err
 		}
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
@@ -89,7 +93,7 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	}
 	if !descriptor {
 		if s.PublicURL != nil && s.Publisher == "local" {
-			canonical, err := localproxy.NormalizeTarget(s.Target)
+			canonical, err := targetsyntax.NormalizeTarget(s.Target)
 			if err != nil {
 				return ErrProjectConfigurationInvalid
 			}

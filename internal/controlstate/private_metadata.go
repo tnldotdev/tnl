@@ -11,7 +11,6 @@ import (
 	"errors"
 	"net/netip"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,15 +98,15 @@ func validateServiceTrustRoots(hostname, caPEM string, system bool) error {
 	return nil
 }
 
-func privateMetadata(row controlstatedb.ControlPrivateService) PrivateServiceMetadata {
-	m := PrivateServiceMetadata{Protocol: row.Protocol, PublisherPool: row.PublisherPool, TrustRevision: row.TrustRevision}
+func checkedPrivateMetadata(row controlstatedb.ControlPrivateService) (PrivateServiceMetadata, error) {
+	m, err := decodePrivateMetadata(row.Protocol, row.TlsMetadata, row.PublisherPool, row.TrustRevision)
+	if err != nil {
+		return m, err
+	}
 	if row.CertificateHostname != "" && row.ServicePort.Valid {
 		m.ManagedTLS = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
 	}
-	if len(row.TlsMetadata) != 0 {
-		_ = json.Unmarshal(row.TlsMetadata, &m.TLS)
-	}
-	return m
+	return m, nil
 }
 
 func managedServiceTLS(hostname string, port int, public bool) *ManagedServiceTLS {
@@ -118,6 +117,9 @@ func managedServiceTLS(hostname string, port int, public bool) *ManagedServiceTL
 }
 
 func privateMetadataMatches(saved PrivateServiceMetadata, declared PrivateServiceMetadata) bool {
+	if saved.Validate() != nil || declared.Validate() != nil {
+		return false
+	}
 	if saved.Protocol != declared.Protocol || (saved.TLS == nil) != (declared.TLS == nil) {
 		return false
 	}
@@ -142,12 +144,20 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	saved := privateMetadata(row)
+	saved, err := checkedPrivateMetadata(row)
+	if err != nil {
+		return result, err
+	}
 	if metadata.TrustRevision != saved.TrustRevision {
 		return result, ErrPrivateServiceConflict
 	}
 	changed := !privateMetadataMatches(saved, metadata)
 	configurationChanged := changed || saved.PublisherPool != metadata.PublisherPool
+	if configurationChanged {
+		if _, err = nextPrivateRevision(saved.TrustRevision); err != nil {
+			return result, err
+		}
+	}
 	if !metadata.PublisherPool && saved.PublisherPool {
 		var count int
 		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.private_service_runs WHERE private_service_id=$1 AND closed_at IS NULL AND publisher_expires_at>$2`, serviceID, now).Scan(&count); err != nil {
@@ -191,20 +201,29 @@ func (d *Database) ConfigurePrivateService(ctx context.Context, serviceID, actor
 			return result, err
 		}
 	}
+	result, err = checkedPrivateServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	return privateServiceRecord(row), nil
+	return result, nil
 }
+
+var ErrPrivateServiceMetadata = errors.New("saved private service trust is invalid")
 
 func decodePrivateMetadata(protocol string, encoded []byte, pool bool, revision int64) (PrivateServiceMetadata, error) {
 	m := PrivateServiceMetadata{Protocol: protocol, PublisherPool: pool, TrustRevision: revision}
-	if len(encoded) > 0 && strings.TrimSpace(string(encoded)) != "null" {
+	if len(encoded) > 0 {
 		if err := json.Unmarshal(encoded, &m.TLS); err != nil {
-			return m, errors.New("controlstate: invalid saved private service trust")
+			return PrivateServiceMetadata{}, ErrPrivateServiceMetadata
 		}
 	}
-	return m, m.Validate()
+	if revision < 1 || m.Validate() != nil {
+		return PrivateServiceMetadata{}, ErrPrivateServiceMetadata
+	}
+	return m, nil
 }
 
 type LocalServiceSource struct {
@@ -233,7 +252,10 @@ func (d *Database) GetPrivateServiceForPublisher(ctx context.Context, id string,
 	if err != nil {
 		return result, err
 	}
-	result = privateServiceRecord(row)
+	result, err = checkedPrivateServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
 	settings, err := d.managedHTTPSettings(ctx, controlstatedb.New(tx), id)
 	if err != nil {
 		return result, err

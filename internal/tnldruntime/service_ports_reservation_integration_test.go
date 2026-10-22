@@ -17,7 +17,7 @@ func TestIntegrationPrivateRuntimeReservesStandaloneServicePorts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, interval := range ports {
+		for _, interval := range ports.Ranges() {
 			for port := interval.First; port <= interval.Last; port++ {
 				listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 				if err == nil {

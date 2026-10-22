@@ -72,7 +72,7 @@ func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) err
 			return ErrJobExists
 		}
 		seen[owner], replicas[replica] = true, true
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: "starting"}
+		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		jobs = append(jobs, job)
 	}
 	return r.update(ctx, func(existing *[]Job) error {
@@ -127,7 +127,7 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
 		return grouppublisher.ErrAssignment
 	}
-	run := privatepublisher.RunConfig{Control: native, State: p.State, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Metadata: nativeauth.PrivateServiceMetadata(service), ObserveReadiness: func(status privatepublisher.RunStatus) {
+	run := privatepublisher.RunConfig{Control: native.ManagedRunControl(), State: p.State, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Metadata: nativeauth.PrivateServiceMetadata(service), ObserveReadiness: func(status privatepublisher.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}
@@ -144,22 +144,22 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 		}
 		return grouppublisher.PublishCloudAssignment(ctx, p.Discovery, request, run)
 	}
-	job := Job{Kind: KindPrivateService, Protocol: config.ProtocolName(service.Protocol), Target: assignment.Configuration.Target}
+	plan := PrivateTargetPlan{Protocol: config.ProtocolName(service.Protocol), Target: assignment.Configuration.Target}
 	if trust := assignment.Configuration.TargetTls; trust != nil {
 		snapshot := projectconfig.TargetTrustSnapshot{Hostname: trust.Hostname, Digest: trust.Digest}
 		if trust.CaPem != nil {
 			snapshot.CAPEM = []byte(*trust.CaPem)
 		}
-		job.Trust, err = snapshot.PrivateSnapshot()
+		plan.Trust, err = snapshot.PrivateSnapshot()
 		if err != nil {
 			return err
 		}
 	}
-	if err := nativeauth.MatchPrivateServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
+	if err := nativeauth.MatchPrivateServiceDeclaration(service, string(plan.Protocol), plan.Trust); err != nil {
 		return err
 	}
-	run.Target = job.Target
-	return PublishPrivate(ctx, job, run)
+	run.Target = plan.Target
+	return PublishPrivate(ctx, plan, run)
 }
 
 // InstallGroup captures the task's own signing identity. no person session or
@@ -189,7 +189,7 @@ func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.P
 			if err := r.retainGroup(ctx, job, member, private); err != nil {
 				return err
 			}
-			job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: "starting"}
+			job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
 			(*jobs)[i] = job
 			return nil
 		}
@@ -199,7 +199,7 @@ func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.P
 		if err := r.retainGroup(ctx, job, member, private); err != nil {
 			return err
 		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: "starting"}
+		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		*jobs = append(*jobs, job)
 		return nil
 	})

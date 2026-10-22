@@ -15,7 +15,7 @@ func (n *Native) RemoteRuntime(server string) (*publisherruntime.Owner, error) {
 	if !ok {
 		return nil, ErrScope
 	}
-	return publisherruntime.New(control, server, n.identity.ClientId, n.identity.KeyId, n.identity.GrantId, n.private)
+	return publisherruntime.New(control, server, n.identity.clientID, n.identity.keyID, n.identity.grantID, n.private)
 }
 
 func (n *Native) WithRuntime(owner *publisherruntime.Owner) { n.runtime = owner }

@@ -69,8 +69,8 @@ func (a *appRuntime) privateWorkerConfiguration(ctx context.Context, project pro
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}
-	job := publisherjob.Job{Kind: publisherjob.KindPrivateService, Protocol: config.ProtocolName(config.Protocol(definition)), Target: target.Address, Trust: trust}
-	if err := publisherjob.PreflightPrivate(ctx, job); err != nil {
+	plan := publisherjob.PrivateTargetPlan{Protocol: config.ProtocolName(config.Protocol(definition)), Target: target.Address, Trust: trust}
+	if err := publisherjob.PreflightPrivate(ctx, plan); err != nil {
 		return projectpublisher.Configuration{}, err
 	}
 	realized, err := realizeLocalService(ctx, auth.Control, project, current, service.Name, "")
@@ -92,9 +92,9 @@ func (a *appRuntime) privateWorkerConfiguration(ctx context.Context, project pro
 		return projectpublisher.Configuration{}, err
 	}
 	if config.TargetType(definition) != "app" {
-		job.Project, job.ProjectService = &project.Project, service.Name
+		plan.Project, plan.ProjectService = &project.Project, service.Name
 	}
-	transport, err := publisherjob.PrivateTransport(job)
+	transport, err := publisherjob.PrivateTransport(plan)
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}
@@ -119,7 +119,7 @@ func (a *appRuntime) privateWorkerConfiguration(ctx context.Context, project pro
 		return observation
 	}
 	return projectpublisher.Configuration{CheckPrivate: check, RunPrivate: func(ctx context.Context, observe func(uint64, bool) error) error {
-		control := &privateProjectControl{RunControl: native}
+		control := &privateProjectControl{RunControl: native.ManagedRunControl()}
 		control.prepared = func(run uint64) error {
 			pinMu.Lock()
 			pin, pinRun = pending, run
@@ -140,7 +140,7 @@ func (a *appRuntime) privateWorkerConfiguration(ctx context.Context, project pro
 			return nil
 		}
 		publish := func() error {
-			return publisherjob.PublishPrivate(ctx, job, privatepublisher.RunConfig{Control: control, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: saved.Id, Target: job.Target, Metadata: nativeauth.PrivateServiceMetadata(saved),
+			return publisherjob.PublishPrivate(ctx, plan, privatepublisher.RunConfig{Control: control, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: saved.Id, Target: plan.Target, Metadata: nativeauth.PrivateServiceMetadata(saved),
 				Healthy: func(probe context.Context) bool {
 					current := service
 					current.PublishRunNumber = control.number.Load()

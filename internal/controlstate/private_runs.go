@@ -37,6 +37,7 @@ type PrivateRunAssignment struct {
 
 type PrivateRunState struct {
 	ServiceID, RunID, Token, State  string
+	ManagedToken                    credentials.ManagedRunToken `json:"-"`
 	RunNumber                       int64
 	ExpiresAt                       time.Time
 	Connections                     []PrivateRunAssignment
@@ -97,7 +98,11 @@ func (d *Database) PreparePrivateServiceRun(ctx context.Context, serviceID strin
 	if len(declared) == 1 {
 		metadata = declared[0]
 	}
-	if metadata.Validate() != nil || metadata.TrustRevision != service.TrustRevision || !privateMetadataMatches(privateMetadata(service), metadata) {
+	saved, err := checkedPrivateMetadata(service)
+	if err != nil {
+		return result, err
+	}
+	if metadata.Validate() != nil || metadata.TrustRevision != service.TrustRevision || !privateMetadataMatches(saved, metadata) {
 		return result, ErrPrivateServiceConflict
 	}
 	keyRecord, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: p.KeyID, PublisherIdentityID: p.ID})
@@ -121,7 +126,7 @@ func (d *Database) PreparePrivateServiceRun(ctx context.Context, serviceID strin
 		if err != nil {
 			return result, err
 		}
-		if run.State != "prepared" || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(now) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
+		if privateRunLifecycleState(run.State) != privateRunPrepared || run.ClosedAt.Valid || !run.PreparationExpiresAt.Time.After(now) || !bytes.Equal(run.RequestDigest, digest[:]) || run.PublisherIdentityID != p.ID || run.PublisherGrantID != p.GrantID || run.PublisherKeyID != p.KeyID {
 			return result, ErrPrivateServiceConflict
 		}
 		if err = tx.Commit(ctx); err != nil {
@@ -141,7 +146,10 @@ func (d *Database) PreparePrivateServiceRun(ctx context.Context, serviceID strin
 		if err != nil {
 			return result, err
 		}
-		if active.PublisherExpiresAt.Time.After(now) && (active.State != "prepared" || active.PreparationExpiresAt.Time.After(now)) {
+		if !privateRunLifecycleState(active.State).valid() {
+			return result, ErrPrivateServiceAccess
+		}
+		if active.PublisherExpiresAt.Time.After(now) && (privateRunLifecycleState(active.State) != privateRunPrepared || active.PreparationExpiresAt.Time.After(now)) {
 			return result, ErrPrivateServiceConflict
 		}
 		if _, err = q.ClosePrivateServiceRun(ctx, controlstatedb.ClosePrivateServiceRunParams{
@@ -157,12 +165,15 @@ func (d *Database) PreparePrivateServiceRun(ctx context.Context, serviceID strin
 	if err != nil {
 		return result, err
 	}
-	seed, _, _, err := credentials.NewPublishRunToken()
+	seed, err := credentials.NewAssignmentSeed()
 	if err != nil {
 		return result, err
 	}
 	ciphertext, err := d.storageKey.Seal(privateAssignmentSeedContext(id), []byte(seed))
 	if err != nil {
+		return result, err
+	}
+	if _, err = nextPrivateRevision(service.NextRunNumber); err != nil {
 		return result, err
 	}
 	number, err := q.AdvancePrivateServiceRunNumber(ctx, controlstatedb.AdvancePrivateServiceRunNumberParams{ID: serviceID, Now: timestamptz(now)})
@@ -190,19 +201,19 @@ func (d *Database) PreparePrivateServiceRun(ctx context.Context, serviceID strin
 	return privateRunPreparation(run), nil
 }
 
-func (d *Database) privateAssignmentSeed(run controlstatedb.ControlPrivateServiceRun) (credentials.PublishRunToken, error) {
+func (d *Database) privateAssignmentSeed(run controlstatedb.ControlPrivateServiceRun) (credentials.AssignmentSeed, error) {
 	seed, _, err := d.storageKey.Open(run.AssignmentSeedStorageKeyID, privateAssignmentSeedContext(run.ID), run.AssignmentSeedCiphertext)
 	if err != nil {
 		return "", err
 	}
-	if _, _, err = credentials.ParsePublishRunToken(credentials.PublishRunToken(seed)); err != nil {
+	if err = credentials.ParseAssignmentSeed(credentials.AssignmentSeed(seed)); err != nil {
 		return "", err
 	}
-	return credentials.PublishRunToken(seed), nil
+	return credentials.AssignmentSeed(seed), nil
 }
 
-func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed credentials.PublishRunToken, runID string) ([]PrivateRunAssignment, error) {
-	rows, err := q.ListPrivateServiceConnectionSlots(ctx, runID)
+func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlPrivateServiceRun) ([]PrivateRunAssignment, error) {
+	rows, err := q.ListPrivateServiceConnectionSlots(ctx, run.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -211,17 +222,22 @@ func privateAssignments(ctx context.Context, q *controlstatedb.Queries, seed cre
 	}
 	result := make([]PrivateRunAssignment, 0, 2)
 	for index, slot := range rows {
-		if int(slot.ConnectionSlot) != index || slot.ConnectionAssignmentRevision <= 0 {
+		binding, err := checkedPrivateAssignmentBinding(slot.PrivateServiceID, slot.PrivateRunID, slot.PublisherConnectionID, slot.RunNumber, slot.ConnectionAssignmentRevision)
+		if err != nil || binding.serviceID != run.PrivateServiceID || binding.runID != run.ID || binding.number != run.RunNumber || int(slot.ConnectionSlot) != index {
 			return nil, ErrPrivateServiceAccess
 		}
-		credential, hash, err := credentials.DerivePublisherConnectionCredential(seed,
+		state, err := privateAssignmentState(slot.State)
+		if err != nil {
+			return nil, err
+		}
+		credential, hash, err := credentials.DeriveAssignmentCredential(seed,
 			publisherConnectionCredentialContext(slot.PublisherConnectionID, slot.ConnectionAssignmentRevision))
 		if err != nil || !credentials.SecretHashMatches(slot.CredentialDigest, hash) {
 			return nil, ErrPrivateServiceAccess
 		}
 		result = append(result, PrivateRunAssignment{PublisherConnectionID: slot.PublisherConnectionID,
 			RelayServiceID: slot.RelayServiceID, RelayAddress: slot.RelayAddress,
-			TLSServerName: slot.TlsServerName, Credential: string(credential), State: slot.State,
+			TLSServerName: slot.TlsServerName, Credential: string(credential), State: string(state),
 			ConnectionSlot: slot.ConnectionSlot, Revision: slot.ConnectionAssignmentRevision,
 			CredentialExpiresAt: slot.CredentialExpiresAt.Time})
 	}
@@ -232,9 +248,9 @@ func privateRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if !opaqueid.Valid(runID, opaqueid.PrivateRunPrefix) {
 		return controlstatedb.ControlPrivateServiceRun{}, ErrPrivateServiceAccess
 	}
-	digest, err := privateSecretDigest(token)
+	digest, err := credentials.ParseManagedRunToken(credentials.ManagedRunToken(token))
 	if err != nil {
-		return controlstatedb.ControlPrivateServiceRun{}, err
+		return controlstatedb.ControlPrivateServiceRun{}, ErrPrivateServiceAccess
 	}
 	run, err := q.LockPrivateServiceRun(ctx, controlstatedb.LockPrivateServiceRunParams{ID: runID, PrivateServiceID: serviceID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -243,7 +259,11 @@ func privateRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if err != nil {
 		return run, err
 	}
-	if run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !bytes.Equal(digest, run.RunTokenDigest) || run.State != "starting" && run.State != "ready" {
+	binding, err := checkedPrivateRunBinding(serviceID, runID, run.RunNumber)
+	if err != nil || !binding.matches(run) {
+		return run, ErrPrivateServiceAccess
+	}
+	if run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !bytes.Equal(digest[:], run.RunTokenDigest) || !privateRunLifecycleState(run.State).active() {
 		return run, ErrPrivateServiceAccess
 	}
 	var current bool
@@ -287,6 +307,9 @@ func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now ti
 			&relay.InternalRelayAddress, &relay.LeaseExpiresAt, &relay.TLSServerName); err != nil {
 			return nil, time.Time{}, err
 		}
+		if !opaqueid.Valid(relay.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 {
+			return nil, time.Time{}, ErrPrivateServiceAccess
+		}
 		if relay.LeaseExpiresAt.After(lastRelayExpiry) {
 			lastRelayExpiry = relay.LeaseExpiresAt
 		}
@@ -308,7 +331,7 @@ func privateRoutingUpsert(ctx context.Context, tx pgx.Tx, q *controlstatedb.Quer
 	if lastRelayExpiry.Before(expires) {
 		expires = lastRelayExpiry
 	}
-	if run.State != "ready" || !run.ReadyAt.Valid || len(relays) < 1 || len(relays) > 2 || !expires.After(now) {
+	if privateRunLifecycleState(run.State) != privateRunReady || !run.ReadyAt.Valid || len(relays) < 1 || len(relays) > 2 || !expires.After(now) {
 		return ErrPrivateServiceAccess
 	}
 	encoded, err := json.Marshal(relays)
@@ -336,7 +359,7 @@ func privateRoutingUpsert(ctx context.Context, tx pgx.Tx, q *controlstatedb.Quer
 	return err
 }
 
-func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries, seed credentials.PublishRunToken, run controlstatedb.ControlPrivateServiceRun, now time.Time) error {
+func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlPrivateServiceRun, now time.Time) error {
 	stale, err := q.ListPrivateServiceConnectionSlotsNeedingReplacement(ctx, controlstatedb.ListPrivateServiceConnectionSlotsNeedingReplacementParams{
 		PrivateRunID: run.ID, Now: timestamptz(now),
 	})
@@ -346,7 +369,7 @@ func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries,
 	var replaced []controlstatedb.ControlPrivateServiceConnectionSlot
 	used := make(map[string]bool, 2)
 	for _, slot := range stale {
-		if slot.State == "ready" || slot.State == "connected" {
+		if PublisherConnectionState(slot.State) == PublisherConnectionReady || PublisherConnectionState(slot.State) == PublisherConnectionConnected {
 			if _, err = q.ExpirePrivateServiceConnectionSlot(ctx, controlstatedb.ExpirePrivateServiceConnectionSlotParams{
 				PublisherConnectionID: slot.PublisherConnectionID, PrivateRunID: run.ID, Now: timestamptz(now),
 			}); err != nil {
@@ -359,7 +382,11 @@ func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries,
 		return err
 	}
 	for _, slot := range rows {
-		if slot.State == "closed" || slot.State == "assigned" && !slot.CredentialExpiresAt.Time.After(now) {
+		state, err := privateAssignmentState(slot.State)
+		if err != nil {
+			return err
+		}
+		if state == PublisherConnectionClosed || state == PublisherConnectionAssigned && !slot.CredentialExpiresAt.Time.After(now) {
 			replaced = append(replaced, slot)
 		} else {
 			used[slot.RelayServiceID] = true
@@ -374,7 +401,7 @@ func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries,
 	}
 	free := make(map[string]int64, len(replaced))
 	for _, old := range replaced {
-		if old.State == "assigned" {
+		if PublisherConnectionState(old.State) == PublisherConnectionAssigned {
 			free[old.RelayServiceID]++
 		}
 	}
@@ -399,6 +426,14 @@ func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries,
 		choices = append(choices, *choice)
 	}
 	for index, old := range replaced {
+		binding, err := checkedPrivateAssignmentBinding(old.PrivateServiceID, old.PrivateRunID, old.PublisherConnectionID, old.RunNumber, old.ConnectionAssignmentRevision)
+		if err != nil || binding.serviceID != run.PrivateServiceID || binding.runID != run.ID || binding.number != run.RunNumber {
+			return ErrPrivateServiceAccess
+		}
+		revision, err := nextPrivateRevision(binding.revision)
+		if err != nil {
+			return err
+		}
 		count, err := q.DeletePrivateServiceConnectionSlot(ctx, controlstatedb.DeletePrivateServiceConnectionSlotParams{
 			PublisherConnectionID: old.PublisherConnectionID, PrivateRunID: run.ID, Now: timestamptz(now),
 		})
@@ -413,15 +448,15 @@ func replenishPrivateConnections(ctx context.Context, q *controlstatedb.Queries,
 		if err != nil {
 			return err
 		}
-		_, digest, err := credentials.DerivePublisherConnectionCredential(seed,
-			publisherConnectionCredentialContext(id, old.ConnectionAssignmentRevision+1))
+		_, digest, err := credentials.DeriveAssignmentCredential(seed,
+			publisherConnectionCredentialContext(id, revision))
 		if err != nil {
 			return err
 		}
 		_, err = q.InsertPrivateServiceConnectionSlot(ctx, controlstatedb.InsertPrivateServiceConnectionSlotParams{
 			PublisherConnectionID: id, PrivateRunID: run.ID, PrivateServiceID: run.PrivateServiceID,
 			RunNumber: run.RunNumber, ConnectionSlot: old.ConnectionSlot,
-			ConnectionAssignmentRevision: old.ConnectionAssignmentRevision + 1,
+			ConnectionAssignmentRevision: revision,
 			RelayServiceID:               choice.relayServiceID, RelayAddress: choice.relayAddress,
 			TlsServerName: choice.tlsServerName, CredentialDigest: digest[:],
 			CredentialExpiresAt: timestamptz(now.Add(2 * time.Minute)),
@@ -480,14 +515,14 @@ func (d *Database) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, ru
 		return result, err
 	}
 	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(now)
-	demoted := (ready == 0 || !run.Healthy || !certificateReady) && run.State == "ready"
+	demoted := (ready == 0 || !run.Healthy || !certificateReady) && privateRunLifecycleState(run.State) == privateRunReady
 	if demoted {
 		if _, err = q.DemotePrivateServiceRun(ctx, controlstatedb.DemotePrivateServiceRunParams{
 			ID: runID, PrivateServiceID: serviceID, RunNumber: run.RunNumber,
 		}); err != nil {
 			return result, err
 		}
-		run.State = "starting"
+		run.State = string(privateRunStarting)
 	}
 	seed, err := d.privateAssignmentSeed(run)
 	if err != nil {
@@ -499,7 +534,7 @@ func (d *Database) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, ru
 		}
 	}
 	if run.Healthy && certificateReady && ready > 0 && (ready == 2 || run.ReadyAt.Valid) {
-		if run.State == "starting" {
+		if privateRunLifecycleState(run.State) == privateRunStarting {
 			run, err = q.ReadyPrivateServiceRun(ctx, controlstatedb.ReadyPrivateServiceRunParams{
 				ID: runID, PrivateServiceID: serviceID, RunNumber: run.RunNumber, Now: timestamptz(now),
 			})
@@ -518,7 +553,7 @@ func (d *Database) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, ru
 			return result, err
 		}
 	}
-	connections, err := privateAssignments(ctx, q, seed, runID)
+	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
 	}
@@ -532,7 +567,7 @@ func (d *Database) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, ru
 }
 
 func (d *Database) ClosePrivateServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time) (retErr error) {
-	digest, err := privateSecretDigest(token)
+	digest, err := credentials.ParseManagedRunToken(credentials.ManagedRunToken(token))
 	if err != nil || !opaqueid.Valid(runID, opaqueid.PrivateRunPrefix) {
 		return ErrPrivateServiceAccess
 	}
@@ -552,7 +587,10 @@ func (d *Database) ClosePrivateServiceRun(ctx context.Context, serviceID, runID,
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(digest, run.RunTokenDigest) || run.ClosedAt.Valid {
+	if _, err = checkedPrivateRunBinding(serviceID, runID, run.RunNumber); err != nil {
+		return err
+	}
+	if !bytes.Equal(digest[:], run.RunTokenDigest) || run.ClosedAt.Valid || !privateRunLifecycleState(run.State).active() {
 		return ErrPrivateServiceAccess
 	}
 	count, err := q.ClosePrivateServiceRun(ctx, controlstatedb.ClosePrivateServiceRunParams{

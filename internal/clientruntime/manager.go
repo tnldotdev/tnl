@@ -12,9 +12,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
@@ -306,7 +306,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	}
 	var targetErr error
 	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
-		_, targetErr = localproxy.ParseCanonicalTarget(target)
+		_, targetErr = targetsyntax.ParseCanonicalTarget(target)
 	} else {
 		var canonical string
 		canonical, targetErr = tcptarget.Normalize(target)
@@ -405,7 +405,7 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 		if service.RegistrationID != id || !service.Registered || reg == nil || time.Now().After(reg.expires) {
 			continue
 		}
-		if run < service.PublishRunNumber {
+		if run == 0 || run < service.PublishRunNumber || m.Alive != nil && !m.Alive(reg.pid) {
 			return ErrRegistrationStale
 		}
 		if run != service.PublishRunNumber || !routable {
@@ -429,12 +429,50 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 	return ErrRegistrationStale
 }
 
-func (m *Manager) Current(name, id, target string, run uint64) bool {
+// CurrentRegistration checks listener ownership before a publish run exists.
+func (m *Manager) CurrentRegistration(name, id, target string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.currentRegistrationLocked(name, id, target)
+}
+
+func (m *Manager) currentRegistrationLocked(name, id, target string) bool {
 	service := m.serviceLocked(name)
 	reg := m.registrations[name]
-	return !m.closed && service != nil && reg != nil && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) && service.Registered && service.RegistrationID == id && service.Target == target && (run == 0 || service.PublishRunNumber == run)
+	return !m.closed && service != nil && reg != nil && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) && service.Registered && service.RegistrationID == id && service.Target == target
+}
+
+// CurrentRun requires an exact, nonzero run. routability and readiness are
+// separate observations and are not required during provisioning or drain.
+func (m *Manager) CurrentRun(name, id, target string, run uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentRunLocked(name, id, target, run)
+}
+
+func (m *Manager) currentRunLocked(name, id, target string, run uint64) bool {
+	return run != 0 && m.currentRegistrationLocked(name, id, target) && m.serviceLocked(name).PublishRunNumber == run
+}
+
+// Current retains the exact-run check for callers using the earlier name.
+func (m *Manager) Current(name, id, target string, run uint64) bool {
+	return m.CurrentRun(name, id, target, run)
+}
+
+// ServiceForRun reads the live registration and run together, without combining
+// a journal snapshot with a later ownership check.
+func (m *Manager) ServiceForRun(name, id, target string, run uint64) (Service, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.currentRunLocked(name, id, target, run) {
+		return Service{}, false
+	}
+	service := *m.serviceLocked(name)
+	if service.Observation != nil {
+		observation := *service.Observation
+		service.Observation = &observation
+	}
+	return service, true
 }
 
 func (m *Manager) BindTunnel(name, id, target, tunnelID string) error {

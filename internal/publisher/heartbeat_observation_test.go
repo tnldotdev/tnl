@@ -30,9 +30,9 @@ func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
 					if calls > 1 {
 						cancel()
 					}
-					return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: next}, PublisherConnections: []controlv1.ConnectionAssignment{{}}}, nil
+					return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{Id: "run", PublishRunNumber: 1, ExpiresAt: next}, PublisherConnections: []controlv1.ConnectionAssignment{{}}}, nil
 				}}
-				err := heartbeatSessionAfterUpdate(ctx, control, "run", 1, "token", old, func([]controlv1.ConnectionAssignment) error {
+				err := heartbeatSessionAfterUpdate(ctx, heartbeatTestAuthority(control, "run", "token"), old, func([]controlv1.ConnectionAssignment) error {
 					if rejected == "connections" {
 						return invalid
 					}

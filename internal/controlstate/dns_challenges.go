@@ -15,6 +15,7 @@ import (
 var ErrDNSChallengeNotFound = errors.New("controlstate: DNS challenge not found")
 
 type DNSChallengeContext struct {
+	Subject               CertificateSubject `json:"-"`
 	PublicURLID           string
 	PrivateServiceID      string
 	TeamID                string
@@ -90,17 +91,63 @@ func (d *Database) GetDNSChallengeContext(
 		return DNSChallengeContext{}, err
 	}
 	queries := controlstatedb.New(d.pool)
-	row, err := queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{
-		PublicURLID: publicURLID, AuthorizationID: authorizationID,
+	subject, err := d.dnsChallengeSubject(ctx, publicURLID, authorizationID)
+	if err != nil {
+		return DNSChallengeContext{}, err
+	}
+	return dnsChallengeContext(ctx, queries, subject, authorizationID)
+}
+
+func (d *Database) dnsChallengeSubject(ctx context.Context, ownerID, authorizationID string) (CertificateSubject, error) {
+	row, err := controlstatedb.New(d.pool).GetDNSChallengeSubject(ctx, controlstatedb.GetDNSChallengeSubjectParams{
+		AuthorizationID: authorizationID, OwnerID: ownerID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CertificateSubject{}, ErrDNSChallengeNotFound
+	}
+	if err != nil {
+		return CertificateSubject{}, fmt.Errorf("read DNS challenge subject: %w", err)
+	}
+	subject, err := certificateSubject(row.PublicURLID, row.PublishRunID, row.PublishRunNumber, row.PrivateServiceID, row.PrivateRunID, row.PrivateRunNumber)
+	if err != nil {
+		return CertificateSubject{}, ErrDNSChallengeNotFound
+	}
+	return subject, nil
+}
+
+func (d *Database) GetDNSChallengeContextForSubject(ctx context.Context, subject CertificateSubject, authorizationID string) (DNSChallengeContext, error) {
+	if !subject.Valid() || !validStateText(authorizationID) {
+		return DNSChallengeContext{}, ErrDNSChallengeNotFound
+	}
+	if err := d.requireOpen(); err != nil {
+		return DNSChallengeContext{}, err
+	}
+	stored, err := d.dnsChallengeSubject(ctx, subject.ID, authorizationID)
+	if err != nil {
+		return DNSChallengeContext{}, err
+	}
+	if stored != subject {
+		return DNSChallengeContext{}, ErrDNSChallengeNotFound
+	}
+	return dnsChallengeContext(ctx, controlstatedb.New(d.pool), subject, authorizationID)
+}
+
+func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, subject CertificateSubject, authorizationID string) (DNSChallengeContext, error) {
+	var row controlstatedb.GetDNSChallengeContextRow
+	var err error
 	privateID := ""
-	if strings.HasPrefix(publicURLID, "psvc_") {
-		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{PrivateServiceID: publicURLID, AuthorizationID: authorizationID})
+	switch subject.Kind {
+	case CertificateSubjectPublicURL:
+		row, err = queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{PublicURLID: subject.ID, AuthorizationID: authorizationID})
+	case CertificateSubjectManagedService:
+		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{PrivateServiceID: subject.ID, AuthorizationID: authorizationID})
 		err = privateErr
 		if err == nil {
 			privateID = private.PrivateServiceID
 			row = controlstatedb.GetDNSChallengeContextRow{TeamID: private.TeamID, DomainID: private.DomainID.String, DnsAuthorityReference: private.DnsAuthorityReference, CanonicalHostname: private.CanonicalHostname, CanonicalDomain: private.CanonicalDomain, AuthorizationID: private.AuthorizationID, Identifier: private.Identifier, ChallengeDigest: private.ChallengeDigest, PresentationReference: private.PresentationReference, State: private.State}
 		}
+	default:
+		return DNSChallengeContext{}, ErrDNSChallengeNotFound
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
@@ -122,6 +169,7 @@ func (d *Database) GetDNSChallengeContext(
 		return DNSChallengeContext{}, fmt.Errorf("controlstate: list DNS challenge presentations: %w", err)
 	}
 	result := DNSChallengeContext{
+		Subject:     subject,
 		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
 		PrivateServiceID:      privateID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
@@ -15,6 +16,25 @@ type trafficControlStub struct {
 	NativeControl
 	url, retry, token, proof string
 	selection                *trafficlimits.Selection
+}
+
+func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
+	selection := &trafficlimits.Selection{Connections: new(48), Rate: new(3), RatePer: new("1m"), Burst: new(4), UploadBytes: new(int64(1 << 20)), DownloadBytes: new(int64(2 << 20)), TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(7)), TotalDownloadBytes: new(int64(8))}
+	n := &Native{NativeControl: &trafficControlStub{}}
+	selected, err := n.WithTraffic(selection)
+	if err != nil || !reflect.DeepEqual(selection, selected.traffic) {
+		t.Fatal("typed copy changed explicit traffic values", err)
+	}
+	*selection.Connections, *selection.Rate, *selection.RatePer, *selection.Burst = 1, 1, "1s", 1
+	*selection.UploadBytes, *selection.DownloadBytes = 1, 1
+	*selection.TotalConnections, *selection.TotalUploadBytes, *selection.TotalDownloadBytes = 1, 1, 1
+	limits, err := selected.traffic.Resolve(trafficlimits.Default(), trafficlimits.Ceiling())
+	if err != nil || limits.Connections != 48 || limits.Rate != 3 || limits.Period().String() != "1m0s" || limits.Burst != 4 || limits.UploadBytes != 1<<20 || limits.DownloadBytes != 2<<20 || limits.TotalConnections != 0 || limits.TotalUploadBytes != 7 || limits.TotalDownloadBytes != 8 {
+		t.Fatal("input pointers changed worker traffic budgets", err)
+	}
+	if selected, err := n.WithTraffic(nil); err != nil || selected.traffic != nil || (*trafficlimits.Selection)(nil).Clone() != nil {
+		t.Fatal("omitted selection became explicit traffic limits", err)
+	}
 }
 
 func (s *trafficControlStub) CreatePublisherRunWithTraffic(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
@@ -40,6 +60,10 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 	}
 	if _, err := publisheridentity.VerifyRun(private.Public().(ed25519.PublicKey), control.proof, "url", "retry"); err != nil {
 		t.Fatal(err)
+	}
+	*control.selection.Connections = 1
+	if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil || *control.selection.Connections != 48 {
+		t.Fatal("control mutated the worker's traffic selection", err)
 	}
 	if _, err := selected.CreatePublishRun(t.Context(), "other", "retry"); !errors.Is(err, ErrScope) {
 		t.Fatalf("unscoped run: %v", err)

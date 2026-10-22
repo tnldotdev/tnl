@@ -175,10 +175,28 @@ func RemoveEndpoint(path, ownerID string) {
 
 type grantKey struct{}
 
+// capabilityGrant owns only scalar values; API descriptors are fresh views.
+type capabilityGrant struct {
+	url, ownerID, capability string
+	scope                    api.EndpointScope
+	service, invocationID    string
+}
+
+func (g capabilityGrant) endpoint() Endpoint {
+	e := Endpoint{Version: 1, Url: g.url, OwnerId: g.ownerID, Capability: g.capability, Scope: g.scope}
+	if g.scope == "app" {
+		e.Service = &g.service
+	}
+	if g.scope == "invocation" {
+		e.InvocationId = &g.invocationID
+	}
+	return e
+}
+
 type Capabilities struct {
 	mu     sync.Mutex
-	owner  Endpoint
-	grants map[[32]byte]Endpoint
+	owner  capabilityGrant
+	grants map[[32]byte]capabilityGrant
 }
 
 func NewCapabilities(address string) (*Capabilities, error) {
@@ -194,35 +212,37 @@ func NewCapabilities(address string) (*Capabilities, error) {
 	if err := ValidateEndpoint(e); err != nil {
 		return nil, err
 	}
-	return &Capabilities{owner: e, grants: map[[32]byte]Endpoint{sha256.Sum256([]byte(secret)): e}}, nil
+	owner := capabilityGrant{url: address, ownerID: id, capability: secret, scope: "owner"}
+	return &Capabilities{owner: owner, grants: map[[32]byte]capabilityGrant{sha256.Sum256([]byte(secret)): owner}}, nil
 }
 
-func (c *Capabilities) Owner() Endpoint { return c.owner }
+func (c *Capabilities) Owner() Endpoint { return c.owner.endpoint() }
 
 func (c *Capabilities) Issue(request CapabilityRequest) (Endpoint, error) {
 	secret, err := Random(32)
 	if err != nil {
 		return Endpoint{}, err
 	}
-	e := c.owner
+	e := c.owner.endpoint()
 	e.Scope, e.Service, e.InvocationId, e.Capability = api.EndpointScope(request.Scope), request.Service, request.InvocationId, secret
 	if !request.Scope.Valid() || ValidateEndpoint(e) != nil {
 		return Endpoint{}, ErrForbidden
 	}
+	grant := capabilityGrant{url: e.Url, ownerID: e.OwnerId, capability: e.Capability, scope: e.Scope, service: optional(e.Service), invocationID: optional(e.InvocationId)}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// bounded grants are stable per selected service/invocation, so SDK retries
 	// cannot exhaust owner memory or revoke another application's capability.
 	for _, existing := range c.grants {
-		if existing.Scope == e.Scope && optional(existing.Service) == optional(e.Service) && optional(existing.InvocationId) == optional(e.InvocationId) {
-			return existing, nil
+		if existing.scope == grant.scope && existing.service == grant.service && existing.invocationID == grant.invocationID {
+			return existing.endpoint(), nil
 		}
 	}
 	if len(c.grants) >= 256 {
 		return Endpoint{}, ErrForbidden
 	}
-	c.grants[sha256.Sum256([]byte(secret))] = e
-	return e, nil
+	c.grants[sha256.Sum256([]byte(secret))] = grant
+	return grant.endpoint(), nil
 }
 
 func optional(value *string) string {
@@ -233,14 +253,17 @@ func optional(value *string) string {
 }
 
 func Grant(r *http.Request) Endpoint {
-	value, _ := r.Context().Value(grantKey{}).(Endpoint)
-	return value
+	value, found := r.Context().Value(grantKey{}).(capabilityGrant)
+	if !found {
+		return Endpoint{}
+	}
+	return value.endpoint()
 }
 
 func (c *Capabilities) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		u, _ := url.Parse(c.owner.Url)
+		u, _ := url.Parse(c.owner.url)
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		remote, parseErr := netip.ParseAddr(host)
 		if err != nil || parseErr != nil || !remote.IsLoopback() || r.Host != u.Host || len(r.Header.Values("Origin")) != 0 || r.URL.IsAbs() || len(r.Header.Values("Authorization")) != 1 {

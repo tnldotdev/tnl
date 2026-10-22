@@ -18,7 +18,7 @@ import (
 type privateConnection struct {
 	ref   tunnelv1.PrivatePublisherConnectionRef
 	lease relayv1.RelayLease
-	paths *PublisherConnection
+	paths *streamLifetime
 }
 
 // PrivateRegistry contains only exact locally claimed private assignments.
@@ -124,8 +124,8 @@ func (r *PrivateRegistry) candidate(h tunnelv1.PrivateForwardingHeader, lease re
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := r.connections[h.PublisherConnectionID]
-	if c == nil || r.closed || c.ref.PrivateServiceID != h.PrivateServiceID || c.ref.PrivateRunID != h.PrivateRunID || c.ref.RunNumber != h.RunNumber ||
-		c.ref.ConnectionSlot != h.ConnectionSlot || c.ref.ConnectionAssignmentRevision != h.ConnectionAssignmentRevision || c.ref.RelayServiceID != h.RelayServiceID ||
+	if c == nil || r.closed || tunnel.PrivateForwardingRef(h) != c.ref ||
+		c.lease.RelayServiceId != lease.RelayServiceId || c.lease.RelayId != lease.RelayId ||
 		c.lease.RelayRunId != lease.RelayRunId || c.lease.RelayLeaseRevision != lease.RelayLeaseRevision {
 		return nil, false
 	}
@@ -242,7 +242,7 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	if session == nil {
 		return errors.New("relay: private handshake failed after claim")
 	}
-	paths := &PublisherConnection{session: session, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
+	paths := newStreamLifetime(session)
 	connection := &privateConnection{ref: c.ref, lease: c.lease, paths: paths}
 	if err := c.target.Registry.insert(connection); err != nil {
 		var protocol *tunnel.ProtocolError
@@ -277,9 +277,9 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingPrivateForwardingStream) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_private_visitor_stream")
-	observability.Visitor(ctx, incoming.PrivateHeader.VisitorConnectionID)
+	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
 	var rejected error
@@ -300,7 +300,7 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
 	defer a.releaseStream()
-	header := *incoming.PrivateHeader
+	header := incoming.Header
 	connection, ok := a.private.candidate(header, a.currentLease(), a.now())
 	if !ok {
 		a.streamRejected("stale_assignment")

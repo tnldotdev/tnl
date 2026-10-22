@@ -131,6 +131,36 @@ func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testin
 	}
 }
 
+func TestReadinessProbeRejectsSameAddressTargetReplacementBeforeAcceptance(t *testing.T) {
+	w, ready := testWorkers(t)
+	var identity atomic.Value
+	identity.Store("container-a")
+	configure := w.Configure
+	w.Configure = func(ctx context.Context, service clientruntime.Service) (Configuration, error) {
+		cfg, err := configure(ctx, service)
+		cfg.TargetBinding = &TargetBinding{Resolve: func(context.Context) (TargetSnapshot, error) {
+			return TargetSnapshot{Address: service.Target, Identity: identity.Load().(string)}, nil
+		}}
+		return cfg, err
+	}
+	registerAutomaticWorker(t, w, ready)
+	w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
+		identity.Store("container-b")
+		return automaticResponse(200), nil
+	})
+	service := w.Manager.Snapshot().Services[0]
+	if w.checkService(t.Context(), service) {
+		t.Fatal("old target identity's success was accepted at the same address")
+	}
+	current := w.Manager.Snapshot().Services[0]
+	if current.Ready || !current.Routable || current.Observation == nil || current.Observation.Reason != "runtime.target_changed" {
+		t.Fatal("target replacement lost its readiness invalidation", current)
+	}
+	if !w.checkService(t.Context(), current) {
+		t.Fatal("a fresh explicit probe could not accept the replacement identity")
+	}
+}
+
 func TestOneJournalContainsDirectNamedAndReadinessTransitions(t *testing.T) {
 	w, ready := testWorkers(t)
 	cursor := w.Manager.Snapshot().Cursor

@@ -79,9 +79,9 @@ func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acme
 			var err error
 			switch phase {
 			case controlstate.ACMEAuthorizationPresenting:
-				err = w.presentDNSAuthorization(ctx, work.ServiceID(), authorization, now)
+				err = w.presentDNSAuthorizationWork(ctx, work, authorization, now)
 			case controlstate.ACMEAuthorizationPresented:
-				err = w.acceptAuthorization(ctx, client, work.ID, work.ServiceID(), authorization, now)
+				err = w.acceptAuthorizationWork(ctx, client, work, authorization, now)
 			case controlstate.ACMEAuthorizationValidating:
 				err = w.pollAuthorization(ctx, client, authorization, now)
 			}
@@ -95,8 +95,8 @@ func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acme
 	return false, nil
 }
 
-func (w *PublicURLWorker) presentDNSAuthorization(ctx context.Context, publicURLID string, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
-	if err := w.config.DNSChallenges.Present(ctx, publicURLID, authorization.ID); err != nil {
+func (w *PublicURLWorker) presentDNSAuthorizationWork(ctx context.Context, work *controlstate.ACMEOrderWork, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
+	if err := w.presentSubject(ctx, work, authorization.ID); err != nil {
 		return err
 	}
 	authorization.State = controlstate.ACMEAuthorizationPresented
@@ -106,9 +106,9 @@ func (w *PublicURLWorker) presentDNSAuthorization(ctx context.Context, publicURL
 	return nil
 }
 
-func (w *PublicURLWorker) acceptAuthorization(ctx context.Context, client acmeAPI, orderID, publicURLID string, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
+func (w *PublicURLWorker) acceptAuthorizationWork(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
 	if authorization.ChallengeType == certificateidentity.ChallengeDNS01 {
-		verified, err := w.config.DNSChallenges.Verify(ctx, publicURLID, authorization.ID)
+		verified, err := w.verifySubject(ctx, work, authorization.ID)
 		if err != nil {
 			return err
 		}

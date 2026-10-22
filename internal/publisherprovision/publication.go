@@ -17,14 +17,14 @@ func EnsurePublication(ctx context.Context, store *clientstate.Store, operator n
 	if err != nil {
 		return credentialfile.File{}, err
 	}
-	saved, found, err := store.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
+	saved, found, err := store.PublisherIdentity(ctx, identity.ClientId)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
 	if !found {
 		return credentialfile.File{}, nativeauth.ErrScope
 	}
-	native, err := nativeauth.NewNative(control, authority, identity, saved.PrivateValue)
+	native, err := nativeauth.NewNative(control, authority, identity, saved.SigningKey)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
@@ -35,5 +35,5 @@ func EnsurePublication(ctx context.Context, store *clientstate.Store, operator n
 	if current.Id != route.Id || current.TeamId != route.TeamId {
 		return credentialfile.File{}, nativeauth.ErrScope
 	}
-	return credentialfile.New(server, identity, saved.PrivateValue)
+	return credentialfile.New(server, identity, saved.SigningKey)
 }

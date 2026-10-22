@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,11 +14,71 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+type managedHTTPCredentialKind string
+
+const (
+	managedHTTPNone        managedHTTPCredentialKind = "none"
+	managedHTTPBrowser     managedHTTPCredentialKind = "browser"
+	managedHTTPToken       managedHTTPCredentialKind = "token"
+	managedHTTPShare       managedHTTPCredentialKind = "share"
+	managedHTTPCertificate managedHTTPCredentialKind = "certificate"
+)
+
+func (kind managedHTTPCredentialKind) secret() bool {
+	return kind == managedHTTPBrowser || kind.grant()
+}
+
+func (kind managedHTTPCredentialKind) grant() bool {
+	return kind == managedHTTPToken || kind == managedHTTPShare
+}
+
+// parsed HTTP credentials carry exactly one selected payload. only secret kinds
+// can be restored from a stored digest; certificate verification stays with the
+// certificate API and cannot fall back to a different supplied credential.
+type managedHTTPCredential struct {
+	kind        managedHTTPCredentialKind
+	digest      [32]byte
+	certificate []byte
+}
+
+func storedManagedHTTPCredential(kind string, digest []byte) (managedHTTPCredential, error) {
+	credential := managedHTTPCredential{kind: managedHTTPCredentialKind(kind)}
+	if !credential.kind.secret() || len(digest) != len(credential.digest) {
+		return managedHTTPCredential{}, ErrPrivateServiceAccess
+	}
+	copy(credential.digest[:], digest)
+	return credential, nil
+}
+
+func parseManagedHTTPCredential(input controlv1.ManagedHTTPCredential) (managedHTTPCredential, error) {
+	kind := managedHTTPCredentialKind(input.Kind)
+	switch kind {
+	case managedHTTPNone:
+		if input.Secret == nil && input.Certificate == nil {
+			return managedHTTPCredential{kind: kind}, nil
+		}
+	case managedHTTPCertificate:
+		if input.Secret == nil && input.Certificate != nil {
+			return managedHTTPCredential{kind: kind, certificate: slices.Clone(*input.Certificate)}, nil
+		}
+	default:
+		if kind.secret() && input.Secret != nil && input.Certificate == nil {
+			digest, err := managedHTTPDigest(string(kind), *input.Secret)
+			if err != nil {
+				return managedHTTPCredential{}, ErrPrivateServiceAccess
+			}
+			return storedManagedHTTPCredential(string(kind), digest)
+		}
+	}
+	return managedHTTPCredential{}, ErrPrivateServiceAccess
+}
+
 func managedHTTPDigest(kind, secret string) ([]byte, error) {
-	if kind == "browser" {
+	selected := managedHTTPCredentialKind(kind)
+	if selected == managedHTTPBrowser {
 		return browserDigest(secret)
 	}
-	if kind != "token" && kind != "share" {
+	if !selected.grant() {
 		return nil, ErrPrivateServiceAccess
 	}
 	id, raw, ok := strings.Cut(secret, ".")
@@ -31,9 +92,9 @@ func managedHTTPDigest(kind, secret string) ([]byte, error) {
 	return hashManagedHTTPSecret(secret), nil
 }
 
-func managedHTTPCredentialPermission(ctx context.Context, tx pgx.Tx, service, run, kind string, digest []byte, now time.Time) (time.Time, error) {
-	if kind == "browser" {
-		permission, err := managedBrowserPermission(ctx, tx, service, run, digest, now)
+func managedHTTPCredentialPermission(ctx context.Context, tx pgx.Tx, service, run string, credential managedHTTPCredential, now time.Time) (time.Time, error) {
+	if credential.kind == managedHTTPBrowser {
+		permission, err := managedBrowserPermission(ctx, tx, service, run, credential.digest[:], now)
 		if err != nil {
 			return time.Time{}, err
 		}
@@ -42,10 +103,10 @@ func managedHTTPCredentialPermission(ctx context.Context, tx pgx.Tx, service, ru
 		}
 		return *permission.ExpiresAt, nil
 	}
-	if kind != "token" && kind != "share" {
+	if !credential.kind.grant() {
 		return time.Time{}, ErrPrivateServiceAccess
 	}
-	grant, err := controlstatedb.New(tx).ManagedHTTPGrantPermission(ctx, controlstatedb.ManagedHTTPGrantPermissionParams{PrivateServiceID: service, Kind: kind, SecretDigest: digest, Now: timestamptz(now)})
+	grant, err := controlstatedb.New(tx).ManagedHTTPGrantPermission(ctx, controlstatedb.ManagedHTTPGrantPermissionParams{PrivateServiceID: service, Kind: string(credential.kind), SecretDigest: credential.digest[:], Now: timestamptz(now)})
 	if err != nil {
 		return time.Time{}, publisherLookupError(err, ErrPrivateServiceAccess)
 	}
@@ -54,7 +115,7 @@ func managedHTTPCredentialPermission(ctx context.Context, tx pgx.Tx, service, ru
 	return minTime(until, grant.ExpiresAt.Time), err
 }
 
-func (d *Database) recheckManagedHTTPVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor string, source netip.Addr, port int32, kind string, digest []byte, now time.Time) (result PrivateVisitorValidity, err error) {
+func (d *Database) recheckManagedHTTPVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor string, source netip.Addr, port int32, credential managedHTTPCredential, now time.Time) (result PrivateVisitorValidity, err error) {
 	result.ValidUntil = now
 	q := controlstatedb.New(tx)
 	if err := d.managedHTTPSourceAllowed(ctx, q, service, source); err != nil {
@@ -64,7 +125,7 @@ func (d *Database) recheckManagedHTTPVisitor(ctx context.Context, tx pgx.Tx, ser
 	if err != nil {
 		return result, publisherLookupError(err, ErrPrivateServiceAccess)
 	}
-	until, err := managedHTTPCredentialPermission(ctx, tx, service, run, kind, digest, now)
+	until, err := managedHTTPCredentialPermission(ctx, tx, service, run, credential, now)
 	if err != nil {
 		return result, err
 	}
@@ -72,7 +133,7 @@ func (d *Database) recheckManagedHTTPVisitor(ctx context.Context, tx pgx.Tx, ser
 	if !until.After(now) {
 		return result, nil
 	}
-	err = q.BindManagedHTTPDirectCredential(ctx, controlstatedb.BindManagedHTTPDirectCredentialParams{VisitorConnectionID: visitor, Kind: text(kind), Digest: digest, ValidUntil: timestamptz(until)})
+	err = q.BindManagedHTTPDirectCredential(ctx, controlstatedb.BindManagedHTTPDirectCredentialParams{VisitorConnectionID: visitor, Kind: text(string(credential.kind)), Digest: credential.digest[:], ValidUntil: timestamptz(until)})
 	result.Allowed, result.Admitted, result.ValidUntil = err == nil, binding.Admitted, until
 	return result, err
 }
@@ -83,11 +144,11 @@ func (d *Database) AuthorizeManagedHTTPVisitor(ctx context.Context, auth Managed
 	if err != nil || source.Zone() != "" || source.Unmap().String() != input.SourceIp || !auth.valid() || input.RunNumber != auth.Number || !opaqueid.Valid(input.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || input.DestinationPort < 1024 || input.DestinationPort > 65535 {
 		return result, ErrPrivateServiceAccess
 	}
-	credential := input.Credential
-	if credential.Kind == "certificate" {
-		if credential.Secret != nil || credential.Certificate == nil {
-			return result, ErrPrivateServiceAccess
-		}
+	credential, err := parseManagedHTTPCredential(input.Credential)
+	if err != nil {
+		return result, err
+	}
+	if credential.kind == managedHTTPCertificate {
 		// the certificate API verifies the issuer, exact service and proof-bound
 		// identity/device. the run's protocol and observed port are checked here.
 		tx, err := d.pool.Begin(ctx)
@@ -105,20 +166,10 @@ func (d *Database) AuthorizeManagedHTTPVisitor(ctx context.Context, auth Managed
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
 		}
-		return d.AuthorizeServiceClientCertificate(ctx, auth.Subject.ID, auth.RunID, auth.Token.String(), input.VisitorConnectionId, auth.Number, source, *credential.Certificate, now)
+		return d.AuthorizeServiceClientCertificate(ctx, auth.Subject.ID, auth.RunID, auth.Token.String(), input.VisitorConnectionId, auth.Number, source, credential.certificate, now)
 	}
-	if credential.Certificate != nil {
-		return result, ErrPrivateServiceAccess
-	}
-	if credential.Kind == "none" && credential.Secret == nil {
+	if credential.kind == managedHTTPNone {
 		return result, nil
-	}
-	if credential.Secret == nil {
-		return result, ErrPrivateServiceAccess
-	}
-	digest, err := managedHTTPDigest(string(credential.Kind), *credential.Secret)
-	if err != nil {
-		return result, ErrPrivateServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -128,7 +179,7 @@ func (d *Database) AuthorizeManagedHTTPVisitor(ctx context.Context, auth Managed
 	if err = d.lockManagedHTTPRun(ctx, tx, auth, now); err != nil {
 		return result, err
 	}
-	result, err = d.recheckManagedHTTPVisitor(ctx, tx, auth.Subject.ID, auth.RunID, auth.Number, input.VisitorConnectionId, source, int32(input.DestinationPort), string(credential.Kind), digest, now)
+	result, err = d.recheckManagedHTTPVisitor(ctx, tx, auth.Subject.ID, auth.RunID, auth.Number, input.VisitorConnectionId, source, int32(input.DestinationPort), credential, now)
 	if errors.Is(err, ErrPrivateServiceAccess) || errors.Is(err, ErrVisitorSignIn) {
 		return PrivateVisitorValidity{ValidUntil: now}, nil
 	}

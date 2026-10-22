@@ -78,7 +78,7 @@ func (d *daemon) startStandalone(
 ) error {
 	publicListener := settings.publicListener
 	if publicListener == nil {
-		listener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges, settings.ingress.requireProxyHeader)
+		listener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges.Ranges(), settings.ingress.requireProxyHeader)
 		if err != nil {
 			return fmt.Errorf("listen for standalone public traffic: %w", err)
 		}
@@ -236,7 +236,7 @@ func (d *daemon) startStandalone(
 	d.relays[0].udpListener = udpListener
 	d.start("serve standalone QUIC infrastructure", func() error {
 		return serveQUICSessions(ctx, udpListener, func(ctx context.Context, session muxsession.Session) error {
-			peer, ok := session.(interface{ TLSConnectionState() tls.ConnectionState })
+			peer, ok := session.(muxsession.AcceptedPeer)
 			if !ok {
 				_ = session.Close()
 				return errors.New("standalone QUIC handshake identity is unavailable")

@@ -44,7 +44,7 @@ func TestPrivateOwnerEnrollmentRecoversResponseLossWithoutAnotherGrant(t *testin
 		t.Fatal(err)
 	}
 	control := &privateOwnerControl{privateScopeControl: scope, enrollment: controlv1.PublisherEnrollment{Id: id, TeamId: scope.service.TeamId, Kind: "private_service", PrivateServiceId: &scope.service.Id, EnrollmentKey: id + ".one-use"}}
-	authority := &lostEnrollmentResponse{result: fixture.identity}
+	authority := &lostEnrollmentResponse{result: fixture.identity.enrollment()}
 	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestPrivateOwnerEnrollmentRecoversResponseLossWithoutAnotherGrant(t *testin
 	}
 	for range 2 {
 		native, identity, err := EnsurePrivateServiceOwner(t.Context(), profile, control, authority, scope.service)
-		if err != nil || native == nil || identity.ClientId != fixture.identity.ClientId || control.created != 1 || authority.calls != 2 {
+		if err != nil || native == nil || identity.ClientId != fixture.identity.clientID || control.created != 1 || authority.calls != 2 {
 			t.Fatalf("private owner recovery: identity=%+v created=%d redeemed=%d err=%v", identity, control.created, authority.calls, err)
 		}
 		if _, err := native.SavedPrivateService(t.Context()); err != nil {
@@ -118,7 +118,7 @@ func TestNativePrivateGrantCannotSelectPublicURLOrAnotherService(t *testing.T) {
 		t.Fatal(err)
 	}
 	public, err := native.ForGrant(controlv1.PublisherGrant{Id: grantID, Kind: "saved_url", PublicUrlId: &urlID})
-	if err != nil || public.identity.PrivateServiceId != nil || public.identity.PublicUrlId == nil || *public.identity.PublicUrlId != urlID {
+	if err != nil || public.identity.privateServiceID != "" || public.identity.publicURLID != urlID {
 		t.Fatalf("grant switch retained another scope: %+v, %v", public, err)
 	}
 	if _, err := public.SavedPrivateService(t.Context()); !errors.Is(err, ErrScope) {
@@ -131,7 +131,7 @@ func TestNativePrivateGrantCannotSelectPublicURLOrAnotherService(t *testing.T) {
 		t.Fatal("private grant selected a public URL", err)
 	}
 	service, err := native.SavedPrivateService(t.Context())
-	if err != nil || service.Id != *native.identity.PrivateServiceId {
+	if err != nil || service.Id != native.identity.privateServiceID {
 		t.Fatalf("exact private scope = %+v, %v", service, err)
 	}
 	control.service.TeamId = "other-team"

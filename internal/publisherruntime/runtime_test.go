@@ -171,3 +171,19 @@ func TestLostStartRetainsProcessAndExpectedEpoch(t *testing.T) {
 		t.Fatal("new process reused run ID")
 	}
 }
+
+func TestRuntimeOwnsSigningKeySnapshot(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &lostStartControl{public: public, startLost: true}
+	owner, err := New(c, "https://control.example", "publisher", "key", "scope", private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(private)
+	if _, err := owner.Renew(t.Context()); err != nil {
+		t.Fatal("caller mutation changed the runtime signing identity", err)
+	}
+}

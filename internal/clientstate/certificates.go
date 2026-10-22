@@ -3,7 +3,6 @@ package clientstate
 import (
 	"bytes"
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -532,18 +531,16 @@ func (r *CertificateCache) checkpoint() error {
 	return r.files.Write("certificate-plans-v1.json", data)
 }
 
-func validateCSR(csrDER []byte, key any, identifiers []string) error {
+func validateCSR(csrDER []byte, key *ecdsa.PrivateKey, identifiers []string) error {
 	request, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
 		return errors.New("clientstate: pending CSR is invalid")
 	}
-	signer, signerOK := key.(crypto.Signer)
-	if !signerOK {
+	if key == nil {
 		return errors.New("clientstate: pending CSR key is invalid")
 	}
 	publicKey, keyOK := request.PublicKey.(*ecdsa.PublicKey)
-	expected, expectedOK := signer.Public().(*ecdsa.PublicKey)
-	if request.CheckSignature() != nil || !keyOK || !expectedOK || !publicKey.Equal(expected) || len(request.EmailAddresses) != 0 || len(request.IPAddresses) != 0 || len(request.URIs) != 0 || request.Subject.String() != "" || !certificateidentity.Matches(request.Extensions, request.DNSNames, identifiers) {
+	if request.CheckSignature() != nil || !keyOK || !publicKey.Equal(&key.PublicKey) || len(request.EmailAddresses) != 0 || len(request.IPAddresses) != 0 || len(request.URIs) != 0 || request.Subject.String() != "" || !certificateidentity.Matches(request.Extensions, request.DNSNames, identifiers) {
 		return errors.New("clientstate: pending CSR is invalid")
 	}
 	return nil

@@ -56,9 +56,15 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		RelayID: "relay-one-process", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2,
 		LeaseExpiresAt: time.Now().Add(time.Minute)}
 	for _, wrong := range []func(*tunnelv1.PrivateForwardingHeader){
+		func(h *tunnelv1.PrivateForwardingHeader) { h.PrivateServiceID = id(opaqueid.PrivateServicePrefix) },
 		func(h *tunnelv1.PrivateForwardingHeader) { h.PrivateRunID = id(opaqueid.PrivateRunPrefix) },
+		func(h *tunnelv1.PrivateForwardingHeader) { h.RunNumber++ },
+		func(h *tunnelv1.PrivateForwardingHeader) {
+			h.PublisherConnectionID = id(opaqueid.PublisherConnectionPrefix)
+		},
 		func(h *tunnelv1.PrivateForwardingHeader) { h.ConnectionSlot = 1 },
 		func(h *tunnelv1.PrivateForwardingHeader) { h.ConnectionAssignmentRevision++ },
+		func(h *tunnelv1.PrivateForwardingHeader) { h.RelayServiceID = "another-relay" },
 	} {
 		stream, err := relay.transport.OpenStream(ctx)
 		if err != nil {

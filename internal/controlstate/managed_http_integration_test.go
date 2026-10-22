@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -55,7 +54,7 @@ func TestIntegrationManagedHTTPSubjectAndAdmissionScope(t *testing.T) {
 		if _, err = d.HeartbeatPrivateServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, PrivateRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 			t.Fatal(err)
 		}
-		return ManagedHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.ManagedService, ID: run.ServiceID}, RunID: run.RunID, Number: run.RunNumber, Token: credentials.PublishRunToken(run.Token)}
+		return ManagedHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.ManagedService, ID: run.ServiceID}, RunID: run.RunID, Number: run.RunNumber, Token: run.ManagedToken}
 	}
 	a, b := start(0, "a"), start(1, "b")
 	ports := make([]int32, 0, len(applied.Services))

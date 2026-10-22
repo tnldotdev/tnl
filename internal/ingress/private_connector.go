@@ -322,10 +322,7 @@ func (p *PrivateConnector) TransportTLSConfig() *tls.Config {
 // AcceptQUIC obtains source metadata from the authenticated transport socket.
 // the shared infrastructure port is unrelated to a private service's identity.
 func (p *PrivateConnector) AcceptQUIC(ctx context.Context, session muxsession.Session) error {
-	connection, ok := session.(interface {
-		LocalAddr() net.Addr
-		RemoteAddr() net.Addr
-	})
+	connection, ok := session.(muxsession.AcceptedPeer)
 	if !ok {
 		if session != nil {
 			_ = session.Close()

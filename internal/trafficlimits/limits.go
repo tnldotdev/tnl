@@ -78,6 +78,26 @@ type Selection struct {
 	TotalDownloadBytes *int64  `json:"total_download_bytes,omitempty"`
 }
 
+// Clone keeps omitted values and gives each selected value independent storage.
+func (s *Selection) Clone() *Selection {
+	if s == nil {
+		return nil
+	}
+	return &Selection{
+		Connections: copyOptional(s.Connections), Rate: copyOptional(s.Rate), RatePer: copyOptional(s.RatePer),
+		Burst: copyOptional(s.Burst), UploadBytes: copyOptional(s.UploadBytes), DownloadBytes: copyOptional(s.DownloadBytes),
+		TotalConnections: copyOptional(s.TotalConnections), TotalUploadBytes: copyOptional(s.TotalUploadBytes), TotalDownloadBytes: copyOptional(s.TotalDownloadBytes),
+	}
+}
+
+func copyOptional[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
 func (s Selection) Validate() error {
 	_, err := s.apply(Default())
 	return err

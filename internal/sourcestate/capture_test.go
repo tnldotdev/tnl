@@ -1,13 +1,42 @@
 package sourcestate
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestCaptureOutputBoundThroughCopyAndGitSubprocess(t *testing.T) {
+	root := t.TempDir()
+	gitInTest(t, root, "init", "-q")
+	for _, size := range []int{maximumOutputBytes, maximumOutputBytes + 1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			data := bytes.Repeat([]byte{'g'}, size)
+			var output boundedOutput
+			_, err := io.Copy(&output, struct{ io.Reader }{bytes.NewReader(data)})
+			if (err == nil) != (size == maximumOutputBytes) || output.buffer.Len() > maximumOutputBytes {
+				t.Fatalf("copy captured %d bytes, error %v", output.buffer.Len(), err)
+			}
+			if size == maximumOutputBytes && !bytes.Equal(output.buffer.Bytes(), data) {
+				t.Fatal("copy changed exact-bound output")
+			}
+			id, err := runGit(t.Context(), root, data, "hash-object", "-w", "--stdin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := runGit(t.Context(), root, nil, "cat-file", "blob", strings.TrimSpace(string(id)))
+			if (err == nil) != (size == maximumOutputBytes) || len(got) > maximumOutputBytes || size == maximumOutputBytes && !bytes.Equal(got, data) {
+				t.Fatalf("git captured %d bytes, error %v", len(got), err)
+			}
+		})
+	}
+}
 
 func gitInTest(t *testing.T, root string, args ...string) string {
 	t.Helper()

@@ -18,6 +18,13 @@ var ErrDraining = errors.New("relay: draining")
 type PublisherConnection struct {
 	ref     tunnelv1.PublisherConnectionRef
 	claimed relayv1.ClaimedPublisherConnection
+	*streamLifetime
+	pending map[string]*pendingForwarding
+}
+
+// streamLifetime owns pending opens and admitted streams for either kind of
+// publisher connection. it must stay pointer-owned through drain and close.
+type streamLifetime struct {
 	session *tunnel.Session
 
 	mu       sync.Mutex
@@ -26,10 +33,13 @@ type PublisherConnection struct {
 	opening  int
 	streams  map[*trackedConn]struct{}
 	changed  chan struct{}
-	pending  map[string]*pendingForwarding
 
 	closeOnce sync.Once
 	closeErr  error
+}
+
+func newStreamLifetime(session *tunnel.Session) *streamLifetime {
+	return &streamLifetime{session: session, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
 }
 
 func NewPublisherConnection(
@@ -43,16 +53,12 @@ func NewPublisherConnection(
 	if session == nil {
 		return nil, errors.New("relay: tunnel session is required")
 	}
-	if claimed.PublisherConnectionId != ref.PublisherConnectionID ||
-		claimed.PublishRunId != ref.PublishRunID || claimed.PublicUrlId != ref.PublicURLID ||
-		claimed.PublishRunNumber != int64(ref.PublishRunNumber) || claimed.ConnectionSlot != int(ref.ConnectionSlot) ||
-		claimed.ConnectionAssignmentRevision != int64(ref.ConnectionAssignmentRevision) ||
-		claimed.RelayServiceId != ref.RelayServiceID {
+	if claimed.ConnectionSlot < 0 || claimed.ConnectionSlot > 1 || publicClaimRef(claimed) != ref {
 		return nil, errors.New("relay: claimed publisher connection does not match its reference")
 	}
 	c := &PublisherConnection{
-		ref: ref, claimed: claimed, session: session,
-		streams: make(map[*trackedConn]struct{}), changed: make(chan struct{}), pending: make(map[string]*pendingForwarding),
+		ref: ref, claimed: claimed, streamLifetime: newStreamLifetime(session),
+		pending: make(map[string]*pendingForwarding),
 	}
 	go func() {
 		_ = session.ServeAdmissions(context.Background(), tunnelv1.PublisherAdmissionStream, c.promoteVisitor)
@@ -85,7 +91,7 @@ func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnection
 	return c.finishOpen(stream, err)
 }
 
-func (c *PublisherConnection) beginOpen() error {
+func (c *streamLifetime) beginOpen() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.stateErrorLocked(); err != nil {
@@ -95,11 +101,11 @@ func (c *PublisherConnection) beginOpen() error {
 	return nil
 }
 
-func (c *PublisherConnection) finishOpen(connection net.Conn, openErr error) (net.Conn, error) {
+func (c *streamLifetime) finishOpen(connection net.Conn, openErr error) (net.Conn, error) {
 	c.mu.Lock()
-	c.opening--
 	stateErr := c.stateErrorLocked()
 	if openErr == nil && stateErr == nil {
+		c.opening--
 		tracked := &trackedConn{Conn: connection}
 		tracked.release = func() {
 			c.mu.Lock()
@@ -112,18 +118,23 @@ func (c *PublisherConnection) finishOpen(connection net.Conn, openErr error) (ne
 		c.mu.Unlock()
 		return tracked, nil
 	}
-	c.notifyLocked()
 	c.mu.Unlock()
 	if connection != nil {
 		_ = connection.Close()
 	}
+	// retain the pending reservation until a rejected open's stream is closed.
+	// drain and close must not finish while that cleanup is still in flight.
+	c.mu.Lock()
+	c.opening--
+	c.notifyLocked()
+	c.mu.Unlock()
 	if openErr != nil {
 		return nil, openErr
 	}
 	return nil, stateErr
 }
 
-func (c *PublisherConnection) Drain(ctx context.Context) error {
+func (c *streamLifetime) Drain(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -149,7 +160,7 @@ func (c *PublisherConnection) Drain(ctx context.Context) error {
 	return nil
 }
 
-func (c *PublisherConnection) Close() error {
+func (c *streamLifetime) Close() error {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
@@ -173,7 +184,7 @@ func (c *PublisherConnection) Close() error {
 	return c.closeErr
 }
 
-func (c *PublisherConnection) stateErrorLocked() error {
+func (c *streamLifetime) stateErrorLocked() error {
 	if c.closed {
 		return net.ErrClosed
 	}
@@ -183,7 +194,7 @@ func (c *PublisherConnection) stateErrorLocked() error {
 	return nil
 }
 
-func (c *PublisherConnection) snapshotLocked() []*trackedConn {
+func (c *streamLifetime) snapshotLocked() []*trackedConn {
 	result := make([]*trackedConn, 0, len(c.streams))
 	for stream := range c.streams {
 		result = append(result, stream)
@@ -191,7 +202,7 @@ func (c *PublisherConnection) snapshotLocked() []*trackedConn {
 	return result
 }
 
-func (c *PublisherConnection) notifyLocked() {
+func (c *streamLifetime) notifyLocked() {
 	close(c.changed)
 	c.changed = make(chan struct{})
 }
@@ -316,10 +327,7 @@ func (r *Registry) candidate(header tunnelv1.InternalForwardingHeader, lease rel
 		return nil, false
 	}
 	ref, claimed := connection.ref, connection.claimed
-	if header.PublicURLID != ref.PublicURLID || header.PublishRunID != ref.PublishRunID ||
-		header.PublishRunNumber != ref.PublishRunNumber || header.ConnectionSlot != ref.ConnectionSlot ||
-		header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision ||
-		header.RelayServiceID != ref.RelayServiceID || header.RelayID != claimed.RelayId ||
+	if tunnel.PublicForwardingRef(header) != ref || header.RelayID != claimed.RelayId ||
 		header.RelayRunID != claimed.RelayRunId || header.RelayLeaseRevision != uint64(claimed.RelayLeaseRevision) {
 		return nil, false
 	}

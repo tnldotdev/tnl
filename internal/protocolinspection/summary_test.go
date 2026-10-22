@@ -5,11 +5,67 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/inspection"
 )
+
+func readObservedWire(t *testing.T, m *Observer, client bool, wire []byte) {
+	t.Helper()
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, err := writer.Write(wire)
+		_ = writer.Close()
+		done <- err
+	}()
+	got := make([]byte, len(wire))
+	if _, err := io.ReadFull(Wrap(reader, m, client), got); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, wire) {
+		t.Fatal("inspection changed forwarded bytes")
+	}
+}
+
+func TestSummaryNamedStatesPreserveForwardedWire(t *testing.T) {
+	t.Run("mysql", func(t *testing.T) {
+		m, out := summaryHarness("mysql")
+		readObservedWire(t, m, true, mysqlWire(0, []byte{3, 'x'}))
+		readObservedWire(t, m, false, mysqlWire(1, []byte{0, 2, 0, 0, 0, 0, 0}))
+		readObservedWire(t, m, true, mysqlWire(0, []byte{3, 'y'}))
+		readObservedWire(t, m, false, mysqlWire(1, []byte{1}))
+		readObservedWire(t, m, false, mysqlWire(2, []byte("secret-reply")))
+		readObservedWire(t, m, false, mysqlWire(3, []byte{0xfe, 0, 0, 0, 0}))
+		readObservedWire(t, m, false, mysqlWire(4, []byte("secret-reply")))
+		readObservedWire(t, m, false, mysqlWire(5, []byte{0xfe, 0, 0, 0, 0}))
+		if m.stopped || len(*out) != 2 || (*out)[0].Protocol != inspection.MySQL || (*out)[0].Rows != 2 || (*out)[1].Rows != 1 || (*out)[1].ResultSets != 1 {
+			t.Fatalf("MySQL outcomes = %+v", *out)
+		}
+		assertSummaryPrivacy(t, *out)
+	})
+	t.Run("redis", func(t *testing.T) {
+		m, out := summaryHarness("redis")
+		readObservedWire(t, m, true, append(append(respCommand("GET", "key"), respCommand("PING")...), respCommand("SET", "key", "secret-argument")...))
+		readObservedWire(t, m, false, []byte("$0\r\n\r\n*2\r\n:1\r\n+OK\r\n!3\r\nERR\r\n"))
+		if m.stopped || len(*out) != 3 || (*out)[0].Protocol != inspection.Redis || (*out)[0].Command != "GET" || (*out)[1].Command != "PING" || (*out)[2].Result != inspection.ResultError {
+			t.Fatalf("RESP outcomes = %+v", *out)
+		}
+		assertSummaryPrivacy(t, *out)
+	})
+	for _, protocol := range []string{"", "http", "tcp", "kubernetes", "MYSQL"} {
+		if New(protocol, func(inspection.Summary) {}) != nil {
+			t.Fatalf("unsupported TCP observer %q", protocol)
+		}
+	}
+}
 
 func pgWire(kind byte, body string) []byte {
 	b := make([]byte, 5+len(body))

@@ -327,3 +327,58 @@ func TestAutomaticReadinessTargetChangeNeedsExplicitCheckAfterSuccess(t *testing
 	expectAutomaticGET(t, gets)
 	expectNoAutomaticGET(t, gets)
 }
+
+func TestAutomaticReadinessAcceptedSuccessStopsAfterImmediateInvalidation(t *testing.T) {
+	w, ready, _ := automaticWorkers(t, time.Second)
+	gets := make(chan string, 8)
+	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+		gets <- r.Header.Get(clientruntime.ProbeHeader)
+		return automaticResponse(200), nil
+	})
+	accepted := make(chan bool, 1)
+	w.acceptReadiness = func(observation clientruntime.Observation) bool {
+		ok := w.Manager.Observe(observation)
+		w.Manager.TargetChanged("web", observation.RegistrationID, observation.Target)
+		accepted <- ok && observation.Ready
+		return ok
+	}
+	cfg, _ := registerAutomaticWorker(t, w, ready)
+	expectAutomaticGET(t, gets)
+	if !<-accepted {
+		t.Fatal("probe success was not accepted before invalidation")
+	}
+	if service := w.Manager.Snapshot().Services[0]; service.Ready || service.Observation == nil || service.Observation.Reason != "runtime.target_changed" {
+		t.Fatalf("target invalidation was lost: %+v", service)
+	}
+	if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: "https://public.example"}); err != nil {
+		t.Fatal(err)
+	}
+	expectNoAutomaticGET(t, gets)
+}
+
+func TestAutomaticReadinessReplacementBeforeAcceptanceRejectsOldSuccess(t *testing.T) {
+	w, ready, _ := automaticWorkers(t, time.Second)
+	gets := make(chan string, 8)
+	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+		gets <- r.Header.Get(clientruntime.ProbeHeader)
+		return automaticResponse(200), nil
+	})
+	accepted := make(chan bool, 1)
+	w.acceptReadiness = func(observation clientruntime.Observation) bool {
+		if err := w.Manager.Published(observation.RegistrationID, 2, true); err != nil {
+			t.Error(err)
+		}
+		ok := w.Manager.Observe(observation)
+		accepted <- ok
+		return ok
+	}
+	registerAutomaticWorker(t, w, ready)
+	expectAutomaticGET(t, gets)
+	if <-accepted {
+		t.Fatal("old probe success crossed publish run replacement")
+	}
+	expectNoAutomaticGET(t, gets)
+	if service := w.Manager.Snapshot().Services[0]; service.PublishRunNumber != 2 || service.Ready || !service.Routable {
+		t.Fatalf("old result changed the replacement's readiness: %+v", service)
+	}
+}

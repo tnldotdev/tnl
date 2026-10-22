@@ -89,6 +89,17 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	if err != nil || loaded.GrantId != identity.GrantId || !bytes.Equal(key, private) {
 		t.Fatalf("restored signing key: %v", err)
 	}
+	profile, err := r.Profile(t.Context(), job.Server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", "job:"+job.ID)
+	if err != nil || !found || selected.ID != identity.ClientId || !bytes.Equal(selected.SigningKey, private) {
+		t.Fatalf("installed job selection encoding changed: found=%v, %v", found, err)
+	}
+	if _, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", job.ID); err != nil || found {
+		t.Fatalf("job acquired an unprefixed selection: found=%v, %v", found, err)
+	}
 	for _, mutate := range []func(*Job){
 		func(j *Job) { j.Server = "https://other.example" },
 		func(j *Job) { j.ID = "other" },
@@ -240,6 +251,16 @@ func TestStableJobKeyAndDisplayName(t *testing.T) {
 	}
 	if _, found, _, err := r.signingIdentity(t.Context(), job); err == nil || found != nil {
 		t.Fatalf("removed job identity still readable: %v", err)
+	}
+	profile, err := r.Profile(t.Context(), job.Server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", "job:"+job.ID); err != nil || found {
+		t.Fatalf("removed job kept its selection: found=%v, %v", found, err)
+	}
+	if stored, found, err := profile.PublisherIdentity(t.Context(), identity.ClientId); err != nil || !found || !bytes.Equal(stored.SigningKey, private) {
+		t.Fatalf("removing the job deleted its independently stored identity: found=%v, %v", found, err)
 	}
 }
 

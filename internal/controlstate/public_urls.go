@@ -1156,76 +1156,101 @@ func nullableText(value string) pgtype.Text {
 }
 
 func publicURLFromModel(row controlstatedb.ControlPublicUrl, openPublishRunID string) PublicURL {
-	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
-		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, openPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
-	)
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: openPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+	})
 }
 
 func publicURLFromIdempotencyRow(row controlstatedb.GetPublicURLByCreatorIdempotencyRow) PublicURL {
-	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
-		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
-	)
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: row.OpenPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+	})
 }
 
 func publicURLFromIdentityRow(row controlstatedb.GetIdentityPublicURLRow) PublicURL {
-	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
-		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
-	)
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: row.OpenPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+	})
 }
 
 func publicURLFromListRow(row controlstatedb.ListIdentityPublicURLsRow) PublicURL {
-	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
-		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
-	)
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: row.OpenPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+	})
 }
 
 func publicURLFromAuthorizedListRow(row controlstatedb.ListAuthorizedPublicURLsDataRow) PublicURL {
-	return publicURLFromValues(
-		row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace,
-		row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState,
-		row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool,
-	)
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: row.OpenPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+	})
 }
 
-func publicURLFromValues(
-	id, teamID, domainID string,
-	membershipID pgtype.Text,
-	canonicalHostname, target, namespace, publicURLScope, purpose, accessMode string,
-	policyRevision int64,
-	lifecycleState string,
-	dnsAuthorityReference pgtype.Text,
-	dnsState string,
-	nextPublishRunNumber int64,
-	mutationRevision int64,
-	ephemeral bool,
-	expiresAt pgtype.Timestamptz,
-	openPublishRunID string,
-	createdAt, updatedAt pgtype.Timestamptz,
-	serviceProtocol string,
-	publisherPool bool,
-) PublicURL {
-	result := PublicURL{
-		ID: id, TeamID: teamID, DomainID: domainID, MembershipID: membershipID.String,
-		CanonicalHostname: canonicalHostname, Namespace: namespace, Target: target, PublicURLScope: PublicURLScope(publicURLScope), Purpose: PublicURLPurpose(purpose),
-		ServiceProtocol: PublicURLServiceProtocol(serviceProtocol),
-		PublisherPool:   publisherPool,
-		PolicyRevision:  policyRevision, AccessMode: VisitorAccessMode(accessMode), LifecycleState: PublicURLLifecycleState(lifecycleState),
-		DNSAuthorityReference: dnsAuthorityReference.String, DNSState: PublicURLDNSState(dnsState),
-		NextPublishRunNumber: nextPublishRunNumber,
-		MutationRevision:     uint64(mutationRevision), AuthorizationPublishRunNumber: uint64(nextPublishRunNumber),
-		Ephemeral:        ephemeral,
-		OpenPublishRunID: openPublishRunID, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
+type publicURLProjection struct {
+	ID, TeamID, DomainID, CanonicalHostname, Target, Namespace string
+	MembershipID                                               pgtype.Text
+	PublicURLScope, Purpose, AccessMode, LifecycleState        string
+	PolicyRevision, NextPublishRunNumber, MutationRevision     int64
+	DNSAuthorityReference                                      pgtype.Text
+	DNSState, OpenPublishRunID, ServiceProtocol                string
+	Ephemeral, PublisherPool                                   bool
+	ExpiresAt, CreatedAt, UpdatedAt                            pgtype.Timestamptz
+	AuthorizationPublishRunNumber                              *int64
+}
+
+func publicURLFromProjection(p publicURLProjection) PublicURL {
+	authorizationNumber := p.NextPublishRunNumber
+	if p.AuthorizationPublishRunNumber != nil {
+		authorizationNumber = *p.AuthorizationPublishRunNumber
 	}
-	if expiresAt.Valid {
-		value := expiresAt.Time
+	result := PublicURL{
+		ID: p.ID, TeamID: p.TeamID, DomainID: p.DomainID, MembershipID: p.MembershipID.String,
+		CanonicalHostname: p.CanonicalHostname, Namespace: p.Namespace, Target: p.Target, PublicURLScope: PublicURLScope(p.PublicURLScope), Purpose: PublicURLPurpose(p.Purpose),
+		ServiceProtocol: PublicURLServiceProtocol(p.ServiceProtocol),
+		PublisherPool:   p.PublisherPool,
+		PolicyRevision:  p.PolicyRevision, AccessMode: VisitorAccessMode(p.AccessMode), LifecycleState: PublicURLLifecycleState(p.LifecycleState),
+		DNSAuthorityReference: p.DNSAuthorityReference.String, DNSState: PublicURLDNSState(p.DNSState),
+		NextPublishRunNumber: p.NextPublishRunNumber,
+		MutationRevision:     uint64(p.MutationRevision), AuthorizationPublishRunNumber: uint64(authorizationNumber),
+		Ephemeral:        p.Ephemeral,
+		OpenPublishRunID: p.OpenPublishRunID, CreatedAt: p.CreatedAt.Time, UpdatedAt: p.UpdatedAt.Time,
+	}
+	if p.ExpiresAt.Valid {
+		value := p.ExpiresAt.Time
 		result.ExpiresAt = &value
 	}
 	return result

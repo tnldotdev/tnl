@@ -34,6 +34,13 @@ type PublisherIdentity struct {
 	SigningKey     []byte
 }
 
+// PublisherSelection names a local use of an installed identity. its key is
+// opaque to persistence and keeps the caller's existing selection encoding.
+type PublisherSelection struct {
+	Kind string
+	Key  string
+}
+
 var ErrPublisherStateConflict = errors.New("clientstate: publisher identity or enrollment changed")
 
 func pendingKeyContext(id string) string    { return "publisher-enrollment:" + id + ":key" }
@@ -324,6 +331,34 @@ func (s *Store) RemovePublisherSelection(ctx context.Context, kind, key string) 
 // ImportPublisherIdentity installs the exact public document and key once.
 // retries may select it again but cannot silently replace its signing key.
 func (s *Store) ImportPublisherIdentity(ctx context.Context, identity PublisherIdentity) error {
+	return s.importPublisherIdentity(ctx, s.database.queries, identity)
+}
+
+// InstallPublisherIdentity commits an exact imported key and its selection
+// together. a failed installation cannot leave the selection partially changed.
+func (s *Store) InstallPublisherIdentity(ctx context.Context, identity PublisherIdentity, selection PublisherSelection) error {
+	if !validPublisherSelection(selection.Kind, selection.Key) || selection.Kind == "explicit" {
+		return errors.New("clientstate: invalid publisher selection")
+	}
+	tx, err := s.database.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	queries := s.database.queries.WithTx(tx)
+	if err := s.importPublisherIdentity(ctx, queries, identity); err != nil {
+		return err
+	}
+	if err := queries.SelectPublisherIdentity(ctx, clientstatedb.SelectPublisherIdentityParams{
+		ServerOrigin: s.controlEndpoint, SelectionKind: selection.Kind, SelectionKey: selection.Key,
+		IdentityID: identity.ID, UpdatedAt: s.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) importPublisherIdentity(ctx context.Context, queries *clientstatedb.Queries, identity PublisherIdentity) error {
 	if !validOpaqueValue(identity.ID, 256) || !json.Valid(identity.PublicDocument) ||
 		len(identity.PublicDocument) > 65536 || len(identity.SigningKey) == 0 || len(identity.SigningKey) > 65536 {
 		return errors.New("clientstate: invalid publisher identity")
@@ -332,14 +367,15 @@ func (s *Store) ImportPublisherIdentity(ctx context.Context, identity PublisherI
 	if err != nil {
 		return err
 	}
-	if err := s.database.queries.SavePublisherIdentity(ctx, clientstatedb.SavePublisherIdentityParams{
+	if err := queries.SavePublisherIdentity(ctx, clientstatedb.SavePublisherIdentityParams{
 		ServerOrigin: s.controlEndpoint, IdentityID: identity.ID,
 		PublicDocumentJson: string(identity.PublicDocument), SigningKeyCiphertext: sealed,
 		UpdatedAt: s.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return err
 	}
-	stored, found, err := s.PublisherIdentity(ctx, identity.ID)
+	row, err := queries.GetPublisherIdentity(ctx, clientstatedb.GetPublisherIdentityParams{ServerOrigin: s.controlEndpoint, IdentityID: identity.ID})
+	stored, found, err := s.openPublisherIdentity(ctx, row, err)
 	if err != nil {
 		return err
 	}

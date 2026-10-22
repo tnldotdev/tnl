@@ -56,7 +56,7 @@ func TestRunSubmitsAuthoritativeNamespaceCSR(t *testing.T) {
 
 func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 	control, route, state := newCertificateTransactionTest(t)
-	material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+	material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestRunReacknowledgesCachedCertificateForEachSession(t *testing.T) {
 
 func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 	control, route, state := newCertificateTransactionTest(t)
-	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
+	if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); err != nil {
 		t.Fatal(err)
 	}
 	config := startCertificateTLSYamuxHarness(t, control)
@@ -118,7 +118,7 @@ func TestRunSessionRetriesReadinessConflict(t *testing.T) {
 
 func TestRunSessionDoesNotRetryReadyCallbackAfterControlAccepts(t *testing.T) {
 	control, route, state := newCertificateTransactionTest(t)
-	if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err != nil {
+	if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); err != nil {
 		t.Fatal(err)
 	}
 	config := startCertificateTLSYamuxHarness(t, control)
@@ -171,7 +171,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+			material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -284,7 +284,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 							issuance.NotAfter = pointer(leaf.NotAfter)
 						}
 						route := certificateTestPublicURL(t, control.setup.PublicUrl.CanonicalHostname, control.setup.CertificatePlan)
-						original, err = attemptCertificateTransaction(t.Context(), control, route, cache, control.setup, false)
+						original, err = attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, cache, false)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -440,7 +440,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 
 func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	control, route, state := newCertificateTransactionTest(t)
-	material, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false)
+	material, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
 	if err != nil {
 		t.Fatal(err)
 	}

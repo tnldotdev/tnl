@@ -143,9 +143,10 @@ func validALabel(label string) bool {
 	return err == nil && encoded == label
 }
 
+// ErrorCodeOf reports a code only when extraction yields a non-nil validation error.
 func ErrorCodeOf(err error) (ErrorCode, bool) {
-	var validationError *ValidationError
-	if !errors.As(err, &validationError) {
+	validationError, ok := errors.AsType[*ValidationError](err)
+	if !ok || validationError == nil {
 		return "", false
 	}
 	return validationError.Code, true

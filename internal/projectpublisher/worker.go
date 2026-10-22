@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type Configuration struct {
@@ -50,6 +49,7 @@ type Workers struct {
 	// zero values use the public readiness retry policy; tests can shorten time.
 	readinessBudget time.Duration
 	readinessDelay  func(int) time.Duration
+	acceptReadiness func(clientruntime.Observation) bool
 	mu              sync.Mutex
 	proofs          map[string]*proofEntry
 }
@@ -114,7 +114,7 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	if configuration.TargetBinding != nil {
 		prior := cfg.AdmitRequest
 		cfg.AdmitRequest = func(request *http.Request, run publisher.PublishRunIdentity) error {
-			if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, 0) {
+			if ctx.Err() != nil || !w.Manager.CurrentRegistration(service.Name, service.RegistrationID, service.Target) {
 				return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
 			}
 			if _, err := configuration.TargetBinding.Capture(request.Context()); err != nil {
@@ -142,11 +142,11 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 			previousSummary(summary)
 		}
 		if recorder != nil {
-			recorder.Observe(clientstate.InspectionRecord{Protocol: controlv1.PublicURLServiceProtocol(summary.Protocol), ReceivedAt: summary.ReceivedAt, Method: summary.Method, Path: summary.Path, Status: summary.Status, DurationMS: summary.Duration.Milliseconds(), Origin: summary.Origin, Operation: summary.Operation, Result: summary.Result, RedisCommand: summary.Command, SQLState: summary.SQLState, Rows: summary.Rows, ResultSets: int64(summary.ResultSets), MySQLErrorCode: int64(summary.MySQLErrorCode)})
+			recorder.Observe(clientstate.InspectionRecord{Protocol: summary.Protocol, ReceivedAt: summary.ReceivedAt, Method: summary.Method, Path: summary.Path, Status: summary.Status, DurationMS: summary.Duration.Milliseconds(), Origin: summary.Origin, Operation: summary.Operation, Result: summary.Result, RedisCommand: summary.Command, SQLState: summary.SQLState, Rows: summary.Rows, ResultSets: int64(summary.ResultSets), MySQLErrorCode: int64(summary.MySQLErrorCode)})
 		}
 	}
 	current := func(run uint64) error {
-		if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, run) {
+		if ctx.Err() != nil || !w.Manager.CurrentRun(service.Name, service.RegistrationID, service.Target, run) {
 			return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
 		}
 		return nil
@@ -320,9 +320,11 @@ func (w *Workers) checkService(ctx context.Context, service clientruntime.Servic
 			observation.Ready = false
 			observation.Reason = "runtime.target_changed"
 		}
-		if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
-			ready = w.Manager.Observe(observation) && observation.Ready
+		accept := w.acceptReadiness
+		if accept == nil {
+			accept = w.Manager.Observe
 		}
+		ready = accept(observation) && observation.Ready
 	}()
 	w.mu.Lock()
 	entry = w.proofs[service.RegistrationID]

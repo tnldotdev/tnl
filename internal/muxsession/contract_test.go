@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -57,6 +58,31 @@ func TestSessionContract(t *testing.T) {
 		pair pairFactory
 	}{{"quic", newQUICPair}, {"tls_yamux", newTLSYamuxPair}} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Run("accepted peer identity", func(t *testing.T) {
+				client, server := test.pair(t)
+				local, ok := client.(AcceptedPeer)
+				if !ok {
+					t.Fatal("network client has no accepted-peer capability")
+				}
+				remote, ok := server.(AcceptedPeer)
+				if !ok {
+					t.Fatal("network server has no accepted-peer capability")
+				}
+				for _, addresses := range [][2]net.Addr{{local.LocalAddr(), remote.RemoteAddr()}, {remote.LocalAddr(), local.RemoteAddr()}} {
+					bound, boundErr := netip.ParseAddrPort(addresses[0].String())
+					observed, observedErr := netip.ParseAddrPort(addresses[1].String())
+					// a QUIC socket may bind a wildcard local address; the peer
+					// still observes its concrete loopback address and exact port.
+					if boundErr != nil || observedErr != nil || bound.Port() != observed.Port() ||
+						!bound.Addr().IsUnspecified() && bound.Addr().Unmap() != observed.Addr().Unmap() || observed.Addr().IsUnspecified() {
+						t.Fatalf("accepted peer socket mismatch: %v / %v", addresses[0], addresses[1])
+					}
+				}
+				state := remote.TLSConnectionState()
+				if !state.HandshakeComplete || state.NegotiatedProtocol != ALPN || state.ServerName != "relay.test" {
+					t.Fatalf("accepted peer lost TLS identity: %+v", state)
+				}
+			})
 			t.Run("full duplex and half close", func(t *testing.T) {
 				client, server := test.pair(t)
 				a, b := streamPair(t, client, server)

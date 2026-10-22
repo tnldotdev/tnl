@@ -106,7 +106,8 @@ func connectionFromRow(c controlstatedb.ControlIdentityConnection) IdentityConne
 // BeginIdentityConnectionSetup leaves current access untouched until verified
 // tenant consent activates this exact pending connection.
 func (d *Database) BeginIdentityConnectionSetup(ctx context.Context, p ControlPrincipal, r CreateIdentityConnectionRequest, now time.Time) (result IdentityConnectionSetup, retErr error) {
-	if !validStateText(r.TeamID) || !validStateText(r.Issuer) || !validStateText(r.SourceID) || len(r.SourceID) > 256 || len(r.Issuer) > 2048 || (r.Admission != "approval" && r.Admission != "managed") || now.IsZero() {
+	admission, err := parseCompanyAdmissionMode(r.Admission)
+	if err != nil || !validStateText(r.TeamID) || !validStateText(r.Issuer) || !validStateText(r.SourceID) || len(r.SourceID) > 256 || len(r.Issuer) > 2048 || now.IsZero() {
 		return result, ErrAuthorityInvalid
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -162,7 +163,7 @@ func (d *Database) BeginIdentityConnectionSetup(ctx context.Context, p ControlPr
 		return result, ErrAuthorityConflict
 	}
 	until := now.Add(15 * time.Minute)
-	_, err = tx.Exec(ctx, `INSERT INTO control.identity_connections(id,team_id,issuer,source_id,admission,state,provisioning_digest,setup_digest,setup_expires_at,replaces_id,replaces_revision,created_by_identity_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,'pending',$6,$6,$7,$8,$9,$10,$11,$11)`, id, r.TeamID, r.Issuer, r.SourceID, r.Admission, digest[:], until, nullableText(r.ReplaceID), nullableRevision(r.ExpectedRevision), ownerID, now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.identity_connections(id,team_id,issuer,source_id,admission,state,provisioning_digest,setup_digest,setup_expires_at,replaces_id,replaces_revision,created_by_identity_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,'pending',$6,$6,$7,$8,$9,$10,$11,$11)`, id, r.TeamID, r.Issuer, r.SourceID, string(admission), digest[:], until, nullableText(r.ReplaceID), nullableRevision(r.ExpectedRevision), ownerID, now)
 	if err != nil {
 		return result, err
 	}
@@ -191,13 +192,14 @@ func (d *Database) DisconnectIdentityConnection(ctx context.Context, p ControlPr
 	if err != nil {
 		return publisherLookupError(err, ErrAuthorityAccess)
 	}
-	if c.Revision != revision || c.State == "retired" {
+	connection := companyConnectionFromRow(c)
+	if c.Revision != revision || connection.state == identityConnectionRetired {
 		return ErrAuthorityConflict
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.identity_connections SET state='retired',revision=revision+1,updated_at=$2 WHERE id=$1`, id, now); err != nil {
 		return err
 	}
-	if c.State == "pending" {
+	if connection.state == identityConnectionPending {
 		return tx.Commit(ctx)
 	}
 	if err = companyPolicyChanged(ctx, tx, q, team, id, ownerID, "", "connection.disconnect", companyAccessAuditDetails{ConnectionRevision: c.Revision + 1, State: "retired"}, now); err != nil {
@@ -249,7 +251,8 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 		return publisherLookupError(err, ErrAuthorityAccess)
 	}
 	actual := sha256.Sum256([]byte(token))
-	if token == "" || subtle.ConstantTimeCompare(actual[:], c.ProvisioningDigest) != 1 || (c.State != "active" && c.State != "pending") || c.State == "pending" && !c.SetupExpiresAt.Time.After(now) {
+	connection := companyConnectionFromRow(c)
+	if token == "" || subtle.ConstantTimeCompare(actual[:], c.ProvisioningDigest) != 1 || !connection.acceptsProvisioning(now) {
 		return ErrAuthorityAccess
 	}
 	if c.Revision != r.ConnectionRevision {
@@ -286,7 +289,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if member == "" && r.Eligible && c.Admission == "managed" && c.State == "active" {
+	if member == "" && r.Eligible && connection.automaticallyAdmits() {
 		unchangedAuthorization = false
 		if !naming.ValidAuthorityLabel(r.MemberSlug) {
 			return ErrMemberSlugRequired
@@ -299,7 +302,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 		return err
 	}
 	details := companyAccessAuditDetails{ConnectionRevision: c.Revision, EligibilityRevision: r.Revision, Eligible: &r.Eligible, ValidUntil: &r.ValidUntil}
-	if c.State == "pending" {
+	if connection.state == identityConnectionPending {
 		return tx.Commit(ctx)
 	}
 	if unchangedAuthorization {
@@ -370,66 +373,79 @@ func (d *Database) createManagedCompanyMember(ctx context.Context, tx pgx.Tx, q 
 	return err
 }
 
-// SetCompanyMembershipDecision is the independent, owner-controlled manual
-// decision. recovery explicitly grants a personal-account exception to an owner;
-// it never fabricates eligibility or bypasses a removed membership.
-func (d *Database) SetCompanyMembershipDecision(ctx context.Context, p ControlPrincipal, team, member string, suspended, exception, recovery bool, now time.Time) (retErr error) {
+func (d *Database) UpdateCompanyMembershipDecision(ctx context.Context, p ControlPrincipal, team, member string, decision CompanyMembershipDecision, now time.Time) (retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback(ctx, tx, "company membership decision", &retErr)()
 	q := controlstatedb.New(tx)
-	if recovery {
-		if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-			return err
-		}
-		var companyTeam bool
-		if err = tx.QueryRow(ctx, `SELECT kind='organization' AND company_sign_in_required FROM control.teams WHERE id=$1`, team).Scan(&companyTeam); err != nil {
-			return err
-		}
-		if !companyTeam {
-			return ErrAuthorityAccess
-		}
-		var authorized bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.control_sessions s JOIN control.identities i ON i.id=s.identity_id WHERE s.id=$1 AND i.id=$2 AND i.disabled_at IS NULL AND s.revoked_at IS NULL AND s.refresh_expires_at>$4 AND (i.administrator OR EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=$3 AND m.identity_id=i.id AND m.role='owner' AND m.removed_at IS NULL AND m.manual_suspended_at IS NULL)))`, p.SessionID, p.IdentityID, team, now).Scan(&authorized)
-		if err != nil {
-			return err
-		}
-		if !authorized || suspended || !exception {
-			return ErrAuthorityAccess
-		}
-	} else {
-		// signed owner checks take identity bootstrap before the team guard,
-		// matching reads and other company configuration operations.
-		a, ownerID, e := lockCompanyOwner(WithControlPrincipal(ctx, p), tx, q, p, team, now)
-		if e != nil {
-			return e
-		}
-		if a.Kind != "organization" || a.ActorRole != "owner" {
-			return ErrAuthorityAccess
-		}
-		p.IdentityID = ownerID
+	// signed owner checks take identity bootstrap before the team guard,
+	// matching reads and other company configuration operations.
+	a, ownerID, err := lockCompanyOwner(WithControlPrincipal(ctx, p), tx, q, p, team, now)
+	if err != nil {
+		return err
+	}
+	if a.Kind != "organization" || a.ActorRole != "owner" {
+		return ErrAuthorityAccess
 	}
 	target, err := q.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{TeamID: team, MembershipID: member})
 	if err != nil {
 		return publisherLookupError(err, ErrAuthorityAccess)
 	}
-	if recovery && target.Role != "owner" {
-		return ErrAuthorityAccess
-	}
-	_, err = tx.Exec(ctx, `UPDATE control.team_memberships SET manual_suspended_at=CASE WHEN $2 THEN $4::timestamptz END,personal_account_exception=$3,updated_at=$4 WHERE id=$1`, member, suspended, exception, now)
-	if err != nil {
-		return err
-	}
-	op := "membership.decision"
-	if recovery {
-		op = "membership.recovery"
-	}
-	if err = companyPolicyChanged(ctx, tx, q, team, "", p.IdentityID, target.IdentityID, op, companyAccessAuditDetails{ManualSuspended: &suspended, PersonalAccountException: &exception}, now); err != nil {
+	if err = persistCompanyMembershipDecision(ctx, tx, q, team, member, ownerID, target.IdentityID, decision, "membership.decision", now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// recovery grants a personal-account exception only to an existing owner. it
+// never fabricates source eligibility or bypasses a removed membership.
+func (d *Database) RecoverCompanyOwner(ctx context.Context, p ControlPrincipal, team, member string, now time.Time) (retErr error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx, "company membership decision", &retErr)()
+	q := controlstatedb.New(tx)
+	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+		return err
+	}
+	var companyTeam bool
+	if err = tx.QueryRow(ctx, `SELECT kind='organization' AND company_sign_in_required FROM control.teams WHERE id=$1`, team).Scan(&companyTeam); err != nil {
+		return err
+	}
+	if !companyTeam {
+		return ErrAuthorityAccess
+	}
+	var authorized bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.control_sessions s JOIN control.identities i ON i.id=s.identity_id WHERE s.id=$1 AND i.id=$2 AND i.disabled_at IS NULL AND s.revoked_at IS NULL AND s.refresh_expires_at>$4 AND (i.administrator OR EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=$3 AND m.identity_id=i.id AND m.role='owner' AND m.removed_at IS NULL AND m.manual_suspended_at IS NULL)))`, p.SessionID, p.IdentityID, team, now).Scan(&authorized)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		return ErrAuthorityAccess
+	}
+	target, err := q.LockTeamMembership(ctx, controlstatedb.LockTeamMembershipParams{TeamID: team, MembershipID: member})
+	if err != nil {
+		return publisherLookupError(err, ErrAuthorityAccess)
+	}
+	if target.Role != "owner" {
+		return ErrAuthorityAccess
+	}
+	if err = persistCompanyMembershipDecision(ctx, tx, q, team, member, p.IdentityID, target.IdentityID, CompanyMembershipDecision{PersonalAccountException: true}, "membership.recovery", now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func persistCompanyMembershipDecision(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, team, member, actor, identity string, decision CompanyMembershipDecision, operation string, now time.Time) error {
+	suspended, exception := decision.Suspended, decision.PersonalAccountException
+	_, err := tx.Exec(ctx, `UPDATE control.team_memberships SET manual_suspended_at=CASE WHEN $2 THEN $4::timestamptz END,personal_account_exception=$3,updated_at=$4 WHERE id=$1`, member, suspended, exception, now)
+	if err != nil {
+		return err
+	}
+	return companyPolicyChanged(ctx, tx, q, team, "", actor, identity, operation, companyAccessAuditDetails{ManualSuspended: &suspended, PersonalAccountException: &exception}, now)
 }
 
 type companyAccessAuditDetails struct {

@@ -85,7 +85,7 @@ func ValidateCertificate(certificate tls.Certificate, hostname string, identifie
 		return nil, errors.New("certificateidentity: certificate is not valid for TLS servers")
 	}
 	key, ok := certificate.PrivateKey.(*ecdsa.PrivateKey)
-	if !ok || key.Curve != elliptic.P256() {
+	if !ok || key == nil || key.Curve != elliptic.P256() {
 		return nil, errors.New("certificateidentity: certificate requires an ECDSA P-256 key")
 	}
 	publicKey, ok := leaf.PublicKey.(*ecdsa.PublicKey)

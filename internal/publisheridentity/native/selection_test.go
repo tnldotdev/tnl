@@ -125,11 +125,11 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", "", "", "", "", "", "", nil); err != nil {
 		t.Fatalf("local setup required a control session during publication: %v", err)
 	}
-	saved, found, err := state.PublisherSigningIdentity(t.Context(), "publisher:"+id)
+	saved, found, err := state.PublisherIdentity(t.Context(), id)
 	if err != nil || !found {
 		t.Fatalf("read installed publisher: %v", err)
 	}
-	file, err := credentialfile.New("https://control.example", a.identity, saved.PrivateValue)
+	file, err := credentialfile.New("https://control.example", a.identity, saved.SigningKey)
 	if err != nil {
 		t.Fatal(err)
 	}

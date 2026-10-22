@@ -249,7 +249,7 @@ func checkManagedHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *m
 	if line, err := reader.ReadString('\n'); err != nil || line != "data: ready\n" {
 		t.Fatal(line, err)
 	}
-	if err = f.database.SetCompanyMembershipDecision(ctx, principal, service.TeamId, member, true, false, false, time.Now()); err != nil {
+	if err = f.database.UpdateCompanyMembershipDecision(ctx, principal, service.TeamId, member, controlstate.CompanyMembershipDecision{Suspended: true}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = io.Copy(io.Discard, reader); err == nil {

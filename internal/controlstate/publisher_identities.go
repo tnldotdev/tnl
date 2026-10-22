@@ -29,6 +29,42 @@ type PublisherScope struct {
 	TeamID, Kind, PublicURLID, PrivateServiceID, DomainID, Namespace, MembershipID string
 	PublicURLScope                                                                 PublicURLScope
 }
+
+// resolvedPublisherScope is a transaction-authorized grant target. submitted
+// scopes are DTOs; only authorization and persisted enrollment validation may
+// construct these variants before passing them to grant persistence.
+type resolvedPublisherScope interface {
+	publisherScope() PublisherScope
+}
+
+type savedURLPublisherScope struct{ teamID, publicURLID string }
+type privateServicePublisherScope struct{ teamID, privateServiceID string }
+type namespacePublisherScope struct {
+	teamID, domainID, namespace, membershipID string
+	publicURLScope                            PublicURLScope
+}
+
+func (s savedURLPublisherScope) publisherScope() PublisherScope {
+	return PublisherScope{TeamID: s.teamID, Kind: "saved_url", PublicURLID: s.publicURLID}
+}
+
+func (s privateServicePublisherScope) publisherScope() PublisherScope {
+	return PublisherScope{TeamID: s.teamID, Kind: "private_service", PrivateServiceID: s.privateServiceID}
+}
+
+func (s namespacePublisherScope) publisherScope() PublisherScope {
+	return PublisherScope{TeamID: s.teamID, Kind: "namespace", DomainID: s.domainID, Namespace: s.namespace, MembershipID: s.membershipID, PublicURLScope: s.publicURLScope}
+}
+
+// applied services have already been authorized under the project/team guard.
+// their saved target, rather than a caller's submitted scope, determines grants.
+func publisherScopeForAppliedService(s controlstatedb.ControlAppliedProjectService) resolvedPublisherScope {
+	if s.PrivateServiceID.Valid {
+		return privateServicePublisherScope{s.TeamID, s.PrivateServiceID.String}
+	}
+	return savedURLPublisherScope{s.TeamID, s.PublicURLID.String}
+}
+
 type PublisherIdentity struct {
 	ID, KeyID, GrantID, CreatorID, Kind, GuestID string
 	Ownership, OwnerMembershipID                 string
@@ -73,74 +109,74 @@ func scopeFromGrant(team string, g controlstatedb.ControlPublisherGrant) Publish
 
 // authorizePublisherScope captures an explicit grant after checking the current
 // editor under team/membership locks. grant use never consults that membership.
-func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstatedb.Queries, scope PublisherScope, editor, membership string, revision uint64) (PublisherScope, error) {
+func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstatedb.Queries, scope PublisherScope, editor, membership string, revision uint64) (resolvedPublisherScope, error) {
 	if !validStateText(editor) || revision == 0 {
-		return scope, ErrPublisherIdentity
+		return nil, ErrPublisherIdentity
 	}
 	if _, err := q.LockLocalTeamForMutation(ctx, scope.TeamID); err != nil {
-		return scope, err
+		return nil, err
 	}
 	m, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: scope.TeamID, IdentityID: editor})
 	if err != nil {
-		return scope, publisherLookupError(err, ErrPublisherIdentity)
+		return nil, publisherLookupError(err, ErrPublisherIdentity)
 	}
 	if m.ID != membership || m.PolicyRevision != int64(revision) {
-		return scope, ErrPublisherIdentity
+		return nil, ErrPublisherIdentity
 	}
 	if err := requireTeamSession(ctx, q, scope.TeamID, editor, time.Now()); err != nil {
 		if errors.Is(err, ErrAuthorityAccess) {
-			return scope, ErrPublisherIdentity
+			return nil, ErrPublisherIdentity
 		}
-		return scope, err
+		return nil, err
 	}
 	if scope.Kind == "private_service" {
 		if !opaqueid.Valid(scope.PrivateServiceID, opaqueid.PrivateServicePrefix) || scope.PublicURLID != "" || scope.DomainID != "" || scope.Namespace != "" ||
 			scope.MembershipID != "" || scope.PublicURLScope != "" || m.Role != "owner" && m.Role != "admin" {
-			return scope, ErrPublisherIdentity
+			return nil, ErrPublisherIdentity
 		}
 		s, err := q.LockPrivateService(ctx, scope.PrivateServiceID)
 		if err != nil {
-			return scope, publisherLookupError(err, ErrPublisherIdentity)
+			return nil, publisherLookupError(err, ErrPublisherIdentity)
 		}
 		if s.TeamID != scope.TeamID || !s.Enabled || s.DeletedAt.Valid {
-			return scope, ErrPublisherIdentity
+			return nil, ErrPublisherIdentity
 		}
-		return scope, nil
+		return privateServicePublisherScope{scope.TeamID, s.ID}, nil
 	}
 	if scope.Kind == "saved_url" {
 		if scope.PrivateServiceID != "" || scope.DomainID != "" || scope.Namespace != "" {
-			return scope, ErrPublisherIdentity
+			return nil, ErrPublisherIdentity
 		}
 		u, err := q.LockPublicURLForRun(ctx, scope.PublicURLID)
 		if err != nil {
-			return scope, publisherLookupError(err, ErrPublisherIdentity)
+			return nil, publisherLookupError(err, ErrPublisherIdentity)
 		}
 		if u.TeamID != scope.TeamID || u.Ephemeral || u.LifecycleState != "enabled" || !PublicURLPurpose(u.Purpose).ValidForCreation() ||
 			u.PublicURLScope == "member" && u.MembershipID.String != m.ID || u.PublicURLScope == "shared" && m.Role != "owner" && m.Role != "admin" {
-			return scope, ErrPublisherIdentity
+			return nil, ErrPublisherIdentity
 		}
-		return PublisherScope{TeamID: scope.TeamID, Kind: "saved_url", PublicURLID: u.ID}, nil
+		return savedURLPublisherScope{scope.TeamID, u.ID}, nil
 	}
 	if scope.Kind != "namespace" || scope.PublicURLID != "" || scope.PrivateServiceID != "" {
-		return scope, ErrPublisherIdentity
+		return nil, ErrPublisherIdentity
 	}
 	c, err := q.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{IdentityID: editor, DomainID: scope.DomainID, TeamID: scope.TeamID})
 	if err != nil {
-		return scope, err
+		return nil, err
 	}
 	if c.DomainState != "ready" {
-		return scope, ErrPublisherIdentity
+		return nil, ErrPublisherIdentity
 	}
 	ns, direct := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: c.CanonicalDomain, Managed: c.DomainKind == "managed", Mode: d.managedURLMode, Personal: c.TeamKind == "personal", TeamName: c.TeamDisplayName, MemberSlug: c.ActorMemberSlug, ManagedLabel: c.ActorManagedLabel})
 	if ns == "" || scope.Namespace != "" && scope.Namespace != ns {
-		return scope, ErrPublisherIdentity
+		return nil, ErrPublisherIdentity
 	}
 	scope.Namespace = ns
 	scope.PublicURLScope, scope.MembershipID = PublicURLScopeMember, m.ID
 	if direct {
 		scope.PublicURLScope, scope.MembershipID = PublicURLScopeShared, ""
 	}
-	return scope, nil
+	return namespacePublisherScope{scope.TeamID, scope.DomainID, scope.Namespace, scope.MembershipID, scope.PublicURLScope}, nil
 }
 
 func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublisherEnrollmentRequest) (result PublisherEnrollment, retErr error) {
@@ -153,10 +189,11 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	}
 	defer rollback(ctx, tx, "issue publisher enrollment", &retErr)()
 	q := controlstatedb.New(tx)
-	s, err := d.authorizePublisherScope(ctx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
+	resolved, err := d.authorizePublisherScope(ctx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
 	if err != nil {
 		return result, err
 	}
+	s := resolved.publisherScope()
 	ownership, owner := "member", r.EditorMembershipID
 	if s.Kind == "private_service" || s.PublicURLScope == PublicURLScopeShared {
 		ownership, owner = "team", ""
@@ -201,7 +238,11 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	return PublisherEnrollment{id, key, s, until}, nil
 }
 
-func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publisher, issuer string, s PublisherScope, expires *time.Time, now time.Time) (controlstatedb.ControlPublisherGrant, error) {
+func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publisher, issuer string, resolved resolvedPublisherScope, expires *time.Time, now time.Time) (controlstatedb.ControlPublisherGrant, error) {
+	if resolved == nil {
+		return controlstatedb.ControlPublisherGrant{}, ErrPublisherIdentity
+	}
+	s := resolved.publisherScope()
 	id, err := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	if err != nil {
 		return controlstatedb.ControlPublisherGrant{}, err
@@ -214,7 +255,11 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 	return grant, err
 }
 
-func insertPublisher(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, name, kind, creator, guest, ownership, owner string, public ed25519.PublicKey, expires *time.Time, now time.Time) (PublisherIdentity, error) {
+func insertPublisher(ctx context.Context, q *controlstatedb.Queries, resolved resolvedPublisherScope, name, kind, creator, guest, ownership, owner string, public ed25519.PublicKey, expires *time.Time, now time.Time) (PublisherIdentity, error) {
+	if resolved == nil {
+		return PublisherIdentity{}, ErrPublisherIdentity
+	}
+	s := resolved.publisherScope()
 	id, err := opaqueid.New(opaqueid.PublisherIdentityPrefix)
 	if err != nil {
 		return PublisherIdentity{}, err
@@ -229,7 +274,7 @@ func insertPublisher(ctx context.Context, q *controlstatedb.Queries, s Publisher
 	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: kid, PublisherIdentityID: id, PublicKey: public, Revision: 1, CreatedAt: timestamptz(now)}); err != nil {
 		return PublisherIdentity{}, err
 	}
-	g, err := insertPublisherGrant(ctx, q, id, creator, s, expires, now)
+	g, err := insertPublisherGrant(ctx, q, id, creator, resolved, expires, now)
 	if err != nil {
 		return PublisherIdentity{}, err
 	}
@@ -271,7 +316,8 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 		result.KeyID = e.RedeemedKeyID.String
 		return result, nil
 	}
-	if err := validatePublisherScope(ctx, q, s, ""); err != nil {
+	resolved, err := resolvePublisherScope(ctx, q, s, "")
+	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherEnrollment)
 	}
 	if e.Ownership == "member" {
@@ -288,7 +334,7 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 		until := now.Add(time.Hour)
 		expires = &until
 	}
-	result, err = insertPublisher(ctx, q, s, e.Name, e.IdentityKind, e.CreatedByIdentityID, "", e.Ownership, e.OwnerMembershipID.String, public, expires, now)
+	result, err = insertPublisher(ctx, q, resolved, e.Name, e.IdentityKind, e.CreatedByIdentityID, "", e.Ownership, e.OwnerMembershipID.String, public, expires, now)
 	if err != nil {
 		return result, err
 	}
@@ -298,6 +344,24 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 	return result, tx.Commit(ctx)
 }
 
+func resolvePublisherScope(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, guest string) (resolvedPublisherScope, error) {
+	if err := validatePublisherScope(ctx, q, s, guest); err != nil {
+		return nil, err
+	}
+	switch s.Kind {
+	case "private_service":
+		return privateServicePublisherScope{s.TeamID, s.PrivateServiceID}, nil
+	case "saved_url":
+		return savedURLPublisherScope{s.TeamID, s.PublicURLID}, nil
+	case "namespace":
+		return namespacePublisherScope{s.TeamID, s.DomainID, s.Namespace, s.MembershipID, s.PublicURLScope}, nil
+	default:
+		return nil, ErrPublisherIdentity
+	}
+}
+
+// live-run checks validate current scope availability without creating a grant.
+// resolution uses the same checks before constructing a persistence-only scope.
 func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, guest string) error {
 	if s.Kind == "private_service" {
 		if guest != "" || !opaqueid.Valid(s.PrivateServiceID, opaqueid.PrivateServicePrefix) || s.PublicURLID != "" || s.DomainID != "" || s.Namespace != "" {
@@ -562,10 +626,11 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	}
 	defer rollback(ctx, tx, "create publisher grant", &retErr)()
 	q := controlstatedb.New(tx)
-	s, err := d.authorizePublisherScope(ctx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
+	resolved, err := d.authorizePublisherScope(ctx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision)
 	if err != nil {
 		return "", err
 	}
+	s := resolved.publisherScope()
 	i, err := q.LockPublisherIdentity(ctx, r.PublisherIdentityID)
 	if err != nil {
 		return "", publisherLookupError(err, ErrPublisherIdentity)
@@ -599,7 +664,7 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	if err = rejectPublisherGroupGrantMutation(ctx, tx, i.ID); err != nil {
 		return "", err
 	}
-	g, err := insertPublisherGrant(ctx, q, i.ID, r.EditorID, s, r.ExpiresAt, r.Now)
+	g, err := insertPublisherGrant(ctx, q, i.ID, r.EditorID, resolved, r.ExpiresAt, r.Now)
 	if err != nil {
 		return "", err
 	}
@@ -842,7 +907,8 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, guestID, urlID, sou
 		return result, ErrPublisherIdentity
 	}
 	s := PublisherScope{TeamID: trial.TeamID, Kind: "saved_url", PublicURLID: urlID}
-	if err := validatePublisherScope(ctx, q, s, guestID); err != nil {
+	resolved, err := resolvePublisherScope(ctx, q, s, guestID)
+	if err != nil {
 		return result, err
 	}
 	// one identity per URL/key; competing keys cannot take over a trial URL.
@@ -860,7 +926,7 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, guestID, urlID, sou
 		return result, err
 	}
 	until := trial.ExpiresAt.Time
-	result, err = insertPublisher(ctx, q, s, "guest", "guest", u.CreatedByIdentityID, guestID, "guest", "", public, &until, now)
+	result, err = insertPublisher(ctx, q, resolved, "guest", "guest", u.CreatedByIdentityID, guestID, "guest", "", public, &until, now)
 	if err != nil {
 		return result, err
 	}

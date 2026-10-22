@@ -3,9 +3,11 @@ package native
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -17,6 +19,75 @@ type lostEnrollmentResponse struct {
 	result authorityv1.PublisherEnrollmentResult
 	public ed25519.PublicKey
 	calls  int
+}
+
+func TestEnrollmentResumesRecordedResultBeforePromotion(t *testing.T) {
+	fixture, control := privateScopeFixture(t)
+	d, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	state, err := d.Server(t.Context(), "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
+	secret := id + ".secret"
+	result := fixture.identity.enrollment()
+	document, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := clientstate.PendingPublisherEnrollment{EnrollmentID: id, SelectionKind: "project", SelectionKey: "project-publisher:private:" + control.service.Id, PublicKey: fixture.private.Public().(ed25519.PublicKey), SigningKey: fixture.private, EnrollmentSecret: []byte(secret), ExpiresAt: time.Now().Add(time.Minute)}
+	if err := state.SavePendingPublisherEnrollment(t.Context(), pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RecordPublisherEnrollmentResult(t.Context(), id, document); err != nil {
+		t.Fatal(err)
+	}
+	authority := &scopedAuthority{}
+	n, returned, err := EnrollNative(t.Context(), state, control, authority, secret)
+	if err != nil || authority.calls != 0 || n == nil {
+		t.Fatal("recorded redemption was sent to the authority again", err)
+	}
+	*returned.PrivateServiceId = "changed-result"
+	if n.identity.privateServiceID != control.service.Id {
+		t.Fatal("returned enrollment result changed native grant scope")
+	}
+	selected, found, err := state.SelectedPublisherIdentity(t.Context(), pending.SelectionKind, pending.SelectionKey)
+	if err != nil || !found || selected.ID != result.ClientId || string(selected.PublicDocument) != string(document) {
+		t.Fatal("promotion did not atomically install the original selection", err)
+	}
+}
+
+func TestNativeEnrollmentRejectsOpaqueOrInconsistentSigningKey(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		d, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = d.Close() })
+		state, err := d.Server(t.Context(), "https://control.example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
+		key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+		public := append([]byte(nil), key.Public().(ed25519.PublicKey)...)
+		if malformed {
+			key = []byte("opaque storage value")
+		} else {
+			key[len(key)-1] ^= 1
+		}
+		if err := state.SavePendingPublisherEnrollment(t.Context(), clientstate.PendingPublisherEnrollment{EnrollmentID: id, SelectionKind: "explicit", SelectionKey: id, PublicKey: public, SigningKey: key, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatal("opaque state storage unexpectedly applied native crypto validation", err)
+		}
+		authority := &scopedAuthority{}
+		if _, _, err := EnrollNative(t.Context(), state, &unusedControl{}, authority, id+".secret"); !errors.Is(err, ErrScope) || authority.calls != 0 {
+			t.Fatal("invalid native key reached one-use redemption", err)
+		}
+	}
 }
 
 type ownerEnrollmentControl struct {
@@ -52,8 +123,8 @@ func TestEnsureOwnerRecoversPendingEnrollmentWithoutIssuingAnotherGrant(t *testi
 	if _, _, err := EnsureOwner(t.Context(), state, control, authority, route); err == nil {
 		t.Fatal("lost redemption response succeeded")
 	}
-	stored, found, err := state.PublisherSigningIdentity(t.Context(), "owner-url:"+url)
-	if err != nil || !found || string(stored.PublicValue) != "{}" {
+	stored, found, err := state.PendingPublisherEnrollmentForSelection(t.Context(), "project", "owner-url:"+url)
+	if err != nil || !found || len(stored.ResultJSON) != 0 || string(stored.EnrollmentSecret) != secret {
 		t.Fatalf("pending enrollment entered public metadata: %v", err)
 	}
 	adapter, identity, err := EnsureOwner(t.Context(), state, control, authority, route)

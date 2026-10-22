@@ -8,7 +8,31 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
+
+func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
+	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
+	if !ok || ports.MinItems == nil || *ports.MinItems != 1 || ports.MaxItems == nil || *ports.MaxItems != tcpport.MaxInventoryDeclarations || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
+		t.Fatal("inventory metadata", ports)
+	}
+	for _, protocol := range []string{"postgres", "mysql", "kubernetes"} {
+		for _, variant := range targetSchema(protocol).OneOf {
+			kind, _ := variant.Properties.Get("type")
+			if kind.Const != "eks" && kind.Const != "rds" {
+				continue
+			}
+			region, _ := variant.Properties.Get("region")
+			if region.Pattern != config.AWSRegionPattern || region.MaxLength == nil || *region.MaxLength != 32 {
+				t.Fatal("cloud region metadata", region)
+			}
+			name, _ := variant.Properties.Get("cluster")
+			if kind.Const == "rds" && name != jsonschema.FalseSchema && (name.Pattern != config.RDSNamePattern || name.Not == nil) {
+				t.Fatal("RDS name metadata", name)
+			}
+		}
+	}
+}
 
 func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	reflector := &jsonschema.Reflector{

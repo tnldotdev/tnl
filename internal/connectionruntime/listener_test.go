@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -99,5 +100,71 @@ func TestListenerCloseJoinsAnUndeliveredAccept(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("owner close leaked an undelivered accept")
+	}
+}
+
+func TestListenerNextAfterTerminalCloseIsImmediatelyClosed(t *testing.T) {
+	for _, acceptFailure := range []bool{false, true} {
+		name := "close"
+		if acceptFailure {
+			name = "accept-failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			base, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := NewListenerSwitch(base)
+			defer owner.Close()
+			first := owner.Next()
+			if acceptFailure {
+				_ = base.Close()
+				select {
+				case <-owner.done:
+				case <-time.After(time.Second):
+					t.Fatal("accept worker did not exit")
+				}
+			} else if err := owner.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, generation := range []net.Listener{first, owner.Next(), owner.Next()} {
+				result := make(chan error, 1)
+				go func() { _, err := generation.Accept(); result <- err }()
+				select {
+				case err := <-result:
+					if !errors.Is(err, net.ErrClosed) {
+						t.Fatalf("terminal accept=%v", err)
+					}
+				case <-time.After(time.Second):
+					_ = generation.Close()
+					t.Fatal("Next after terminal close blocked")
+				}
+				if generation.Addr().String() != base.Addr().String() {
+					t.Fatal("terminal address changed")
+				}
+			}
+		})
+	}
+}
+
+func TestListenerConcurrentNextAndCloseCannotReviveAccepts(t *testing.T) {
+	base, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := NewListenerSwitch(base)
+	defer owner.Close()
+	var group sync.WaitGroup
+	for range 16 {
+		group.Go(func() {
+			for range 16 {
+				_ = owner.Next().Close()
+			}
+		})
+		group.Go(func() { _ = owner.Close() })
+	}
+	group.Wait()
+	if _, err := owner.Next().Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("revived accept=%v", err)
 	}
 }

@@ -89,3 +89,67 @@ func TestSettingContextNamesOnlyAnAllowedField(t *testing.T) {
 	}()
 	_ = WrapSetting("validate database URL", ServerDatabaseURLInvalid, Setting("postgresql://secret"), cause)
 }
+
+type failureAs struct{ value *Error }
+
+func (failureAs) Error() string { return "custom failure" }
+func (e failureAs) As(target any) bool {
+	if out, ok := target.(**Error); ok {
+		*out = e.value
+		return true
+	}
+	return false
+}
+
+type reasonMarker struct{}
+
+func (reasonMarker) FailureReason() Reason { return ServerDNSConflict }
+
+type reasonAs struct{}
+
+func (reasonAs) Error() string { return "custom reason" }
+func (reasonAs) As(target any) bool {
+	if out, ok := target.(*interface{ FailureReason() Reason }); ok {
+		*out = reasonMarker{}
+		return true
+	}
+	return false
+}
+
+func TestFailureExtractionContractsAndPrecedence(t *testing.T) {
+	cause := errors.New("secret cause")
+	first := newError("connect database", DatabaseUnavailable, cause)
+	second := newError("validate database", ServerDatabaseURLInvalid, cause)
+	for _, err := range []error{first, fmt.Errorf("outer: %w", first), errors.Join(first, second), failureAs{first}, errors.Join(domainFailure{cause}, first)} {
+		typed, ok := Of(err)
+		if !ok || typed != first {
+			t.Fatalf("Of = %p, %t; want %p", typed, ok, first)
+		}
+		reason, definition, ok := Describe(err)
+		if !ok || reason != DatabaseUnavailable || definition.Retry != RetryLater {
+			t.Fatalf("typed failure lost retry precedence: %q, %+v, %t", reason, definition, ok)
+		}
+	}
+	if reason, definition, ok := Describe(reasonAs{}); !ok || reason != ServerDNSConflict || definition.Retry != RetryAfterChange {
+		t.Fatalf("custom marker As lost reason or retry: %q, %+v, %t", reason, definition, ok)
+	}
+	for _, err := range []error{nil, cause, (*Error)(nil), failureAs{}} {
+		if typed, ok := Of(err); ok || typed != nil {
+			t.Fatalf("Of accepted absent failure: %p, %t", typed, ok)
+		}
+		if _, _, ok := Describe(err); ok {
+			t.Fatal("unclassified error acquired a definition")
+		}
+		if err != nil && SafeMessage(err, Unexpected) == "" {
+			t.Fatal("non-nil error became successful output")
+		}
+	}
+	if Wrap("", "", nil) != nil || WrapSetting("", "", "", nil) != nil {
+		t.Fatal("nil causes must remain nil")
+	}
+	setting := WrapSetting("validate database", ServerDatabaseURLInvalid, SettingDatabaseURL, cause)
+	typed, ok := Of(setting)
+	if !errors.Is(setting, cause) || !ok || typed.Setting() != SettingDatabaseURL {
+		t.Fatal("setting wrapper lost its cause or safe setting")
+	}
+}

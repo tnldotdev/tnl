@@ -19,8 +19,7 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServ
 	defer func() { finish(retErr) }()
 	if f == nil || f.connector == nil || header.Validate() != nil || relay.TlsServerName == "" || relay.InternalRelayAddress == "" ||
 		relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 ||
-		header.PublisherConnectionID != relay.PublisherConnectionId || header.ConnectionSlot != uint8(relay.ConnectionSlot) ||
-		header.ConnectionAssignmentRevision != uint64(relay.ConnectionAssignmentRevision) || header.RelayServiceID != relay.RelayServiceId ||
+		tunnel.PrivateForwardingRef(header) != privateRelayRef(header, relay) ||
 		header.RelayID != relay.RelayId || header.RelayRunID != relay.RelayRunId || header.RelayLeaseRevision != uint64(relay.RelayLeaseRevision) ||
 		!relay.LeaseExpiresAt.After(time.Now()) || !header.ExpiresAt.After(time.Now()) {
 		return nil, ErrPrivateAdmission
@@ -47,4 +46,12 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServ
 			return nil, err
 		}
 	}
+}
+
+func privateRelayRef(header tunnelv1.PrivateForwardingHeader, relay ingressv1.PrivateServiceRelay) tunnelv1.PrivatePublisherConnectionRef {
+	// service and run come from the selected private projection; this relay
+	// member supplies only its assignment and relay service identity.
+	return tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: header.PrivateServiceID, PrivateRunID: header.PrivateRunID, RunNumber: header.RunNumber,
+		PublisherConnectionID: relay.PublisherConnectionId, ConnectionSlot: uint8(relay.ConnectionSlot),
+		ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), RelayServiceID: relay.RelayServiceId}
 }

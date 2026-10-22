@@ -4,14 +4,12 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 func validateTarget(job *Job) error {
@@ -22,21 +20,18 @@ func validateTarget(job *Job) error {
 		if job.Limits.Requests != 0 || job.Limits.RateRequests != 0 || job.Limits.RatePer != 0 || job.Limits.RateBurst != 0 || job.Limits.Concurrency > 4096 {
 			return ErrScope
 		}
-		if job.Project != nil {
-			definition, found := job.Project.Config.Services[job.ProjectService]
-			if job.Kind != KindPrivateService || !found || !filepath.IsAbs(job.Project.Root) || config.IsPublicService(definition) || config.Protocol(definition) != string(job.Protocol) || config.TargetType(definition) == "app" {
-				return ErrScope
-			}
-		}
 		if !job.Protocol.Valid() {
 			return ErrScope
 		}
-		if job.Trust != nil {
-			if _, err := job.Trust.Verifier(); err != nil {
-				return errors.Join(ErrScope, err)
-			}
-		}
 		if job.Kind == KindConnector {
+			if job.Project != nil {
+				return ErrScope
+			}
+			if job.Trust != nil {
+				if _, err := job.Trust.Verifier(); err != nil {
+					return errors.Join(ErrScope, err)
+				}
+			}
 			host, port, err := net.SplitHostPort(job.Target)
 			address := net.ParseIP(host)
 			n, parseErr := strconv.Atoi(port)
@@ -45,33 +40,18 @@ func validateTarget(job *Job) error {
 			}
 			return nil
 		}
-		var target string
-		var err error
-		if job.Protocol == config.ProtocolHTTP || job.Protocol == config.ProtocolKubernetes {
-			if job.Protocol == config.ProtocolKubernetes && (!strings.HasPrefix(job.Target, "https://") || job.Trust == nil) {
-				return ErrScope
-			}
-			if strings.HasPrefix(job.Target, "https://") && job.Trust == nil || strings.HasPrefix(job.Target, "http://") && job.Trust != nil {
-				return ErrScope
-			}
-			target, err = config.NormalizeHTTPServiceTarget(config.Service{}, job.Target)
-			if err == nil && job.Trust != nil && !strings.Contains(job.Target, "://") {
-				target = "https://" + strings.TrimPrefix(target, "http://")
-			}
-		} else {
-			target, err = tcptarget.Normalize(job.Target)
+		plan := job.PrivateTargetPlan()
+		if err := plan.normalize(); err != nil {
+			return err
 		}
-		if err != nil {
-			return ErrScope
-		}
-		job.Target = target
+		job.Target = plan.Target
 		return nil
 	}
 	if job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP {
 		return ErrScope
 	}
 	var err error
-	job.Target, err = localproxy.NormalizeTarget(job.Target)
+	job.Target, err = targetsyntax.NormalizeTarget(job.Target)
 	if (len(job.TargetCAPEM) > 0 || job.TargetTLSName != "") && !strings.HasPrefix(job.Target, "https://") {
 		return ErrScope
 	}

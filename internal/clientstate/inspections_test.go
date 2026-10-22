@@ -3,6 +3,7 @@ package clientstate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -10,8 +11,60 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestInspectionProtocolStorageAndFilterContracts(t *testing.T) {
+	state, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	project := t.TempDir()
+	now := time.Now().UTC()
+	for _, protocol := range []inspection.Protocol{"", inspection.Postgres, inspection.MySQL, inspection.Redis} {
+		record := InspectionRecord{Protocol: protocol, ReceivedAt: now, Origin: "tnl"}
+		switch protocol {
+		case "":
+			record.Method, record.Path, record.Status = "GET", "/health", 200
+		case inspection.Redis:
+			record.RedisCommand, record.Result = "PING", inspection.ResultOK
+		default:
+			record.Operation, record.Result = inspection.OperationQuery, inspection.ResultOK
+		}
+		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "service", record, testInspectionPolicy()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filter := InspectionFilter{Project: project, SharedProject: project, Limit: 10}
+	items, err := state.ListInspections(t.Context(), filter)
+	if err != nil || len(items) != 4 {
+		t.Fatalf("empty protocol filter = %d, %v", len(items), err)
+	}
+	for index, protocol := range []inspection.Protocol{inspection.HTTP, inspection.Postgres, inspection.MySQL, inspection.Redis} {
+		var stored string
+		if err := state.db.QueryRowContext(t.Context(), `SELECT service_protocol FROM inspections WHERE number = ?`, index+1).Scan(&stored); err != nil || stored != string(protocol) {
+			t.Fatalf("stored protocol = %q, %v", stored, err)
+		}
+		filter.Protocol = protocol
+		items, err := state.ListInspections(t.Context(), filter)
+		if err != nil || len(items) != 1 || items[0].Protocol != protocol {
+			t.Fatalf("typed filter %s = %+v, %v", protocol, items, err)
+		}
+		data, err := json.Marshal(items[0])
+		if err != nil || !strings.Contains(string(data), `"protocol":"`+string(protocol)+`"`) {
+			t.Fatalf("protocol JSON = %s, %v", data, err)
+		}
+	}
+	for _, protocol := range []inspection.Protocol{"tcp", "kubernetes", "HTTP", "unknown"} {
+		filter.Protocol = protocol
+		if _, err := state.ListInspections(t.Context(), filter); err == nil {
+			t.Fatalf("accepted unsupported filter %q", protocol)
+		}
+		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "service", InspectionRecord{Protocol: protocol, ReceivedAt: now}, testInspectionPolicy()); err == nil {
+			t.Fatalf("accepted unsupported observation %q", protocol)
+		}
+	}
+}
 
 func testInspectionPolicy() inspection.Policy {
 	return inspection.Policy{Retention: inspection.DefaultRetention, MaxBytes: inspection.DefaultMaxBytes}
@@ -46,7 +99,7 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	}
 	filter := InspectionFilter{Project: project, SharedProject: project, Limit: 10, Result: inspection.ResultError}
 	items, err := state.ListInspections(t.Context(), filter)
-	if err != nil || len(items) != 1 || items[0].Number != 1 || items[0].Protocol != controlv1.Http {
+	if err != nil || len(items) != 1 || items[0].Number != 1 || items[0].Protocol != inspection.HTTP {
 		t.Fatalf("current worktree errors = %+v, %v", items, err)
 	}
 	filter.AllWorktrees = true

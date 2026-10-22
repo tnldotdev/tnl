@@ -250,7 +250,7 @@ func TestIntegrationCompanyManagedMembershipPreservesManualAuthority(t *testing.
 	if companyTestActive(t, d, ownerMember, now) {
 		t.Fatal("last owner silently bypassed eligibility")
 	}
-	if err := d.SetCompanyMembershipDecision(t.Context(), p, team.ID, ownerMember, false, true, true, now); err != nil {
+	if err := d.RecoverCompanyOwner(t.Context(), p, team.ID, ownerMember, now); err != nil {
 		t.Fatal("explicit owner recovery", err)
 	}
 	if err := d.AuthorizeTeamSession(t.Context(), p, team.ID, now); err != nil {
@@ -269,14 +269,14 @@ func TestIntegrationCompanyManagedMembershipPreservesManualAuthority(t *testing.
 	if err != nil || after.Role != TeamRoleAdmin || after.ID != admin.ID || after.ManagedLabel != admin.ManagedLabel || after.MemberSlug != admin.MemberSlug {
 		t.Fatalf("resume lost authority or namespace: %+v %v", after, err)
 	}
-	if err = d.SetCompanyMembershipDecision(t.Context(), p, team.ID, admin.ID, true, false, false, now); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(t.Context(), p, team.ID, admin.ID, CompanyMembershipDecision{Suspended: true}, now); err != nil {
 		t.Fatal(err)
 	}
 	companyTestEligibility(t, d, c, admin.IdentityID, 4, true, now)
 	if companyTestActive(t, d, admin.ID, now) {
 		t.Fatal("sync cleared manual suspension")
 	}
-	if err = d.SetCompanyMembershipDecision(t.Context(), p, team.ID, admin.ID, false, false, false, now); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(t.Context(), p, team.ID, admin.ID, CompanyMembershipDecision{}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.RemoveMembership(WithControlPrincipal(t.Context(), p), owner, team.ID, admin.ID, now); err != nil {
@@ -378,7 +378,7 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err = d.pool.QueryRow(t.Context(), `SELECT id FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2`, team.ID, owner).Scan(&ownerMember); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.SetCompanyMembershipDecision(t.Context(), p, team.ID, ownerMember, false, true, true, now); err != nil {
+	if err = d.RecoverCompanyOwner(t.Context(), p, team.ID, ownerMember, now); err != nil {
 		t.Fatal(err)
 	}
 	invitation, err := d.CreateTeamInvitation(WithControlPrincipal(t.Context(), p), authorityInvitationRequest(owner, team.ID, "company-user", now), now)
@@ -522,14 +522,14 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 		t.Fatal("explicit public identity grant bypassed suspension", permission, err)
 	}
 	companyTestEligibility(t, d, c, person.Identity.ID, 3, true, now)
-	if err = d.SetCompanyMembershipDecision(t.Context(), p, team.ID, member.ID, false, true, false, now); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(t.Context(), p, team.ID, member.ID, CompanyMembershipDecision{PersonalAccountException: true}, now); err != nil {
 		t.Fatal(err)
 	}
 	companyTestEligibility(t, d, c, person.Identity.ID, 4, false, now)
 	if err = d.AuthorizeTeamSession(t.Context(), personalPrincipal, team.ID, now); err != nil {
 		t.Fatal("explicit contractor exception denied personal account", err)
 	}
-	if err = d.SetCompanyMembershipDecision(t.Context(), p, team.ID, member.ID, true, true, false, now); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(t.Context(), p, team.ID, member.ID, CompanyMembershipDecision{Suspended: true, PersonalAccountException: true}, now); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.AuthorizeTeamSession(t.Context(), personalPrincipal, team.ID, now); !errors.Is(err, ErrAuthorityAccess) {

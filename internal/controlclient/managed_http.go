@@ -8,22 +8,22 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func (c *Client) AuthorizeManagedHTTPVisitor(ctx context.Context, service, run string, token credentials.PublishRunToken, input controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *Client) AuthorizeManagedHTTPVisitor(ctx context.Context, service, run string, token credentials.ManagedRunToken, input controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return request[controlv1.ServiceClientCertificateDecision](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AuthorizeManagedHTTPVisitor(ctx, service, run, input, e...)
 	})
 }
-func (c *Client) RedeemManagedBrowserHandoff(ctx context.Context, service, run string, token credentials.PublishRunToken, input controlv1.ManagedBrowserRequest) (controlv1.BrowserHandoffResponse, error) {
+func (c *Client) RedeemManagedBrowserHandoff(ctx context.Context, service, run string, token credentials.ManagedRunToken, input controlv1.ManagedBrowserRequest) (controlv1.BrowserHandoffResponse, error) {
 	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RedeemManagedBrowserHandoff(ctx, service, run, input, e...)
 	})
 }
-func (c *Client) CheckManagedBrowserSession(ctx context.Context, service, run string, token credentials.PublishRunToken, input controlv1.ManagedBrowserRequest) (controlv1.BrowserAccessResponse, error) {
+func (c *Client) CheckManagedBrowserSession(ctx context.Context, service, run string, token credentials.ManagedRunToken, input controlv1.ManagedBrowserRequest) (controlv1.BrowserAccessResponse, error) {
 	return request[controlv1.BrowserAccessResponse](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CheckManagedBrowserSession(ctx, service, run, input, e...)
 	})
 }
-func (c *Client) RevokeManagedBrowserSession(ctx context.Context, service, run string, token credentials.PublishRunToken, input controlv1.ManagedBrowserRequest) error {
+func (c *Client) RevokeManagedBrowserSession(ctx context.Context, service, run string, token credentials.ManagedRunToken, input controlv1.ManagedBrowserRequest) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RevokeManagedBrowserSession(ctx, service, run, input, e...)
 	})

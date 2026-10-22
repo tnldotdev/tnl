@@ -37,7 +37,7 @@ func validateYAMLValueTypes(node *yaml.Node, typ reflect.Type, active map[*yaml.
 		return errors.New("target address must be a string or integer port")
 	}
 	if typ == reflect.TypeOf(Duration(0)) || typ == reflect.TypeOf(ByteSize(0)) || typ == reflect.TypeOf(time.Duration(0)) {
-		if node.Tag != "!!str" {
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
 			return errors.New("duration and byte sizes must be strings")
 		}
 		return nil
@@ -113,6 +113,10 @@ func validateYAMLValueTypes(node *yaml.Node, typ reflect.Type, active map[*yaml.
 	case reflect.Int, reflect.Int64:
 		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
 			return errors.New("configuration integer is required")
+		}
+	case reflect.Float64:
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!float" && node.Tag != "!!int" {
+			return errors.New("configuration number is required")
 		}
 	}
 	return nil

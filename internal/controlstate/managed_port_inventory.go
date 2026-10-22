@@ -3,7 +3,6 @@ package controlstate
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
@@ -14,16 +13,16 @@ var ErrManagedPortsExhausted = errors.New("ingress pool has no available service
 // ConfigureIngressServicePorts serializes with allocation. removing an active
 // or quarantined port cannot silently strand a private or public client profile.
 func (d *Database) ConfigureIngressServicePorts(ctx context.Context, pool string, ranges []tcpport.Range) (retErr error) {
-	if pool == "" || len(ranges) == 0 || len(ranges) > 128 {
+	if pool == "" {
 		return tcpport.ErrInventory
 	}
-	ranges = slices.Clone(ranges)
-	slices.SortFunc(ranges, func(a, b tcpport.Range) int { return a.First - b.First })
+	inventory, err := tcpport.NewInventory(ranges)
+	if err != nil {
+		return err
+	}
+	ranges = inventory.Ranges()
 	first, last := make([]int32, len(ranges)), make([]int32, len(ranges))
 	for i, r := range ranges {
-		if !r.Valid() || i > 0 && r.First <= ranges[i-1].Last {
-			return tcpport.ErrInventory
-		}
 		first[i], last[i] = int32(r.First), int32(r.Last)
 	}
 	tx, err := d.pool.Begin(ctx)

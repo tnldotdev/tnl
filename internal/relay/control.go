@@ -397,11 +397,7 @@ func validateClaimedConnection(
 	claimed relayv1.ClaimedPublisherConnection,
 	requireReady bool,
 ) error {
-	if claimed.PublishRunId != request.PublishRunId || claimed.PublicUrlId != request.PublicUrlId ||
-		claimed.PublishRunNumber != request.PublishRunNumber || claimed.PublisherConnectionId != request.PublisherConnectionId ||
-		claimed.ConnectionSlot != request.ConnectionSlot ||
-		claimed.ConnectionAssignmentRevision != request.ConnectionAssignmentRevision ||
-		claimed.RelayServiceId != request.RelayServiceId || claimed.RelayId != request.RelayId ||
+	if publicClaimRef(claimed) != publicTransitionRef(request) || claimed.ConnectionSlot != request.ConnectionSlot || claimed.RelayId != request.RelayId ||
 		claimed.RelayRunId != request.RelayRunId || claimed.RelayLeaseRevision != request.RelayLeaseRevision ||
 		claimed.ClaimId != request.ClaimId || claimed.ConnectionSlot < 0 || claimed.ConnectionSlot > 1 ||
 		claimed.RelayAddress == "" || claimed.TlsServerName == "" || !claimed.State.Valid() ||

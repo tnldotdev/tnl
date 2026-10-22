@@ -3,6 +3,7 @@ package diagnostic
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,40 @@ import (
 	"syscall"
 	"testing"
 )
+
+type diagnosticAs struct{ value *Error }
+
+func (diagnosticAs) Error() string { return "custom diagnostic" }
+func (e diagnosticAs) As(target any) bool {
+	if out, ok := target.(**Error); ok {
+		*out = e.value
+		return true
+	}
+	return false
+}
+
+func TestDiagnosticExtractionContracts(t *testing.T) {
+	classified := &Error{code: TargetUnavailable, cause: syscall.ECONNREFUSED}
+	want, ok := TextForError(classified)
+	if !ok {
+		t.Fatal("direct diagnostic was not classified")
+	}
+	for _, err := range []error{fmt.Errorf("outer: %w", classified), errors.Join(classified, Wrap(PublicURLConflict, errors.New("private cause"))), errors.Join(diagnosticAs{classified}, syscall.ECONNREFUSED)} {
+		code, ok := CodeOf(err)
+		text, rendered := TextForError(err)
+		if !ok || code != TargetUnavailable || !rendered || text != want || KnownCase(err) != "connection-refused" {
+			t.Fatalf("diagnostic extraction changed: %q, %t, %q", code, ok, text)
+		}
+	}
+	for _, err := range []error{nil, errors.New("unknown non-nil failure"), (*Error)(nil), diagnosticAs{}} {
+		if code, ok := CodeOf(err); ok || code != "" {
+			t.Fatal("absent diagnostic was classified")
+		}
+		if text, ok := TextForError(err); ok || text != "" || KnownCase(err) != "" || HelpURLForError(err) != "" {
+			t.Fatal("absent diagnostic was rendered")
+		}
+	}
+}
 
 func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 	seenCodes := make(map[Code]bool)

@@ -81,11 +81,11 @@ func (f *lifecycleControl) StartManagedServiceRun(_ context.Context, id, run, to
 	return setup, nil
 }
 
-func (f *lifecycleControl) HeartbeatPrivateServiceRun(_ context.Context, id, run string, token credentials.PublishRunToken) (controlv1.PrivateServiceRunState, error) {
+func (f *lifecycleControl) HeartbeatPrivateServiceRun(_ context.Context, id, run string, token credentials.ManagedRunToken) (controlv1.PrivateServiceRunState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats++
-	if id != f.prep.PrivateServiceId || run != f.prep.PrivateRunId || token != "run-secret" {
+	if id != f.prep.PrivateServiceId || run != f.prep.PrivateRunId || token.String() != f.setup.RunToken {
 		f.bad = errors.New("heartbeat used another run")
 	}
 	connections := append([]controlv1.ConnectionAssignment(nil), f.setup.PublisherConnections...)
@@ -102,15 +102,15 @@ func (f *lifecycleControl) HeartbeatPrivateServiceRun(_ context.Context, id, run
 		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
 }
 
-func (f *lifecycleControl) HeartbeatPrivateServiceRunHealth(ctx context.Context, id, run string, token credentials.PublishRunToken, _ controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
+func (f *lifecycleControl) HeartbeatPrivateServiceRunHealth(ctx context.Context, id, run string, token credentials.ManagedRunToken, _ controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
 	return f.HeartbeatPrivateServiceRun(ctx, id, run, token)
 }
 
-func (f *lifecycleControl) ClosePrivateServiceRun(_ context.Context, id, run string, token credentials.PublishRunToken) error {
+func (f *lifecycleControl) ClosePrivateServiceRun(_ context.Context, id, run string, token credentials.ManagedRunToken) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closes++
-	if id != f.prep.PrivateServiceId || run != f.prep.PrivateRunId || token != "run-secret" {
+	if id != f.prep.PrivateServiceId || run != f.prep.PrivateRunId || token.String() != f.setup.RunToken {
 		f.bad = errors.New("close used another run")
 	}
 	return nil
@@ -132,7 +132,7 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 	}
 	f := &lifecycleControl{prep: p.Preparation, setup: controlv1.PrivateServiceRunSetup{
 		PrivateServiceId: service, PrivateRunId: p.Preparation.PrivateRunId,
-		RunNumber: p.Preparation.RunNumber, RunToken: "run-secret",
+		RunNumber: p.Preparation.RunNumber, RunToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },
@@ -271,7 +271,7 @@ func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.
 	}
 }
 
-func (f *lifecycleControl) CreatePrivateCertificateIssuance(_ context.Context, service, run string, number int64, _ credentials.PublishRunToken, der []byte, _ string) (controlv1.PrivateCertificateIssuance, error) {
+func (f *lifecycleControl) CreatePrivateCertificateIssuance(_ context.Context, service, run string, number int64, _ credentials.ManagedRunToken, der []byte, _ string) (controlv1.PrivateCertificateIssuance, error) {
 	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil {
 		return controlv1.PrivateCertificateIssuance{}, err
@@ -297,10 +297,10 @@ func (f *lifecycleControl) CreatePrivateCertificateIssuance(_ context.Context, s
 	value := string(append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issued}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root})...))
 	return controlv1.PrivateCertificateIssuance{Id: "test-issuance", PublisherIdentityId: f.prep.PublisherIdentityId, PrivateServiceId: service, PrivateRunId: run, RunNumber: number, CertificatePlan: *f.prep.CertificatePlan, State: controlv1.CertificateIssuanceStateWaitingForInstall, CertificatePem: &value, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}, nil
 }
-func (f *lifecycleControl) GetPrivateCertificateIssuance(context.Context, string, string, string, credentials.PublishRunToken) (controlv1.PrivateCertificateIssuance, error) {
+func (f *lifecycleControl) GetPrivateCertificateIssuance(context.Context, string, string, string, credentials.ManagedRunToken) (controlv1.PrivateCertificateIssuance, error) {
 	return controlv1.PrivateCertificateIssuance{}, errors.New("unexpected poll")
 }
-func (f *lifecycleControl) MarkPrivateCertificateInstalled(_ context.Context, service, run string, number int64, _ string, _ time.Time, _ credentials.PublishRunToken) error {
+func (f *lifecycleControl) MarkPrivateCertificateInstalled(_ context.Context, service, run string, number int64, _ string, _ time.Time, _ credentials.ManagedRunToken) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if service != f.prep.PrivateServiceId || run != f.prep.PrivateRunId || number != f.prep.RunNumber {
@@ -309,10 +309,10 @@ func (f *lifecycleControl) MarkPrivateCertificateInstalled(_ context.Context, se
 	f.installs++
 	return nil
 }
-func (f *lifecycleControl) AuthorizeServiceConnector(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (f *lifecycleControl) AuthorizeServiceConnector(context.Context, string, string, credentials.ManagedRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
-func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ManagedRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return controlv1.ServiceClientCertificateDecision{}, nil
 }
 

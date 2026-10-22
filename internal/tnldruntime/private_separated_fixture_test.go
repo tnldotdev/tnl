@@ -105,7 +105,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ConfigureIngressServicePorts(t.Context(), controlstate.PrimaryIngressPoolID, ports); err != nil {
+	if err := database.ConfigureIngressServicePorts(t.Context(), controlstate.PrimaryIngressPoolID, ports.Ranges()); err != nil {
 		t.Fatal(err)
 	}
 	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"

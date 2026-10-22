@@ -18,7 +18,8 @@ func hashManagedHTTPSecret(secret string) []byte {
 }
 
 func (d *Database) CreateManagedHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateManagedHTTPGrantRequest, now time.Time) (result controlv1.ManagedHTTPGrant, retErr error) {
-	if input.Kind != "token" && input.Kind != "share" || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
+	kind := managedHTTPCredentialKind(input.Kind)
+	if !kind.grant() || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrPrivateServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
@@ -58,7 +59,11 @@ func (d *Database) CreateManagedHTTPGrant(ctx context.Context, service, actor st
 		return result, err
 	}
 	secret = id + "." + secret
-	err = q.InsertManagedHTTPGrant(ctx, controlstatedb.InsertManagedHTTPGrantParams{ID: id, PrivateServiceID: service, Kind: string(input.Kind), SecretDigest: hashManagedHTTPSecret(secret), CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
+	credential, err := parseManagedHTTPCredential(controlv1.ManagedHTTPCredential{Kind: controlv1.ManagedHTTPCredentialKind(kind), Secret: &secret})
+	if err != nil {
+		return result, err
+	}
+	err = q.InsertManagedHTTPGrant(ctx, controlstatedb.InsertManagedHTTPGrantParams{ID: id, PrivateServiceID: service, Kind: string(credential.kind), SecretDigest: credential.digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
 	if err != nil {
 		return result, err
 	}

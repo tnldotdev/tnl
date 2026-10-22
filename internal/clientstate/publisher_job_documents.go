@@ -36,6 +36,10 @@ func (d *Database) SavePublisherJobRegistry(ctx context.Context, value []byte) e
 	})
 }
 
+func (d *Database) RemovePublisherJobRegistry(ctx context.Context) error {
+	return d.queries.DeletePublisherJobRegistry(ctx)
+}
+
 // PublisherJobFileManifest stores the exact pinned-file set separately from
 // the registry; both documents remain protected inside the database.
 func (d *Database) PublisherJobFileManifest(ctx context.Context) ([]byte, bool, error) {

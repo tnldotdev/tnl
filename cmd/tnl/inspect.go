@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type inspectCommand struct {
@@ -40,18 +39,18 @@ type inspectShowCommand struct {
 }
 
 type inspectionRecord struct {
-	Number     int64                              `json:"number"`
-	Protocol   controlv1.PublicURLServiceProtocol `json:"protocol"`
-	TunnelID   string                             `json:"tunnel_id"`
-	Project    string                             `json:"project_root"`
-	Service    string                             `json:"service,omitempty"`
-	ReceivedAt time.Time                          `json:"received_at"`
-	DurationMS int64                              `json:"duration_ms"`
-	Result     inspection.Result                  `json:"result"`
-	HTTP       *inspectionHTTP                    `json:"http,omitempty"`
-	Postgres   *inspectionSQL                     `json:"postgres,omitempty"`
-	MySQL      *inspectionMySQL                   `json:"mysql,omitempty"`
-	Redis      *inspectionRedis                   `json:"redis,omitempty"`
+	Number     int64               `json:"number"`
+	Protocol   inspection.Protocol `json:"protocol"`
+	TunnelID   string              `json:"tunnel_id"`
+	Project    string              `json:"project_root"`
+	Service    string              `json:"service,omitempty"`
+	ReceivedAt time.Time           `json:"received_at"`
+	DurationMS int64               `json:"duration_ms"`
+	Result     inspection.Result   `json:"result"`
+	HTTP       *inspectionHTTP     `json:"http,omitempty"`
+	Postgres   *inspectionSQL      `json:"postgres,omitempty"`
+	MySQL      *inspectionMySQL    `json:"mysql,omitempty"`
+	Redis      *inspectionRedis    `json:"redis,omitempty"`
 }
 
 type inspectionHTTP struct {
@@ -84,22 +83,22 @@ func inspectionFromRecord(item clientstate.InspectionRecord) (inspectionRecord, 
 		Result: item.Result,
 	}
 	switch item.Protocol {
-	case controlv1.Http:
+	case inspection.HTTP:
 		record.Result = inspection.HTTPResult(item.Status)
 		record.HTTP = &inspectionHTTP{
 			Method: item.Method, Path: item.Path, Status: item.Status, Origin: item.Origin,
 		}
-	case "postgres", "mysql":
+	case inspection.Postgres, inspection.MySQL:
 		if !item.Operation.Valid() || !item.Result.Valid() {
 			return record, errors.New("inspection has an invalid database outcome")
 		}
 		sql := inspectionSQL{Operation: item.Operation, SQLState: item.SQLState, Rows: item.Rows}
-		if item.Protocol == "postgres" {
+		if item.Protocol == inspection.Postgres {
 			record.Postgres = &sql
 		} else {
 			record.MySQL = &inspectionMySQL{inspectionSQL: sql, ErrorCode: item.MySQLErrorCode, ResultSets: item.ResultSets}
 		}
-	case "redis":
+	case inspection.Redis:
 		if item.RedisCommand == "" || !item.Result.Valid() {
 			return record, errors.New("inspection has an invalid Redis outcome")
 		}
@@ -116,11 +115,11 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 		return errors.New("since must be at most 720h, limit 1 to 500, and status a valid HTTP status")
 	}
 	flags.Method = strings.ToUpper(flags.Method)
-	protocol := controlv1.PublicURLServiceProtocol(flags.Protocol)
-	if flags.Protocol != "" && protocol != controlv1.Http && protocol != "postgres" && protocol != "mysql" && protocol != "redis" {
+	protocol, valid := inspection.ParseProtocol(flags.Protocol)
+	if flags.Protocol != "" && !valid {
 		return errors.New("protocol must be http, postgres, mysql, or redis")
 	}
-	if protocol != "" && protocol != controlv1.Http && (flags.Method != "" || flags.Status != 0) {
+	if protocol.IsTCP() && (flags.Method != "" || flags.Status != 0) {
 		return errors.New("method and status only filter HTTP inspections")
 	}
 	if flags.Result != "" && !inspection.Result(flags.Result).Valid() {

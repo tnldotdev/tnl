@@ -18,6 +18,9 @@ func (n *Native) managedHTTP(service string) (managedHTTPControl, error) {
 	if _, err := n.managedCertificates(service); err != nil {
 		return nil, err
 	}
+	if control, ok := n.NativeControl.(managedControl); ok {
+		return legacyManagedControl{control}, nil
+	}
 	control, ok := n.NativeControl.(managedHTTPControl)
 	if !ok {
 		return nil, ErrScope

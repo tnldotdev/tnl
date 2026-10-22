@@ -234,6 +234,22 @@ tasks:
   go:test:
     cmds:
       - go test ./...
+      - task: go:test:public-api
+
+  go:test:public-api:
+    desc: Compile an external consumer against the existing public Go API
+    cmds:
+      - go test ./pkg/tnl/testdata/publicapi
+
+  go:test:focused:
+    desc: Run selected Go packages and assertions without changing their test tier
+    requires:
+      vars: [PACKAGES]
+    vars:
+      RUN: '{{default "." .RUN}}'
+      FLAGS: '{{default "" .FLAGS}}'
+    cmds:
+      - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
 
   go:test:auth:
     desc: Check OIDC verification, control sessions, and durable CLI authentication
@@ -344,7 +360,7 @@ tasks:
   go:test:owner-lifecycle:
     desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
     vars:
-      RUN: '{{default "Test(Connection|DeviceIssued|ConnectorAssignmentConflict|AssignmentCleanup)" .RUN}}'
+      RUN: '{{default "Test(Connection|Listener|DeviceIssued|ConnectorAssignmentConflict|AssignmentCleanup)" .RUN}}'
     cmds:
       - go test {{.CLI_ARGS}} -v ./internal/connectionruntime ./internal/tcpconnect ./internal/clientauth ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
 
@@ -649,9 +665,9 @@ tasks:
       - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml --parameters VpcId=vpc-0123456789abcdef0 MountSubnet1=subnet-0123456789abcdef0 MountSubnet2=subnet-0123456789abcdef1 ExistingClusterArn=arn:aws:ecs:us-east-1:123456789012:cluster/existing ExistingPublisherSecurityGroupId=sg-0123456789abcdef0 Replica1ExistingLogGroupName=/customer/replica-1 Replica2ExistingLogGroupName=/customer/replica-2 Replica1ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-1 Replica2ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-2 Replica1ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-1 Replica2ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-2
 
   go:test:publisher-identity:
-    desc: Check the portable group identity file and injected-secret contract
+    desc: Check owned native identities, enrollment retries and portable group credentials
     cmds:
-      - go test -race ./internal/publisheridentity/credentialfile -run='^TestGroupIdentity' -count=1
+      - go test -race ./internal/publisheridentity/native ./internal/publisheridentity/credentialfile -count=1
 
   deploy:publishers:storage-check:
     desc: Reject immutable publisher storage changes using resolved parameter files, without AWS
@@ -677,7 +693,7 @@ tasks:
   go:test:publisher-state:
     desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
     cmds:
-      - go test -race ./internal/clientstate -run='^Test(Certificate|PublisherCertificate|PublisherHostname|DurablePublisher|PrivateDirectory)' -count=1
+      - go test -race ./internal/clientstate -run='^Test(Certificate|Publisher|PendingPublisher|InstallPublisher|PromotePublisher|DurablePublisher|PrivateDirectory)' -count=1
       - go test -race ./internal/publisheridentity/credentialfile -count=1
       - go test -race ./internal/publisherjob -run='^TestInstalledGroup' -count=1
 
@@ -777,7 +793,8 @@ tasks:
       - task: go:test:fuzz:publisher-observability
         vars:
           TIME: "{{.TIME}}"
-      - go test ./internal/localproxy -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
+      - go test ./internal/policy/target -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
+      - go test ./internal/protocolinspection -run='^$' -fuzz='^FuzzSummaryFrames$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'

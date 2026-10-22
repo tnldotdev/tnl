@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -81,5 +82,39 @@ func TestRegistryCandidateRequiresExactCurrentPublisherConnection(t *testing.T) 
 				t.Fatalf("Candidate returned %#v, %t; want stale-state rejection", candidate, ok)
 			}
 		})
+	}
+}
+
+func TestPublisherConnectionRejectsChangedClaimIdentity(t *testing.T) {
+	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url", PublishRunID: "run", PublishRunNumber: 3,
+		PublisherConnectionID: "connection", ConnectionSlot: 1, ConnectionAssignmentRevision: 2, RelayServiceID: "relay"}
+	claimed := relayv1.ClaimedPublisherConnection{PublicUrlId: ref.PublicURLID, PublishRunId: ref.PublishRunID, PublishRunNumber: int64(ref.PublishRunNumber),
+		PublisherConnectionId: ref.PublisherConnectionID, ConnectionSlot: int(ref.ConnectionSlot),
+		ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), RelayServiceId: ref.RelayServiceID}
+	_, session := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+		Role: tunnelv1.Publisher, Credential: "publisher", PublisherConnection: &ref})
+	for _, field := range []string{"PublicUrlId", "PublishRunId", "PublishRunNumber", "PublisherConnectionId", "ConnectionSlot", "ConnectionAssignmentRevision", "RelayServiceId"} {
+		for _, missing := range []bool{false, true} {
+			name := "substitute/"
+			if missing {
+				name = "missing/"
+			}
+			t.Run(name+field, func(t *testing.T) {
+				changed := claimed
+				value := reflect.ValueOf(&changed).Elem().FieldByName(field)
+				if missing {
+					value.SetZero()
+				} else if value.Kind() == reflect.String {
+					value.SetString(value.String() + "other")
+				} else if field == "ConnectionSlot" {
+					value.SetInt(0)
+				} else {
+					value.SetInt(value.Int() + 1)
+				}
+				if connection, err := NewPublisherConnection(ref, changed, session); err == nil || connection != nil {
+					t.Fatal("changed control claim became a publisher connection")
+				}
+			})
+		}
 	}
 }

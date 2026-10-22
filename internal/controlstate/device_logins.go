@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
@@ -102,11 +101,10 @@ func (d *Database) DenyDeviceBrowser(ctx context.Context, code string, binding [
 	_, err := d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByCode(ctx, code)
 	}, now, func(l *DeviceLogin, _ *controlstatedb.Queries) error {
-		if l.Status != DevicePending || len(binding) != 32 || subtle.ConstantTimeCompare(binding, l.Binding) != 1 {
+		if l.Status != DevicePending || !deviceBindingMatches(l.Binding, binding) {
 			return ErrDeviceLogin
 		}
-		l.Status, l.Identity, l.State, l.Nonce, l.Verifier, l.Binding = DeviceDenied, nil, "", "", "", nil
-		l.CompanyIntent = nil
+		l.clearBrowser(DeviceDenied)
 		return nil
 	})
 	return err
@@ -140,7 +138,13 @@ func (d *Database) mutateDeviceLogin(ctx context.Context, lookup func(*controlst
 	if err := json.Unmarshal(bytes, &result); err != nil {
 		return result, err
 	}
+	if _, err := result.stage(); err != nil {
+		return result, err
+	}
 	if err := mutate(&result, q); err != nil {
+		return result, err
+	}
+	if _, err := result.stage(); err != nil {
 		return result, err
 	}
 	bytes, err = json.Marshal(result)
@@ -180,13 +184,16 @@ func (d *Database) CancelDeviceLogin(ctx context.Context, credential string, now
 	_, err := d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByCredential(ctx, digest[:])
 	}, now, func(l *DeviceLogin, q *controlstatedb.Queries) error {
-		if l.Session != nil {
-			if _, err := q.RevokeControlSession(ctx, controlstatedb.RevokeControlSessionParams{ID: l.Session.SessionID, RevokedAt: timestamptz(now), RevokedBy: text(l.Session.Identity.Identity.ID)}); err != nil {
+		stage, err := l.stage()
+		if err != nil {
+			return err
+		}
+		if issued, ok := stage.(deviceIssuedSession); ok {
+			if _, err := q.RevokeControlSession(ctx, controlstatedb.RevokeControlSessionParams{ID: issued.session.SessionID, RevokedAt: timestamptz(now), RevokedBy: text(issued.session.Identity.Identity.ID)}); err != nil {
 				return err
 			}
 		}
-		l.Status, l.Session, l.Identity, l.State, l.Nonce, l.Verifier, l.Binding = DeviceCancelled, nil, nil, "", "", "", nil
-		l.CompanyIntent = nil
+		l.clearBrowser(DeviceCancelled)
 		return nil
 	})
 	return err
@@ -213,15 +220,7 @@ func (d *Database) BeginDeviceBrowser(ctx context.Context, code, state, nonce, v
 	_, err := d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByCode(ctx, code)
 	}, now, func(l *DeviceLogin, _ *controlstatedb.Queries) error {
-		if l.Status != DevicePending || l.Identity != nil {
-			return ErrDeviceLogin
-		}
-		if l.TeamID != "" && l.TeamID != team {
-			return ErrDeviceLogin
-		}
-		l.TeamID, l.CompanyIntent = team, intent
-		l.State, l.Nonce, l.Verifier, l.Binding = state, nonce, verifier, binding
-		return nil
+		return l.beginBrowser(deviceBrowserExchange{state, nonce, verifier, binding}, team, intent)
 	})
 	return err
 }
@@ -236,11 +235,7 @@ func (d *Database) ConsumeDeviceBrowser(ctx context.Context, state string, bindi
 	return d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByState(ctx, digest[:])
 	}, now, func(l *DeviceLogin, _ *controlstatedb.Queries) error {
-		if l.Status != DevicePending || subtle.ConstantTimeCompare(binding, l.Binding) != 1 {
-			return ErrDeviceLogin
-		}
-		l.State = ""
-		return nil
+		return l.consumeBrowser(binding)
 	})
 }
 
@@ -248,14 +243,7 @@ func (d *Database) VerifyDeviceBrowser(ctx context.Context, code string, binding
 	_, err := d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByCode(ctx, code)
 	}, now, func(l *DeviceLogin, _ *controlstatedb.Queries) error {
-		if l.Status != DevicePending || len(binding) != 32 || subtle.ConstantTimeCompare(binding, l.Binding) != 1 || l.Identity != nil || l.State != "" {
-			return ErrDeviceLogin
-		}
-		l.Identity, l.Nonce, l.Verifier = &identity, "", ""
-		if l.CompanyIntent != nil {
-			identity.CompanyIntent = &CompanyIntentBinding{ID: l.CompanyIntent.ID, BindingToken: l.CompanyIntent.BindingToken, RedirectURI: l.CompanyIntent.RedirectURI}
-		}
-		return nil
+		return l.verifyBrowser(binding, identity)
 	})
 	return err
 }
@@ -264,10 +252,12 @@ func (d *Database) ApproveDeviceLogin(ctx context.Context, code string, binding 
 	_, err := d.mutateDeviceLogin(ctx, func(q *controlstatedb.Queries) (controlstatedb.ControlDeviceLogin, error) {
 		return q.LockDeviceLoginByCode(ctx, code)
 	}, now, func(l *DeviceLogin, q *controlstatedb.Queries) error {
-		if l.Status != DevicePending || len(binding) != 32 || subtle.ConstantTimeCompare(binding, l.Binding) != 1 || l.Identity == nil || !l.Identity.AssertionExpiry.After(now) {
+		stage, err := l.stage()
+		verified, ok := stage.(deviceVerifiedIdentity)
+		if err != nil || !ok || !deviceBindingMatches(verified.binding, binding) || !verified.identity.AssertionExpiry.After(now) {
 			return ErrDeviceLogin
 		}
-		session, err := d.createOIDCControlSession(ctx, q, managedDomain, *l.Identity, access, refresh, now)
+		session, err := d.createOIDCControlSession(ctx, q, managedDomain, verified.identity, access, refresh, now)
 		if err != nil {
 			return err
 		}
@@ -287,8 +277,7 @@ func (d *Database) ApproveDeviceLogin(ctx context.Context, code string, binding 
 		if l.TeamID != "" {
 			session.Identity.DefaultTeamID = l.TeamID
 		}
-		l.Status, l.Session, l.Identity, l.Binding = DeviceApproved, &session, nil, nil
-		l.CompanyIntent = nil
+		l.issueSession(session)
 		return nil
 	})
 	return err

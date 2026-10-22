@@ -14,8 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -299,7 +299,7 @@ func ValidateTNL(config TNL) error {
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
 			mount := paths[prefix]
-			if !localproxy.ValidMountPrefix(prefix) {
+			if !targetsyntax.ValidMountPrefix(prefix) {
 				return fmt.Errorf("services.%s.http.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
 			}
 			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
@@ -317,7 +317,7 @@ func validateReadiness(value *Readiness) error {
 	if value == nil {
 		return nil
 	}
-	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
+	if value.Path != "/" && !targetsyntax.ValidMountPrefix(value.Path) {
 		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
 	}
 	return nil

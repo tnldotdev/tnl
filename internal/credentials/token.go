@@ -161,6 +161,10 @@ func DerivePublisherConnectionCredential(publishRunToken PublishRunToken, assign
 		return "", SecretHash{}, ErrInvalidPublishRunToken
 	}
 	sessionSecret := validatedTokenSecret(publishRunToken.String(), sessionPrefix)
+	return deriveConnectionCredential(sessionSecret, assignmentContext)
+}
+
+func deriveConnectionCredential(sessionSecret []byte, assignmentContext string) (PublisherConnectionCredential, SecretHash, error) {
 	idMAC := hmac.New(sha256.New, sessionSecret)
 	_, _ = idMAC.Write([]byte("tnl/publisher-connection-id/v1\x00" + assignmentContext))
 	lookupID := CredentialID(base64.RawURLEncoding.EncodeToString(idMAC.Sum(nil)[:lookupBytes]))

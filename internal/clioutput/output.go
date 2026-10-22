@@ -92,10 +92,10 @@ func WrapCommand(command string, err error) error {
 	return &commandError{command: command, err: err}
 }
 
-// CommandOf returns the nearest attached command context.
+// CommandOf returns the nearest attached command context from a non-nil wrapper.
 func CommandOf(err error) (string, bool) {
-	var contextual *commandError
-	if !errors.As(err, &contextual) {
+	contextual, ok := errors.AsType[*commandError](err)
+	if !ok || contextual == nil {
 		return "", false
 	}
 	return contextual.command, true

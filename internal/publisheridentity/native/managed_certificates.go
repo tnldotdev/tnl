@@ -16,8 +16,11 @@ type ManagedCertificateControl interface {
 }
 
 func (n *Native) managedCertificates(service string) (ManagedCertificateControl, error) {
-	if n.identity.Kind != authorityv1.PrivateService || n.identity.PrivateServiceId == nil || *n.identity.PrivateServiceId != service {
+	if n.identity.kind != authorityv1.PrivateService || n.identity.privateServiceID != service {
 		return nil, ErrScope
+	}
+	if control, ok := n.NativeControl.(managedControl); ok {
+		return legacyManagedControl{control}, nil
 	}
 	control, ok := n.NativeControl.(ManagedCertificateControl)
 	if !ok {
@@ -67,6 +70,9 @@ func (n *Native) AuthorizeServiceClientCertificate(ctx context.Context, service,
 	if _, err := n.managedCertificates(service); err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, err
 	}
+	if control, ok := n.NativeControl.(managedControl); ok {
+		return control.AuthorizeServiceClientCertificate(ctx, service, run, credentials.ManagedRunToken(token), body)
+	}
 	control, ok := n.NativeControl.(interface {
 		AuthorizeServiceClientCertificate(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
 	})
@@ -79,6 +85,9 @@ func (n *Native) AuthorizeServiceClientCertificate(ctx context.Context, service,
 func (n *Native) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.PublishRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	if _, err := n.managedCertificates(service); err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, err
+	}
+	if control, ok := n.NativeControl.(managedControl); ok {
+		return control.AuthorizeServiceConnector(ctx, service, run, credentials.ManagedRunToken(token), body)
 	}
 	control, ok := n.NativeControl.(interface {
 		AuthorizeServiceConnector(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error)

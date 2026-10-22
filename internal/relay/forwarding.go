@@ -139,14 +139,17 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 }
 
 func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
-	if incoming.PrivateHeader != nil {
-		ctx = observability.ExtractWireTrace(ctx, incoming.PrivateHeader.TraceContext)
-	} else {
-		ctx = observability.ExtractWireTrace(ctx, incoming.Header.TraceContext)
+	switch request := incoming.Request().(type) {
+	case *tunnel.IncomingPrivateForwardingStream:
+		return a.forwardPrivate(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
+	case *tunnel.IncomingPublicForwardingStream:
+		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request, ingressSessions...)
+	default:
+		return incoming.Reject(tunnelv1.InvalidMessage)
 	}
-	if incoming.PrivateHeader != nil {
-		return a.forwardPrivate(ctx, incoming)
-	}
+}
+
+func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")

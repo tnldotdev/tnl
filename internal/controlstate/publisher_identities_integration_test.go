@@ -18,6 +18,54 @@ import (
 
 const publisherTestAudience = "https://control.example/v1/publisher-token"
 
+func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "publisher_resolved_scope")
+	r := oidcRouteRequest(t, d, now)
+	u := createTestPublicURL(t, d, r, now)
+	service, err := d.CreatePrivateService(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: r.TeamID, IdentityID: r.ActingIdentityID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, submitted := range []PublisherScope{
+		{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: u.ID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
+		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
+		{TeamID: r.TeamID, Kind: "private_service", PrivateServiceID: service.ID},
+	} {
+		e := publisherEnrollment(t, d, r, submitted, now)
+		if e.Scope.Kind == "saved_url" && (e.Scope.MembershipID != "" || e.Scope.PublicURLScope != "") {
+			t.Fatal("saved URL grant retained submitted namespace ownership", e.Scope)
+		}
+		if e.Scope.Kind == "namespace" && (e.Scope.MembershipID != m.ID || e.Scope.PublicURLScope != PublicURLScopeMember || e.Scope.Namespace == "") {
+			t.Fatal("namespace grant trusted submitted ownership", e.Scope)
+		}
+		public, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
+		if err != nil || identity.Scope != e.Scope {
+			t.Fatal("enrollment redemption changed resolved scope", identity.Scope, e.Scope, err)
+		}
+		stored, err := controlstatedb.New(d.pool).GetPublisherGrant(t.Context(), controlstatedb.GetPublisherGrantParams{ID: identity.GrantID, PublisherIdentityID: identity.ID})
+		if err != nil || scopeFromGrant(r.TeamID, stored) != e.Scope {
+			t.Fatal("grant persistence lost the authorized target", stored, err)
+		}
+	}
+	for _, submitted := range []PublisherScope{
+		{TeamID: r.TeamID, Kind: "saved_url", PublicURLID: u.ID, PrivateServiceID: service.ID},
+		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, PublicURLID: u.ID},
+		{TeamID: r.TeamID, Kind: "private_service", PrivateServiceID: service.ID, Namespace: "forged.example"},
+	} {
+		if _, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: submitted, Name: "test", Kind: "installed", EditorID: r.ActingIdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now}); !errors.Is(err, ErrPublisherIdentity) {
+			t.Fatal("mixed submitted scope was authorized", submitted, err)
+		}
+	}
+}
+
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
 	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "private_service_tickets"} {

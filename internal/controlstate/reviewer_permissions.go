@@ -8,12 +8,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, previewID string, actor FeedbackActor, now time.Time) (FeedbackActor, string, error) {
+// feedback may combine a verified browser author with URL-scoped share access.
+// HTTP visitor selection remains exclusive at its own request boundary.
+func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, previewID string, actor FeedbackActor, now time.Time) (authorizedFeedbackActor, error) {
 	if actor.Kind != "reviewer" || url.ServiceProtocol != "http" {
-		return FeedbackActor{}, "", ErrFeedbackAccess
+		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
 	if len(actor.BrowserCookieSecret) != 0 && len(actor.BrowserCookieSecret) != 32 || len(actor.BrowserCookieSecret) == 0 && actor.IdentityID != "" {
-		return FeedbackActor{}, "", ErrVisitorSignIn
+		return authorizedFeedbackActor{}, ErrVisitorSignIn
 	}
 	token := ""
 	if len(actor.BrowserCookieSecret) != 0 {
@@ -21,19 +23,17 @@ func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Querie
 	}
 	identity, err := d.httpVisitorDecision(ctx, q, url, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: token, ShareID: actor.ShareID, ShareCookieSecret: actor.CookieSecret, ShareSecret: actor.ShareSecret}, now)
 	if err != nil {
-		return FeedbackActor{}, "", err
+		return authorizedFeedbackActor{}, err
 	}
-	actor.IdentityID, actor.DisplayName = identity.IdentityID, identity.DisplayName
 	reference := identity.Reason
 	if identity.Reason == "anonymous_share" {
 		reference = actor.ShareID
 	}
 	if !identity.VisitAllowed {
-		return FeedbackActor{}, "", ErrFeedbackAccess
+		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
 	if identity.IdentityID != "" {
 		reference = "identity:" + identity.IdentityID
 	}
-	actor.VisitAllowed = identity.VisitAllowed
-	return actor, reference, nil
+	return authorizedFeedbackActor{kind: feedbackReviewer, identityID: identity.IdentityID, displayName: identity.DisplayName, reference: reference, permissions: reviewerFeedbackPermissions}, nil
 }
