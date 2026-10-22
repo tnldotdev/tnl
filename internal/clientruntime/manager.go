@@ -97,7 +97,6 @@ func (m *Manager) emitLocked(kind string, service *Service) {
 
 func (m *Manager) Snapshot() Snapshot {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	copy := m.snapshot
 	copy.Services = slices.Clone(copy.Services)
 	for index := range copy.Services {
@@ -107,9 +106,23 @@ func (m *Manager) Snapshot() Snapshot {
 		}
 	}
 	copy.Events = slices.Clone(copy.Events)
-	// publication writers share the journal but do not take the manager lock.
-	if latest, err := ReadSnapshotFrom(context.Background(), m.database, m.snapshot.Project); err == nil {
-		copy.Cursor, copy.ObservedAt, copy.Publications, copy.Events = latest.Cursor, latest.ObservedAt, latest.Publications, latest.Events
+	project := m.snapshot.Project
+	m.mu.Unlock()
+	// retain the journal's services and cursor together. publication writers share
+	// the journal and do not take the manager lock; reading it must not block leases.
+	if latest, err := ReadSnapshotFrom(context.Background(), m.database, project); err == nil {
+		copy = latest
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for index := range copy.Services {
+		service := &copy.Services[index]
+		reg := m.registrations[service.Name]
+		current := m.serviceLocked(service.Name)
+		if service.Registered && (m.closed || reg == nil || current == nil || current.RegistrationID != service.RegistrationID || !current.Registered || time.Now().After(reg.expires) || m.Alive != nil && !m.Alive(reg.pid)) {
+			service.Registered, service.Routable, service.Ready = false, false, false
+			service.Observation, service.Failure = nil, "runtime.registration_stale"
+		}
 	}
 	return copy
 }
@@ -230,6 +243,7 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 	}
 	service.RegistrationID = "reg_" + hex.EncodeToString(bytes)
 	service.Target, service.Framework, service.PublishRunNumber = "", "", 0
+	service.TunnelID, service.ProvisioningStage = "", ""
 	service.Registered, service.Routable, service.Ready, service.Observation = false, false, false, nil
 	service.PublicURL, service.Failure = publicURL, ""
 	m.registrations[name] = &registration{owner: owner, pid: pid, expires: time.Now().Add(LeaseDuration)}
@@ -587,11 +601,26 @@ func (m *Manager) unregister(id, owner string) error {
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
 	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
+	service.PublishRunNumber, service.Framework = 0, ""
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
 	m.emitLocked("service.stopped", service)
 	return m.writeErr
+}
+
+// TargetChanged invalidates only the current registration's current run. worker
+// configuration is captured before provisioning and cannot supply its run number.
+func (m *Manager) TargetChanged(name, id, target string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	service := m.serviceLocked(name)
+	if m.closed || service == nil || service.RegistrationID != id || service.Target != target || !service.Registered || !service.Routable {
+		return
+	}
+	service.Ready = false
+	service.Observation = &Observation{Target: target, RegistrationID: id, PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+	m.emitLocked("service.readiness", service)
 }
 
 // sweep uses both SDK renewal and process liveness; a TCP listener alone never

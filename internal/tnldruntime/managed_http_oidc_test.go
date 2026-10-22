@@ -116,7 +116,8 @@ func checkManagedHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *m
 		t.Fatal(err)
 	}
 	proof := []oidcauth.TeamContext{{TeamID: service.TeamId, IdentityConnectionID: setup.ID, ConnectionRevision: setup.Revision, SourceID: setup.SourceID, Subject: "directory-operator", AuthenticatedAt: now.Unix()}}
-	active, err := f.database.ActivateIdentityConnection(ctx, principal, service.TeamId, setup.ID, setup.SetupToken, setup.Revision, controlstate.OIDCIdentity{Issuer: testOIDCIssuer, Subject: "operator", AssertionDigest: sha256.Sum256([]byte("managed-http-company-consent")), AssertionExpiry: now.Add(time.Minute), TeamContexts: proof}, now)
+	provisioning := sha256.Sum256([]byte("managed-http-company-provisioning"))
+	active, err := f.database.ActivateIdentityConnection(ctx, principal, service.TeamId, setup.ID, setup.SetupToken, setup.Revision, controlstate.OIDCIdentity{Issuer: testOIDCIssuer, Subject: "operator", AssertionDigest: sha256.Sum256([]byte("managed-http-company-consent")), AssertionExpiry: now.Add(time.Minute), TeamContexts: proof}, now, base64.RawURLEncoding.EncodeToString(provisioning[:]))
 	if err != nil {
 		t.Fatal(err)
 	}

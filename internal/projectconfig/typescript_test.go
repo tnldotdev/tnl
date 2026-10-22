@@ -162,7 +162,7 @@ func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 	}{{"api", true}, {"missing", false}} {
 		directory := t.TempDir()
 		path := filepath.Join(directory, "tnl.config.ts")
-		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
+		source := fmt.Sprintf(`export default () => ({ services: {api: {publicURL: {}}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}

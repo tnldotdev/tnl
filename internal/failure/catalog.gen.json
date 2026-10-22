@@ -37,6 +37,13 @@
       "action": "start the entry service in the selected worktree and check tnl status"
     },
     {
+      "code": "TNL_CLIENT_APP_CONFIGURATION_CONFLICT",
+      "slug": "app-configuration-conflict",
+      "class": "conflict",
+      "message": "the local publisher uses another project configuration",
+      "action": "stop this project's apps and named publishers, then start them with the selected configuration"
+    },
+    {
       "code": "TNL_CLIENT_APP_CURSOR_EXPIRED",
       "slug": "app-cursor-expired",
       "class": "invalid",
@@ -44,11 +51,25 @@
       "action": "run tnl watch without --after to follow current events"
     },
     {
+      "code": "TNL_CLIENT_APP_OWNER_CONFLICT",
+      "slug": "app-owner-conflict",
+      "class": "conflict",
+      "message": "another live app or named publisher owns this service",
+      "action": "stop that service's current owner before starting another"
+    },
+    {
       "code": "TNL_CLIENT_APP_READINESS_TIMEOUT",
       "slug": "app-readiness-timeout",
       "class": "unavailable",
       "message": "public readiness checks timed out",
       "action": "check tnl status and the app response, then run tnl wait again"
+    },
+    {
+      "code": "TNL_CLIENT_APP_REMOTE_SERVICE",
+      "slug": "app-remote-service",
+      "class": "invalid",
+      "message": "readiness checks require a local configured service",
+      "action": "select a local service with --service; use tnl status for applied publisher groups"
     },
     {
       "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",
@@ -552,7 +573,7 @@
       "slug": "invalid-tunnel-flags",
       "class": "invalid",
       "message": "tunnel options conflict or contain an invalid value",
-      "action": "check --public-url, --name, --allow-ip, and --concurrency"
+      "action": "check --public-url, --name, --ip, and HTTP limits such as --concurrency"
     },
     {
       "code": "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE",
@@ -574,6 +595,27 @@
       "class": "invalid",
       "message": "a target is required",
       "action": "pass an HTTP or HTTPS origin or local port, or set publish.target in the project configuration"
+    },
+    {
+      "code": "TNL_CLIENT_NAMED_PUBLISH_OVERRIDES",
+      "slug": "named-publish-overrides",
+      "class": "invalid",
+      "message": "named publishing uses the selected project configuration",
+      "action": "set public URL, access, TLS, limits, and inspection in the selected configuration"
+    },
+    {
+      "code": "TNL_CLIENT_NAMED_PUBLISH_SESSION",
+      "slug": "named-publish-session",
+      "class": "invalid",
+      "message": "named publishing requires its saved sign-in",
+      "action": "omit the access token or publish an explicit target"
+    },
+    {
+      "code": "TNL_CLIENT_NAMED_PUBLISH_TEAM",
+      "slug": "named-publish-team",
+      "class": "invalid",
+      "message": "the configured team belongs to another server selection",
+      "action": "select --team explicitly for the selected server"
     },
     {
       "code": "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID",
@@ -653,11 +695,25 @@
       "action": "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_ENROLLMENT_INPUT",
+      "slug": "publisher-enrollment-input",
+      "class": "invalid",
+      "message": "one publisher enrollment key is required",
+      "action": "pass one enrollment key or use --enroll-key - to read it from stdin"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED",
       "slug": "publisher-enrollment-required",
       "class": "unauthenticated",
       "message": "this publisher needs a new enrollment key",
       "action": "request fresh enrollment for the saved public URL with tnl publisher enroll; set TNL_ENROLL_KEY and restart with the persistent state volume"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_GRANT_MISMATCH",
+      "slug": "publisher-grant-mismatch",
+      "class": "invalid",
+      "message": "the selected publisher grant does not match this publication",
+      "action": "match the configured service, target, protocol, and public or private scope to the saved grant"
     },
     {
       "code": "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
@@ -674,11 +730,46 @@
       "action": "check the identity directory's mount and available space, then retry"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_INSTALL_INSPECTION",
+      "slug": "publisher-install-inspection",
+      "class": "invalid",
+      "message": "installed publication does not support inspection capture",
+      "action": "use --inspection-mode=none"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_INSTALL_OPTIONS",
+      "slug": "publisher-install-options",
+      "class": "invalid",
+      "message": "installed publication requires a saved HTTP public URL and stable target",
+      "action": "select --name or --public-url with a stable HTTP target; remove demo, ephemeral, and open options"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISHER_INSTALL_SOURCE_INVALID",
       "slug": "publisher-install-source-invalid",
       "class": "invalid",
       "message": "tnl's installation files are missing or unsafe",
       "action": "install tnl from a release archive with LICENSE, NOTICE and THIRD_PARTY_LICENSES.txt, then retry --install"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_NAMESPACE_OPTIONS",
+      "slug": "publisher-namespace-options",
+      "class": "invalid",
+      "message": "namespace publication requires an HTTP target",
+      "action": "select an HTTP target and remove private-protocol and target TLS name overrides"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_SAVED_POLICY",
+      "slug": "publisher-saved-policy",
+      "class": "invalid",
+      "message": "the saved public URL owns visitor policy and lifecycle",
+      "action": "remove anonymous, access, IP, and ephemeral overrides; change policy on the saved URL"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_SELECTION_INVALID",
+      "slug": "publisher-selection-invalid",
+      "class": "invalid",
+      "message": "scoped publisher selection conflicts with publication options",
+      "action": "select one --enroll-key, --publisher, or --publisher-file; its grant selects the URL and team"
     },
     {
       "code": "TNL_CLIENT_SERVER_CONFLICT",

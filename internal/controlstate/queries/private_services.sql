@@ -237,11 +237,11 @@ SELECT * FROM control.private_service_connection_slots WHERE private_run_id = sq
 ORDER BY connection_slot;
 
 -- name: ListPrivateServiceConnectionSlotsNeedingReplacement :many
--- never modify a connected or ready slot that still has its matching live
--- relay lease. its streams and assignment remain owned by that relay.
+-- replace expired never-ready claims even with a live relay lease.
+-- ready slots retain ownership and streams while their matching lease is live.
 SELECT slot.* FROM control.private_service_connection_slots slot
 WHERE slot.private_run_id = sqlc.arg(private_run_id)
-    AND (slot.state = 'closed' OR slot.state = 'assigned' AND slot.credential_expires_at <= sqlc.arg(now)
+    AND (slot.state = 'closed' OR slot.state IN ('assigned', 'connected') AND slot.credential_expires_at <= sqlc.arg(now)
         OR slot.state IN ('connected', 'ready') AND NOT EXISTS (
             SELECT 1 FROM control.relay_leases lease
             WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
@@ -256,11 +256,12 @@ UPDATE control.private_service_connection_slots slot SET state = 'closed', relay
 WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
     AND slot.private_run_id = sqlc.arg(private_run_id)
     AND slot.state IN ('connected', 'ready')
-    AND NOT EXISTS (SELECT 1 FROM control.relay_leases lease
-        WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
-          AND lease.relay_lease_revision = slot.relay_lease_revision
-          AND lease.relay_service_id = slot.relay_service_id
-          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining);
+    AND (slot.state = 'connected' AND slot.credential_expires_at <= sqlc.arg(now)
+        OR NOT EXISTS (SELECT 1 FROM control.relay_leases lease
+            WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+              AND lease.relay_lease_revision = slot.relay_lease_revision
+              AND lease.relay_service_id = slot.relay_service_id
+              AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining));
 
 -- name: DeletePrivateServiceConnectionSlot :execrows
 DELETE FROM control.private_service_connection_slots WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
@@ -275,7 +276,13 @@ FROM control.private_service_runs r, control.relay_leases l
 WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
     AND slot.credential_digest = sqlc.arg(credential_digest)
     AND slot.connection_assignment_revision = sqlc.arg(connection_assignment_revision)
-    AND slot.state = 'assigned' AND slot.credential_expires_at > sqlc.arg(now)
+    -- recover only the exact committed claim while it is still connected.
+    -- the relay fences local handshakes through disconnect; no other process
+    -- can adopt the slot and readiness cannot be reset by a claim replay.
+    AND (slot.state = 'assigned' OR slot.state = 'connected'
+        AND slot.relay_id = sqlc.arg(relay_id) AND slot.relay_run_id = sqlc.arg(relay_run_id)
+        AND slot.relay_lease_revision = sqlc.arg(relay_lease_revision))
+    AND slot.credential_expires_at > sqlc.arg(now)
     AND r.id = slot.private_run_id AND r.closed_at IS NULL AND r.publisher_expires_at > sqlc.arg(now)
     AND l.relay_id = sqlc.arg(relay_id) AND l.relay_run_id = sqlc.arg(relay_run_id)
     AND l.relay_lease_revision = sqlc.arg(relay_lease_revision)
@@ -357,7 +364,7 @@ DELETE FROM control.private_connector_sessions session WHERE session.id IN
 -- revalidate the admitted stream, live device, grant and exact run. identity
 -- and source are bound by ingress, and an outage never extends the deadline.
 WITH permitted AS (
-    SELECT LEAST(sqlc.arg(now)::timestamptz + interval '2 minutes', run.publisher_expires_at,
+    SELECT LEAST(sqlc.arg(now)::timestamptz + interval '2 minutes', run.publisher_expires_at, run.certificate_expires_at,
       control.company_subject_deadline(service.team_id,person.id,COALESCE(session.control_session_id,''),sqlc.arg(now)),
       ingress.lease_expires_at, publisher_grant.expires_at,
       (SELECT MAX(relay.lease_expires_at) FROM control.private_service_connection_slots slot
@@ -416,6 +423,7 @@ WITH permitted AS (
       AND service.enabled AND service.deleted_at IS NULL
       AND run.private_service_id = service.id AND run.run_number = stream.run_number
       AND run.state = 'ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
+      AND run.certificate_expires_at > sqlc.arg(now)
       AND publisher_grant.publisher_identity_id = publisher.id
       AND publisher_grant.private_service_id = service.id
       AND publisher_grant.kind = 'private_service' AND publisher_grant.revoked_at IS NULL

@@ -152,21 +152,21 @@ func TestSourceAndPendingBudgetsUseIPv6Networks(t *testing.T) {
 	}
 }
 
-func TestRunTotalsRetireOnlyAfterTrustedRoutingRemoval(t *testing.T) {
+func TestRunTotalsRetireOnlyAfterTrustedRunClosure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a := trafficFixture(t)
 		key := trafficKey{url: "url", id: "run", run: 1}
 		l := a.config.Default
 		l.TotalConnections = 1
-		current := map[TrafficRun]struct{}{{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run}: {}}
-		a.currentRuns = func() (map[TrafficRun]struct{}, bool) { return current, true }
+		terminal := map[TrafficRun]struct{}{}
+		a.terminalRuns = func([]TrafficRun) map[TrafficRun]struct{} { return terminal }
 		release, _ := a.acquire(key, l)
 		release()
 		time.Sleep(3 * time.Minute)
 		if release, reason := a.acquire(key, l); release != nil || reason != "public_url_connection_total" {
 			t.Fatal("refresh reset live totals", reason)
 		}
-		clear(current)
+		terminal[TrafficRun{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run}] = struct{}{}
 		time.Sleep(31 * time.Second)
 		a.mu.Lock()
 		a.prune(time.Now())

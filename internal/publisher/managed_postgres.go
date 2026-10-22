@@ -26,11 +26,14 @@ func forwardPostgresAuthentication(client, backend net.Conn) error {
 	if _, err := io.ReadFull(client, startup[4:]); err != nil {
 		return err
 	}
+	if binary.BigEndian.Uint32(startup[4:8]) == 80877102 {
+		// admission on this socket does not bind a backend PID/key to the
+		// original principal or service. refuse even TLS-wrapped cancellation
+		// until that ownership is established; never forward an unbound key.
+		return ErrManagedTLS
+	}
 	if _, err := backend.Write(startup); err != nil {
 		return err
-	}
-	if length == 16 && binary.BigEndian.Uint32(startup[4:8]) == 80877102 {
-		return nil
 	}
 	for range 64 {
 		var header [5]byte

@@ -25,6 +25,15 @@ import (
 // real TLS and HTTP proof bytes exercise the native session boundary. provider
 // verification itself is covered by the signed-issuer/PG integration target.
 func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.T) {
+	runConnectionReplacement(t, false)
+}
+
+func TestConnectionPendingReplacementIsRevokedAfterInventoryFailure(t *testing.T) {
+	runConnectionReplacement(t, true)
+}
+
+func runConnectionReplacement(t *testing.T, pending bool) {
+	t.Helper()
 	const binding = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	team, service := "tm_"+strings.Repeat("t", 22), "psvc_"+strings.Repeat("p", 22)
 	oldID, newID := "wls_"+strings.Repeat("s", 22), "wls_"+strings.Repeat("n", 22)
@@ -38,6 +47,8 @@ func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.
 	var nextNonce string
 	var exchanges, dropped int
 	var revoked bool
+	var preparing bool
+	var preparedRequests int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -113,13 +124,29 @@ func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.
 				w.WriteHeader(403)
 				return
 			}
+			if pending {
+				w.WriteHeader(503)
+				_, _ = w.Write([]byte(`{"status":503,"code":"unavailable","detail":"inventory unavailable"}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": "db", "protocol": "postgres", "managed_tls": controlv1.ManagedServiceTLS{Hostname: "db.example.test", Port: 15443, Public: false}}}})
+		case "/v1/workload/services/" + service + "/authorization":
+			_ = json.NewEncoder(w).Encode(controlv1.WorkloadServiceAuthorization{Subject: newSession.Subject, ServiceId: service, ValidUntil: newSession.LeaseExpiresAt, PolicyRevision: 1})
+		case "/v1/workload/services/" + service + "/run":
+			if !preparing {
+				t.Error("attachment eagerly rebuilt a prepared service")
+			}
+			preparedRequests++
+			w.WriteHeader(503)
+			_, _ = w.Write([]byte(`{"status":503,"code":"unavailable","detail":"requested preparation barrier"}`))
 		case "/v1/workload-sessions/" + newID:
 			if r.Method != http.MethodDelete {
 				w.WriteHeader(405)
 				return
 			}
 			revoked = true
+			w.WriteHeader(204)
+		case "/v1/workload-sessions/" + oldID:
 			w.WriteHeader(204)
 		default:
 			t.Error("replacement eagerly started an unrequested service", r.URL.Path)
@@ -134,14 +161,36 @@ func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "first", []string{"db", "removed"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: connectionruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), workload: client, deadline: oldSession.ExpiresAt, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	b := &nativeConnectionBackend{scope: connectionruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), nativeConnectionSession: nativeConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	// a replacement session invalidates old snapshots without rebuilding their
+	// listeners. only a later Connect for the requested service may do that work.
+	b.prepared["db"] = &preparedConnection{ready: true, sessionID: oldID, service: controlv1.PrivateService{Id: service, Protocol: controlv1.Postgres, Enabled: true, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "db.example.test", Port: 15443}}}
+	b.prepared["removed"] = &preparedConnection{ready: true, sessionID: oldID}
 	if err := b.Attach(t.Context(), "first"); err == nil || b.replacement == nil || b.workload != client {
 		t.Fatal("lost replacement exchange abandoned its original key or replaced the live adapter", err)
 	}
-	if err := b.Attach(t.Context(), "rotated"); err != nil {
+	err = b.Attach(t.Context(), "rotated")
+	if pending {
+		if err == nil || b.replacement == nil {
+			t.Fatal("fixture did not retain its issued pending replacement", err)
+		}
+		if _, err := b.replacement.Session(); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if !revoked {
+			t.Fatal("issued pending replacement was not revoked")
+		}
+		return
+	}
+	if err != nil {
 		t.Fatal("replacement did not recover its committed exchange", err)
 	}
-	if len(b.prepared) != 0 || len(b.services) != 1 || b.metadata.Services["db"].Protocol != "postgres" {
+	if len(b.prepared) != 2 || len(b.services) != 1 || b.metadata.Services["db"].Protocol != "postgres" {
 		t.Fatal("authorized snapshot was confused with prepared listeners")
 	}
 	current, err := b.workload.Session()
@@ -151,6 +200,18 @@ func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.
 	previous, _ := client.Session()
 	if previous.Id != oldID {
 		t.Fatal("existing adapter inherited the new session")
+	}
+	mu.Lock()
+	preparing = true
+	mu.Unlock()
+	if _, err := b.Connect(t.Context(), "db"); err == nil {
+		t.Fatal("requested preparation failure was hidden")
+	}
+	mu.Lock()
+	requests := preparedRequests
+	mu.Unlock()
+	if requests != 1 {
+		t.Fatal("replacement did not rebuild only the requested old-session adapter", requests)
 	}
 	if err := b.Attach(t.Context(), "rotated"); err == nil {
 		t.Fatal("revocation silently created another session")

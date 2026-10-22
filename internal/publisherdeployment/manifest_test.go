@@ -45,7 +45,7 @@ func put(t *testing.T, path string, data []byte) {
 
 func TestGoldenAndReplicaStability(t *testing.T) {
 	two := testBundle(t, 2)
-	for name, fixture := range map[string]string{"aws/production.yaml": "fargate.yaml", "aws/production.parameters.example.json": "fargate.parameters.example.json", "manifest.json": "fargate.manifest.example.json"} {
+	for name, fixture := range map[string]string{"aws/production.yaml": "fargate.yaml", "aws/production.parameters.example.json": "fargate.parameters.example.json", "aws/production.storage-policy.json": "fargate.storage-policy.json", "manifest.json": "fargate.manifest.example.json"} {
 		want, err := os.ReadFile(filepath.Join("..", "..", "deploy", "publishers", fixture))
 		if err != nil {
 			t.Fatal(err)
@@ -175,6 +175,13 @@ func TestReadValidateAndReadOnlyCheck(t *testing.T) {
 }
 
 func TestManifestRejectsUnsafeAndUnboundedInputs(t *testing.T) {
+	for _, change := range []func(*Publisher){func(p *Publisher) { p.StoragePolicyPath = "" }, func(p *Publisher) { p.StoragePolicySHA256 = "" }} {
+		b := testBundle(t, 2)
+		change(&b.Manifest.Publishers[0])
+		if b.Manifest.Validate() == nil {
+			t.Fatal("required storage policy metadata was omitted")
+		}
+	}
 	for _, change := range []func(*Manifest){func(m *Manifest) { m.SchemaVersion = 2 }, func(m *Manifest) { m.Publishers[0].TemplatePath = "../customer.yaml" }, func(m *Manifest) { m.Publishers[0].Replicas[0].Key = "other" }, func(m *Manifest) { m.Publishers = append(m.Publishers, m.Publishers[0]) }, func(m *Manifest) { m.Publishers[0].TemplateSHA256 = "invalid" }} {
 		b := testBundle(t, 2)
 		change(&b.Manifest)

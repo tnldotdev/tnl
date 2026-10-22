@@ -21,22 +21,40 @@ import (
 )
 
 type Server struct {
-	Capabilities    *privateprotocol.Capabilities
-	Manager         *clientruntime.Manager
-	Database        *clientstate.Database
-	Project         string
-	Prepare         func(context.Context, privateprotocol.Prepare) (privateprotocol.Assignment, error)
-	Register        func(privateprotocol.Registration) error
-	RegisterContext func(context.Context, privateprotocol.Registration) error
-	Acquire         func(context.Context, privateprotocol.Lease) (privateprotocol.Registration, error)
-	Invocation      func(context.Context, privateprotocol.Invocation) (privateprotocol.Registration, error)
-	Check           func(context.Context, []string) (clientruntime.Snapshot, error)
-	AppService      func(string) bool
+	Capabilities        *privateprotocol.Capabilities
+	Manager             *clientruntime.Manager
+	Database            *clientstate.Database
+	Project             string
+	Prepare             func(context.Context, privateprotocol.Prepare) (privateprotocol.Assignment, error)
+	Register            func(privateprotocol.Registration) error
+	RegisterContext     func(context.Context, privateprotocol.Registration) error
+	Acquire             func(context.Context, privateprotocol.Lease) (privateprotocol.Registration, error)
+	Invocation          func(context.Context, privateprotocol.Invocation) (privateprotocol.Registration, error)
+	Check               func(context.Context, []string) (clientruntime.Snapshot, error)
+	AppService          func(string) bool
+	ConfigurationDigest func() (string, error)
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
+		if digest := r.URL.Query().Get("configuration_digest"); digest != "" {
+			if privateprotocol.Grant(r).Scope != "owner" || s.ConfigurationDigest == nil {
+				Problem(w, privateprotocol.ErrForbidden)
+				return
+			}
+			current, err := s.ConfigurationDigest()
+			if err != nil {
+				Problem(w, err)
+				return
+			}
+			if digest != current {
+				Problem(w, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict))
+				return
+			}
+		}
+		w.WriteHeader(204)
+	})
 	mux.HandleFunc("POST /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		if privateprotocol.Grant(r).Scope != "owner" {
 			Problem(w, privateprotocol.ErrForbidden)
@@ -126,7 +144,11 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
-		privateprotocol.Write(w, 200, registration)
+		if err := privateprotocol.Write(w, 200, registration); err != nil || r.Context().Err() != nil {
+			// a failed acknowledgment cannot leave an unrenewable invocation
+			// running. unregister joins its worker and allocation cleanup.
+			_ = s.Manager.UnregisterTarget(registration.RegistrationID, registration.Owner, registration.Target)
+		}
 	})
 	for _, operation := range []string{"register", "renew", "unregister"} {
 		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +204,12 @@ func (s *Server) Handler() http.Handler {
 				name = *grant.InvocationId
 			}
 			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.Name != name })
-			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool { return publication.Service != name })
+			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
+				if grant.Scope == "invocation" {
+					return !slices.ContainsFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.TunnelID == publication.ID })
+				}
+				return publication.Service != name
+			})
 			snapshot.Events = nil
 		}
 		privateprotocol.Write(w, 200, snapshot)
@@ -234,7 +261,11 @@ func (s *Server) Handler() http.Handler {
 
 func Problem(w http.ResponseWriter, err error) {
 	status, code, message := 400, "runtime.request_invalid", "local publisher request is invalid"
+	reason, _ := failure.ReasonOf(err)
 	switch {
+	case reason == failure.AppConfigurationConflict:
+		definition, _ := failure.DefinitionFor(failure.AppConfigurationConflict)
+		status, code, message = 409, string(failure.AppConfigurationConflict), definition.Message
 	case errors.Is(err, privateprotocol.ErrUnauthorized):
 		status, code, message = 401, "runtime.unauthorized", "read the current private endpoint descriptor"
 	case errors.Is(err, privateprotocol.ErrForbidden):

@@ -104,10 +104,15 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		}
 		target := routes
 		key := routingEventKey(event)
-		if current, exists := target[key]; exists && current.publicURLID == event.PublicUrlId &&
-			(event.PublishRunNumber < current.publishRunNumber ||
-				event.PublishRunNumber == current.publishRunNumber && event.EntryRevision <= current.entryRevision) {
-			return fmt.Errorf("%w: stale entry revision for hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
+		if current, exists := target[key]; exists && current.publicURLID == event.PublicUrlId {
+			if event.PublishRunNumber < current.publishRunNumber ||
+				event.PublishRunNumber == current.publishRunNumber && event.EntryRevision <= current.entryRevision {
+				return fmt.Errorf("%w: stale entry revision for hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
+			}
+			if current.entry.PublishRunClosed != nil && *current.entry.PublishRunClosed &&
+				(event.Entry.PublishRunClosed == nil || !*event.Entry.PublishRunClosed) {
+				return fmt.Errorf("%w: closed publish run cannot resume", ErrRoutingTableEvent)
+			}
 		}
 		updated := routingEntryForEvent(event)
 		target[key] = updated
@@ -124,23 +129,31 @@ func (t *RoutingTable) Revision() (int64, bool) {
 	return t.revision, t.initialized
 }
 
-// CurrentTrafficRuns permits eviction only after a trusted tombstone or run
-// replacement. a temporarily expired projection or ingress lease must never
-// reset a live run's totals when the same projection is refreshed.
-func (t *RoutingTable) CurrentTrafficRuns() (map[TrafficRun]struct{}, bool) {
+// TerminalTrafficRuns proves that control closed these exact runs. absence,
+// temporary tombstones, sibling runs, and expired projections prove nothing.
+// traffic keeps unknown totals in its bounded key table and fails closed at
+// capacity rather than resetting a potentially live run after a resnapshot.
+func (t *RoutingTable) TerminalTrafficRuns(candidates []TrafficRun) map[TrafficRun]struct{} {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if !t.initialized {
-		return nil, false
+	if !t.initialized || len(candidates) == 0 {
+		return nil
 	}
-	runs := make(map[TrafficRun]struct{}, len(t.routes))
+	requested := make(map[TrafficRun]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		requested[candidate] = struct{}{}
+	}
+	runs := make(map[TrafficRun]struct{})
 	for _, stored := range t.routes {
-		if !stored.tombstone {
+		if stored.tombstone && stored.entry.PublishRunClosed != nil && *stored.entry.PublishRunClosed {
 			entry := stored.entry
-			runs[TrafficRun{PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber)}] = struct{}{}
+			run := TrafficRun{PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber)}
+			if _, wanted := requested[run]; wanted {
+				runs[run] = struct{}{}
+			}
 		}
 	}
-	return runs, true
+	return runs
 }
 
 func (t *RoutingTable) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
@@ -207,6 +220,9 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		return ErrRoutingTableEvent
 	}
 	if event.Kind == ingressv1.PublicUrlUpsert {
+		if entry.PublishRunClosed != nil && *entry.PublishRunClosed {
+			return ErrRoutingTableEvent
+		}
 		if event.PublicUrlExpiresAt == nil || !event.PublicUrlExpiresAt.Equal(entry.PublicUrlExpiresAt) ||
 			len(entry.PublisherConnections) == 0 {
 			return ErrRoutingTableEvent
@@ -272,6 +288,10 @@ func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTable
 
 func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1.IngressRoutingTableEntry {
 	result := source
+	if source.PublishRunClosed != nil {
+		closed := *source.PublishRunClosed
+		result.PublishRunClosed = &closed
+	}
 	if source.Traffic != nil {
 		traffic := *source.Traffic
 		if traffic.TotalConnections != nil {

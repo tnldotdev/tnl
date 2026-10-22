@@ -48,6 +48,7 @@ type nativeIngressForwarder struct {
 	server  publisher.ManagedStream
 	workers *sync.WaitGroup
 	port    uint16
+	visitor func() publisher.ManagedVisitorAuthentication
 }
 
 func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.PrivateServiceRelay, header tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
@@ -67,7 +68,11 @@ func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.Pri
 			f.t.Error("original destination/source changed before publisher")
 			return
 		}
-		_ = f.server.Forward(f.t.Context(), nativeReaderConn{Conn: b, reader: reader})
+		server := f.server
+		if f.visitor != nil {
+			server.Visitor = f.visitor()
+		}
+		_ = server.Forward(f.t.Context(), nativeReaderConn{Conn: b, reader: reader})
 	})
 	return a, nil
 }
@@ -82,7 +87,7 @@ func (c nativeReaderConn) Read(b []byte) (int, error) { return c.reader.Read(b) 
 // a real public TCP socket and a trusted PROXY v2 hop precede ingress. neither
 // the native driver nor the application sends destination metadata or SNI hints
 // before PostgreSQL SSLRequest or the server-first MySQL greeting.
-func managedIngressListener(t *testing.T, managed publisher.ManagedStream) string {
+func managedIngressListener(t *testing.T, managed publisher.ManagedStream, visitors ...func() publisher.ManagedVisitorAuthentication) string {
 	t.Helper()
 	front, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -107,7 +112,11 @@ func managedIngressListener(t *testing.T, managed publisher.ManagedStream) strin
 		control.relays = append(control.relays, ingressv1.PrivateServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", LeaseExpiresAt: lease.LeaseExpiresAt})
 	}
 	var workers sync.WaitGroup
-	connector, err := ingress.NewPrivateConnector(ingress.PrivateConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, DirectControl: control, Forwarder: nativeIngressForwarder{t: t, server: managed, workers: &workers, port: uint16(port)}, Routing: new(ingress.PrivateRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
+	forwarder := nativeIngressForwarder{t: t, server: managed, workers: &workers, port: uint16(port)}
+	if len(visitors) != 0 {
+		forwarder.visitor = visitors[0]
+	}
+	connector, err := ingress.NewPrivateConnector(ingress.PrivateConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, DirectControl: control, Forwarder: forwarder, Routing: new(ingress.PrivateRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
 	if err != nil {
 		_ = front.Close()
 		_ = backend.Close()

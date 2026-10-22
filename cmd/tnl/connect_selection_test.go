@@ -33,6 +33,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	localSource := project.LocalPublicationIdentity()
 	for _, test := range []struct {
 		name, team, want string
 		status           int
@@ -73,9 +74,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 						return
 					}
 					_ = json.NewEncoder(w).Encode(controlv1.PrivateService{Id: "svc_remote", Name: group, TeamId: "team_one"})
-				case "/v1/projects/" + source.Key + "/local-services/orders":
+				case "/v1/projects/" + localSource.Key + "/local-services/orders":
 					lookup++
-					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("worktree_key") != project.LocalWorktreeKey() || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 3 {
+					if r.URL.Query().Get("source_fingerprint") != localSource.Fingerprint || r.URL.Query().Get("worktree_key") != project.LocalWorktreeKey() || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 3 {
 						t.Errorf("lookup scope = %s", r.URL)
 					}
 					if test.status != 0 {

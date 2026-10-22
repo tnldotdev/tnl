@@ -351,8 +351,8 @@ type Querier interface {
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPrivateServiceConnectionSlots(ctx context.Context, privateRunID string) ([]ControlPrivateServiceConnectionSlot, error)
-	// never modify a connected or ready slot that still has its matching live
-	// relay lease. its streams and assignment remain owned by that relay.
+	// replace expired never-ready claims even with a live relay lease.
+	// ready slots retain ownership and streams while their matching lease is live.
 	ListPrivateServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListPrivateServiceConnectionSlotsNeedingReplacementParams) ([]ControlPrivateServiceConnectionSlot, error)
 	ListPrivateServiceGrants(ctx context.Context, arg ListPrivateServiceGrantsParams) ([]ControlPrivateServiceGrant, error)
 	ListPrivateServiceInvitations(ctx context.Context, arg ListPrivateServiceInvitationsParams) ([]ControlPrivateServiceInvitation, error)
@@ -361,6 +361,7 @@ type Querier interface {
 	ListPrivateServicesForTeam(ctx context.Context, arg ListPrivateServicesForTeamParams) ([]ControlPrivateService, error)
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
 	ListPublisherGroupServiceGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGroupServiceGrant, error)

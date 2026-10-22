@@ -5,9 +5,11 @@ artifacts. Commit this directory. `tnl generate --check` compares every owned
 output without writing files; `tnl check` validates configuration and prints the
 selected path. Both commands bypass client state and authentication.
 
-Type-only projects need neither Git nor an origin. An AWS publisher declaration
-requires a real portable Git origin because its infrastructure manifest carries
-the source identity. `--output-dir` is relative to the selected project root;
+Type-only projects and configured local publication need neither Git nor an
+origin. AWS publisher and workload declarations require a real portable Git
+origin because their manifests carry the source identity. Local publication
+instead uses the canonical directory identity, which survives Git initialization
+and origin changes. `--output-dir` is relative to the selected project root;
 the declaration's type-only config import is relative to that output directory.
 The artifact manifest owns the declaration hash as well as infrastructure files.
 Writers reject symlink output paths and preserve unrelated files.
@@ -42,17 +44,18 @@ control, so an unapplied remote declaration does not block local listeners.
 Applied remote endpoints still come from control; other lookup failures remain
 errors.
 
-`TnlConnectionRegistry` defines the Node-only native connection result boundary.
-PostgreSQL and MySQL return `{host, port, ssl}`. `ssl.servername` selects the
-managed service identity and `ssl.rejectUnauthorized` is always `true`. The
-optional `ca`, `cert`, and `key` fields are supplied only when needed at runtime.
-Omitting `ca` uses the native client's WebPKI server roots; the service's client
-certificate issuer is not a replacement for those roots. Private admission does
-not promise an application client certificate. The native SDK supplies `cert`
-and `key` for public mTLS admission. Credential-bearing TLS options belong only
-in the method result, never public metadata or generated files.
-The foundation's `tnl.connect(NAME)` rejects with a diagnostic until the native
-SDK connection implementation is integrated.
+`TnlConnectionRegistry` defines the server-only native connection result boundary.
+PostgreSQL returns loopback `{host, port, ssl}` with the managed TLS server name.
+MySQL returns the managed `host`, local `port`, a fresh mutable `ssl` object with
+`verifyIdentity: true`, and mysql2's loopback `stream` factory. HTTP returns
+`{url, fetch}` with an SDK-owned origin-restricted transport; TCP returns
+`{host, port}`, and Kubernetes returns `{server, kubeconfig, context}`. Every
+protocol requires the matching native binary on Node or Bun. The connector owns
+admission for both public and private endpoints; no application client
+certificate or key enters these snapshots. Omitting the optional `ssl.ca` uses
+the driver's normal server roots. Await `tnl.connect(NAME)` to prepare one
+service; synchronous reads require an already prepared owner. See the
+[connection runtime](connection-runtime.md) for protocol and lifetime details.
 
 ## shared configuration shape
 

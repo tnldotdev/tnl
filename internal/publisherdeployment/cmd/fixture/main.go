@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	for source, destination := range map[string]string{"aws/production.yaml": "fargate.yaml", "aws/production.parameters.example.json": "fargate.parameters.example.json", "manifest.json": "fargate.manifest.example.json"} {
+	for source, destination := range map[string]string{"aws/production.yaml": "fargate.yaml", "aws/production.parameters.example.json": "fargate.parameters.example.json", "aws/production.storage-policy.json": "fargate.storage-policy.json", "manifest.json": "fargate.manifest.example.json"} {
 		if err := os.WriteFile(filepath.Join("..", "..", "deploy", "publishers", destination), bundle.Files[source], 0644); err != nil {
 			panic(err)
 		}

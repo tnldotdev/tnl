@@ -61,7 +61,10 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 }
 
 func TestCheckEvaluatesConfigurationWithoutStateOrTelemetry(t *testing.T) {
-	directory := t.TempDir()
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	stateRoot := filepath.Join(directory, "state")
 	t.Setenv("TNL_STATE_DIR", stateRoot)
 	configPath := filepath.Join(directory, "tnl.config.ts")

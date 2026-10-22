@@ -1003,6 +1003,9 @@ components:
           type: integer
           format: int64
           minimum: 1
+        publish_run_closed:
+          type: boolean
+          description: True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
         publisher_connections:
           type: array
           maxItems: 2

@@ -30,12 +30,14 @@ export type LocalHTTPServer = NodeHTTPServer | BunHTTPServer;
 export interface RegistrationOptions {
   /** hostname used to reach the listener, including for HTTPS certificate verification. */
   readonly targetHostname?: string;
+  readonly signal?: AbortSignal;
 }
 
 export async function listeningTarget(
   server: LocalHTTPServer,
   options: RegistrationOptions = {},
 ): Promise<`http://${string}` | `https://${string}`> {
+  options.signal?.throwIfAborted();
   if (isBunServer(server)) {
     const hostname = server.hostname ?? server.url.hostname;
     if (
@@ -60,6 +62,7 @@ export async function listeningTarget(
         server.off("listening", onListening);
         server.off("error", onError);
         server.off("close", onClose);
+        options.signal?.removeEventListener("abort", onAbort);
       };
       const onListening = () => {
         cleanup();
@@ -73,6 +76,11 @@ export async function listeningTarget(
         cleanup();
         reject(new TnlError("sdk.listener_failed"));
       };
+      const onAbort = () => {
+        cleanup();
+        reject(options.signal?.reason);
+      };
+      options.signal?.addEventListener("abort", onAbort, { once: true });
       server.once("listening", onListening);
       server.once("error", onError);
       server.once("close", onClose);

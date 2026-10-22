@@ -1,6 +1,8 @@
 package naming
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 )
@@ -25,7 +27,16 @@ func ProjectDNSLabel(repository, directory string) string {
 			separator = true
 		}
 	}
-	return b.String()
+	label := b.String()
+	if label == "" {
+		return "project"
+	}
+	if len(label) <= 63 {
+		return label
+	}
+	// retain readable prefixes and distinguish long monorepo paths after fitting.
+	digest := sha256.Sum256([]byte(label))
+	return strings.TrimRight(label[:50], "-") + "-" + hex.EncodeToString(digest[:6])
 }
 
 // ManagedGroupNamespace stays beneath an existing team or member namespace.

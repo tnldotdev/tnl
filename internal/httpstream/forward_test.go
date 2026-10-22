@@ -1,4 +1,4 @@
-package httpstream
+package httpstream_test
 
 import (
 	"bufio"
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 )
@@ -385,5 +386,5 @@ func forwardVerifiedTarget(ctx context.Context, local, target net.Conn, trust *p
 	if err = secure.HandshakeContext(ctx); err != nil {
 		return err
 	}
-	return Forward(ctx, local, secure, &url.URL{Scheme: "https", Host: trust.Hostname})
+	return httpstream.Forward(ctx, local, secure, &url.URL{Scheme: "https", Host: trust.Hostname})
 }

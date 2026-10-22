@@ -5,6 +5,12 @@ the package root stays browser-safe and imports the Node implementation only on
 that call. portable project declarations select exact service keys and protocol
 results; allocated hostnames, ports, and exposure are runtime values.
 
+every protocol requires the matching native executable, including HTTP and
+Kubernetes. deploy the platform package or Python wheel with the application;
+a public endpoint does not select a direct-dial SDK path. configured local
+publication uses a directory identity without Git; portable apply and generated
+workload manifests retain their separate Git-source boundary.
+
 ```ts
 import { tnl } from "@tnldotdev/tnl";
 
@@ -58,6 +64,19 @@ Postgres.js 3.4.9 uses non-PLUS SCRAM and accepts the returned `host`, `port`, a
 `database`, `max`, and `prepare` options. the accounts adapter's `max: 5` and
 `prepare: false` need no `connection.channel_binding` parameter.
 
+native PostgreSQL cancellation is unsupported; use provider `statement_timeout`
+or explicitly authorized SQL cancellation. see the
+[database cancellation boundary](database-cancellation.md) for tested client
+options, ownership proof, and the required follow-up design.
+
+psql and psycopg/libpq use the managed `host`, loopback `hostaddr`, local port,
+`sslmode=verify-full`, `channel_binding=disable`, and `gssencmode=disable`.
+the last two options select supported SCRAM/TLS behavior across publisher TLS
+termination; they do not turn off certificate or hostname verification. libpq
+trust comes from `sslrootcert`, not a Python `SSLContext`. see the
+[Python adapter instructions](../../packages/py/connections.md#client-adapters)
+for CA-file ownership and supported system-root versions.
+
 HTTP returns `{url, fetch}`. its reusable Undici pool checks the managed
 origin and dials the loopback listener with the managed TLS server name. eight
 connections, a bounded pending-call budget, and four draining pool generations
@@ -65,6 +84,14 @@ bound local resources. caller cancellation controls streamed bodies without a
 hidden 30-second total abort. redirects are manual, including same-origin
 redirects; no body is replayed. application `Authorization`
 headers are passed through; tnl adds no application bearer token.
+
+the SDK calls its owned Undici fetch implementation on both Node and Bun.
+Bun's global fetch ignores Undici dispatchers, so passing it a dispatcher would
+not enforce the loopback dial boundary. the installed ESM/CommonJS fixture in
+`packages/ts/connection-installed.test.ts` runs actual Node and Bun processes and
+checks managed Host/SNI, streamed uploads, manual redirects, and no request replay.
+this resolves the targeted local Bun transport question; deployed provider
+freeze/thaw remains a separate qualification.
 
 opaque TCP returns the loopback TLS helper's `{host, port}`. the helper owns
 outer managed TLS, so applications must not add a second managed TLS layer.
@@ -74,6 +101,26 @@ the cluster bearer token into an exec credential. its kubeconfig uses a loopback
 context; CI uses one private `PlanSession` file and returns it separately for
 the action to export as `KUBECONFIG`. contexts use `tnl:shop/cluster` and the
 existing ownership-based qualification rule.
+
+## ownership and authorization lifetimes
+
+| scope                            | owner and deadline                                                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| local publication                | one canonical project/client-state owner and evaluated configuration; app registrations and named leases keep it alive  |
+| SDK connection process           | one verified human or workload identity/policy scope; selected services prepare independently                           |
+| caller-prepared connection owner | the caller owns start and joined stop; `TNL_CONNECTION_HANDLE` retains its original fixed deadline                      |
+| workload session                 | one key, exact service scope and fixed execution window; a renewable lease never extends that window                    |
+| prepared snapshot                | one service adapter's transport identity and current authorization deadline; existing driver settings do not update     |
+| admitted operation               | its original subject/session and exact run; bounded live decisions renew only within that original authorization window |
+
+public HTTP responses and WebSocket upgrades retain live guards just as managed
+HTTP and PostgreSQL streams do. guards recheck current access within 30 seconds
+and fail closed at the last successful decision deadline during a control outage,
+at most two minutes and never beyond an earlier credential/session/run deadline.
+renewal can keep an authorized operation alive within its original scope; a fresh
+session cannot extend that operation's original deadline. denied or failed
+operations close without replay. pool reuse and stable listener ports do not
+replace these checks.
 
 ## machine lifecycle, schema 1
 
@@ -402,6 +449,6 @@ the listed versions and paths; they do not establish compatibility for every SQL
 driver, another runtime, or the accounts application's complete database workflow.
 
 `task go:test:integration:vercel` qualifies the installed SDK in a real emitted
-Vercel Node 24 function with an external prepared owner. see
+Vercel Node 24 function that starts its own packaged native owner. see
 [local Vercel qualification](vercel-functions.md) for artifact checks, invocation
 evidence, platform limits, and the separate deployed startup boundary.

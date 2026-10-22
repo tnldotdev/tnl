@@ -2,7 +2,9 @@ package publisherjob
 
 import (
 	"context"
+	"crypto/ed25519"
 	json "encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -110,6 +112,8 @@ func (b GroupBinding) Validate() error {
 	requests := map[targetdiscovery.Request]bool{}
 	for _, request := range b.Discovery {
 		key, err := request.request().Normalize()
+		// account is an operator constraint, not part of control's selector.
+		key.Account = ""
 		if err != nil || requests[key] || b.AWS == nil {
 			return ErrScope
 		}
@@ -135,6 +139,10 @@ func (b GroupBinding) Validate() error {
 // workers start. AWS credentials refresh only from the selected private file;
 // the SDK default config loader and process AWS environment are never consulted.
 func ScopedGroupRunner(value credentialfile.GroupFile, binding *GroupBinding, startup, providers *OperationLimiter) (GroupRunner, []byte, error) {
+	private, err := value.Validate(value.ControlURL, value.Member.ProjectKey, value.Member.GroupName, value.Instance)
+	if err != nil {
+		return GroupRunner{}, nil, errors.Join(ErrScope, err)
+	}
 	b := GroupBinding{Version: 1, Scope: ScopeForGroup(value)}
 	if binding != nil {
 		b = *binding
@@ -142,30 +150,36 @@ func ScopedGroupRunner(value credentialfile.GroupFile, binding *GroupBinding, st
 	if b.Validate() != nil || b.Scope != ScopeForGroup(value) || b.Deployment != nil && b.Deployment.Instance != value.Instance {
 		return GroupRunner{}, nil, ErrScope
 	}
-	var credentials aws.CredentialsProvider
+	var selected *AWSBinding
 	if b.AWS != nil {
-		credentials = aws.NewCredentialsCache(fileCredentials{path: b.AWS.CredentialsFile})
-		if b.AWS.RoleARN != "" {
-			cfg := scopedAWSConfig(b.AWS.RoleRegion, credentials)
-			credentials = aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), b.AWS.RoleARN))
-		}
+		copy := *b.AWS
+		selected = &copy
 	}
-	discovery := &scopedGroupDiscovery{allowed: map[targetdiscovery.Request]bool{}, limiter: providers, provider: targetdiscovery.AWS{Load: func(ctx context.Context, region string) (targetdiscovery.Clients, error) {
-		if credentials == nil {
+	discovery := &scopedGroupDiscovery{allowed: map[targetdiscovery.Request]string{}, limiter: providers, provider: targetdiscovery.AWS{Load: func(ctx context.Context, region string) (targetdiscovery.Clients, error) {
+		if selected == nil {
 			return targetdiscovery.Clients{}, &targetdiscovery.Error{Kind: targetdiscovery.Permission}
+		}
+		var credentials aws.CredentialsProvider = fileCredentials{path: selected.CredentialsFile}
+		if selected.RoleARN != "" {
+			cfg := scopedAWSConfig(selected.RoleRegion, credentials)
+			// this provider belongs to one bounded discovery call. the SDK cache
+			// detaches refresh cancellation, so do not wrap it in CredentialsCache.
+			credentials = stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), selected.RoleARN)
 		}
 		cfg := scopedAWSConfig(region, credentials)
 		return targetdiscovery.Clients{EKS: eks.NewFromConfig(cfg), RDS: rds.NewFromConfig(cfg), Caller: sts.NewFromConfig(cfg)}, nil
 	}}}
 	for _, request := range b.Discovery {
 		key, _ := request.request().Normalize()
-		discovery.allowed[key] = true
+		account := key.Account
+		key.Account = ""
+		discovery.allowed[key] = account
 	}
-	return GroupRunner{Discovery: discovery, Deployment: b.Deployment, Startup: startup}, []byte(b.ServerCAPEM), nil
+	return GroupRunner{Discovery: discovery, Deployment: b.Deployment, Startup: startup, scope: &groupRunnerScope{identity: b.Scope, project: value.Member.ProjectKey, instance: value.Instance, keyID: value.Member.KeyId, public: private.Public().(ed25519.PublicKey)}}, []byte(b.ServerCAPEM), nil
 }
 
 type scopedGroupDiscovery struct {
-	allowed  map[targetdiscovery.Request]bool
+	allowed  map[targetdiscovery.Request]string
 	provider targetdiscovery.Provider
 	limiter  *OperationLimiter
 }
@@ -175,8 +189,15 @@ func (p *scopedGroupDiscovery) Discover(ctx context.Context, request targetdisco
 	if err != nil {
 		return targetdiscovery.ResolvedTarget{}, err
 	}
-	if !p.allowed[key] {
+	requestedAccount := key.Account
+	key.Account = ""
+	account, allowed := p.allowed[key]
+	if !allowed || requestedAccount != "" && account != "" && requestedAccount != account {
 		return targetdiscovery.ResolvedTarget{}, &targetdiscovery.Error{Kind: targetdiscovery.Permission}
+	}
+	key.Account = account
+	if key.Account == "" {
+		key.Account = requestedAccount
 	}
 	release, err := p.limiter.Acquire(ctx)
 	if err != nil {
@@ -199,7 +220,7 @@ func (p fileCredentials) Retrieve(ctx context.Context) (aws.Credentials, error) 
 		ExpiresAt       time.Time `json:"expires_at,omitempty"`
 	}
 	if readLocalJSON(p.path, 16384, &value) != nil || value.AccessKeyID == "" || value.SecretAccessKey == "" || !value.ExpiresAt.IsZero() && !value.ExpiresAt.After(time.Now()) {
-		return aws.Credentials{}, ErrUnsafeState
+		return aws.Credentials{}, targetdiscovery.CredentialError(ErrUnsafeState)
 	}
 	return aws.Credentials{AccessKeyID: value.AccessKeyID, SecretAccessKey: value.SecretAccessKey, SessionToken: value.SessionToken, CanExpire: !value.ExpiresAt.IsZero(), Expires: value.ExpiresAt, Source: "publisher group binding"}, nil
 }

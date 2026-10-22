@@ -14,15 +14,15 @@ import (
 type companyAccessStore interface {
 	ReadCompanyConnections(context.Context, controlstate.ControlPrincipal, string, time.Time) (controlstate.CompanyConnections, error)
 	BeginIdentityConnectionSetup(context.Context, controlstate.ControlPrincipal, controlstate.CreateIdentityConnectionRequest, time.Time) (controlstate.IdentityConnectionSetup, error)
-	ActivateIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, string, int64, controlstate.OIDCIdentity, time.Time) (controlstate.IdentityConnectionSecret, error)
+	ActivateIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, string, int64, controlstate.OIDCIdentity, time.Time, string) (controlstate.IdentityConnectionSecret, error)
 	DisconnectIdentityConnection(context.Context, controlstate.ControlPrincipal, string, string, int64, time.Time) error
 	RotateCompanyProvisioningToken(context.Context, controlstate.ControlPrincipal, string, string, int64, time.Time) (controlstate.IdentityConnectionSecret, error)
-	ResolveCompanyAccount(context.Context, string, string) (string, error)
+	ResolveCompanyEligibilityAccount(context.Context, string, string, bool) (string, error)
 	ProvisionCompanyEligibility(context.Context, string, controlstate.ProvisionCompanyEligibilityRequest, time.Time) error
 	SetCompanyMembershipDecision(context.Context, controlstate.ControlPrincipal, string, string, bool, bool, bool, time.Time) error
 	SetCompanyInvitationException(context.Context, controlstate.ControlPrincipal, string, string, bool, time.Time) error
 	RequestCompanyAdmission(context.Context, controlstate.ControlPrincipal, string, string, int64, string, time.Time) (controlstate.CompanyAdmissionRequest, error)
-	ListCompanyAdmissions(context.Context, controlstate.ControlPrincipal, string, time.Time) ([]controlstate.CompanyAdmissionRequest, error)
+	ListCompanyAdmissions(context.Context, controlstate.ControlPrincipal, string, string, time.Time) (controlstate.CompanyAdmissionPage, error)
 	DecideCompanyAdmission(context.Context, controlstate.ControlPrincipal, string, string, int64, string, time.Time) error
 	CreateCompanyLoginIntent(context.Context, string, string, string, string, time.Time) (controlstate.CompanyLoginIntent, error)
 	ResolveCompanyLoginIntent(context.Context, string, string, time.Time) (controlstate.CompanyLoginIntent, error)
@@ -57,7 +57,7 @@ func companyOIDCIdentity(i oidcauth.Identity) controlstate.OIDCIdentity {
 }
 
 func (h *handler) companyOwner(w http.ResponseWriter, r *http.Request, body any) (companyAccessStore, bool) {
-	i, nonce, ok := h.verifiedHumanRequest(w, r, body, controlstate.CompanyActorNonce, false)
+	i, nonce, ok := h.verifiedHumanRequest(w, r, body, controlstate.CompanyActorNonce, true)
 	if !ok {
 		return nil, false
 	}
@@ -110,7 +110,7 @@ func (h *handler) ActivateIdentityConnection(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	result, err := s.ActivateIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.SetupToken, body.ExpectedRevision, controlstate.OIDCIdentity{}, time.Now())
+	result, err := s.ActivateIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.SetupToken, body.ExpectedRevision, controlstate.OIDCIdentity{}, time.Now(), body.ProvisioningToken)
 	if err != nil {
 		companyError(w, "activate company connection", err)
 		return
@@ -158,7 +158,7 @@ func (h *handler) ProvisionCompanyEligibility(w http.ResponseWriter, r *http.Req
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid eligibility delta")
 		return
 	}
-	identity, err := s.ResolveCompanyAccount(r.Context(), h.config.OIDCIssuer, body.AccountSubject)
+	identity, err := s.ResolveCompanyEligibilityAccount(r.Context(), h.config.OIDCIssuer, body.AccountSubject, body.Eligible)
 	if err != nil {
 		companyError(w, "resolve company account", err)
 		return
@@ -197,12 +197,16 @@ func (h *handler) SetCompanyInvitationException(w http.ResponseWriter, r *http.R
 	w.WriteHeader(204)
 }
 
-func (h *handler) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, team string, _ authorityv1.ListCompanyAdmissionsParams) {
+func (h *handler) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, team string, params authorityv1.ListCompanyAdmissionsParams) {
 	s, ok := h.companyOwner(w, r, nil)
 	if !ok {
 		return
 	}
-	result, err := s.ListCompanyAdmissions(r.Context(), controlstate.ControlPrincipal{}, team, time.Now())
+	after := ""
+	if params.Cursor != nil {
+		after = *params.Cursor
+	}
+	result, err := s.ListCompanyAdmissions(r.Context(), controlstate.ControlPrincipal{}, team, after, time.Now())
 	if err != nil {
 		companyError(w, "list company admissions", err)
 		return

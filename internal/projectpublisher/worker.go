@@ -25,7 +25,10 @@ type Configuration struct {
 	SharedRoot       string
 	IntegrationGroup string
 	TargetBinding    *TargetBinding
-	Attach           func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
+	// cleanup owns resources allocated before the worker starts, including when
+	// target capture or local tunnel creation fails. it runs after drain/join.
+	Cleanup func() error
+	Attach  func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
 }
 
 type proofEntry struct {
@@ -38,13 +41,17 @@ type proofEntry struct {
 }
 
 type Workers struct {
-	Database      *clientstate.Database
-	Manager       *clientruntime.Manager
-	Configure     func(context.Context, clientruntime.Service) (Configuration, error)
-	RunPublisher  func(context.Context, publisher.Config) error
-	HTTPTransport http.RoundTripper
-	mu            sync.Mutex
-	proofs        map[string]*proofEntry
+	Database           *clientstate.Database
+	Manager            *clientruntime.Manager
+	Configure          func(context.Context, clientruntime.Service) (Configuration, error)
+	RunPublisher       func(context.Context, publisher.Config) error
+	HTTPTransport      http.RoundTripper
+	AutomaticReadiness bool
+	// zero values use the public readiness retry policy; tests can shorten time.
+	readinessBudget time.Duration
+	readinessDelay  func(int) time.Duration
+	mu              sync.Mutex
+	proofs          map[string]*proofEntry
 }
 
 func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
@@ -52,12 +59,22 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	if err != nil {
 		return err
 	}
+	if configuration.Cleanup != nil {
+		defer func() { result = errors.Join(result, configuration.Cleanup()) }()
+	}
 	if configuration.RunPrivate != nil {
 		return w.runPrivate(ctx, service, configuration, observe)
 	}
 	cfg := configuration.Publisher
 	var captured TargetSnapshot
 	if configuration.TargetBinding != nil {
+		previous := configuration.TargetBinding.Changed
+		configuration.TargetBinding.Changed = func() {
+			w.Manager.TargetChanged(service.Name, service.RegistrationID, service.Target)
+			if previous != nil {
+				previous()
+			}
+		}
 		captured, err = configuration.TargetBinding.Capture(ctx)
 		if err != nil {
 			return err
@@ -66,7 +83,9 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 			return diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("target changed before publication"))
 		}
 	}
-	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: service.Name, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
+	// service.Name is the registration key, which may be an invocation ID.
+	// cfg.Service is only a configured service name; ad-hoc tunnels have none.
+	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
 	if err != nil {
 		return err
 	}
@@ -203,8 +222,16 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 		}
 		w.mu.Unlock()
 	}()
+	// lifecycle events are ordered by the publisher. each run gets one bounded
+	// automatic check, even if ready is reported again after that check finishes.
+	lastReadinessRun := uint64(0)
+	stopReadiness := func() {}
+	defer func() { stopReadiness() }()
 	previous := cfg.Observe
 	cfg.Observe = func(event publisher.Event) error {
+		if event.Type == publisher.EventProvisioning || event.Type == publisher.EventDraining {
+			stopReadiness()
+		}
 		if previous != nil {
 			if err := previous(event); err != nil {
 				return err
@@ -231,7 +258,15 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 			if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, true)
+			if err := observe(event.PublishRunNumber, true); err != nil {
+				return err
+			}
+			if w.AutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
+				stopReadiness()
+				lastReadinessRun = event.PublishRunNumber
+				stopReadiness = w.startReadiness(ctx, service, event.PublishRunNumber)
+			}
+			return nil
 		case publisher.EventDraining:
 			if err := tunnel.SetDraining(ctx); err != nil {
 				return err
@@ -266,49 +301,59 @@ func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snap
 		checks.Add(1)
 		go func() {
 			defer checks.Done()
-			var entry *proofEntry
-			var captured TargetSnapshot
-			var capturedTarget bool
-			observation := clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
-			defer func() {
-				if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
-					observation.Ready = false
-					observation.Reason = "runtime.target_changed"
-				}
-				if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
-					w.Manager.Observe(observation)
-				}
-			}()
-			w.mu.Lock()
-			entry = w.proofs[service.RegistrationID]
-			w.mu.Unlock()
-			if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
-				return
-			}
-			if entry.target != nil {
-				var err error
-				captured, err = entry.target.Capture(ctx)
-				if err != nil {
-					return
-				}
-				capturedTarget = true
-			}
-			if entry.privateCheck != nil {
-				observation = entry.privateCheck(ctx, service)
-			} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
-				if entry.proof == nil {
-					return
-				}
-				entry.check.Lock()
-				defer entry.check.Unlock()
-				secret, err := entry.proof.Renew()
-				if err != nil {
-					return
-				}
-				observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
-			}
+			w.checkService(ctx, service)
 		}()
 	}
 	checks.Wait()
 	return w.Manager.Snapshot(), nil
+}
+
+// checkService reports this probe's accepted result. a later target change may
+// invalidate the journal, but cannot restart a completed automatic check.
+func (w *Workers) checkService(ctx context.Context, service clientruntime.Service) (ready bool) {
+	var entry *proofEntry
+	var captured TargetSnapshot
+	var capturedTarget bool
+	observation := clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+	defer func() {
+		if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
+			observation.Ready = false
+			observation.Reason = "runtime.target_changed"
+		}
+		if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
+			ready = w.Manager.Observe(observation) && observation.Ready
+		}
+	}()
+	w.mu.Lock()
+	entry = w.proofs[service.RegistrationID]
+	w.mu.Unlock()
+	if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
+		return false
+	}
+	if entry.target != nil {
+		var err error
+		captured, err = entry.target.Capture(ctx)
+		if err != nil {
+			return false
+		}
+		capturedTarget = true
+	}
+	if entry.privateCheck != nil {
+		observation = entry.privateCheck(ctx, service)
+	} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
+		if entry.proof == nil {
+			return false
+		}
+		entry.check.Lock()
+		defer entry.check.Unlock()
+		if ctx.Err() != nil {
+			return false
+		}
+		secret, err := entry.proof.Renew()
+		if err != nil {
+			return false
+		}
+		observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
+	}
+	return false
 }

@@ -93,6 +93,17 @@ an IP match does not replace their credential.
 service, including apps that have not started, without sending a request to the
 app. `tnl watch --output ndjson` follows ordered local lifecycle events.
 
+Local publication works in a directory without Git or an origin remote. Its
+identity stays with the canonical project directory when you initialize Git,
+change the origin, or switch branches. Each separate checkout gets its own local
+identity. Portable `tnl apply` and workload generation require a Git source.
+
+One local `tnl` process holds the project's evaluated configuration. After changing
+it, stop and restart all of that project's apps and named local publishers
+together. Reusing an owner with a different configuration fails with restart
+instructions. Each routable public publish run gets one automatic readiness
+check with a two-minute retry budget; use `tnl wait` for a fresh check afterward.
+
 Hot reloading works automatically, as well as SSE/websockets/streaming responses.
 
 You can [allow reviewers](https://tnl.dev/docs/publish#who-can-visit) or
@@ -236,9 +247,11 @@ Without `--name`, `tnl` uses a stable project-and-worktree name. Personal
 teams use a readable label, such as `app.alex.routes.example.com`; members of
 the `studio` team use `app.alex.studio.routes.example.com`. A shared hosted
 server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
-`ecstatic-penguin` instead. With managed DNS automation, sibling public URLs
-reuse namespace wildcard DNS and certificates; without it, point their DNS at
-ingress and `tnl` obtains exact-hostname certificates.
+`ecstatic-penguin` instead. Publisher certificate issuance requires DNS-01
+automation, including for exact-hostname certificates. Namespace wildcard plans
+can reuse DNS and certificates; pointing an exact hostname at ingress alone does
+not enable issuance. Managed service endpoints also require a ready team domain
+with DNS-01 automation.
 
 After deploying the `tnl` server, update your config with it:
 

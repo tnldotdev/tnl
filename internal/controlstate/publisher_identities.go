@@ -622,6 +622,9 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 	if _, err := q.LockLocalTeamForMutation(ctx, team); err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
+	if err = lockPublisherPublications(ctx, tx, team, id, ""); err != nil {
+		return err
+	}
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
@@ -681,6 +684,9 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	if _, err := q.LockLocalTeamForMutation(ctx, team); err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
+	if err = lockPublisherPublications(ctx, tx, team, id, grant); err != nil {
+		return err
+	}
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
@@ -709,6 +715,27 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 		return ErrPublisherIdentity
 	}
 	return tx.Commit(ctx)
+}
+
+// the team mutation guard fences new grants and runs while this set is read.
+// lock every affected parent before the publisher: heartbeats already own their
+// URL/run when they recheck it. closures may then take audit and routing clocks
+// without waiting for another service parent. unrelated services stay unlocked.
+func lockPublisherPublications(ctx context.Context, tx pgx.Tx, team, publisher, grant string) error {
+	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.private_services service
+		WHERE service.team_id=$1 AND service.id IN (
+			SELECT private_service_id FROM control.publisher_grants
+			WHERE publisher_identity_id=$2 AND ($3='' OR id=$3) AND kind='private_service')
+		ORDER BY service.id FOR UPDATE OF service`, team, publisher, grant); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
+		WHERE service.team_id=$1 AND service.id IN (
+			SELECT run.public_url_id FROM control.publish_runs run
+			JOIN control.publish_run_publisher_grants binding ON binding.publish_run_id=run.id
+			WHERE binding.publisher_identity_id=$2 AND ($3='' OR binding.publisher_grant_id=$3) AND run.closed_at IS NULL)
+		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, publisher, grant)
+	return err
 }
 
 func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, publisherID, grantID string, now time.Time) error {

@@ -1,5 +1,5 @@
 import { developmentPort } from "./internal/port.js";
-import { createRequire } from "node:module";
+import { loadConnection } from "./internal/connection_bridge.js";
 import { serviceMetadata } from "./internal/service_metadata.js";
 import {
   parseRuntimePayload,
@@ -73,7 +73,6 @@ const serializedRuntime =
 // the parser validates the runtime shape; generated project declarations supply
 // project-specific service names and literals unavailable to this shared module.
 let runtime = parseRuntimePayload(serializedRuntime);
-const loadConnection = createRequire(import.meta.url);
 export const tnl = Object.freeze({
   ...runtime,
   get services() {
@@ -100,9 +99,7 @@ export const tnl = Object.freeze({
   connect(name: string) {
     if (typeof process === "undefined" || typeof process.versions?.node !== "string")
       throw new TnlError("sdk.connection_server_only");
-    const { connectionHandle } = loadConnection(
-      "./internal/connection.cjs",
-    ) as typeof import("./internal/connection.js");
+    const { connectionHandle } = loadConnection();
     return connectionHandle(name, (project) => {
       runtime =
         runtime === undefined

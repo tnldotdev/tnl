@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"time"
 
@@ -91,8 +92,52 @@ func (d *Database) ClaimPrivatePublisherConnection(ctx context.Context, connecti
 	if _, err = lockPrivateConnectionRun(ctx, tx, q, connectionID, serviceID, runID, runNumber, revision, now); err != nil {
 		return result, err
 	}
-	if _, err = q.GetRelayLeaseForClaim(ctx, lease.RelayID); err != nil {
+	slots, err := q.ListPrivateServiceConnectionSlots(ctx, runID)
+	if err != nil {
 		return result, err
+	}
+	var connection controlstatedb.ControlPrivateServiceConnectionSlot
+	for _, slot := range slots {
+		if slot.PublisherConnectionID == connectionID {
+			connection = slot
+			break
+		}
+	}
+	if connection.PrivateServiceID != serviceID || connection.RunNumber != runNumber || connection.ConnectionAssignmentRevision != revision ||
+		!connection.CredentialExpiresAt.Time.After(now) || subtle.ConstantTimeCompare(connection.CredentialDigest, digest[:]) != 1 {
+		return result, ErrPrivateServiceAccess
+	}
+	current, err := q.GetRelayLeaseForClaim(ctx, lease.RelayID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrPrivateServiceAccess
+	}
+	if err != nil {
+		return result, err
+	}
+	if err = validateClaimRelayLease(current, lease, connection.RelayServiceID, now); err != nil {
+		return result, ErrPrivateServiceAccess
+	}
+	// only the exact connected claim can recover a lost response. ready slots
+	// remain owned by their existing tunnel; local admission fences duplicates
+	// before control so a losing handshake cannot disconnect the winner.
+	sameClaim := connection.State == "connected" && connection.RelayID.String == lease.RelayID &&
+		connection.RelayRunID.String == lease.RelayRunID && connection.RelayLeaseRevision.Valid &&
+		connection.RelayLeaseRevision.Int64 == int64(lease.RelayLeaseRevision)
+	if connection.State != "assigned" && !sameClaim {
+		return result, ErrPrivateServiceAccess
+	}
+	if !sameClaim {
+		// the selected process lease serializes both public and private claims.
+		active, err := q.CountRelayActiveConnections(ctx, controlstatedb.CountRelayActiveConnectionsParams{
+			RelayID: text(lease.RelayID), RelayRunID: text(lease.RelayRunID),
+			RelayLeaseRevision: pgtype.Int8{Int64: int64(lease.RelayLeaseRevision), Valid: true},
+		})
+		if err != nil {
+			return result, err
+		}
+		if active >= current.ConnectionCapacity {
+			return result, ErrRelayConnectionCapacity
+		}
 	}
 	row, err := q.ClaimPrivateServiceConnectionSlot(ctx, controlstatedb.ClaimPrivateServiceConnectionSlotParams{
 		PublisherConnectionID: connectionID, CredentialDigest: digest[:], ConnectionAssignmentRevision: revision,

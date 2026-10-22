@@ -15,6 +15,27 @@ import (
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
+// apply can close or update several named services and local realizations. the
+// team guard keeps their identity set stable. acquire the complete parent set
+// before any mutation can publish audit/routing or change slot reservations;
+// expiration holds one parent before those same clocks. new rows are private to
+// this transaction and cannot be held by a concurrent run worker.
+func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, project string) error {
+	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.private_services service
+		WHERE service.id IN (
+			SELECT private_service_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
+			UNION SELECT private_service_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
+		ORDER BY service.id FOR UPDATE OF service`, team, project); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
+		WHERE service.id IN (
+			SELECT public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
+			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
+		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project)
+	return err
+}
+
 func (d *Database) createAppliedPrivateService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration) (string, error) {
 	id, err := opaqueid.New(opaqueid.PrivateServicePrefix)
 	if err != nil {

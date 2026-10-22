@@ -108,7 +108,13 @@ FROM control.private_service_runs r, control.relay_leases l
 WHERE slot.publisher_connection_id = $4
     AND slot.credential_digest = $5
     AND slot.connection_assignment_revision = $6
-    AND slot.state = 'assigned' AND slot.credential_expires_at > $7
+    -- recover only the exact committed claim while it is still connected.
+    -- the relay fences local handshakes through disconnect; no other process
+    -- can adopt the slot and readiness cannot be reset by a claim replay.
+    AND (slot.state = 'assigned' OR slot.state = 'connected'
+        AND slot.relay_id = $1 AND slot.relay_run_id = $2
+        AND slot.relay_lease_revision = $3)
+    AND slot.credential_expires_at > $7
     AND r.id = slot.private_run_id AND r.closed_at IS NULL AND r.publisher_expires_at > $7
     AND l.relay_id = $1 AND l.relay_run_id = $2
     AND l.relay_lease_revision = $3
@@ -348,11 +354,12 @@ UPDATE control.private_service_connection_slots slot SET state = 'closed', relay
 WHERE slot.publisher_connection_id = $1
     AND slot.private_run_id = $2
     AND slot.state IN ('connected', 'ready')
-    AND NOT EXISTS (SELECT 1 FROM control.relay_leases lease
-        WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
-          AND lease.relay_lease_revision = slot.relay_lease_revision
-          AND lease.relay_service_id = slot.relay_service_id
-          AND lease.lease_expires_at > $3 AND NOT lease.draining)
+    AND (slot.state = 'connected' AND slot.credential_expires_at <= $3
+        OR NOT EXISTS (SELECT 1 FROM control.relay_leases lease
+            WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+              AND lease.relay_lease_revision = slot.relay_lease_revision
+              AND lease.relay_service_id = slot.relay_service_id
+              AND lease.lease_expires_at > $3 AND NOT lease.draining))
 `
 
 type ExpirePrivateServiceConnectionSlotParams struct {
@@ -959,7 +966,7 @@ func (q *Queries) ListPrivateServiceConnectionSlots(ctx context.Context, private
 const listPrivateServiceConnectionSlotsNeedingReplacement = `-- name: ListPrivateServiceConnectionSlotsNeedingReplacement :many
 SELECT slot.publisher_connection_id, slot.private_run_id, slot.private_service_id, slot.run_number, slot.connection_slot, slot.connection_assignment_revision, slot.relay_service_id, slot.relay_address, slot.tls_server_name, slot.credential_digest, slot.credential_expires_at, slot.relay_id, slot.relay_run_id, slot.relay_lease_revision, slot.state, slot.session_open, slot.service_kind, slot.assigned_at FROM control.private_service_connection_slots slot
 WHERE slot.private_run_id = $1
-    AND (slot.state = 'closed' OR slot.state = 'assigned' AND slot.credential_expires_at <= $2
+    AND (slot.state = 'closed' OR slot.state IN ('assigned', 'connected') AND slot.credential_expires_at <= $2
         OR slot.state IN ('connected', 'ready') AND NOT EXISTS (
             SELECT 1 FROM control.relay_leases lease
             WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
@@ -974,8 +981,8 @@ type ListPrivateServiceConnectionSlotsNeedingReplacementParams struct {
 	Now          pgtype.Timestamptz
 }
 
-// never modify a connected or ready slot that still has its matching live
-// relay lease. its streams and assignment remain owned by that relay.
+// replace expired never-ready claims even with a live relay lease.
+// ready slots retain ownership and streams while their matching lease is live.
 func (q *Queries) ListPrivateServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListPrivateServiceConnectionSlotsNeedingReplacementParams) ([]ControlPrivateServiceConnectionSlot, error) {
 	rows, err := q.db.Query(ctx, listPrivateServiceConnectionSlotsNeedingReplacement, arg.PrivateRunID, arg.Now)
 	if err != nil {
@@ -1607,7 +1614,7 @@ func (q *Queries) ReadyPrivateServiceRun(ctx context.Context, arg ReadyPrivateSe
 
 const recheckPrivateServiceVisitor = `-- name: RecheckPrivateServiceVisitor :one
 WITH permitted AS (
-    SELECT LEAST($1::timestamptz + interval '2 minutes', run.publisher_expires_at,
+    SELECT LEAST($1::timestamptz + interval '2 minutes', run.publisher_expires_at, run.certificate_expires_at,
       control.company_subject_deadline(service.team_id,person.id,COALESCE(session.control_session_id,''),$1),
       ingress.lease_expires_at, publisher_grant.expires_at,
       (SELECT MAX(relay.lease_expires_at) FROM control.private_service_connection_slots slot
@@ -1666,6 +1673,7 @@ WITH permitted AS (
       AND service.enabled AND service.deleted_at IS NULL
       AND run.private_service_id = service.id AND run.run_number = stream.run_number
       AND run.state = 'ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at > $1
+      AND run.certificate_expires_at > $1
       AND publisher_grant.publisher_identity_id = publisher.id
       AND publisher_grant.private_service_id = service.id
       AND publisher_grant.kind = 'private_service' AND publisher_grant.revoked_at IS NULL

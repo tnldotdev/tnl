@@ -68,6 +68,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 	} {
 		got := events[i]
 		if got.Path != want.path || got.Status != want.status || got.Origin != want.origin || got.Method != http.MethodGet ||
+			got.Result != inspection.HTTPResult(want.status) ||
 			got.ReceivedAt.IsZero() || got.Duration < 0 || got.Duration > time.Minute {
 			t.Fatalf("observation %d = %+v", i, got)
 		}

@@ -28,7 +28,7 @@ func (d *Database) IssueControlBrowserHandoff(ctx context.Context, access creden
 	if err != nil {
 		return handoff, "", err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" {
+	if url.Purpose != "app" && url.Purpose != "alias" || url.ServiceProtocol != "http" {
 		return handoff, "", ErrPreviewAccess
 	}
 	source, err := q.LockVisitorControlSession(ctx, accessID.String())

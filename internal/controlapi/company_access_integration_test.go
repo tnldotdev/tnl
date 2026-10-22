@@ -65,7 +65,10 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 		t.Fatal("setup locked out owner", w.Code)
 	}
 	activation := base + "/" + failed.ID + "/activate"
-	if w := ownerCall("POST", activation, ownerSub, nil, map[string]any{"expected_revision": failed.Revision, "setup_token": failed.SetupToken}); w.Code != 403 {
+	if w := ownerCall("POST", activation, ownerSub, nil, map[string]any{"expected_revision": failed.Revision, "setup_token": failed.SetupToken}); w.Code != 400 {
+		t.Fatal("activation accepted a missing precommitted credential", w.Code, w.Body.String())
+	}
+	if w := ownerCall("POST", activation, ownerSub, nil, f.activationRequest(failed)); w.Code != 403 {
 		t.Fatal("activation without tenant consent", w.Code, w.Body.String())
 	}
 	decode(ownerCall("DELETE", base+"/"+failed.ID, ownerSub, nil, map[string]any{"expected_revision": failed.Revision}), 204, nil)
@@ -99,7 +102,7 @@ func TestIntegrationCompanyWebsiteSetupAdmissionAndRefresh(t *testing.T) {
 	badSource := companyProof(setup.IdentityConnection, "directory-owner")
 	badSource[0].SourceID = "other-tenant"
 	activation = base + "/" + setup.ID + "/activate"
-	activateBody := map[string]any{"expected_revision": setup.Revision, "setup_token": setup.SetupToken}
+	activateBody := f.activationRequest(setup)
 	if w := ownerCall("POST", activation, ownerSub, badSource, activateBody); w.Code != 403 {
 		t.Fatal("wrong tenant activated", w.Code, w.Body.String())
 	}

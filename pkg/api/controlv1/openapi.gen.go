@@ -2503,7 +2503,7 @@ type PrivateServiceMetadata struct {
 // PrivateServiceName defines model for PrivateServiceName.
 type PrivateServiceName = string
 
-// PrivateServicePage defines model for PrivateServicePage.
+// PrivateServicePage At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
 type PrivateServicePage struct {
 	NextCursor *PrivateServiceID `json:"next_cursor,omitempty"`
 	Services   []PrivateService  `json:"services"`
@@ -2692,7 +2692,7 @@ type ProjectServiceConfiguration struct {
 	Name     *string                 `json:"name,omitempty"`
 	Protocol *PrivateServiceProtocol `json:"protocol,omitempty"`
 
-	// PublicUrl Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+	// PublicUrl Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
 	PublicUrl *ProjectServicePublicURL `json:"public_url,omitempty"`
 	Publisher *string                  `json:"publisher,omitempty"`
 
@@ -2718,12 +2718,12 @@ type ProjectServiceHTTP struct {
 	} `json:"readiness,omitempty"`
 }
 
-// ProjectServicePublicURL Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+// ProjectServicePublicURL Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
 type ProjectServicePublicURL struct {
 	Access   *ProjectPublicAccess `json:"access,omitempty"`
 	DomainId *string              `json:"domain_id,omitempty"`
 
-	// Ephemeral Local deferred declarations may request an ephemeral worktree URL. Named publisher groups require saved pooled URLs and reject true.
+	// Ephemeral Local deferred declarations may request an ephemeral worktree URL. Named publisher groups use managed endpoints and reject true.
 	Ephemeral *bool                `json:"ephemeral,omitempty"`
 	Hostname  *string              `json:"hostname,omitempty"`
 	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
@@ -2984,12 +2984,12 @@ type PublisherGroupAcknowledgement struct {
 
 // PublisherGroupAssignments defines model for PublisherGroupAssignments.
 type PublisherGroupAssignments struct {
-	// CertificateStateRequired This replica has submitted certificate issuance work. Missing durable certificate state must not be replaced with fresh keys. Absence means the server does not support this recovery boundary.
-	CertificateStateRequired *bool                             `json:"certificate_state_required,omitempty"`
-	ConfigurationHash        string                            `json:"configuration_hash"`
-	Member                   PublisherGroupMember              `json:"member"`
-	Revision                 int64                             `json:"revision"`
-	Services                 []PublisherGroupServiceAssignment `json:"services"`
+	// CertificateStatePlans Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
+	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
+	ConfigurationHash     string                            `json:"configuration_hash"`
+	Member                PublisherGroupMember              `json:"member"`
+	Revision              int64                             `json:"revision"`
+	Services              []PublisherGroupServiceAssignment `json:"services"`
 }
 
 // PublisherGroupEnrollment defines model for PublisherGroupEnrollment.

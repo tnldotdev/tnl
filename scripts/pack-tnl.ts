@@ -21,7 +21,12 @@ import process from "node:process";
 import { promisify } from "node:util";
 import * as z from "zod";
 import { nativeTargets } from "../packages/ts/src/internal/native-targets.ts";
-import { packageManifestSchema, type PackedPackage } from "./npm-artifacts.ts";
+import {
+  assertExportTargets,
+  packageManifestSchema,
+  type PackageManifest,
+  type PackedPackage,
+} from "./npm-artifacts.ts";
 import { assertReleaseVersion } from "./release-version.ts";
 import { parseJSON } from "./validation.ts";
 
@@ -46,7 +51,10 @@ const packResultSchema = z.array(
 type PackOptions = {
   readonly packageName: string;
   readonly requiredFiles: readonly string[];
-} & ({ readonly kind: "native"; readonly binarySha256: string } | { readonly kind: "launcher" });
+} & (
+  | { readonly kind: "native"; readonly binarySha256: string }
+  | { readonly kind: "launcher"; readonly exports: PackageManifest["exports"] }
+);
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -120,6 +128,17 @@ try {
       binary,
       `${target.packageName} binary differs from the release archive`,
     );
+    for (const file of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"]) {
+      const { stdout: archivedLegal } = await execFileAsync("tar", ["-xOzf", archivePath, file], {
+        encoding: "buffer",
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      assert.deepEqual(
+        archivedLegal,
+        await readFile(path.join(root, file)),
+        `${target.packageName} release archive has an outdated ${file}`,
+      );
+    }
 
     const stage = path.join(stagingRoot, target.sourceDirectory);
     await copyTemplate(target.sourceDirectory, stage, ["package.json", "readme.md"]);
@@ -189,6 +208,7 @@ try {
   packedPackages.push(
     await packAndVerify(launcherStage, {
       kind: "launcher",
+      exports: launcherManifest.exports,
       packageName: "@tnldotdev/tnl",
       requiredFiles: [
         "LICENSE",
@@ -262,11 +282,13 @@ async function packAndVerify(stage: string, options: PackOptions): Promise<Packe
     packageManifestSchema,
   );
   assert.equal(packedManifest.version, metadata.version);
-  assert.deepEqual(
-    await readFile(path.join(extractionDirectory, "package", "LICENSE")),
-    await readFile(path.join(root, "LICENSE")),
-    `${options.packageName} has an outdated license`,
-  );
+  for (const file of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"]) {
+    assert.deepEqual(
+      await readFile(path.join(extractionDirectory, "package", file)),
+      await readFile(path.join(root, file)),
+      `${options.packageName} has an outdated ${file}`,
+    );
+  }
   assert(!JSON.stringify(packedManifest).includes("workspace:"));
   for (const lifecycle of ["preinstall", "install", "postinstall"]) {
     assert.equal(
@@ -286,13 +308,17 @@ async function packAndVerify(stage: string, options: PackOptions): Promise<Packe
     );
     assert.equal(sha256(await readFile(packedBinary)), options.binarySha256);
   } else {
-    assert(packedManifest.exports, "launcher must define public exports");
-    assert.deepEqual(Object.keys(packedManifest.exports).sort(), [
-      ".",
-      "./config",
-      "./next",
-      "./vite",
-    ]);
+    assert.deepEqual(
+      packedManifest.exports,
+      options.exports,
+      "launcher exports differ from source",
+    );
+    assertExportTargets(packedManifest, packedFiles);
+    assert.deepEqual(
+      await readFile(path.join(extractionDirectory, "package", "dist/third-party-licenses.txt")),
+      await readFile(path.join(root, "packages/ts/dist/third-party-licenses.txt")),
+      "launcher has outdated node dependency licenses",
+    );
     assert.deepEqual(
       packedManifest.optionalDependencies,
       Object.fromEntries(targets.map((target) => [target.packageName, metadata.version])),

@@ -19,7 +19,7 @@ Content-Type: application/json
     "webhooks": {
       "payments": {"service": "app", "path": "/hooks/payments", "provider": "stripe"}
     },
-    "publishers": {"production": {"description": "externally operated replicas"}},
+    "publishers": {"production": {"description": "externally operated replicas", "public": true}},
     "services": {
       "app": {"target": "app", "public_url": {}},
       "api": {
@@ -30,18 +30,26 @@ Content-Type: application/json
       "web": {
         "publisher": "production",
         "target": "http://web.internal:3000",
-        "public_url": {"domain_id": "domain_...", "hostname": "preview.example.com"}
+        "public_url": {
+          "access": {"mode": "restricted", "ip": ["192.0.2.0/24"]},
+          "limits": {"http": {"concurrency": 4}}
+        }
       }
     }
   }
 }
 ```
 
-The example's `api` is private HTTP. Only `public_url` selects public HTTPS.
+The example's `app` is a deferred local public URL. `api` and `web` are managed
+HTTP services in the `production` group. The group's `public: true` makes both
+managed endpoints directly reachable; visitors still need current credentials.
+`web.public_url` adds an IP filter and HTTP concurrency limit to its managed
+endpoint. It cannot choose a public URL hostname, domain, or port. Omit the
+group's `public` setting to keep both endpoints connector-only.
 The protocol defaults to `http`, the publisher to `local`, and the saved name
 to the service key. `local` cannot be declared as a named publisher group.
-Named groups imply publisher pooling. Public group services use stable shared
-saved public URLs authorized through the existing domain and hostname rules.
+Named groups use publisher pools and control-owned managed namespaces, hostnames,
+ports, and certificate plans. They do not create public URL records.
 
 ## apply boundary
 
@@ -81,7 +89,7 @@ ad-hoc creation accepts the equivalent fields in `placement`. Publisher reads
 return `source` for exact local project/service/worktree matching. No private
 creation or realization creates a public URL row or an application-stream key.
 
-Public URL settings are retained in `public_url`:
+Local public URL settings are retained in `public_url`:
 
 ```json
 {
@@ -95,15 +103,19 @@ Public URL settings are retained in `public_url`:
 }
 ```
 
-An omitted remote hostname uses the service `name` beneath the selected domain.
-The complete public access policy is compiled through the existing encrypted IP
-grant and mode contracts. HTTP limits travel in the publisher assignment;
-control binds declared traffic limits when creating each publish run, including
-when a publisher submits a different selection. Policy and limit changes keep
-the saved URL ID and replace the affected publisher grants.
+For local public URLs, the access policy uses the existing encrypted IP grant
+and mode contracts. HTTP limits travel in the publisher assignment; declared
+traffic limits bind the public URL's publish run. Named managed HTTP services
+share one run-local HTTP request budget across direct and connector requests.
 
-Named groups require saved pooled URLs and reject `ephemeral: true` explicitly.
-Local deferred declarations retain it for their per-worktree runtime.
+For a named group, `public_url` accepts only restricted access/IP policy and HTTP
+request limits. `domain_id`, `hostname`, anonymous access, `ephemeral: true`, and
+traffic-limit overrides are rejected by `normalizeAppliedProjectService` in
+`internal/controlstate/applied_project_validation.go`. Select the ready team
+domain with `publishers.NAME.domain_id` and direct reachability with
+`publishers.NAME.public`. Omission captures the default ready domain and private
+reachability. Local deferred declarations retain their separate public URL
+hostname, domain, ephemeral, and traffic settings.
 
 ## root integration declarations
 
@@ -132,9 +144,9 @@ are `false` and `{}`. `expected_revision` is required on every apply, including
 a retry of already-applied content. Source-fingerprint checks precede content
 replay handling.
 
-The CLI derives `source_fingerprint` from the credential-free repository origin
-and the exact project-relative source location. That identity must be stable
-across clones and Git worktrees; absolute checkout paths and worktree names do
+For apply, the CLI derives `source_fingerprint` from the credential-free
+repository origin and the exact project-relative source location. That identity
+must be stable across clones and Git worktrees; absolute checkout paths and worktree names do
 not belong in it. Control rejects the same project label with another source
 fingerprint, including otherwise identical configuration.
 
@@ -153,6 +165,12 @@ All local declarations defer allocation to the per-worktree runtime. Applying
 them does not allocate shared local resources or combine worktree previews.
 
 ## local realization and ownership
+
+Configured local startup uses `LocalPublicationIdentity` and `LocalWorktreeKey`,
+derived from the canonical project directory without requiring Git or an origin.
+They survive Git initialization and origin changes. Those directory-bound
+resources are separate from portable applied-source resources; starting an app
+does not adopt an applied service or apply a revision.
 
 `PUT /v1/projects/{project_key}/local-services/{service}` realizes one local
 declaration. Send `team_id`, `source_fingerprint`, `worktree_key`, and the
@@ -178,13 +196,12 @@ After automatic ephemeral URL expiry, the runtime may bind its replacement exact
 URL ID to the same source/worktree entry. A healthy binding cannot be replaced
 this way.
 
-Realization records provenance before the first apply. Later applies reconcile
-those exact resources, including creating or removing the configuration-owned
-team visitor grant. Other visitor grants remain independent. Removing a local
-declaration retires its realized resources; a fresh listener is needed when the
-public resource's hostname, domain, name, or lifetime setting changes. Once a
-configuration exists, startup must send its current local declaration. Startup
-does not apply remote group changes.
+Realization records the exact project/service/worktree binding and its declared
+team grant. The native owner retains one evaluated configuration and rejects
+discovery or named leases with another snapshot digest. Stop and restart all
+apps and named local publishers for that project after changing configuration.
+Portable apply reconciles resources bound to its own Git source; it does not
+convert a directory identity into a portable one.
 
 Normal definition/delete APIs and revocation of configuration-owned visitor or
 group publisher grants return HTTP `409` with code `project_managed`. Change the
@@ -194,8 +211,10 @@ operational action. An unrelated apply does not replace an already-revoked grant
 
 `GET /v1/projects/{project_key}/public-metadata?team_id=...` provides browser
 preparation with `source_fingerprint` and `services`, each containing only
-`service`, `public_url_id`, and `hostname`. Managers see the project's public
-services, including realized local worktree URLs before or after first apply;
+`service`, `hostname`, `port`, and the appropriate `public_url_id` or
+`private_service_id`. Managed HTTP endpoints use their service ID, not a public
+URL ID, and retain the allocated port. Managers see the project's eligible HTTP
+endpoints, including realized local worktree URLs before or after first apply;
 other signed-in callers see only services they may visit. Separate worktree URLs
 may repeat a service key with distinct immutable IDs. The complete
 configuration endpoint remains manager-only.

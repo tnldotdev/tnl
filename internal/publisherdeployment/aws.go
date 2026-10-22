@@ -122,7 +122,7 @@ func RenderAWS(p Publisher, projectKey string, configurations ...config.TNL) ([]
 	for i := 1; i <= 4; i++ {
 		t.optional(fmt.Sprintf("AdditionalSecurityGroup%d", i), "Additional task security group in VpcId. At most five groups including the primary.", sgPattern, 20)
 	}
-	t.optional("FileSystemKMSKeyArn", "Key for the stack's encrypted Regional filesystem. EFS service uses this key; task roles need no KMS decrypt permission.", kmsARNPattern, 256)
+	t.optional("FileSystemKMSKeyArn", "Immutable storage binding. Preserve this value for the deployment's lifetime; changing it would replace EFS with an empty filesystem. EFS uses the key, not task roles.", kmsARNPattern, 256)
 	t.optional("LogsKMSKeyArn", "Key for new log groups only. Key policy must allow logs.REGION.URLSuffix with kms:EncryptionContext:aws:logs:arn scoped to the log group ARN.", kmsARNPattern, 256)
 	t.optional("PermissionsBoundaryArn", "Boundary for new IAM roles only; existing role policies and boundaries remain customer-owned.", "arn:[a-z0-9-]+:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]+", 512)
 	t.parameter("LogRetentionDays", "Retention for new log groups; existing groups retain their settings.", "", 0, text("30"), "1", "3", "5", "7", "14", "30", "60", "90", "120", "150", "180", "365", "400", "545", "731", "1096", "1827", "2192", "2557", "2922", "3288", "3653")

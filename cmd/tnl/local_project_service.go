@@ -6,17 +6,15 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 // realize only the selected local service. remote targets and trust sources are
 // never evaluated or applied as a side effect of starting a development app.
 func realizeLocalService(ctx context.Context, control *controlclient.Client, project projectConfiguration, current teamContext, name, publicURLID string, domainName ...string) (controlv1.LocalProjectService, error) {
-	source, err := project.SourceIdentity(ctx)
-	if err != nil {
-		return controlv1.LocalProjectService{}, failure.Wrap("identify local project service", failure.ProjectConfigInvalid, err)
-	}
-	declaration, err := projectDeclaration(ctx, project, current, source, name)
+	source := project.LocalPublicationIdentity()
+	declaration, err := projectDeclaration(ctx, project, current, projectconfig.SourceIdentity{}, name)
 	if err != nil {
 		return controlv1.LocalProjectService{}, err
 	}

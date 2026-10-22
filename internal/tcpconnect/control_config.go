@@ -9,11 +9,12 @@ import (
 // ControlConfig provides subject-bound hooks for native connection owners.
 // assignments are one-use; a failed slot must not release its healthy sibling.
 type ControlConfig struct {
-	Signer     func(context.Context, string) (Signer, error)
-	Assignment func(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
-	Resolve    func(context.Context, string) (Run, error)
-	Release    func(context.Context, string) error
-	Close      func() error
+	Signer       func(context.Context, string) (Signer, error)
+	Assignment   func(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
+	Resolve      func(context.Context, string) (Run, error)
+	Release      func(context.Context, string) error
+	Close        func() error
+	CloseContext func(context.Context) error
 }
 
 func (ControlConfig) String() string   { return "private connector control configuration" }
@@ -41,3 +42,9 @@ func (c *configuredControl) ReleasePrivateConnectorAssignment(ctx context.Contex
 	return c.config.Release(ctx, session)
 }
 func (c *configuredControl) Close() error { return c.config.Close() }
+func (c *configuredControl) CloseContext(ctx context.Context) error {
+	if c.config.CloseContext != nil {
+		return c.config.CloseContext(ctx)
+	}
+	return c.config.Close()
+}

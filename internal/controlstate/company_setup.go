@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"time"
 
@@ -60,7 +61,11 @@ func (d *Database) ReadCompanyConnections(ctx context.Context, p ControlPrincipa
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrincipal, team, id, setupToken string, revision int64, source OIDCIdentity, now time.Time) (result IdentityConnectionSecret, retErr error) {
+func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrincipal, team, id, setupToken string, revision int64, source OIDCIdentity, now time.Time, provisioningToken string) (result IdentityConnectionSecret, retErr error) {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(provisioningToken)
+	if err != nil || len(raw) != 32 {
+		return result, ErrAuthorityInvalid
+	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -86,6 +91,26 @@ func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrin
 		return result, publisherLookupError(err, ErrAuthorityAccess)
 	}
 	digest := sha256.Sum256([]byte(setupToken))
+	if c.State == "active" && c.Revision == revision+1 && c.CreatedByIdentityID == owner && source.Issuer == c.Issuer && setupToken != "" && subtle.ConstantTimeCompare(digest[:], c.SetupDigest) == 1 {
+		actual := sha256.Sum256([]byte(provisioningToken))
+		if subtle.ConstantTimeCompare(actual[:], c.ProvisioningDigest) != 1 {
+			return result, ErrAuthorityConflict
+		}
+		verified := false
+		for _, proof := range source.TeamContexts {
+			if proof.TeamID == team && proof.IdentityConnectionID == id {
+				ok, e := verifiedCompanyProof(ctx, q, owner, source.Issuer, proof, now)
+				if e != nil {
+					return result, e
+				}
+				verified = verified || ok
+			}
+		}
+		if !verified {
+			return result, ErrAuthorityAccess
+		}
+		return IdentityConnectionSecret{IdentityConnection: connectionFromRow(c), ProvisioningToken: provisioningToken}, tx.Commit(ctx)
+	}
 	if c.State != "pending" || c.Revision != revision || !c.SetupExpiresAt.Time.After(now) || c.CreatedByIdentityID != owner || setupToken == "" || subtle.ConstantTimeCompare(digest[:], c.SetupDigest) != 1 || source.Issuer != c.Issuer {
 		return result, ErrAuthorityConflict
 	}
@@ -124,11 +149,7 @@ func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrin
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	token, err := companyRandom()
-	if err != nil {
-		return result, err
-	}
-	hash := sha256.Sum256([]byte(token))
+	hash := sha256.Sum256([]byte(provisioningToken))
 	if _, err = tx.Exec(ctx, `UPDATE control.identity_connections SET state='active',revision=revision+1,activated_at=$2,updated_at=$2,provisioning_digest=$3 WHERE id=$1`, id, now, hash[:]); err != nil {
 		return result, err
 	}
@@ -159,7 +180,7 @@ func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrin
 	if err = companyPolicyChanged(ctx, tx, q, team, id, owner, bootstrapIdentity, "connection.activate", details, now); err != nil {
 		return result, err
 	}
-	return IdentityConnectionSecret{IdentityConnection: connectionFromRow(c), ProvisioningToken: token}, tx.Commit(ctx)
+	return IdentityConnectionSecret{IdentityConnection: connectionFromRow(c), ProvisioningToken: provisioningToken}, tx.Commit(ctx)
 }
 
 func (d *Database) RotateCompanyProvisioningToken(ctx context.Context, p ControlPrincipal, team, id string, revision int64, now time.Time) (result IdentityConnectionSecret, retErr error) {

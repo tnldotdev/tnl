@@ -10,8 +10,8 @@ import (
 
 func TestAliasDeclarationsArePortableAndServiceScoped(t *testing.T) {
 	for _, source := range []string{
-		`{"services":{"api":{}},"aliases":{"review":{"service":"api"},"nested":{"service":"api","name":"api.shop"}}}`,
-		"services:\n  api: {}\naliases:\n  review:\n    service: api\n  nested:\n    service: api\n    name: api.shop\n",
+		`{"services":{"api":{"public_url":{}}},"aliases":{"review":{"service":"api"},"nested":{"service":"api","name":"api.shop"}}}`,
+		"services:\n  api:\n    public_url: {}\naliases:\n  review:\n    service: api\n  nested:\n    service: api\n    name: api.shop\n",
 	} {
 		var config TNL
 		var err error
@@ -49,7 +49,7 @@ func TestAliasExactHostnameHasOneIdentityAndFingerprint(t *testing.T) {
 	if err != nil || bareHash != originHash {
 		t.Fatalf("equivalent exact aliases have different hashes: %x, %x, %v", bareHash, originHash, err)
 	}
-	config := TNL{Services: Services{"api": {}}, Aliases: map[string]Alias{
+	config := TNL{Services: Services{"api": {Tunnel: &Tunnel{}}}, Aliases: map[string]Alias{
 		"first": {Service: "api", PublicURL: &bare}, "second": {Service: "api", PublicURL: &origin},
 	}}
 	if err := ValidateAliases(config); err == nil || !strings.Contains(err.Error(), "also used") {
@@ -72,7 +72,7 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var config TNL
-			if err := json.Unmarshal([]byte(`{"services":{"api":{}},"aliases":`+test.declaration+`}`), &config); err != nil {
+			if err := json.Unmarshal([]byte(`{"services":{"api":{"public_url":{}}},"aliases":`+test.declaration+`}`), &config); err != nil {
 				t.Fatal(err)
 			}
 			err := ValidateTNL(config)
@@ -82,7 +82,7 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 		})
 	}
 	var duplicateInherited TNL
-	if err := json.Unmarshal([]byte(`{"public_url":{"domain":"custom.example.test"},"services":{"api":{},"web":{"public_url":{"domain":"custom.example.test"}}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
+	if err := json.Unmarshal([]byte(`{"public_url":{"domain":"custom.example.test"},"services":{"api":{"public_url":{}},"web":{"public_url":{"domain":"custom.example.test"}}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateTNL(duplicateInherited); err == nil {

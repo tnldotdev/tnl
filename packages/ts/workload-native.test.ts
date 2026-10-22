@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+const transport = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("undici/index.js", async (original) => ({
+  ...(await original<typeof import("undici/index.js")>()),
+  fetch: transport.fetch,
+}));
+
 const fixture = vi.hoisted(() => ({
   assertion: "first",
   owners: new Map<string, string>(),
@@ -262,10 +268,7 @@ test("control rejection cannot select a cached owner, and one service denial lea
 });
 
 test("a returned fetch resolves the caller's current verified owner rather than capturing its original file", async () => {
-  const dispatch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-    async () => new Response("bytes"),
-  );
-  vi.stubGlobal("fetch", dispatch);
+  const dispatch = transport.fetch.mockResolvedValue(new Response("bytes"));
   const { connectionHandle } = await import("./src/internal/connection.js");
   const initial = await connectionHandle("api", vi.fn());
   if (!("fetch" in initial)) throw new Error("missing HTTP settings");
@@ -280,6 +283,25 @@ test("a returned fetch resolves the caller's current verified owner rather than 
   expect(fixture.ipc.at(-1)?.file).toBe("/fixture/owner-1/handle.json");
   expect(dispatch).toHaveBeenCalledOnce();
   expect(dispatch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+});
+
+test("a module-shared workload handle cannot synchronously select the last caller's identity", async () => {
+  const { connectionHandle } = await import("./src/internal/connection.js");
+  const handle = connectionHandle("db", vi.fn());
+  const first = await handle;
+  fixture.assertion = "other";
+  const second = await handle;
+  expect(first).toHaveProperty("port", 12345);
+  expect(second).toHaveProperty("port", 12346);
+  expect(first).not.toHaveProperty("then");
+  expect(() => ({ ...handle })).toThrow(
+    expect.objectContaining({ code: "sdk.connection_unprepared" }),
+  );
+  fixture.assertion = "forged";
+  await expect(Promise.resolve(handle)).rejects.toMatchObject({
+    code: "sdk.connection_unavailable",
+  });
+  expect(first).toHaveProperty("port", 12345);
 });
 
 test("a late concurrent death proof adopts the recovered owner instead of starting a second native process", async () => {

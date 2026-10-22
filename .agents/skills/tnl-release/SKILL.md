@@ -62,7 +62,7 @@ infer that a stable release is wanted.
 3. Inspect all five npm tarballs and four Python wheels produced by
    `task package`. Confirm that each native binary is executable and identical
    to its release archive, both npm and pnpm installations run `tnl version`,
-   all four public exports import, no `tnld` executable is installed, and the
+   all five public exports import, no `tnld` executable is installed, and the
    private socket implementation has no public export. Verify the Python wheel
    tags, legal files, installation, import, binary version, and commit.
 4. Confirm the proposed tag is absent from Git and the proposed versions of all

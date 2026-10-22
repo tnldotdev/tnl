@@ -3,16 +3,24 @@ import type { TnlProtocol } from "./config.js";
 /** browser-safe addresses only; native credentials are returned by node methods. */
 export interface TnlProtocolRegistry {
   http: {
+    namespace: string;
     protocol: "http";
     hostname: string;
     port: number;
     public: boolean;
     url: `https://${string}`;
   };
-  postgres: { protocol: "postgres"; hostname: string; port: number; public: boolean };
-  mysql: { protocol: "mysql"; hostname: string; port: number; public: boolean };
-  tcp: { protocol: "tcp"; hostname: string; port: number; public: boolean };
+  postgres: {
+    protocol: "postgres";
+    namespace: string;
+    hostname: string;
+    port: number;
+    public: boolean;
+  };
+  mysql: { protocol: "mysql"; namespace: string; hostname: string; port: number; public: boolean };
+  tcp: { protocol: "tcp"; namespace: string; hostname: string; port: number; public: boolean };
   kubernetes: {
+    namespace: string;
     protocol: "kubernetes";
     hostname: string;
     port: number;
@@ -55,8 +63,17 @@ export interface TnlConnectionRegistry {
   };
 }
 
-/** await to prepare or refresh; synchronous reads require a prepared connection. */
-export type TnlConnectionHandle<Settings> = Settings & PromiseLike<Settings>;
+/** prototype method typing keeps the non-enumerable then out of object spreads. */
+declare abstract class ConnectionPreparation<Settings> implements PromiseLike<Settings> {
+  // oxlint-disable-next-line unicorn/no-thenable -- preparation is intentionally awaitable, but not enumerable.
+  abstract then<Result = Settings, Rejected = never>(
+    fulfilled?: ((value: Settings) => Result | PromiseLike<Result>) | null,
+    rejected?: ((reason: unknown) => Rejected | PromiseLike<Rejected>) | null,
+  ): PromiseLike<Result | Rejected>;
+}
+
+/** await to prepare; synchronous workload reads require an explicit prepared handle. */
+export type TnlConnectionHandle<Settings> = Settings & ConnectionPreparation<Settings>;
 
 type DeepReadonly<Value> = Value extends object
   ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }

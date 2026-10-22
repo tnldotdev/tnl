@@ -26,15 +26,23 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "private_visitor_streams"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "private_visitor_streams"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || schemaVersion != 1 {
+	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 {
 		t.Fatalf("baseline = %v, %v", files, err)
+	}
+	var actualVersion int64
+	var actualBaseline string
+	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
+		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
+	}
+	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != "tnl-control-fresh-v1-services-native-owner" {
+		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
 	// readiness check just because its numeric version is greater than one.

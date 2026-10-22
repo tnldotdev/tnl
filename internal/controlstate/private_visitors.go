@@ -300,7 +300,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	}
 	// count only admitted streams with a current hard deadline. dead ingress
 	// processes cannot hold capacity forever, and no established stream moves.
-	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at)
+	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
 	    FROM control.publisher_service_runs runtime JOIN control.private_service_runs run ON run.id=runtime.id
 	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
 	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
@@ -420,7 +420,7 @@ func (d *Database) AuthorizePrivateServiceStream(ctx context.Context, lease Ingr
 	if max(capacity, int(run.ReportedStreams)) >= int(run.StreamCapacity) {
 		return result, ErrPrivateServiceAccess
 	}
-	for _, deadline := range []time.Time{sessionExpires, ingressExpires, run.PublisherExpiresAt.Time, relayExpires} {
+	for _, deadline := range []time.Time{sessionExpires, ingressExpires, run.PublisherExpiresAt.Time, run.CertificateExpiresAt.Time, relayExpires} {
 		if deadline.Before(until) {
 			until = deadline
 		}

@@ -131,6 +131,16 @@ func (f *companyHTTPFixture) token(sub, nonce string, proofs []oidcauth.TeamCont
 	return f.signer.Token(f.t, "key-1", claims)
 }
 
+func (f *companyHTTPFixture) activationRequest(setup controlstate.IdentityConnectionSetup) authorityv1.ActivateIdentityConnectionJSONRequestBody {
+	// one connection retains its chosen credential through exact retries.
+	token := sha256.Sum256([]byte("company-fixture-provisioning:" + setup.ID))
+	return authorityv1.ActivateIdentityConnectionJSONRequestBody{
+		ExpectedRevision:  setup.Revision,
+		SetupToken:        setup.SetupToken,
+		ProvisioningToken: base64.RawURLEncoding.EncodeToString(token[:]),
+	}
+}
+
 func (f *companyHTTPFixture) encode(value any) []byte {
 	f.t.Helper()
 	raw, err := json.Marshal(value)

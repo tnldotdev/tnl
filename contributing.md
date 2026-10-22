@@ -34,7 +34,26 @@ while each test creates its own database. The same harness drives the runtime
 load topology and fault sweeps without a TypeScript container runner.
 The complete runtime tier has a 20-minute budget, including real lease-cycle
 tests; a shell running the full multi-package integration tier needs a longer
-deadline than an individual package. The Node 24 function-artifact fixture runs
+deadline than an individual package. CI runs four state shards, four runtime
+shards, and three CLI shards in parallel. Reproduce one with:
+
+```console
+mise exec -- task go:test:integration:state:shard SHARD=1/4
+mise exec -- task go:test:integration:runtime:shard SHARD=1/4
+mise exec -- task go:test:integration:cli SHARD=1/3
+```
+
+The harness discovers tests with `go test -list` and assigns each complete
+top-level test to one stable name-based shard. New tests enter a shard
+automatically; unsupported selectors and empty shards fail. Runtime shards
+exclude only the two real-clock proofs, which CI runs separately through
+`go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
+All matrix jobs contribute to the required `Go integration` result. CLI shards
+cover the named-app workflows; the management job adds their unique service
+share lookup checks. Native SDK checks run in the provider HTTP job, alongside
+its transport checks, rather than repeating in the binary job.
+
+The Node 24 function-artifact fixture runs
 only through its explicit `go:test:integration:vercel` target and artifact input.
 `generate-check` regenerates files and compares them with `HEAD`, so intentional
 uncommitted generated changes also appear as drift. `format-check` only checks;
@@ -47,19 +66,25 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Routine behavior                           | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                                    |
 | Go races                                   | `task go:test:race`                                          | No database                                                                                                          |
 | Database and service boundaries            | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
+| Durable control-state boundaries           | `task go:test:integration:state-boundaries`                  | Docker; secret rotation, combined retention workers, pageable admission history, and bounded native inventory        |
 | Provider workload authority and selectors  | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub, Vercel, Fly, and generic OIDC fixtures                        |
 | Workload visitor transports                | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
 | Native connection owner and prepared IPC   | `task go:test:connections`                                   | Local TLS fixtures and native subprocesses, without a human sign-in                                                  |
+| Ad-hoc registration and publication        | `task go:test:invocations`                                   | Local control/TLS fixtures, real SQLite workers, and visitor request limits, without a human sign-in                 |
+| Configured local app workflows             | `task go:test:app-workflows`                                 | Local owner, SQLite, enrollment, TLS mount and readiness fixtures                                                    |
+| Built CLI local identity and selection     | `task go:test:integration:app-workflows`                     | Linux and Docker; disposable PostgreSQL, real CLI owners, app registration, and Git transitions                      |
 | Drizzle Kit and native connection options  | `task go:test:integration:connections`                       | Docker; Task owns disposable PostgreSQL and a real Drizzle Kit migration                                             |
 | Local Vercel Node function artifacts       | `task go:test:integration:vercel`                            | Docker and Pebble; Node 24.20.0 on PATH, installed tarballs, workload-owned native startup and real PostgreSQL       |
 | Shared native workload HTTP boundary       | `task go:test:integration:provider-http`                     | Docker and Pebble; SDK/native IPC fixtures plus real workload HTTP certificates and separated runtime processes      |
 | Private services and groups                | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
+| Control-state lock ordering                | `task go:test:integration:state-locks`                       | Docker; deterministic lock gates and wait-graph checks in disposable PostgreSQL                                      |
+| Private claim recovery and capacity        | `task go:test:integration:private-claims`                    | Docker; committed HTTP response loss through relay, mixed public/private claims, and certificate deadlines           |
 | Managed HTTP services                      | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
 | Fixed-list cross-team publishers           | `task go:test:integration:publisher-groups`                  | Linux and Docker; one real CLI process, independent group identities, managed TLS and disposable PostgreSQL          |
 | Signed-human service access and CLI lookup | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
 | Publisher egress evidence                  | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
 | Private runtime topology                   | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
-| Real database clients                      | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                         |
+| Real database clients                      | `task go:test:integration:tcp-clients`                       | Docker CLI, uv and Python; disposable TLS providers, installed Node drivers and an isolated psycopg consumer         |
 | CLI and OpenSSH stdio                      | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
 | Existing OpenSSH target                    | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
 | Binary behavior                            | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
@@ -71,11 +96,81 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | npm exports and tarballs                   | `pnpm run pack`                                              | Built package dependencies                                                                                           |
 | Python ASGI and socket contract            | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real native owner, and wheel source/type-marker checks         |
 | Local release snapshot                     | `task package`                                               | Builds and checks packages; does not publish                                                                         |
+| Actual npm release tarballs                | `task release:npm-package`                                   | `task release:snapshot` first; installs the generated tarballs with npm and pnpm                                     |
 | Deployed release check                     | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
 
 For native client trace propagation and bounded flush, run
 `task go:test:client-tracing` and `task js:test:client-tracing` through `mise exec --`.
 The existing connection tier also checks the real CLI-to-detached-owner trace chain.
+
+For native owner concurrency and shutdown, run `task go:test:owner-lifecycle -- -race`.
+`task go:test:integration:owner-lifecycle` owns disposable PostgreSQL and checks
+one native owner serving real HTTP and PostgreSQL while another request stalls.
+Prepared reads publish metadata and transport identity together; they never wait
+for another service's preparation or an assertion exchange.
+
+For config serialization, evaluated native-owner snapshots, resolved target trust,
+service references, and local status protocols, run `task go:test:config-contracts`
+through `mise exec --`. `task js:typecheck` checks the same reference restrictions
+in config literals and synchronous/asynchronous factories, along with SDK types.
+
+When editing a complete configuration example, check it with `tnl check` using
+the selected source format. Normalized control API examples also need the
+production `NormalizeProjectConfiguration` validator: OpenAPI field validation
+alone does not enforce named-group endpoint ownership. Keep example checks at
+that existing boundary rather than copying its rules into a documentation test.
+
+For configured local publication, no Git repository or origin is required.
+`LocalPublicationIdentity` and `LocalWorktreeKey` bind the canonical directory;
+portable `SourceIdentity` still requires Git for apply, AWS generation, and
+workload manifests. Owner discovery and named leases compare the evaluated
+snapshot digest, including configuration provenance and server/team selection.
+After changing configuration, stop and restart all apps and named local
+publishers for the project together. The app-workflows tier covers these fences
+and once-per-run automatic readiness with its bounded retry budget.
+
+For public HTTP live authorization, run `task go:test:live-authorization`, then
+`task go:test:live-authorization -- -race`. These use deterministic clocks for
+long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
+`task go:test:integration:live-authorization` owns disposable PostgreSQL for
+browser and alias handoffs, current visitor authorization, and HTTP logout.
+
+For ingress production wiring, pool selection, lifetime traffic totals, pending
+promotion, private relay fallback, and server-first half-closes, run
+`task go:test:ingress`, then `task go:test:ingress -- -race`.
+`task go:test:integration:ingress` owns disposable PostgreSQL for terminal
+retirement evidence and real split/standalone forwarding.
+`task go:test:integration:local-oidc` checks the actual UID-65532 provider with a
+mode-0600 key on a Linux-native filesystem, including on Docker Desktop.
+
+For native HTTP forwarding, run `task go:test:http-streaming` and
+`task go:test:http-streaming -- -race` through `mise exec --`. these use local
+HTTP/1 and HTTP/2 wires for early responses during uploads, upload deadlines,
+trailers, long responses, upgrades, cancellation, and inspection outcomes.
+
+For native observability, run `task go:test:observability` and
+`task go:test:server` through `mise exec --`. these include disabled-startup
+subprocesses with malformed ambient settings, decoded OTLP exemplars and gauge
+types, safe audit reporter causes, and metric collection during ingress
+construction. `task go:test:integration:runtime RUN='^TestIntegrationServiceAuditCleanupObservedOnce$'`
+checks the cleanup worker's exact count against an instrumented disposable
+PostgreSQL database.
+
+For native database TLS and authentication, run `task go:test:database-native -- -race`.
+`task go:test:integration:tcp-clients` owns disposable TLS PostgreSQL and MySQL,
+installs the Node SDK and Python wheel into isolated consumers, and checks real
+queries, selected connection lifetimes, and the
+[native cancellation boundary](docs/maintainers/database-cancellation.md).
+
+For SDK connection lifetimes and owned HTTP transport, run
+`task js:test:connections` through `mise exec --`. Its installed ESM/CommonJS
+fixture runs actual Node and Bun processes against local TLS, including the
+managed Host/SNI and loopback dial boundary. This is local transport evidence;
+deployed provider freeze/thaw remains open. For action OIDC cancellation and
+late-result rejection, run `task connect:check`. The Python lifecycle checks in
+`task py:check` cover joined publication cleanup, fork ownership, and bounded
+native exchange. See the [review ledger](docs/maintainers/prerelease-review.md)
+for commit evidence and outstanding integration/live work.
 
 Use `RUN` to select an integration test, for example:
 
@@ -130,6 +225,24 @@ mise exec -- pnpm exec vitest run packages/ts/vite.test.ts
 Run `mise exec -- task js:check` to build once and run the JavaScript checks
 used in CI, including package verification.
 
+`task js:pack` checks a source npm pack. to check the release packer and its
+installed consumers without publishing, run:
+
+```console
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task release:snapshot
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task release:npm-package
+```
+
+the second Task builds the SDK, packages all four native targets from the real
+snapshot archives, and installs the release launcher and host native tarball in
+independent npm and pnpm consumers. both consumers check every public export,
+including Node ESM/CommonJS workload imports and browser restrictions. native
+dependencies resolve from local tarballs; third-party runtime dependencies need
+registry access. packing checks all manifest export targets, executable modes,
+binary hashes, and legal files. only the host native executable runs locally.
+the Checks workflow reuses its Python job's snapshot for this release-package check.
+the Vercel fixture builds its own packages and does not qualify this release path.
+
 For the opt-in emitted Vercel Node function check, see
 [local Vercel qualification](docs/maintainers/vercel-functions.md). its Tasks use
 Node `24.20.0` from `PATH`, including on CI; they do not invoke mise internally.
@@ -182,6 +295,10 @@ future compatible migrations may advance that version. The server's PostgreSQL
 baseline requires a fresh database and a coordinated stop/start of all serving
 roles. Control checks both the exact migration version and baseline identity
 before serving.
+
+The single PostgreSQL baseline includes durable publisher certificate-plan
+checkpoints. Fresh identities have an empty plan inventory; submitted plans
+remain required after order cleanup. See [publisher groups](docs/maintainers/publisher-groups.md).
 
 For local services, an explicit `publicURL` block (`public_url` in static files)
 enables public HTTPS. Without it, the service is private, including `protocol: http`.

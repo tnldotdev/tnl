@@ -107,7 +107,7 @@ func ReadHandle(path string) (Handle, error) {
 	if !ok || stat.Uid != uint32(os.Getuid()) {
 		return h, ErrUnauthorized
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return h, ErrUnauthorized
 	}
@@ -152,7 +152,7 @@ func ReadStopResult(handlePath string) error {
 	if safeAncestors(filepath.Dir(path)) != nil {
 		return ErrUnauthorized
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return ErrCleanup
 	}

@@ -302,7 +302,7 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 	if err := json.Unmarshal(op.Private, &p); err != nil {
 		return err
 	}
-	if p.PollingCredential != "" {
+	if p.Session == nil && p.PollingCredential != "" {
 		authority, err := authorityclient.New(op.Server, config.HTTPClient, "")
 		if err != nil {
 			return err

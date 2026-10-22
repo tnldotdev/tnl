@@ -88,63 +88,65 @@ func (a *browserAccess) checkCurrent(request *http.Request) (controlv1.BrowserAc
 // decision is the final HTTP admission boundary. the caller uses VisitAllowed
 // independently of IdentityId and handles errors before promoting the stream.
 func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorResponse, error) {
+	decision, _, err := a.currentDecision(request, false)
+	return decision, err
+}
+
+func (a *browserAccess) currentDecision(request *http.Request, refresh bool) (controlv1.HTTPVisitorResponse, time.Time, error) {
 	client, ok := a.client.(interface {
 		AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error)
 	})
 	if !ok {
-		return controlv1.HTTPVisitorResponse{}, errors.New("current visitor authorization is unavailable")
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("current visitor authorization is unavailable")
 	}
 	source, err := netip.ParseAddrPort(request.RemoteAddr)
 	if err != nil {
-		return controlv1.HTTPVisitorResponse{}, errors.New("visitor source is unavailable")
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("visitor source is unavailable")
 	}
 	if session, ok := request.Context().Value(visitorSessionKey{}).(*visitorSession); ok {
 		source = session.visitor.Source
 	}
 	if !source.IsValid() || source.Addr().Zone() != "" {
-		return controlv1.HTTPVisitorResponse{}, errors.New("visitor source is invalid")
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("visitor source is invalid")
 	}
 	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(a.version), SourceIp: source.Addr().Unmap().String()}
 	if values, present := request.Header[http.CanonicalHeaderKey(shareAccessHeaderName)]; present {
 		if len(values) != 1 {
-			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
 		}
 		id, secret, valid := strings.Cut(values[0], ".")
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
 		if !valid || id == "" || err != nil || len(raw) != 32 {
-			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
 		}
 		input.ShareId, input.ShareSecret = &id, &secret
 	}
 	if input.ShareId == nil && suppliedCookieCount(request, browserAccessCookieName) != len(request.CookiesNamed(browserAccessCookieName)) {
-		return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
 	}
 	if cookie, err := request.Cookie(browserAccessCookieName); err == nil && input.ShareId == nil {
 		if len(request.CookiesNamed(browserAccessCookieName)) != 1 {
-			return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
 		}
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookie.Value)
 		if err != nil || len(raw) != 32 {
-			return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
 		}
 		input.BrowserCookieSecret = &cookie.Value
 	}
 	if input.ShareId == nil && input.BrowserCookieSecret == nil && suppliedCookieCount(request, shareCookieName) != len(request.CookiesNamed(shareCookieName)) {
-		return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
 	}
 	if cookie, err := request.Cookie(shareCookieName); err == nil && input.ShareId == nil && input.BrowserCookieSecret == nil {
 		if len(request.CookiesNamed(shareCookieName)) != 1 {
-			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
 		}
 		if id, secret, found := strings.Cut(cookie.Value, "."); found {
 			input.ShareId = &id
 			input.ShareCookieSecret = &secret
 		} else {
-			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
 		}
-	}
-	if a.decisions == nil {
-		return client.AuthorizeHTTPVisitor(request.Context(), a.runID, input, a.token)
 	}
 	proof, err := json.Marshal(struct {
 		RunID       string                       `json:"run_id"`
@@ -152,10 +154,11 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 		Request     controlv1.HTTPVisitorRequest `json:"request"`
 	}{a.runID, a.publicURLID, input})
 	if err != nil {
-		return controlv1.HTTPVisitorResponse{}, err
+		return controlv1.HTTPVisitorResponse{}, time.Time{}, err
 	}
 	key := sha256.Sum256(proof)
-	return a.decisions.check(request.Context(), key, func(ctx context.Context) (controlv1.HTTPVisitorResponse, time.Time, bool, error) {
+	load := func(ctx context.Context) (controlv1.HTTPVisitorResponse, time.Time, bool, error) {
+		started := time.Now()
 		decision, err := client.AuthorizeHTTPVisitor(ctx, a.runID, input, a.token)
 		if err != nil {
 			return controlv1.HTTPVisitorResponse{}, time.Time{}, false, err
@@ -163,8 +166,16 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 		if decision.ValidUntil == nil {
 			return decision, time.Time{}, decision.VisitAllowed, nil
 		}
-		return decision, *decision.ValidUntil, decision.VisitAllowed, nil
-	})
+		until := earlierDecisionTime(*decision.ValidUntil, started.Add(visitorDecisionLifetime))
+		decision.ValidUntil = &until
+		return decision, until, decision.VisitAllowed, nil
+	}
+	if a.decisions == nil {
+		checkedAt := time.Now()
+		decision, _, _, err := load(request.Context())
+		return decision, checkedAt, err
+	}
+	return a.decisions.checkCurrent(request.Context(), key, refresh, load)
 }
 
 func (a *browserAccess) handle(response http.ResponseWriter, request *http.Request, permitted bool) bool {

@@ -103,6 +103,11 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// establish a complete current plan before testing uncertain renewal writes.
+	// a partial first checkpoint is invalid state, not a source for reconstruction.
+	if _, err := cache.Pending(t.Context(), "route.example"); err != nil {
+		t.Fatal(err)
+	}
 	failing := true
 	cache.files.syncFile = func(file *os.File) error {
 		info, err := file.Stat()
@@ -113,6 +118,9 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 			return syscall.EIO
 		}
 		return file.Sync()
+	}
+	if pending, err := cache.NewPending(t.Context(), "route.example"); !errors.Is(err, syscall.EIO) || pending.Key != nil {
+		t.Fatal("unsynced renewal key reached issuance", err)
 	}
 	for range 2 {
 		pending, err := cache.Pending(t.Context(), "route.example")

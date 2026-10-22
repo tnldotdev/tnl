@@ -126,6 +126,8 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 			lookups, reads := 0, 0
 			scope := controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: selector}
 			if selector == "orders" {
+				local := project.LocalPublicationIdentity()
+				scope.ProjectKey, scope.SourceFingerprint = local.Key, local.Fingerprint
 				scope.WorktreeKey = project.LocalWorktreeKey()
 			}
 			control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +186,8 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 		{"manager denied", failure.ServerResourceNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			scope := &controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: "orders", WorktreeKey: project.LocalWorktreeKey()}
+			local := project.LocalPublicationIdentity()
+			scope := &controlv1.LocalServiceSource{ProjectKey: local.Key, SourceFingerprint: local.Fingerprint, Service: "orders", WorktreeKey: project.LocalWorktreeKey()}
 			switch test.name {
 			case "missing source":
 				scope = nil

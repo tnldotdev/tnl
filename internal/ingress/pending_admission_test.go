@@ -74,6 +74,7 @@ func TestPendingPromotionRechecksRunAssignmentAndCapacity(t *testing.T) {
 			b := r.Backends[0].(forwardingBackend)
 			b.header.ConnectionAssignmentRevision++
 			r.Backends[0] = b
+			r.assignments[0] = b.header.Admission()
 		}, tunnelv1.StaleConnectionAssignment},
 		{"capacity", func(s *Server, _ *PublicURL) {
 			s.mu.Lock()

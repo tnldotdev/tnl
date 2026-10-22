@@ -12,6 +12,7 @@ import (
 	"time"
 
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -82,6 +83,8 @@ type Config struct {
 	MaxConnections int
 	ManagedTLS     *controlv1.ManagedServiceTLS
 	ServiceTLS     *tls.Config `json:"-"`
+	// an owner may supply one shared shutdown budget for all path releases.
+	CleanupContext func() context.Context `json:"-"`
 }
 
 func (Config) String() string   { return "private connector configuration" }
@@ -208,9 +211,21 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	if config.MaxConnections < 1 {
 		return ErrPrivateConnection
 	}
-	if closer, ok := config.Control.(interface{ Close() error }); ok {
-		defer func() { result = errors.Join(result, closer.Close()) }()
+	cleanupContext := func() context.Context {
+		if config.CleanupContext != nil {
+			return config.CleanupContext()
+		}
+		return observability.Independent(context.WithoutCancel(ctx))
 	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(cleanupContext(), 5*time.Second)
+		defer cancel()
+		if closer, ok := config.Control.(interface{ CloseContext(context.Context) error }); ok {
+			result = errors.Join(result, closer.CloseContext(cleanup))
+		} else if closer, ok := config.Control.(interface{ Close() error }); ok {
+			result = errors.Join(result, closer.Close())
+		}
+	}()
 	if config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
 		return ErrPrivateConnection
 	}
@@ -232,7 +247,9 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, signer.Subject, slot)
 		if err != nil {
 			_, definition, known := failure.Describe(err)
-			if single || known && definition.Retry != failure.RetryLater {
+			// assignment conflicts retire this attempt, not another slot's live
+			// authorization. the adapter discards a confirmed stale request key.
+			if single || known && definition.Retry != failure.RetryLater && !errors.Is(err, controlclient.ErrStatusConflict) {
 				cancel(err)
 			}
 			return nil, err
@@ -246,10 +263,11 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		if used {
 			return nil, ErrPrivateConnection
 		}
-		releaseContext := observability.Independent(context.WithoutCancel(ctx))
 		release := func() error {
 			if control, ok := config.Control.(assignmentReleaser); ok {
-				cleanup, finish := observability.ClientOperation(releaseContext, "connector.path.release")
+				bounded, cancel := context.WithTimeout(cleanupContext(), 5*time.Second)
+				defer cancel()
+				cleanup, finish := observability.ClientOperation(bounded, "connector.path.release")
 				err := control.ReleasePrivateConnectorAssignment(cleanup, assignment.SessionID)
 				finish(err)
 				return err

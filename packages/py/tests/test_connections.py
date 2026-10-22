@@ -647,9 +647,10 @@ def test_cli_output_is_bounded_and_private_errors_are_redacted(
         _connections._command(binary, "read")
     assert caught.value.code == "sdk.connection_invalid"
     binary.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(5)\n")
-    monkeypatch.setattr(_connections, "_TIMEOUT", 0.05)
-    with pytest.raises(tnl.TnlError) as caught:
-        _connections._command(binary, "read")
+    with monkeypatch.context() as timing:
+        timing.setattr(_connections, "_TIMEOUT", 0.05)
+        with pytest.raises(tnl.TnlError) as caught:
+            _connections._command(binary, "read")
     assert caught.value.code == "sdk.connection_unavailable"
     binary.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('secret')\nsys.exit(1)\n")
     with pytest.raises(tnl.TnlError) as caught:

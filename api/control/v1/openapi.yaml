@@ -3232,8 +3232,8 @@ components:
         ephemeral:
           type: boolean
           default: false
-          description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups require saved pooled URLs and reject true.
-      description: Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+          description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups use managed endpoints and reject true.
+      description: Local declarations defer URL allocation to their worktree runtime. Named publisher groups use their managed endpoint and reject domain_id and hostname overrides; their HTTP public_url settings select restricted access, optional IP filters, and HTTP request limits only.
     ProjectPublicAccess:
       type: object
       additionalProperties: false
@@ -3519,11 +3519,13 @@ components:
           items: { type: string, minLength: 1, maxLength: 63 }
     PublisherGroupAssignments:
       type: object
-      required: [member, revision, configuration_hash, services]
+      required: [member, revision, configuration_hash, services, certificate_state_plans]
       properties:
-        certificate_state_required:
-          type: boolean
-          description: This replica has submitted certificate issuance work. Missing durable certificate state must not be replaced with fresh keys. Absence means the server does not support this recovery boundary.
+        certificate_state_plans:
+          type: array
+          maxItems: 1024
+          description: Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
+          items: { $ref: "#/components/schemas/CertificatePlan" }
         member: { $ref: "#/components/schemas/PublisherGroupMember" }
         revision: { type: integer, format: int64 }
         configuration_hash: { type: string }
@@ -3921,9 +3923,11 @@ components:
     PrivateServicePage:
       type: object
       additionalProperties: false
+      description: At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
       required: [services]
       properties:
-        services: { type: array, items: { $ref: "#/components/schemas/PrivateService" } }
+        services:
+          { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PrivateService" } }
         next_cursor: { $ref: "#/components/schemas/PrivateServiceID" }
     CreatePrivateServiceGrantRequest:
       type: object

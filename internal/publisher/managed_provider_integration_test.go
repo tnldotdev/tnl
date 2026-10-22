@@ -313,6 +313,15 @@ func runNativeDatabaseCommand(t *testing.T, protocol config.ProtocolName, contai
 	}
 	_, port, _ := net.SplitHostPort(address)
 	host := "orders.production.storefront.example.test"
+	client := "psql"
+	if protocol == config.ProtocolMySQL {
+		client = "mysql"
+	}
+	version, err := exec.CommandContext(t.Context(), "docker", "exec", container, client, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatal("native client version", err)
+	}
+	t.Log(strings.TrimSpace(string(version)))
 	args := []string{"exec", "-e", "SSL_CERT_FILE=/tnl-fixture/ca.pem", "-e", "PGPASSWORD=testpass", container}
 	if protocol == config.ProtocolPostgres {
 		query := url.Values{"sslmode": {"verify-full"}, "sslrootcert": {"system"}, "channel_binding": {"disable"}, "gssencmode": {"disable"}}

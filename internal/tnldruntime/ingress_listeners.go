@@ -45,6 +45,10 @@ func listenIngress(address string, ports []tcpport.Range, proxied bool) (net.Lis
 			}
 		}
 	}
+	return combineIngressListeners(listeners), nil
+}
+
+func combineIngressListeners(listeners []net.Listener) net.Listener {
 	combined := &ingressListeners{listeners: listeners, accepted: make(chan acceptedIngress), closed: make(chan struct{})}
 	for _, listener := range listeners {
 		combined.workers.Go(func() {
@@ -64,7 +68,7 @@ func listenIngress(address string, ports []tcpport.Range, proxied bool) (net.Lis
 			}
 		})
 	}
-	return combined, nil
+	return combined
 }
 
 type acceptedIngress struct {

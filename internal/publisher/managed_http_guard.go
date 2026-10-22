@@ -3,9 +3,11 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -133,8 +135,11 @@ func (g *managedHTTPGuard) recheck(ctx context.Context, credential controlv1.Man
 	next, err := g.frontend.authorize(ctx, credential)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if revision != g.revision || err != nil {
+	if revision != g.revision {
 		return true
+	}
+	if err != nil {
+		return errors.Is(err, controlclient.ErrUnavailable)
 	}
 	if !next.Allowed || !next.Admitted || !next.ValidUntil.After(time.Now()) {
 		return false

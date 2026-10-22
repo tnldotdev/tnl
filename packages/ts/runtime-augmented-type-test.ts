@@ -37,6 +37,7 @@ tnl.services.db.protocol satisfies "postgres";
 tnl.services.db.hostname satisfies string;
 tnl.services.db.port satisfies number;
 tnl.services.db.public satisfies boolean;
+tnl.services.db.namespace satisfies string;
 tnl.services.cluster.url satisfies `https://${string}`;
 // @ts-expect-error optional factory services stay optional in every checkout.
 void tnl.services.worker.protocol;
@@ -109,6 +110,13 @@ const immediate = tnl.connect("db");
 immediate.host satisfies "127.0.0.1";
 immediate satisfies PromiseLike<TnlConnectionRegistry["postgres"]>;
 ({ ...immediate, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
+const plain = { ...immediate };
+// @ts-expect-error the non-enumerable preparation method is not copied by spread.
+void plain.then;
+const plainAwaited = await plain;
+plainAwaited.port satisfies number;
+// @ts-expect-error awaiting a settings spread does not turn it back into a handle.
+void plainAwaited.then;
 // @ts-expect-error metadata is read-only.
 tnl.services.db.port = 5432;
 

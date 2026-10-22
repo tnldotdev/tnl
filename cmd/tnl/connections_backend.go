@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,7 +44,6 @@ type preparedConnection struct {
 	kubeResult      kubeconfig.Result
 	err             error
 	listener        *connectionruntime.ListenerSwitch
-	epoch           int
 	ready           bool
 	cancel          context.CancelFunc
 	control         tcpconnect.Control
@@ -52,38 +52,143 @@ type preparedConnection struct {
 }
 
 type nativeConnectionBackend struct {
+	nativeConnectionSession
 	project                                                projectConfiguration
 	scope                                                  connectionruntime.Context
 	stateDir, assertion, directory, executable, runnerTemp string
-	human                                                  *teamSession
-	workload                                               *workloadclient.Client
 	httpClient                                             *http.Client
-	replacement                                            *workloadclient.Client
-	replacementScope                                       connectionruntime.Context
 	acquisition                                            workloadmanifest.Acquisition
-	deadline                                               time.Time
 	prepared                                               map[string]*preparedConnection
 	initialServices                                        []string
 	services                                               map[string]controlv1.PrivateService
 	metadata                                               projectmeta.PublicMetadata
 	lifetime                                               context.Context
-	prepareMu                                              sync.Mutex
+	kubeMu                                                 sync.Mutex
+	serviceGates                                           map[string]chan struct{}
+	snapshot                                               atomic.Pointer[nativePreparedSnapshot]
+	closed                                                 bool
+	cleanupContext                                         context.Context
+	operations                                             sync.WaitGroup
 	cancel                                                 context.CancelFunc
 	workers                                                sync.WaitGroup
 	mu                                                     sync.Mutex
 	cleanupErr                                             error
 	parentPID                                              int
 	kubeOptions                                            connectStartCommand
-	verification                                           *connectionruntime.AssertionVerification
-	assertions                                             map[string]connectionruntime.AssertionVerification
-	assertionChecks                                        map[string]time.Time
-	verifiedSession                                        string
 	sessionKubePlan                                        kubeconfig.Plan
 	sessionKubeResult                                      kubeconfig.Result
 }
 
+// session state is independent of configured scope and service coordination.
+// mu protects publication; sessionGate serializes exchanges without blocking readers.
+type nativeConnectionSession struct {
+	human            *teamSession
+	teamID           string
+	workload         *workloadclient.Client
+	replacement      *workloadclient.Client
+	replacementScope connectionruntime.Context
+	deadline         time.Time
+	sessionGate      chan struct{}
+	verification     *connectionruntime.AssertionVerification
+	assertions       map[string]connectionruntime.AssertionVerification
+	assertionChecks  map[string]time.Time
+	verifiedSession  string
+}
+
+// the configured scope never changes with listener readiness or session renewal.
+// snapshots contain only published values; readers never join network work.
+type nativePreparedSnapshot struct {
+	metadata     projectmeta.PublicMetadata
+	verification *connectionruntime.AssertionVerification
+	assertions   map[string]connectionruntime.AssertionVerification
+	connections  map[string]connectionruntime.Connection
+	errors       map[string]error
+}
+
+func (b *nativeConnectionBackend) publishLocked() {
+	s := &nativePreparedSnapshot{metadata: b.metadata, connections: map[string]connectionruntime.Connection{}, errors: map[string]error{}}
+	s.assertions = make(map[string]connectionruntime.AssertionVerification, len(b.assertions))
+	for digest, proof := range b.assertions {
+		s.assertions[digest] = proof
+	}
+	if b.verification != nil {
+		v := *b.verification
+		s.verification = &v
+	}
+	for name, p := range b.prepared {
+		if !p.ready {
+			continue
+		}
+		service, allowed := b.services[name]
+		if !allowed || service.Id != p.service.Id || service.Protocol != p.service.Protocol || service.ManagedTls == nil || p.service.ManagedTls == nil || *service.ManagedTls != *p.service.ManagedTls {
+			continue
+		}
+		if p.err != nil {
+			s.errors[name] = p.err
+			continue
+		}
+		if b.closed {
+			s.errors[name] = connectionruntime.ErrExpired
+			continue
+		}
+		deadline := b.deadline
+		if b.workload != nil {
+			session, err := b.workload.Session()
+			if err != nil || session.Id != p.sessionID {
+				continue
+			}
+			if !slices.Contains(session.ServiceIds, p.service.Id) {
+				continue
+			}
+			deadline = minTime(deadline, session.LeaseExpiresAt)
+		}
+		c := p.connection
+		c.ExpiresAt = deadline
+		if p.service.Protocol != controlv1.Tcp {
+			c.SSL = &connectionruntime.TLSOptions{ServerName: p.service.ManagedTls.Hostname, RejectUnauthorized: true}
+		}
+		s.connections[name] = c
+	}
+	b.snapshot.Store(s)
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func (b *nativeConnectionBackend) begin(ctx context.Context) (context.Context, func(), error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil, nil, connectionruntime.ErrExpired
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	b.operations.Add(1)
+	ctx, cancel := context.WithCancel(ctx)
+	stop := func() bool { return false }
+	if b.lifetime != nil {
+		stop = context.AfterFunc(b.lifetime, cancel)
+	}
+	return ctx, func() { stop(); cancel(); b.operations.Done() }, nil
+}
+
+func (b *nativeConnectionBackend) cleanup() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cleanupContext != nil {
+		return b.cleanupContext
+	}
+	return context.Background()
+}
+
 func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.PublicMetadata, time.Time, error) {
 	b.prepared = map[string]*preparedConnection{}
+	b.teamID = b.scope.TeamID
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 	b.cancel = cancel
 	b.lifetime = lifetime
@@ -149,7 +254,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 		if err != nil {
 			return projectmeta.PublicMetadata{}, time.Time{}, err
 		}
-		b.scope.TeamID = membership.TeamId
+		b.teamID = membership.TeamId
 		for _, name := range b.scope.Services {
 			service, err := selectConnectService(ctx, session.authenticated.Control, b.project, name, membership.TeamId)
 			if err != nil {
@@ -187,6 +292,9 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 	}
 	b.services = services
 	b.metadata = metadata.Public(false)
+	b.mu.Lock()
+	b.publishLocked()
+	b.mu.Unlock()
 	// caller-prepared CLI owners retain their aggregate readiness contract.
 	// application-owned SDK processes prepare each service on its own IPC read.
 	for _, name := range b.initialServices {
@@ -199,9 +307,8 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 
 // preparation is incremental and failure is local to the requested service.
 // the exchanged service-ID snapshot is independent of this listener map.
-func (b *nativeConnectionBackend) prepareService(ctx context.Context, name string, p *preparedConnection) (*preparedConnection, error) {
-	service, ok := b.services[name]
-	if !ok || !slices.Contains(b.scope.Services, name) {
+func (b *nativeConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.PrivateService, client *workloadclient.Client) (*preparedConnection, error) {
+	if !slices.Contains(b.scope.Services, name) {
 		return nil, connectionruntime.ErrUnavailable
 	}
 	if err := validateProfileService(service); err != nil {
@@ -220,16 +327,18 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 		return nil, err
 	}
 	connection.TransportID = transportID
-	if p == nil {
-		p = &preparedConnection{service: service, connection: connection}
+	p := &preparedConnection{service: service, connection: connection}
+	if previous != nil {
+		p.listener = previous.listener
+		p.connection.Kubeconfig, p.connection.Context = previous.connection.Kubeconfig, previous.connection.Context
+		p.kubeSource = previous.kubeSource
 	}
-	p.service = service
 	verification := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.Hostname}
 	var control tcpconnect.Control
 	// each new adapter receives a fresh transport ID even when its listener stays.
 	identity := ""
-	if b.workload != nil {
-		control, err = tcpconnect.NewWorkloadControl(b.workload)
+	if client != nil {
+		control, err = tcpconnect.NewWorkloadControl(client)
 	} else {
 		identity = b.human.identity.Identity.Id
 		control, err = tcpconnect.NewControl(b.human.authenticated.Control, b.human.store, identity)
@@ -265,17 +374,24 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 			return nil, err
 		}
 		p.listener = connectionruntime.NewListenerSwitch(base)
-		b.prepared[name] = p
 	}
 	b.mu.Lock()
-	p.epoch++
-	epoch := p.epoch
-	p.err = nil
-	b.mu.Unlock()
-	p.ready = false
-	if p.cancel != nil {
-		p.cancel()
+	if b.closed || b.workload != client {
+		b.mu.Unlock()
+		if previous == nil {
+			_ = p.listener.Close()
+		}
+		if closer, ok := control.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		return nil, connectionruntime.ErrUnprepared
 	}
+	if previous != nil && previous.cancel != nil {
+		previous.cancel()
+	}
+	b.prepared[name] = p
+	b.publishLocked()
+	b.mu.Unlock()
 	lifetime, cancel := context.WithCancel(b.lifetime)
 	p.cancel = cancel
 	prepared := false
@@ -288,17 +404,18 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 	ready := make(chan struct{})
 	done := make(chan error, 1)
 	connection.Port = listener.Addr().(*net.TCPAddr).Port
-	configuration := tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, ManagedTLS: endpoint, ServiceTLS: verification, Ready: func() error { close(ready); return nil }}
+	configuration := tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, ManagedTLS: endpoint, ServiceTLS: verification, CleanupContext: b.cleanup, Ready: func() error { close(ready); return nil }}
 	b.workers.Go(func() {
 		defer listener.Close()
 		err := tcpconnect.Serve(lifetime, listener, configuration)
 		b.mu.Lock()
-		if p.epoch == epoch {
+		if b.prepared[name] == p {
 			if b.lifetime.Err() == nil {
 				p.err = errors.Join(connectionruntime.ErrUnavailable, err)
 			} else if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				b.cleanupErr = errors.Join(b.cleanupErr, err)
 			}
+			b.publishLocked()
 		}
 		b.mu.Unlock()
 		done <- err
@@ -313,8 +430,8 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 	connection.Kubeconfig, connection.Context = p.connection.Kubeconfig, p.connection.Context
 	p.connection = connection
 	p.control = control
-	if b.workload != nil {
-		session, err := b.workload.Session()
+	if client != nil {
+		session, err := client.Session()
 		if err != nil {
 			return nil, err
 		}
@@ -330,8 +447,13 @@ func (b *nativeConnectionBackend) prepareService(ctx context.Context, name strin
 			}
 		}
 	}
-	b.prepared[name] = p
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.workload != client || p.err != nil {
+		return nil, errors.Join(connectionruntime.ErrUnprepared, p.err)
+	}
 	p.ready = true
+	b.publishLocked()
 	prepared = true
 	return p, nil
 }
@@ -362,24 +484,50 @@ func exchangeConnectionWorkload(ctx context.Context, client *workloadclient.Clie
 }
 
 func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (connectionruntime.Connection, error) {
-	b.prepareMu.Lock()
-	defer b.prepareMu.Unlock()
+	ctx, finish, err := b.begin(ctx)
+	if err != nil {
+		return connectionruntime.Connection{}, err
+	}
+	defer finish()
+	b.mu.Lock()
+	if b.serviceGates == nil {
+		b.serviceGates = map[string]chan struct{}{}
+	}
+	gate := b.serviceGates[name]
+	if gate == nil {
+		gate = make(chan struct{}, 1)
+		b.serviceGates[name] = gate
+	}
+	b.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		defer func() { <-gate }()
+	case <-ctx.Done():
+		return connectionruntime.Connection{}, ctx.Err()
+	}
 	if _, err := b.healthy(); err != nil {
 		return connectionruntime.Connection{}, err
 	}
+	b.mu.Lock()
 	service, found := b.services[name]
+	p := b.prepared[name]
+	client := b.workload
+	authorizedUntil := time.Time{}
+	if p != nil {
+		authorizedUntil = p.authorizedUntil
+	}
+	b.mu.Unlock()
 	if !found || validateProfileService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
 		return connectionruntime.Connection{}, connectionruntime.ErrInvalid
 	}
-	p := b.prepared[name]
-	if p != nil && time.Now().Before(p.authorizedUntil) {
-		if snapshot, err := b.preparedLocked(name); err == nil {
+	if p != nil && time.Now().Before(authorizedUntil) {
+		if snapshot, err := b.Prepared(name); err == nil {
 			return snapshot, nil
 		}
 	}
 	validUntil := time.Now().Add(30 * time.Second)
-	if b.workload != nil {
-		authorization, err := b.workload.CheckService(ctx, service.Id)
+	if client != nil {
+		authorization, err := client.CheckService(ctx, service.Id)
 		if err != nil {
 			return connectionruntime.Connection{}, err
 		}
@@ -389,16 +537,32 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	}
 	b.mu.Lock()
 	failed := p != nil && p.err != nil
+	if p != nil && client != nil {
+		session, err := client.Session()
+		failed = failed || err != nil || session.Id != p.sessionID
+	}
 	b.mu.Unlock()
+	// refresh approved metadata only at an explicit preparation boundary. the
+	// service ID stays fenced by the current session's immutable authorization.
+	if p == nil || !p.ready || failed || !time.Now().Before(authorizedUntil) {
+		fresh, err := b.refreshService(ctx, name, service, client)
+		if err != nil {
+			return connectionruntime.Connection{}, err
+		}
+		if p != nil && (fresh.ManagedTls == nil || p.service.ManagedTls == nil || *fresh.ManagedTls != *p.service.ManagedTls) {
+			failed = true
+		}
+		service = fresh
+	}
 	if p == nil || !p.ready || failed {
 		var err error
-		p, err = b.prepareService(ctx, name, p)
+		p, err = b.prepareService(ctx, name, p, service, client)
 		if err != nil {
 			return connectionruntime.Connection{}, err
 		}
 	}
 	b.mu.Lock()
-	err := p.err
+	err = p.err
 	b.mu.Unlock()
 	if err != nil {
 		return connectionruntime.Connection{}, err
@@ -408,59 +572,130 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 			return connectionruntime.Connection{}, err
 		}
 	}
+	b.mu.Lock()
+	if b.workload != client || b.closed {
+		b.mu.Unlock()
+		return connectionruntime.Connection{}, connectionruntime.ErrUnprepared
+	}
 	p.authorizedUntil = validUntil
-	return b.preparedLocked(name)
+	b.publishLocked()
+	b.mu.Unlock()
+	return b.Prepared(name)
+}
+
+func (b *nativeConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.PrivateService, client *workloadclient.Client) (controlv1.PrivateService, error) {
+	service := approved
+	if client != nil {
+		inventory, err := client.ListServices(ctx)
+		if err != nil {
+			return service, err
+		}
+		found := false
+		for _, s := range inventory.Services {
+			if s.Service != name || s.Id != approved.Id {
+				continue
+			}
+			if found {
+				return service, connectionruntime.ErrInvalid
+			}
+			found = true
+			service = controlv1.PrivateService{Id: s.Id, Name: name, TeamId: approved.TeamId, Protocol: s.Protocol, Enabled: true, ManagedTls: &s.ManagedTls, KubernetesAuth: s.KubernetesAuth}
+		}
+		if !found {
+			return service, connectionruntime.ErrUnauthorized
+		}
+	} else if b.human != nil {
+		var err error
+		service, err = selectConnectService(ctx, b.human.authenticated.Control, b.project, name, b.teamID)
+		if err != nil {
+			return service, err
+		}
+		if service.Id != approved.Id {
+			return service, connectionruntime.ErrUnauthorized
+		}
+	}
+	if validateProfileService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
+		return service, connectionruntime.ErrInvalid
+	}
+	endpoint := service.ManagedTls
+	value, err := projectmeta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
+	if err != nil {
+		return service, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.workload != client || b.closed {
+		return service, connectionruntime.ErrUnprepared
+	}
+	b.services[name] = service
+	metadata := b.metadata
+	metadata.Services = make(map[string]projectmeta.Service, len(b.metadata.Services))
+	for key, s := range b.metadata.Services {
+		metadata.Services[key] = s
+	}
+	metadata.Services[name] = value
+	if approved.ManagedTls != nil && metadata.Namespace == approved.ManagedTls.Hostname {
+		metadata.Namespace = value.Namespace
+	}
+	b.metadata = metadata
+	b.publishLocked()
+	return service, nil
 }
 
 // Prepared is a local read only: no provider/control requests, key creation,
 // listener setup or repair. an unprepared sibling must be explicitly awaited.
 func (b *nativeConnectionBackend) Prepared(name string) (connectionruntime.Connection, error) {
-	b.prepareMu.Lock()
-	defer b.prepareMu.Unlock()
-	return b.preparedLocked(name)
+	p, err := b.Snapshot(name)
+	return p.Connection, err
 }
 
-func (b *nativeConnectionBackend) preparedLocked(name string) (connectionruntime.Connection, error) {
-	p := b.prepared[name]
-	if p == nil || !p.ready {
-		return connectionruntime.Connection{}, connectionruntime.ErrUnprepared
+func (b *nativeConnectionBackend) Snapshot(name string) (connectionruntime.Prepared, error) {
+	return b.SnapshotFor(name, "")
+}
+
+func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectionruntime.Prepared, error) {
+	s := b.snapshot.Load()
+	if s == nil {
+		b.mu.Lock()
+		b.publishLocked()
+		s = b.snapshot.Load()
+		b.mu.Unlock()
 	}
-	service, allowed := b.services[name]
-	if !allowed || service.Id != p.service.Id || validateProfileService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-		return connectionruntime.Connection{}, connectionruntime.ErrUnprepared
+	if err := s.errors[name]; err != nil {
+		return connectionruntime.Prepared{}, err
 	}
-	b.mu.Lock()
-	err := p.err
-	deadline := b.deadline
-	b.mu.Unlock()
-	if err != nil {
-		return connectionruntime.Connection{}, err
+	c, ok := s.connections[name]
+	if !ok {
+		return connectionruntime.Prepared{}, connectionruntime.ErrUnprepared
 	}
-	if !deadline.After(time.Now()) {
-		return connectionruntime.Connection{}, connectionruntime.ErrExpired
+	if !c.ExpiresAt.After(time.Now()) {
+		return connectionruntime.Prepared{}, connectionruntime.ErrExpired
 	}
-	if b.workload != nil {
-		s, err := b.workload.Session()
-		if err == nil && p.sessionID != s.Id {
-			return connectionruntime.Connection{}, connectionruntime.ErrUnprepared
+	var verification *connectionruntime.AssertionVerification
+	if s.verification != nil && s.verification.ExpiresAt.After(time.Now()) {
+		v := *s.verification
+		verification = &v
+	}
+	if c.SSL != nil {
+		ssl := *c.SSL
+		c.SSL = &ssl
+	}
+	if assertion != "" {
+		digest := sha256.Sum256([]byte(assertion))
+		proof, found := s.assertions[hex.EncodeToString(digest[:])]
+		if !found || !proof.ExpiresAt.After(time.Now()) {
+			return connectionruntime.Prepared{}, connectionruntime.ErrUnprepared
 		}
-		if err != nil || !s.LeaseExpiresAt.After(time.Now()) || !slices.Contains(s.ServiceIds, p.service.Id) {
-			return connectionruntime.Connection{}, connectionruntime.ErrExpired
-		}
+		verification = &proof
 	}
-	result := p.connection
-	result.ExpiresAt = deadline
-	if p.service.Protocol != controlv1.Tcp {
-		options := connectionruntime.TLSOptions{ServerName: p.service.ManagedTls.Hostname, RejectUnauthorized: true}
-		result.SSL = &options
-	}
-	return result, nil
+	return connectionruntime.Prepared{Schema: 1, PublicRuntime: s.metadata, Connection: c, Verification: verification}, nil
 }
 func (b *nativeConnectionBackend) healthy() (time.Time, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.human != nil && b.workload == nil {
 		b.deadline = time.Now().Add(time.Hour)
+		b.publishLocked()
 	}
 	if !b.deadline.After(time.Now()) {
 		return time.Time{}, connectionruntime.ErrExpired
@@ -468,6 +703,11 @@ func (b *nativeConnectionBackend) healthy() (time.Time, error) {
 	return b.deadline, nil
 }
 func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) {
+	ctx, finish, err := b.begin(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer finish()
 	if b.parentPID > 0 {
 		process, err := os.FindProcess(b.parentPID)
 		if err != nil || process.Signal(syscall.Signal(0)) != nil {
@@ -494,12 +734,14 @@ func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) 
 			b.deadline = session.ExpiresAt
 		}
 		deadline := b.deadline
+		b.publishLocked()
 		b.mu.Unlock()
 		return deadline, nil
 	}
 	b.mu.Lock()
 	b.deadline = time.Now().Add(time.Hour)
 	deadline := b.deadline
+	b.publishLocked()
 	b.mu.Unlock()
 	return deadline, nil
 }
@@ -525,8 +767,28 @@ func (b *nativeConnectionBackend) UseAssertion(ctx context.Context, assertion st
 }
 
 func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, reuse bool) error {
-	b.prepareMu.Lock()
-	defer b.prepareMu.Unlock()
+	ctx, finish, err := b.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	// verified warm requests do not join unrelated assertion acquisition or
+	// exchange. the cached proof still belongs to this exact current session.
+	if reuse && assertion != "" && b.reuseAssertion(assertion) {
+		return nil
+	}
+	b.mu.Lock()
+	if b.sessionGate == nil {
+		b.sessionGate = make(chan struct{}, 1)
+	}
+	gate := b.sessionGate
+	b.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		defer func() { <-gate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if assertion == "" {
 		var err error
 		assertion, err = workloadclient.Acquire(ctx, b.acquisition, nil)
@@ -534,49 +796,63 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 			return err
 		}
 	}
-	if b.workload == nil {
+	b.mu.Lock()
+	client := b.workload
+	b.mu.Unlock()
+	if client == nil {
 		return connectionruntime.ErrInvalid
 	}
-	previous, err := b.workload.Session()
+	previous, err := client.Session()
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256([]byte(assertion))
-	verified, known := b.assertions[hex.EncodeToString(digest[:])]
-	if reuse && known && b.assertionChecks[verified.Digest].After(time.Now()) && verified.ExpiresAt.After(time.Now()) && b.verifiedSession == previous.Id && previous.LeaseExpiresAt.After(time.Now()) && previous.ExpiresAt.After(time.Now()) {
-		b.verification = &verified
+	if reuse && b.reuseAssertion(assertion) {
 		return nil
 	}
-	session, err := b.workload.Attach(ctx, assertion)
+	session, err := client.Attach(ctx, assertion)
 	if err == nil {
 		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.closed {
+			return connectionruntime.ErrExpired
+		}
 		b.deadline = session.ExpiresAt
-		b.mu.Unlock()
 		if session.AssertionExpiresAt != nil {
 			b.rememberAssertion(assertion, *session.AssertionExpiresAt, session)
 		} else {
 			b.verification = nil
 		}
+		b.publishLocked()
 		return nil
 	}
 	// a denied assertion does not stop other listeners. discard only their
 	// cached admission observations so subsequent preparation checks live access.
+	b.mu.Lock()
 	for _, p := range b.prepared {
 		p.authorizedUntil = time.Time{}
 	}
+	b.mu.Unlock()
 	if errors.Is(err, workloadclient.ErrSessionExpired) {
 		// replacement authorizes future accepts from scratch. the old adapter and
 		// its streams retain their old subject and never receive the new rights.
 		if previous.Provider == controlv1.WorkloadGitHub {
 			return connectionruntime.ErrExpired
 		}
+		b.mu.Lock()
 		next := b.replacement
+		b.mu.Unlock()
 		if next == nil {
 			next, err = workloadclient.New(b.scope.Server, b.httpClient)
 			if err != nil {
 				return err
 			}
+			b.mu.Lock()
+			if b.closed {
+				b.mu.Unlock()
+				return connectionruntime.ErrExpired
+			}
 			b.replacement = next
+			b.mu.Unlock()
 		}
 		identity, err := next.IdentifyPolicy(ctx, b.scope.TeamID, b.scope.ProjectKey, b.scope.SourceID, b.scope.Workload, assertion)
 		if err != nil {
@@ -602,8 +878,10 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 			// only control-confirmed expiry permits a new retry nonce/key after
 			// an exchange response was lost for longer than its original lease.
 			if errors.Is(err, workloadclient.ErrSessionExpired) {
+				b.mu.Lock()
 				b.replacement = nil
 				b.replacementScope = connectionruntime.Context{}
+				b.mu.Unlock()
 			}
 			return err
 		}
@@ -635,26 +913,40 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 			return err
 		}
 		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.closed {
+			return connectionruntime.ErrExpired
+		}
 		b.workload = next
 		b.deadline = session.ExpiresAt
-		b.mu.Unlock()
 		b.services, b.metadata = services, metadata.Public(false)
 		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
 		b.replacement = nil
 		b.replacementScope = connectionruntime.Context{}
-		for name, p := range b.prepared {
-			if _, found := services[name]; !found {
-				continue
-			}
-			if _, err := b.prepareService(ctx, name, p); err != nil {
-				b.mu.Lock()
-				p.err = err
-				b.mu.Unlock()
-			}
-		}
+		b.publishLocked()
 		return nil
 	}
 	return err
+}
+
+func (b *nativeConnectionBackend) reuseAssertion(assertion string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.workload == nil {
+		return false
+	}
+	session, err := b.workload.Session()
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(assertion))
+	proof, known := b.assertions[hex.EncodeToString(digest[:])]
+	if !known || !b.assertionChecks[proof.Digest].After(time.Now()) || !proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
+		return false
+	}
+	b.verification = &proof
+	b.publishLocked()
+	return true
 }
 
 func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires time.Time, session authorityv1.WorkloadSession) {
@@ -690,8 +982,8 @@ func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires ti
 	b.verifiedSession = session.Id
 }
 func (b *nativeConnectionBackend) Verification() *connectionruntime.AssertionVerification {
-	b.prepareMu.Lock()
-	defer b.prepareMu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.verification == nil || !b.verification.ExpiresAt.After(time.Now()) {
 		return nil
 	}
@@ -700,19 +992,26 @@ func (b *nativeConnectionBackend) Verification() *connectionruntime.AssertionVer
 }
 
 func (b *nativeConnectionBackend) PublicRuntime() projectmeta.PublicMetadata {
-	b.prepareMu.Lock()
-	defer b.prepareMu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.metadata
 }
 func (b *nativeConnectionBackend) Kubeconfig() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for _, p := range b.prepared {
-		if p.connection.Kubeconfig != "" {
+		if p.ready && p.connection.Kubeconfig != "" {
 			return p.connection.Kubeconfig
 		}
 	}
 	return ""
 }
-func (b *nativeConnectionBackend) Close(ctx context.Context) (result error) {
+func (b *nativeConnectionBackend) Close(ctx context.Context) error {
+	var result error
+	b.mu.Lock()
+	b.closed = true
+	b.cleanupContext = ctx
+	b.publishLocked()
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -721,23 +1020,70 @@ func (b *nativeConnectionBackend) Close(ctx context.Context) (result error) {
 			result = errors.Join(result, p.listener.Close())
 		}
 	}
-	b.workers.Wait()
-	result = errors.Join(result, b.cleanupErr)
-	if b.sessionKubeResult.File != "" {
-		result = errors.Join(result, b.sessionKubePlan.CleanupSession(ctx, b.sessionKubeResult))
-	}
-	if b.workload != nil {
-		if _, err := b.workload.Session(); err == nil {
-			result = errors.Join(result, b.workload.Revoke(ctx))
+	clients := []*workloadclient.Client{b.workload, b.replacement}
+	b.mu.Unlock()
+	// revocation and path cleanup share the caller's budget and start together.
+	// failed releases cannot consume the time reserved for session revocation.
+	var cleanup sync.WaitGroup
+	var resultsMu sync.Mutex
+	add := func(err error) { resultsMu.Lock(); result = errors.Join(result, err); resultsMu.Unlock() }
+	seen := map[*workloadclient.Client]bool{}
+	var revokeMu sync.Mutex
+	revoke := func(client *workloadclient.Client) {
+		revokeMu.Lock()
+		if client == nil || seen[client] {
+			revokeMu.Unlock()
+			return
 		}
+		if _, err := client.Session(); err != nil {
+			revokeMu.Unlock()
+			return
+		}
+		seen[client] = true
+		revokeMu.Unlock()
+		add(client.Revoke(ctx))
 	}
-	if b.human != nil {
-		result = errors.Join(result, b.human.Close())
+	for _, client := range clients {
+		cleanup.Go(func() { revoke(client) })
 	}
+	cleanup.Go(func() {
+		b.operations.Wait()
+		// an exchange may have committed just as shutdown canceled its request.
+		b.mu.Lock()
+		pending := b.replacement
+		b.mu.Unlock()
+		revoke(pending)
+		b.workers.Wait()
+		b.mu.Lock()
+		err := b.cleanupErr
+		b.mu.Unlock()
+		add(err)
+		b.kubeMu.Lock()
+		defer b.kubeMu.Unlock()
+		if b.sessionKubeResult.File != "" {
+			add(b.sessionKubePlan.CleanupSession(ctx, b.sessionKubeResult))
+		}
+		if b.human != nil {
+			add(b.human.Close())
+		}
+	})
+	done := make(chan struct{})
+	go func() { cleanup.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		resultsMu.Lock()
+		result = errors.Join(result, ctx.Err())
+		resultsMu.Unlock()
+	}
+	resultsMu.Lock()
+	defer resultsMu.Unlock()
 	return result
 }
 
 func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, p *preparedConnection) error {
+	b.kubeMu.Lock()
+	defer b.kubeMu.Unlock()
 	p.kubeSource = kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}
 	var err error
 	if p.kubeSource.TokenFile != "" {
@@ -780,7 +1126,7 @@ func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, 
 	if err != nil {
 		return err
 	}
-	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.scope.TeamID, SourceID: b.scope.SourceID, ServiceID: p.service.Id}
+	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: p.service.Id}
 	p.kubeResult, err = p.kubePlan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(p.connection.Host, strconv.Itoa(p.connection.Port)), TLSServerName: p.service.ManagedTls.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
 	if err == nil {
 		if b.scope.Workload != "" {
@@ -793,11 +1139,20 @@ func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, 
 }
 
 func (b *nativeConnectionBackend) Credential(ctx context.Context, name string) (credentialv1.ExecCredential, error) {
+	ctx, finish, err := b.begin(ctx)
+	if err != nil {
+		return credentialv1.ExecCredential{}, err
+	}
+	defer finish()
+	b.mu.Lock()
 	p := b.prepared[name]
-	if p == nil || p.connection.Protocol != "kubernetes" {
+	if p == nil || !p.ready || p.connection.Protocol != "kubernetes" {
+		b.mu.Unlock()
 		return credentialv1.ExecCredential{}, kubeconfig.ErrCredential
 	}
-	credential, err := kubeconfig.Credential(ctx, kubeconfig.Profile{Source: p.kubeSource}, nil)
+	source := p.kubeSource
+	b.mu.Unlock()
+	credential, err := kubeconfig.Credential(ctx, kubeconfig.Profile{Source: source}, nil)
 	if err != nil {
 		return credentialv1.ExecCredential{}, err
 	}

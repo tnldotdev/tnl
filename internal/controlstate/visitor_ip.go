@@ -330,8 +330,8 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 	if err := q.CleanupManagedHTTPSessions(ctx, timestamptz(now)); err != nil {
 		return err
 	}
-	_, err := d.pool.Exec(ctx, `DELETE FROM control.workload_assertions WHERE jti_digest IN (SELECT jti_digest FROM control.workload_assertions WHERE expires_at<$1 ORDER BY expires_at LIMIT 1000)`, now)
-	return err
+	// workload assertion replay fences and history belong to CleanupWorkloads.
+	return nil
 }
 
 func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, *time.Time, error) {

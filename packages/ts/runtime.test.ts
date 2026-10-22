@@ -152,7 +152,7 @@ describe("root runtime", () => {
     },
   );
 
-  test("missing preparation and missing service metadata have owned diagnostics", async () => {
+  test("unprepared projects fail while absent optional services stay undefined", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
     vi.resetModules();
     const unprepared = await import("@tnldotdev/tnl");
@@ -165,9 +165,7 @@ describe("root runtime", () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: true }));
     vi.resetModules();
     const prepared = await import("@tnldotdev/tnl");
-    expect(() => prepared.tnl.services.missing).toThrow(
-      expect.objectContaining({ code: "sdk.service_unprepared" }),
-    );
+    expect(prepared.tnl.services.missing).toBeUndefined();
   });
 
   test("respects Node and Bun port settings", async () => {

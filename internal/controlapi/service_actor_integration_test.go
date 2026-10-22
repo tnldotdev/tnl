@@ -330,7 +330,7 @@ func TestIntegrationServiceActorCurrentCompanySource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var active controlstate.IdentityConnectionSecret
-	serviceResult(t, f.ownerCall("POST", connections+"/"+setup.ID+"/activate", serviceOwnerSub, f.proof(setup.IdentityConnection, "directory-owner"), map[string]any{"setup_token": setup.SetupToken, "expected_revision": setup.Revision}), 200, &active)
+	serviceResult(t, f.ownerCall("POST", connections+"/"+setup.ID+"/activate", serviceOwnerSub, f.proof(setup.IdentityConnection, "directory-owner"), f.activationRequest(setup)), 200, &active)
 	target := "/v1/service/teams/" + team.ID + "/private-services"
 	base := "/v1/service/private-services/" + service.ID
 	proofs := f.proof(active.IdentityConnection, "directory-owner")

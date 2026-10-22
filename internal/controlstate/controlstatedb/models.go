@@ -1149,6 +1149,12 @@ type ControlPublisherAssertion struct {
 	ExpiresAt           pgtype.Timestamptz
 }
 
+type ControlPublisherCertificateCheckpoint struct {
+	PublisherIdentityID string
+	PlanDigest          string
+	CertificatePlan     []byte
+}
+
 type ControlPublisherEnrollment struct {
 	ID                  string
 	EnrollmentKeyDigest []byte
@@ -1235,17 +1241,16 @@ type ControlPublisherGroupServiceGrant struct {
 }
 
 type ControlPublisherIdentity struct {
-	ID                       string
-	TeamID                   string
-	Name                     string
-	Kind                     string
-	CreatedByIdentityID      string
-	Ownership                string
-	OwnerMembershipID        pgtype.Text
-	GuestID                  pgtype.Text
-	CertificateStateRequired bool
-	CreatedAt                pgtype.Timestamptz
-	RevokedAt                pgtype.Timestamptz
+	ID                  string
+	TeamID              string
+	Name                string
+	Kind                string
+	CreatedByIdentityID string
+	Ownership           string
+	OwnerMembershipID   pgtype.Text
+	GuestID             pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
 }
 
 type ControlPublisherIdentityKey struct {

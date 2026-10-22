@@ -101,7 +101,7 @@ try {
   );
   await run("pnpm", ["install", "--ignore-scripts"], { cwd: consumer, timeout: 120_000 });
   const { stdout: managerVersion } = await run("pnpm", ["--version"], { cwd: consumer });
-  assert.equal(managerVersion.trim(), "11.25.0");
+  assert.equal(managerVersion.trim(), "11.28.7");
   await copyFile(
     path.join(import.meta.dirname, "function.ts"),
     path.join(consumer, "server/routes/check.ts"),
@@ -174,7 +174,7 @@ try {
   await json(path.join(output, "qualification.json"), {
     builder: "nitropack@2.13.5",
     node: process.versions.node,
-    packageManager: "pnpm@11.25.0",
+    packageManager: "pnpm@11.28.7",
     host: `${process.platform}-${process.arch}`,
     linux: "linux-x64 packaging; runtime evidence is in linux-x64-invocation.json when selected",
     nativeSha256: Object.fromEntries(hashes),

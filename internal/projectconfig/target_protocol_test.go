@@ -18,7 +18,11 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 				project := Project{Root: t.TempDir(), Config: config.TNL{Publishers: map[string]config.Publisher{"production": {}}, Services: config.Services{
 					"service": {Publisher: &publisher, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &host}}},
 				}}}
-				local, err := project.CaptureServiceTrust(t.Context(), nil, "service", "")
+				publication, err := project.ResolvePublish("service", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				local, err := project.CaptureServiceTrust(t.Context(), nil, "service", string(*publication.Target))
 				if err != nil {
 					t.Fatal(err)
 				}

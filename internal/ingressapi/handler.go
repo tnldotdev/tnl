@@ -357,7 +357,8 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		protocol = &value
 	}
 	return ingressv1.IngressRoutingTableEntry{
-		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
+		PublishRunClosed: &projection.PublishRunClosed,
+		PublishRunId:     projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
 		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),

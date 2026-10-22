@@ -159,13 +159,17 @@ func selectServiceShare(ctx context.Context, s *teamSession, project projectConf
 	id := name
 	var expectedSource *controlv1.LocalServiceSource
 	if key != "" {
-		source, err := project.SourceIdentity(ctx)
-		if err != nil {
-			return controlv1.PrivateService{}, failure.Wrap("identify service access project", failure.ProjectConfigInvalid, err)
-		}
-		expectedSource = &controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Service: key}
+		expectedSource = &controlv1.LocalServiceSource{Service: key}
 		if config.PublisherName(project.Config.Services[key]) == "local" {
+			source := project.LocalPublicationIdentity()
+			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
 			expectedSource.WorktreeKey = project.LocalWorktreeKey()
+		} else {
+			source, err := project.SourceIdentity(ctx)
+			if err != nil {
+				return controlv1.PrivateService{}, failure.Wrap("identify service access project", failure.ProjectConfigInvalid, err)
+			}
+			expectedSource.ProjectKey, expectedSource.SourceFingerprint = source.Key, source.Fingerprint
 		}
 		// management inventory carries authoritative source bindings without
 		// requiring a visitor grant for either local or applied services.

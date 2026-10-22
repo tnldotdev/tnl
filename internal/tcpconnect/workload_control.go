@@ -46,7 +46,7 @@ func NewWorkloadControl(client *workloadclient.Client) (Control, error) {
 		return nil, err
 	}
 	c := &workloadControl{client: client, subject: subject, pairs: make(map[string]*workloadAssignmentPair), owned: make(map[string]bool)}
-	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close})
+	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext})
 }
 
 func (c *workloadControl) signer(_ context.Context, identity string) (Signer, error) {
@@ -194,7 +194,7 @@ func (c *workloadControl) releaseLocked(ctx context.Context, session string) err
 		return nil
 	}
 	c.owned[session] = true
-	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finish, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := c.client.ReleaseIngressAssignment(finish, session); err != nil {
 		return err
@@ -213,12 +213,17 @@ func (c *workloadControl) releaseLocked(ctx context.Context, session string) err
 	return nil
 }
 func (c *workloadControl) close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.closeContext(ctx)
+}
+func (c *workloadControl) closeContext(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
 	var err error
 	for id := range c.owned {
-		err = errors.Join(err, c.releaseLocked(context.Background(), id))
+		err = errors.Join(err, c.releaseLocked(ctx, id))
 	}
 	return err
 }

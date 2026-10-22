@@ -27,6 +27,7 @@ type PrivateRegistry struct {
 	observer    OperationObserver
 	mu          sync.Mutex
 	connections map[string]*privateConnection
+	claims      map[string]*privateClaim
 	closed      bool
 }
 
@@ -36,6 +37,38 @@ func NewPrivateRegistry() *PrivateRegistry {
 
 // Instrument configures observation before the registry begins serving work.
 func (r *PrivateRegistry) Instrument(observer OperationObserver) { r.observer = observer }
+
+// reserve holds local ownership from before control's claim through its final
+// disconnect. response-loss retries use the same assignment and process lease;
+// a duplicate handshake must never reach control or clean up the owner's claim.
+func (r *PrivateRegistry) reserve(c *privateClaim) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return &tunnel.ProtocolError{Code: tunnelv1.DrainingPublisherConnection}
+	}
+	if r.claims[c.ref.PublisherConnectionID] != nil || r.connections[c.ref.PublisherConnectionID] != nil {
+		return &tunnel.ProtocolError{Code: tunnelv1.DuplicatePublisherConnection}
+	}
+	for _, old := range r.claims {
+		if old.ref.PrivateRunID == c.ref.PrivateRunID && old.ref.ConnectionSlot == c.ref.ConnectionSlot && old.ref.ConnectionAssignmentRevision >= c.ref.ConnectionAssignmentRevision {
+			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		}
+	}
+	if r.claims == nil {
+		r.claims = make(map[string]*privateClaim)
+	}
+	r.claims[c.ref.PublisherConnectionID] = c
+	return nil
+}
+
+func (r *PrivateRegistry) release(c *privateClaim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.claims[c.ref.PublisherConnectionID] == c {
+		delete(r.claims, c.ref.PublisherConnectionID)
+	}
+}
 
 func (r *PrivateRegistry) insert(c *privateConnection) error {
 	r.mu.Lock()
@@ -54,10 +87,7 @@ func (r *PrivateRegistry) insert(c *privateConnection) error {
 			break
 		}
 	}
-	if replaced == nil && int64(len(r.connections)) >= c.lease.ConnectionCapacity {
-		r.mu.Unlock()
-		return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
-	}
+	// control checks shared public/private process capacity under its lease lock.
 	if replaced != nil {
 		delete(r.connections, replaced.ref.PublisherConnectionID)
 	}
@@ -170,8 +200,13 @@ func (a *PrivatePublisherAcceptor) claim(ctx context.Context, message tunnelv1.M
 	if !ok || target.Control == nil || target.Registry == nil {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
+	claim := &privateClaim{target: target, ref: ref}
+	if err := target.Registry.reserve(claim); err != nil {
+		return nil, err
+	}
 	lease, err := target.Control.privateClaim(ctx, ref, message.Credential)
 	if err != nil {
+		target.Registry.release(claim)
 		code := ControlErrorCode(err)
 		var direct *tunnelPrivateControlError
 		if errors.As(err, &direct) {
@@ -179,10 +214,12 @@ func (a *PrivatePublisherAcceptor) claim(ctx context.Context, message tunnelv1.M
 		}
 		return nil, errors.Join(err, &tunnel.ProtocolError{Code: code})
 	}
-	return &privateClaim{target: target, ref: ref, lease: lease}, nil
+	claim.lease = lease
+	return claim, nil
 }
 
 func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, acceptor *PublisherAcceptor, finishAdmission func(error)) (result error) {
+	defer c.target.Registry.release(c)
 	ready := false
 	unexpected := false
 	defer func() {

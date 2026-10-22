@@ -148,6 +148,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				mutations["public readiness"] = func(j *Job) { j.ReadinessPath = "/health" }
 			}
 			if kind == KindPublicURL || kind == KindGroup {
+				mutations["managed service TLS"] = func(j *Job) { j.ManagedTLS = &controlv1.ManagedServiceTLS{Hostname: "service.example", Port: 443} }
 				mutations["private trust"] = func(j *Job) { j.Trust = &privatetrust.Snapshot{} }
 				mutations["private revision"] = func(j *Job) { j.TrustRevision = 1 }
 				mutations["private service"] = func(j *Job) { j.PrivateServiceID = "private" }
@@ -165,6 +166,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 				mutations["missing grant"] = func(j *Job) { j.GrantID = "" }
 			}
 			if kind == KindGroup {
+				mutations["public readiness flag"] = func(j *Job) { j.VerifyReadiness = true }
 				mutations["target"] = func(j *Job) { j.Target = "127.0.0.1:5432" }
 				mutations["target trust"] = func(j *Job) { j.TargetTLSName = "target.example" }
 				mutations["group signer"] = func(j *Job) {

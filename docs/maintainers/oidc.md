@@ -94,6 +94,16 @@ session. The named developer is seeded once as a server administrator and owner
 of the `local` organization team. Local development client secrets are fixed
 fixture data. The provider binds only localhost through Compose.
 
+The host's development TLS key stays mode 0600. A networkless preparation
+container copies the certificate and key into an OIDC-only volume, sets the key
+to mode 0600 and ownership to UID/GID 65532, then exits. The provider mounts that
+volume read-only and runs as UID/GID 65532; it does not depend on Docker Desktop's
+host-file permission translation.
+
+An `oidc_admission_file` set in a `tnld` YAML/JSON configuration resolves relative
+to that configuration's directory. Environment and command-line overrides keep
+their normal working-directory-relative paths.
+
 The normal local stack prerequisites and trust setup are described in
 [contributing](../../contributing.md). No keychain changes are needed for the
 disposable PostgreSQL/OIDC integration test:

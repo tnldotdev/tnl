@@ -233,10 +233,11 @@ FOR KEY SHARE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.publish_run_connection_slots
+FROM control.publisher_service_connection_slots
 WHERE connected_relay_id = sqlc.arg(relay_id)
   AND connected_relay_run_id = sqlc.arg(relay_run_id)
   AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
+  AND session_open
   AND state IN ('connected', 'ready', 'draining');
 
 -- callers hold affected public URL rows and any existing publish run rows.

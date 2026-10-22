@@ -127,7 +127,16 @@ try {
       }
       throw new Error("installed database driver check failed");
     });
-    assert.equal(stderr, "", "ordinary driver settings must not produce option warnings");
+    // pg 8.23's own cancel() reads its deprecated activeQuery getter. allow only
+    // that known method warning; ordinary connection-option warnings still fail.
+    const warnings =
+      protocol === "postgres-drivers"
+        ? stderr.replace(
+            /^\(node:\d+\) DeprecationWarning: Client\.activeQuery is deprecated and will be removed in pg@9\.0\n\(Use `node --trace-deprecation \.\.\.` to show where the warning was created\)\n$/,
+            "",
+          )
+        : stderr;
+    assert.equal(warnings, "", "ordinary driver settings must not produce option warnings");
     process.stdout.write(stdout);
   } else if (protocol !== "postgres") {
     stage = "native runtime";

@@ -36,17 +36,28 @@ service default; declared groups accept `description`, `domain`, and `public`.
 See [applied projects](applied-projects.md) for remote group assignments.
 
 For a configured local private service, `tnl connect orders` reads the exact
-source-bound worktree realization from control, then selects only that immutable
-ID in the caller's visitor inventory. A unique `name` override also selects the
+directory-bound worktree realization from control, then selects only that
+immutable ID in the caller's visitor inventory. A unique `name` override also selects the
 same declaration. Local saved names are worktree-scoped; the CLI does not derive
 them or adopt another project's friendly name. Start the app or `tnl publish
 orders` first if the worktree has no realization. This visitor read never applies
 configuration or realizes a service and requires ordinary visitor access.
+Local publication and lookup need no Git repository or origin. The canonical
+directory identity survives Git initialization and origin changes; it is separate
+from the portable Git source used by apply and named groups.
 Remote declarations resolve the exact applied source fingerprint and
 configuration key through the visitor-safe project-service API. They never
 adopt a similarly named service from another project or group, and they do not
 need manager permission to read a target-free endpoint. An explicit service ID,
 including with `--no-config`, continues to select from visitor inventory.
+
+control-session management lists, visitor lists, and signed-human authority
+management lists return at most 100 service summaries per page. summaries keep
+IDs, placement, source bindings, protocol, managed TLS, and run-selection hints;
+they omit publisher-only `target_tls` and `http_limits`. native publisher setup
+fetches the selected service's exact management record before comparing target
+trust. inventory discovery must fit the bounded native client even when every
+service has a large approved CA bundle.
 
 ## connect with the service's approved protocol
 
@@ -84,6 +95,10 @@ the local dial address and managed TLS identity are separate:
 - PostgreSQL uses the managed `host` and local port with loopback `hostaddr`,
   `sslmode=verify-full`, `sslrootcert=system`, `gssencmode=disable`, and
   `channel_binding=disable` across publisher TLS termination.
+  These transport options keep certificate and hostname verification enabled;
+  a required SCRAM-PLUS channel binding cannot cross the separate visitor and
+  target TLS connections. psycopg uses the same libpq options, with explicit
+  trusted roots on versions without `sslrootcert=system` support.
 - MySQL uses the managed hostname with `VERIFY_IDENTITY` and an explicit server
   CA bundle. the instructions require an exact `/etc/hosts` mapping from that
   name to the listener before running standard `mysql`. `--host=localhost`
@@ -158,6 +173,10 @@ targets can be retried. Neither preflight nor forwarding retries in plaintext,
 disables verification, or replays protocol bytes. MySQL is never probed as HTTPS.
 PostgreSQL instructions retain `channel_binding=disable` because visitor and target
 TLS end at different boundaries; ordinary SCRAM authentication remains intact.
+native PostgreSQL CancelRequests are refused even after TLS admission because
+their backend key is not bound to the original visitor subject and service. see
+[database cancellation](database-cancellation.md) for supported query bounds and
+the required ownership design.
 
 For native `kubectl` access to an EKS private endpoint, use `protocol: tcp`, omit
 `target.tls`, and
@@ -204,6 +223,18 @@ live slots control demotes the run and publishes a tombstone. It retains the
 first-ready timestamp so one reconnected relay can restore availability. Relay
 lease expiry excludes that relay without expiring another surviving slot or
 replaying existing visitors.
+
+A relay can repeat the exact connected claim after losing control's response,
+using the same connection ID, assignment revision, credential, and process lease.
+The relay reserves local ownership before calling control and retains it through
+disconnect, so a duplicate handshake cannot close the owner's connection. A
+different process cannot recover that claim, and a ready connection cannot be
+claimed again. If its credential expires before readiness, heartbeat replaces
+that never-ready assignment and fences late readiness or disconnect calls from
+the old handshake. A ready sibling retains its assignment and streams even after
+its original claim credential expires. Public and private claims share each relay
+process's connection capacity; control checks their combined count under the
+selected lease lock.
 
 ## authenticate the connector and each stream
 
@@ -411,6 +442,14 @@ expires sooner than the normal interval. An explicit denial closes both ends.
 Successful checks return a `valid_until` bounded by the applicable grants, run,
 ingress and live relay deadlines, with a hard two-minute cap. Unavailable control
 cannot extend that deadline. Stream-copy workers join before ingress releases capacity.
+Selection, initial admission, and rechecks also stop at the managed service
+certificate's deadline; a missing or expired certificate denies a recheck.
+
+Public URL HTTP responses and WebSocket upgrades retain their own live guards
+with the same current-access and bounded-outage rules. Session renewal can keep
+an operation authorized within its original deadline; a replacement session or
+credential authorizes future work only. It cannot extend an old operation's
+original session expiry or replay bytes already admitted to a target.
 
 Connector-session expiry prevents new streams on that mux; it does not revoke
 already admitted streams. The connector obtains another authenticated path

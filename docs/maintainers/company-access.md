@@ -30,31 +30,40 @@ compute the standard OIDC `nonce` from the bytes actually sent:
 ```text
 body_digest = base64url_no_padding(SHA256(request_body_bytes))
 nonce = base64url_no_padding(SHA256(UTF8(
-  "tnl.company.actor.v1\n" + METHOD + "\n" + escaped_path + "\n" + body_digest
+  "tnl.company.actor.v1\n" + METHOD + "\n" + request_target + "\n" + body_digest
 )))
 ```
 
-use uppercase HTTP methods, no origin or query in `escaped_path`, and an empty
-body for GET. `controlstate.CompanyActorNonce` implements this formula. serialize
+use uppercase HTTP methods and an empty body for GET. `request_target` is the
+escaped path plus the exact `?query` when present, without an origin.
+`controlstate.CompanyActorNonce` implements this formula. serialize
 the body once, request the issuer token with this nonce, then send those same
 bytes. do not accept a caller's asserted actor or construct company provenance
 from linked-account metadata.
 
-| generated operation              | path and behavior                                                                                                                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `readCompanyConnections`         | `GET /v1/service/teams/{team_id}/identity-connections`; returns optional `active` and `setup` objects, never capabilities                                                                                               |
-| `beginIdentityConnectionSetup`   | `POST` to that path with `source_id`, `admission`, and optional `replace_id` / `expected_revision`; returns pending `icn_...`, revision, `setup_token`, and 15-minute expiry                                            |
-| `activateIdentityConnection`     | `POST .../{identity_connection_id}/activate` with `expected_revision` and `setup_token`; requires signed tenant/source proof and current ownership; returns the advanced active revision and a new `provisioning_token` |
-| `disconnectIdentityConnection`   | `DELETE .../{identity_connection_id}` with `expected_revision`; aborts pending setup or retires an active source and fences old work                                                                                    |
-| `rotateCompanyProvisioningToken` | `POST .../{identity_connection_id}/provisioning-token` with `expected_revision`; recovers a lost activation response by revoking the old token and issuing a new one under fresh current owner proof                    |
-| `listCompanyAdmissions`          | `GET /v1/service/teams/{team_id}/company-admissions`                                                                                                                                                                    |
-| `decideCompanyAdmission`         | `POST .../company-admissions/{request_id}` with current `connection_revision` and `decision: approved` or `denied`                                                                                                      |
-| `setCompanyMembershipDecision`   | `PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision` with `suspended` and `personal_account_exception`                                                                                        |
-| `setCompanyInvitationException`  | `PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision` with `personal_account_exception`; pending invitations only                                                                              |
+| generated operation              | path and behavior                                                                                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readCompanyConnections`         | `GET /v1/service/teams/{team_id}/identity-connections`; returns optional `active` and `setup` objects, never capabilities                                                                                                                   |
+| `beginIdentityConnectionSetup`   | `POST` to that path with `source_id`, `admission`, and optional `replace_id` / `expected_revision`; returns pending `icn_...`, revision, `setup_token`, and 15-minute expiry                                                                |
+| `activateIdentityConnection`     | `POST .../{identity_connection_id}/activate` with required `expected_revision`, `setup_token` and `provisioning_token`; requires signed tenant/source proof and current ownership; returns the advanced active revision and that credential |
+| `disconnectIdentityConnection`   | `DELETE .../{identity_connection_id}` with `expected_revision`; aborts pending setup or retires an active source and fences old work                                                                                                        |
+| `rotateCompanyProvisioningToken` | `POST .../{identity_connection_id}/provisioning-token` with `expected_revision`; explicitly revokes the old token and issues a new one under fresh current owner proof; never use as an activation retry                                    |
+| `listCompanyAdmissions`          | `GET /v1/service/teams/{team_id}/company-admissions`                                                                                                                                                                                        |
+| `decideCompanyAdmission`         | `POST .../company-admissions/{request_id}` with current `connection_revision` and `decision: approved` or `denied`                                                                                                                          |
+| `setCompanyMembershipDecision`   | `PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision` with `suspended` and `personal_account_exception`                                                                                                            |
+| `setCompanyInvitationException`  | `PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision` with `personal_account_exception`; pending invitations only                                                                                                  |
 
 an owner may explicitly grant a contractor invitation or membership exception.
 it permits personal-account sign-in, but does not clear manual suspension or
 removal. sync cannot change that decision or assign admin/owner roles.
+
+`listCompanyAdmissions` returns `{requests, next_cursor?}` with at most 100 rows.
+it includes complete history: pending and decided requests, including previous
+source revisions. follow `?cursor=<next_cursor>` until the cursor is absent.
+order is ascending `created_at`, then bytewise `request_id`; each cursor must
+identify a request in the selected team. sign each page's complete request
+target with a fresh actor assertion. a first-page assertion cannot authorize a
+different cursor. decisions still require the current source revision.
 
 ## consent before enforcement
 
@@ -71,7 +80,20 @@ owner already has an explicit control-owned contractor exception. both current
 ownership and the capability are checked again. activation atomically retires
 the replaced source, advances the new revision, promotes staged eligibility to
 that revision, enables company enforcement, and issues a different provisioning
-credential. the setup credential is unusable afterward.
+credential. the setup credential cannot provision eligibility afterward.
+
+the activation body requires a random 256-bit `provisioning_token` encoded as
+43 canonical base64url characters. the caller must encrypt and persist it before
+sending activation. retries with the same setup capability, expected revision and
+credential return that same active connection only while the credential's digest
+is still current. they recheck current owner/source authorization and never rotate
+a token, advance the revision again, or replay activation's policy changes. a late
+retry after explicit token rotation cannot restore the old credential. when local
+eligibility expired after a lost reply, the precommitted credential can first
+submit a fresh owner delta at the active revision, then the fresh owner proof can
+read the authoritative connection. missing, empty and invalid credentials are
+rejected; activation never generates a provisioning credential. no recoverable
+plaintext secret is stored by control.
 
 staging never creates managed memberships. send subsequent per-user deltas at
 the active revision with higher per-user revisions to perform managed admission.
@@ -140,6 +162,11 @@ website scans stay website-local. only a completed scan may produce negative
 deltas for previously mapped subjects. persist the exact per-user revision and
 payload before sending, and retry the same payload after an uncertain response.
 partial scans must not emit removals. there is no control replace-all operation.
+
+a globally disabled account can receive `eligible: false` deltas, including exact
+retries. positive deltas and normal account resolution still reject it; directory
+sync cannot reactivate an identity. this negative-only path avoids aborting an
+entire completed roster when a former eligible account was globally disabled.
 
 ## one company claim and control login intent
 

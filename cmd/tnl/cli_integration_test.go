@@ -45,7 +45,7 @@ func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	root := filepath.Join(t.TempDir(), "state")
 	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
-	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PublisherSelectionInvalid {
 		t.Fatalf("mixed enrollment selection = %v", err)
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {

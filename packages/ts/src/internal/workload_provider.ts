@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import * as path from "node:path";
-import { Agent, fetch as nodeFetch } from "undici";
+import { Agent, fetch as nodeFetch } from "undici/index.js";
 import * as z from "zod";
 import { privateTnlError, TnlError } from "../errors.js";
 import type { WorkloadOptions } from "../workload.js";
@@ -12,6 +12,7 @@ import {
   type WorkloadManifest,
 } from "./workload_contract.js";
 import { validServiceName } from "./runtime.js";
+import { cancellable } from "./cancellation.js";
 
 let configuration: WorkloadOptions | undefined;
 
@@ -211,6 +212,23 @@ async function githubToken(audience: string, signal: AbortSignal): Promise<strin
 }
 
 export async function acquireAssertion(
+  name: string,
+  selected: Workload,
+  directory: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+  try {
+    return await cancellable(lifetime, () =>
+      acquireCurrentAssertion(name, selected, directory, lifetime),
+    );
+  } catch (cause) {
+    if (lifetime.aborted) throw lifetime.reason;
+    throw privateTnlError("sdk.workload_assertion_unavailable", cause);
+  }
+}
+
+async function acquireCurrentAssertion(
   name: string,
   selected: Workload,
   directory: string,

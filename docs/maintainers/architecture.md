@@ -90,13 +90,36 @@ the target. A source outside a configured IP filter is rejected before
 forwarding. The publisher removes untrusted forwarding headers before proxying
 an allowed HTTP request.
 
+Promotion checks the current assignment identity even when that relay reports no
+spare stream capacity. The visitor already owns its stream; new-stream
+eligibility is a separate decision. Both public and private setup reserve time
+for alternate relays before sending visitor bytes.
+
+Ingress retains run-lifetime traffic totals across temporary routing tombstones,
+projection expiry, and resnapshots. Only a tombstone carrying control's explicit
+`publish_run_closed` evidence permits retiring an inactive run's totals. The
+traffic table holds at most 100,000 run keys and fails closed at capacity. If a
+resnapshot skips closure evidence, the unknown run stays in that bounded table;
+absence and a newer sibling run do not prove closure.
+
 The publisher checks every public HTTP app request against a run-local visitor decision.
 Positive decisions are scoped to the public URL, run, credential digest, and
-trusted source IP. An active decision refreshes after 30 seconds; if control is
+trusted source IP. An active decision rechecks within 30 seconds; if control is
 unavailable, its last successful decision expires within two minutes or sooner
 at the underlying credential, IP grant, or run expiry. Unknown visitors fail
 closed. Only the first allowed request on a restricted visitor connection
 promotes ingress capacity; subsequent requests still check visitor access.
+An admitted public HTTP request keeps its own live guard through streaming and
+WebSocket upgrades. The guard retains the original run, trusted source, and
+browser or share credential, rechecking within 30 seconds. Routine renewal can
+keep a long operation alive; a replacement credential authorizes only future
+requests. Revocation, the original session or share expiry, or the last successful
+decision deadline ends the operation. Only structured control unavailability can
+reuse a positive decision, for at most two minutes and never beyond an earlier
+credential or run deadline. Explicit denial and malformed responses fail closed.
+The publisher cancels the target request and resets the affected HTTP/2 stream
+without closing its shared TLS connection; an upgraded HTTP/1 connection is
+closed directly. No application request is buffered for authorization or replayed.
 Local services without an explicit `publicURL` block are private, including HTTP.
 Managed services have their own hostname, port, and certificate, with loopback
 DNS for private reachability. A named group's `public` setting selects direct
@@ -140,6 +163,17 @@ the assignment adapter, root catalog, tests and live qualification boundary.
 the publisher forwards application authentication headers unchanged after visitor
 admission. the application owns target authentication independently of tnl access.
 
+`internal/httpstream` owns the shared HTTP request-body adapter for managed
+forwarding and `internal/localproxy`. it enables HTTP/1 full duplex before the
+target can flush a response, and gives each upload 30 seconds to complete,
+including trickling uploads. the read deadline ends at body completion; it does
+not impose a total lifetime on SSE responses or upgrades. HTTP/2 read deadlines
+apply to one request stream. the adapter retains the original incoming trailer
+owner across authentication, cookie-filter, mount, and proxy request clones,
+copying trailer values to the target request only after body EOF. it neither
+buffers nor replays payloads. inspection records an interrupted response as an
+error while retaining the status already sent to the visitor.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.
@@ -162,8 +196,11 @@ For local services, an explicit per-service `publicURL` block enables public
 HTTPS; root public URL settings are defaults only. `name` overrides a saved service name on either the
 public or private path. `access: {team: true}` declares team access. Services
 default to the reserved built-in `local` publisher, which owns app registrations
-and local target discovery. Named `publishers` entries accept only an optional
-`description`; infrastructure owns capacity and host placement.
+and local target discovery. Named `publishers` entries accept `description`,
+`domain`, `public`, and optional `aws: {replicas: N}` generation intent;
+infrastructure owns capacity and host placement. A named HTTP service's
+`publicURL` block may narrow IP access and HTTP request limits, but cannot
+override the group's managed endpoint or enable anonymous access.
 
 `tnl apply` stores the evaluated Git project's revision, service assignments,
 group scopes, and audit context in hosted or self-hosted control. Enrolled
@@ -175,12 +212,15 @@ registers its local listener without applying remote configuration. See
 [publisher templates](../../deploy/publishers/readme.md).
 
 Externally operated replacement persists one replica's portable group signing
-identity, not its runtime leases or assignments. The Fargate template keeps
-that identity in a replica-private Secrets Manager version and restores it into
-fresh task-local SQLite without enrollment. Infrastructure owns single-replica
-replacement and separate credentials for additional replicas. SQLite WAL is
-not suitable for an NFS/EFS state mount; control does not manage AWS storage,
-credentials, or tasks.
+identity and complete durable certificate directory, not its runtime leases or
+assignments. The Fargate template bootstraps the signing identity from a
+replica-private Secrets Manager version, mounts the durable identity/certificate
+directory on EFS, and keeps SQLite WAL and its wrapping key task-local. After
+control records issuance work, a signing identity alone cannot recover missing
+certificate keys. Infrastructure owns single-replica replacement and separate
+credentials for additional replicas. Live EFS locking, permissions, and partial
+restore still require deployed qualification; local filesystem checks do not
+establish them.
 
 config factories receive the project's directory relative to its worktree and
 the structured worktree label. the label's project, optional checkout, and ID
@@ -189,11 +229,14 @@ may require further shortening. the primary checkout omits the checkout piece.
 generated project declarations preserve exact label literals, and browser
 metadata exposes those pieces without filesystem roots.
 
-project alias declarations name one configured entry service. relative alias
-names can contain several DNS labels; ordinary tunnel names remain one label.
+project alias declarations name one local HTTP entry service with an explicit
+`publicURL` block. private HTTP and named-group services cannot receive aliases.
+relative alias names can contain several DNS labels; ordinary tunnel names remain
+one label.
 configuration validation does not consult server policy or publish a URL.
-TypeScript config helpers check service references in aliases, webhooks, and
-path mounts; Go validation also checks computed values and static configuration.
+TypeScript config helpers check service references in aliases, webhooks, workloads,
+and path mounts; Go validation also checks computed values and static configuration.
+workload targets must use a named publisher group, matching the apply boundary.
 
 aliases keep a persistent selected project directory in client state, initially
 the corresponding project in the primary checkout. registration never takes an
@@ -209,7 +252,9 @@ from the selected ready entry-service tunnel. each request checks the selection
 revision and destination tunnel/run before entering the local proxy. an old
 publisher stops admitting requests immediately after a handoff; already admitted
 requests may finish, and its hostname lock remains held through drain and join.
-alias runs do not inherit preview shares or feedback state.
+alias runs do not inherit preview shares or feedback state. Browser sign-in and
+native browser handoff accept HTTP `app` and `alias` purposes consistently, while
+redemption still requires the authorized run and its single-use handoff.
 
 OAuth callback state records the initiating public URL/run separately from the
 destination app tunnel. an alias-origin callback returns to the alias hostname
@@ -250,12 +295,32 @@ capabilities and ad-hoc invocations receive invocation-scoped capabilities;
 the owner credential and control sessions stay in the native process. descriptors,
 snapshots, and browser metadata contain no publisher signing key.
 
+project resolution canonicalizes the selected configuration's directory before
+transferring its evaluated snapshot through the private owner pipe. inspection
+byte sizes retain their string form in static projections and snapshots; neither
+the owner nor trust capture evaluates configuration again. runtime trust capture
+uses the already resolved target origin or TCP address. apply resolves a declared
+target once before capturing the same trust material.
+
+configured local publication uses `LocalPublicationIdentity` and
+`LocalWorktreeKey`, bound to that canonical directory without Git or an origin.
+initializing Git, changing the origin, and switching branches keep that local
+identity. portable apply and workload manifests use the separate `SourceIdentity`
+derived from the network Git origin and config path. owner discovery and named
+leases compare the complete evaluated configuration digest before reuse. after
+changing configuration, stop and restart all of the project's apps and named
+local publishers together; a mismatched owner fails with restart instructions.
+
 the same owner can serve several ad-hoc invocations. each requires a current
 namespace-scoped publisher identity from explicit local setup or a private
 `TNL_PUBLISHER_FILE`; invalid explicit files fail closed. registration includes
 only its bound target and invocation identity. the worker allocates the exact
 temporary public URL, starts a signed run, and deletes the URL after drain.
 ad-hoc readiness is the run's routability, not a public GET app probe.
+the registration journal uses the invocation ID as its key; the tunnel has no
+configured service name. invocation-scoped status selects its tunnel by ID.
+an explicit invocation server may override saved or hosted defaults, but must
+match an explicit project server or `TNL_SERVER` selection.
 
 the native owner runs with the project's app or `tnl publish` invocation. a
 host-side owner can discover a selected Compose container through its published
@@ -282,9 +347,14 @@ responses always fail. service readiness can select a path. a proof derived
 for that exact run and path remains in owner memory and is stripped before the
 target sees the GET. checks use normal DNS/TLS, follow no redirects, and read headers only
 with a five-second deadline. retries start at
-500 milliseconds and double to two seconds for up to two minutes. each new run
-gets an automatic check; `tnl wait` checks again. a failed check leaves the
-publication running. `tnl status` reads local observations by default;
+500 milliseconds and double to two seconds for up to two minutes, including
+in-flight probes. each new run starts one automatic check when it becomes
+routable; success or an exhausted budget stops that checker. drain, replacement,
+and shutdown cancel and join it. repeated ready events for the same run do not
+restart it. a target change invalidates its observation without creating another
+budget: an active checker can retry within its remaining budget; otherwise
+`tnl wait` checks again. a failed check leaves the publication running.
+`tnl status` reads local observations by default;
 `--scope=server` fetches saved URL state for locally known public URL IDs.
 `tnl ping` checks the public address from the invoking machine without an
 owner proof or app credentials.
@@ -299,13 +369,19 @@ manager restart and contains no credentials, request bodies, or OAuth state.
 private streams do not create HTTP inspection records. Inspection never retains
 request headers, bodies, database credentials, or application payloads.
 
-`internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
-registrations. control allocates the URL before `publisher.Run` starts; the
+ad-hoc publications allocate their URL through control before `publisher.Run` starts; the
 publisher reuses that exact URL and never creates a second one for the handle.
-the runner signs control calls with the selected namespace publisher identity,
+the native caller signs control calls with the selected namespace publisher identity,
 observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
+
+the native registration handler owns cleanup as soon as allocation succeeds,
+then transfers it to the project worker before local tunnel setup. canceled setup
+and failed registration acknowledgment writes stop and join cleanup. the local
+publisher contract carries the same request, rate, and concurrency limits as
+allocation; native validation precedes allocation and the worker applies them.
+
 the Python binding starts ASGI lifespan on a port-0 loopback listener before
 registering it over the same scoped private API used by TypeScript. its status
 poller waits for the exact registration and ready publish run, never a public
@@ -518,6 +594,10 @@ overwritten client-IP header. Requests must carry `X-Forwarded-Proto: https` and
 the configured external control host. Forwarded host and port input never choose
 the origin. Internal control HTTPS and authenticated ingress-to-relay TLS retain
 separate listeners and trust; standalone does not expose the internal control API.
+
+Split control requires both private-control TLS files during configuration
+validation. Public HTTPS proxy settings and ACME configuration cannot supply the
+internal listener's static certificate and key.
 
 Managed TCP listeners bind the declared service inventory before ingress lease
 registration. A trusted outer PROXY v2 hop may instead deliver the same original

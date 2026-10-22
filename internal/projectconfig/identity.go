@@ -23,10 +23,24 @@ type SourceIdentity struct {
 	Label       string
 }
 
+// LocalPublicationIdentity identifies configured development services in this
+// canonical project directory. Git initialization, origin changes and branches
+// do not change it. it is not a portable source identity for apply or workloads.
+type LocalPublicationIdentity struct {
+	Key         string
+	Fingerprint string
+}
+
+func (p Project) LocalPublicationIdentity() LocalPublicationIdentity {
+	digest := sha256.Sum256([]byte("tnl-local-publication-v1\x00" + p.Root))
+	fingerprint := hex.EncodeToString(digest[:])
+	return LocalPublicationIdentity{Key: "local-" + fingerprint[:48], Fingerprint: fingerprint}
+}
+
 // LocalWorktreeKey identifies this project directory without sending local paths
 // to control. server, team and source identity remain separate scope checks.
 func (p Project) LocalWorktreeKey() string {
-	digest := sha256.Sum256([]byte("tnl-local-worktree-v1\x00" + p.Worktree.Root + "\x00" + p.Root))
+	digest := sha256.Sum256([]byte("tnl-local-worktree-v1\x00" + p.Root))
 	return hex.EncodeToString(digest[:])
 }
 

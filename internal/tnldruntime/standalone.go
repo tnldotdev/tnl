@@ -13,7 +13,6 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
-	"github.com/tnldotdev/tnl/internal/controlproxy"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/ingressapi"
@@ -37,9 +36,9 @@ var standaloneRelays = [...]struct {
 }
 
 type standaloneSettings struct {
-	controlListen          string
-	controlProxy           controlproxy.Config
+	control                controlSettings
 	publicListen           string
+	publicListener         net.Listener
 	relayUDPListen         string
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
@@ -56,8 +55,7 @@ type standaloneSettings struct {
 
 func standaloneSettingsFrom(cfg tnldconfig.Config) standaloneSettings {
 	return standaloneSettings{
-		controlListen:          cfg.ControlListen,
-		controlProxy:           controlProxyConfig(cfg),
+		control:                controlSettingsFrom(cfg),
 		publicListen:           cfg.IngressListen,
 		relayUDPListen:         cfg.RelayUDPListen,
 		quicIdleTimeout:        cfg.QUICIdleTimeout,
@@ -78,9 +76,13 @@ func (d *daemon) startStandalone(
 	metrics *observability.Metrics,
 	controlHandler http.Handler,
 ) error {
-	publicListener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges, settings.ingress.requireProxyHeader)
-	if err != nil {
-		return fmt.Errorf("listen for standalone public traffic: %w", err)
+	publicListener := settings.publicListener
+	if publicListener == nil {
+		listener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges, settings.ingress.requireProxyHeader)
+		if err != nil {
+			return fmt.Errorf("listen for standalone public traffic: %w", err)
+		}
+		publicListener = listener
 	}
 	publicOwned := false
 	defer func() {
@@ -90,7 +92,7 @@ func (d *daemon) startStandalone(
 	}()
 
 	relayListener := newConnectionListener(publicListener.Addr())
-	if err := d.startControl(settings.controlListen, settings.controlProxy, controlHandler); err != nil {
+	if err := d.startControl(settings.control, controlHandler); err != nil {
 		return err
 	}
 

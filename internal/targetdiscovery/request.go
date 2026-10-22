@@ -218,6 +218,11 @@ func (t ResolvedTarget) validate(request Request) error {
 	return err
 }
 func discoveryError(kind Kind, cause error) error { return &Error{Kind: kind, cause: cause} }
+
+// CredentialError preserves selected credential/configuration failures through
+// SDK signing wrappers. these failures must never permit last-success fallback.
+func CredentialError(cause error) error { return discoveryError(Authentication, cause) }
+
 func ErrorKind(err error) Kind {
 	if err == nil {
 		return ""

@@ -24,6 +24,7 @@ class OwnerIPC:
     port: int
 
     def __init__(self, filename: str) -> None:
+        self.creator_pid = os.getpid()
         self.connection: http.client.HTTPConnection | None = None
         self.closed = False
         try:
@@ -108,6 +109,9 @@ class OwnerIPC:
         return "<tnl native IPC (private)>"
 
     def prepare(self, service: str, assertion: str | None = None) -> object:
+        if self.creator_pid != os.getpid():
+            self.discard_inherited()
+            raise _failure()
         try:
             if self.closed or self.expires <= datetime.now(UTC):
                 raise ValueError("closed capability")
@@ -142,7 +146,22 @@ class OwnerIPC:
         raise _failure() from None
 
     def close(self) -> None:
+        if self.creator_pid != os.getpid():
+            self.discard_inherited()
+            return
         self.closed = True
         if self.connection is not None:
             self.connection.close()
             self.connection = None
+
+    def discard_inherited(self) -> None:
+        # HTTPConnection.close can acquire an inherited buffered-reader lock
+        # during a response. detach only this child's socket, without shutdown
+        # or touching a response another parent thread may have been reading.
+        if self.creator_pid == os.getpid():
+            return
+        self.closed = True
+        if self.connection is not None and self.connection.sock is not None:
+            descriptor = self.connection.sock.detach()
+            if descriptor >= 0:
+                os.close(descriptor)

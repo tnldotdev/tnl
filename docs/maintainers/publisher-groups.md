@@ -68,16 +68,23 @@ add these fields to the binding:
 ```
 
 the credential file contains `access_key_id`, `secret_access_key`, optional
-`session_token`, and optional RFC 3339 `expires_at`. an expiring credential is
-refreshed from that same file. replace expiring files atomically before expiry;
-credentials without an expiry remain cached for the process lifetime. omit
+`session_token`, and optional RFC 3339 `expires_at`. each SDK signing operation
+reads that same file. replace files atomically before expiry; rotation also works
+for credentials without an expiry. omit
 `role_arn` and `role_region` to use the file's credentials directly. an assumed
 role uses only that explicit source. the AWS default chain, shared config,
 process AWS credentials, ambient endpoint overrides and task roles are not
 selected in fixed-list mode.
 
-discovery permissions match the normalized exact selector, protocol and optional
-account. these local permissions do not expand the assignments control authorizes.
+discovery permissions match the normalized exact selector and protocol. `account`
+is a separate local constraint: assignments omit it, and the scoped provider
+applies it to both STS caller identity and the described resource ARN. duplicate
+selectors are rejected even if their account constraints differ. these local
+permissions do not expand the assignments control authorizes. missing, unsafe or
+expired selected credentials retain an authentication failure through SDK signing;
+they block new target connections rather than using last-success metadata.
+AssumeRole runs inside the discovery deadline and provider slot, without detached
+SDK credential-cache refreshes; resolver shutdown cancels and joins that work.
 embedded callers can provide their own per-group `targetdiscovery.Provider` to
 `publisherjob.GroupRunner`; a nil provider is rejected.
 
@@ -98,6 +105,13 @@ malformed identity/binding input and duplicate publisher ownership fail locally
 before leases; remote authorization and control failures block or retry only
 the affected group. disabled jobs and process shutdown cancel and join their
 workers. a fixed-list process's next invocation reinstalls its explicit list.
+omission from that next list explicitly retires a replica from the active group
+catalog before adding replacements. the catalog bounds 256 active references per
+server, not all historical invocations. retirement preserves the private identity,
+certificates and a version-1 immutable selection pin; it neither revokes control
+authority nor silently deletes it. explicit reactivation must use the original
+publisher and key. retained history consumes disk until an operator retires its
+control authority and deliberately archives or removes its private state.
 
 startup admits four finite setup operations at a time, each with a 30-second
 deadline. provider work admits eight operations in FIFO order, with existing
@@ -110,9 +124,23 @@ SQLite state is task-local. durable identities are cataloged by canonical server
 and immutable group identity. certificate files and `publisher.lock` use the
 existing canonical-server/team/publisher scope. matching names in different
 teams cannot select each other's keys or certificate cache. the runner preserves
-the certificate recovery check: after acquiring `publisher.lock`, read the
-lease and assignments, require `CertificateStateRequired`, and refuse to serve
-if control remembers certificate work but the durable files are missing.
+the certificate recovery check: after acquiring `publisher.lock`, read the lease
+and assignments. the required `certificate_state_plans` list includes every
+submitted plan and is empty for a fresh publisher identity. control
+records those plans in the same transaction as issuance and preserves them after
+order/run cleanup. a restored old plan cannot satisfy a newer missing plan.
+the local `certificate-plans-v1.json` checkpoint is synced before returning a
+pending CSR for issuance. missing checkpointed files fail before generating keys;
+startup also checks the control inventory to detect a wholly older local snapshot.
+missing or corrupt checkpoints, uncheckpointed material and partial snapshots
+fail closed; the publisher does not reconstruct checkpoints from remaining files.
+restore the complete private identity directory, including all plans, pending
+keys/CSRs, staged/current material and the checkpoint, while the replica is stopped.
+
+the single PostgreSQL baseline includes the checkpoint table and issuance trigger.
+schema 1 and the baseline identity are fixed. checkpoint and selection-pin files
+use fixed format version 1, without format negotiation or import paths. active
+catalog entries require their selection pins; retirement preserves those pins.
 
 lifecycle frames identify server, team ID, group ID, publisher and instance, and
 show `starting`, `reconciling`, `ready`, `retrying` or `blocked`. registry status

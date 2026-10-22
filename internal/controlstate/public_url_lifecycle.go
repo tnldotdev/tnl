@@ -208,6 +208,7 @@ func (d *Database) MarkPublishRunReady(
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
 	PublishRunID         string                                   `json:"publish_run_id"`
+	PublishRunClosed     bool                                     `json:"publish_run_closed,omitempty"`
 	PublicURLID          string                                   `json:"public_url_id"`
 	PublishRunNumber     uint64                                   `json:"publish_run_number"`
 	CanonicalHostname    string                                   `json:"canonical_hostname"`
@@ -775,7 +776,8 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 		return nil, err
 	}
 	projection := IngressRoutingTableProjection{
-		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
+		PublishRunClosed: session.ClosedAt.Valid,
+		PublishRunID:     session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
 		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
 		AccessMode:           VisitorAccessMode(route.AccessMode),

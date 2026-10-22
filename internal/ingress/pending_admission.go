@@ -193,14 +193,11 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	}
 	// a routing refresh can replace the assignment while the visitor authorizes.
 	matched := false
-	for _, backend := range current.Backends {
-		if b, ok := backend.(forwardingBackend); ok {
-			want := b.header
-			want.VisitorConnectionID = h.VisitorConnectionID
-			if want.Admission() == h {
-				matched = true
-				break
-			}
+	for _, want := range current.assignments {
+		want.VisitorConnectionID = h.VisitorConnectionID
+		if want == h {
+			matched = true
+			break
 		}
 	}
 	if !matched {

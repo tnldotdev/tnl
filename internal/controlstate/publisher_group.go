@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -64,11 +65,11 @@ type PublisherGroupServiceAssignment struct {
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type PublisherGroupAssignments struct {
-	Member                   PublisherGroupMember              `json:"member"`
-	Revision                 int64                             `json:"revision"`
-	ConfigurationHash        string                            `json:"configuration_hash"`
-	Services                 []PublisherGroupServiceAssignment `json:"services"`
-	CertificateStateRequired bool                              `json:"certificate_state_required"`
+	Member                PublisherGroupMember              `json:"member"`
+	Revision              int64                             `json:"revision"`
+	ConfigurationHash     string                            `json:"configuration_hash"`
+	Services              []PublisherGroupServiceAssignment `json:"services"`
+	CertificateStatePlans []CertificatePlan                 `json:"certificate_state_plans"`
 }
 
 func (d *Database) IssuePublisherGroupEnrollment(ctx context.Context, team, project, group, actor string, maxMembers int, lifetime time.Duration, now time.Time) (result PublisherGroupEnrollment, retErr error) {
@@ -390,8 +391,20 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		return result, err
 	}
 	result = PublisherGroupAssignments{Member: m, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Services: []PublisherGroupServiceAssignment{}}
-	if err = tx.QueryRow(ctx, `SELECT certificate_state_required FROM control.publisher_identities WHERE id=$1`, m.PublisherIdentityID).Scan(&result.CertificateStateRequired); err != nil {
+	result.CertificateStatePlans = []CertificatePlan{}
+	checkpoints, err := q.ListPublisherCertificateCheckpoints(ctx, m.PublisherIdentityID)
+	if err != nil {
 		return result, err
+	}
+	if len(checkpoints) > 1024 {
+		return result, ErrPublisherGroup
+	}
+	for _, checkpoint := range checkpoints {
+		var plan CertificatePlan
+		if json.Unmarshal(checkpoint, &plan) != nil {
+			return result, ErrPublisherGroup
+		}
+		result.CertificateStatePlans = append(result.CertificateStatePlans, plan)
 	}
 	services, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
 	if err != nil {

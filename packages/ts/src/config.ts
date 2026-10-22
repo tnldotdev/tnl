@@ -16,7 +16,7 @@ type HTTPServiceNames<Config> = Config extends { readonly services: infer Servic
   : never;
 
 type ObjectReference<Names extends string> = { readonly service: Names };
-type LocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
+type LocalServiceNames<Config> = Config extends { readonly services: infer Services }
   ? Extract<
       {
         [Name in keyof Services]: Services[Name] extends { readonly publisher: infer Group }
@@ -25,8 +25,12 @@ type LocalHTTPServiceNames<Config> = Config extends { readonly services: infer S
             : never
           : Name;
       }[keyof Services],
-      HTTPServiceNames<Config>
+      string
     >
+  : never;
+type LocalHTTPServiceNames<Config> = Extract<LocalServiceNames<Config>, HTTPServiceNames<Config>>;
+type NamedPublisherServiceNames<Config> = Config extends { readonly services: infer Services }
+  ? Exclude<Extract<keyof Services, string>, LocalServiceNames<Config>>
   : never;
 type PublisherNames<Config> =
   | "local"
@@ -41,7 +45,7 @@ type PublisherReference<Config, Service> = Service extends { readonly publisher:
           readonly http?: never;
         })
   : unknown;
-type WebhookService<Config> = Config extends { readonly services: infer Services }
+type PublicLocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
   ? Extract<
       {
         [Name in keyof Services]: Services[Name] extends { readonly publicURL: object }
@@ -55,16 +59,12 @@ type WebhookService<Config> = Config extends { readonly services: infer Services
 type TargetReferences<Config> = {
   [Field in keyof Config as Field extends "workloads" ? Field : never]: {
     [Name in keyof Config[Field]]: {
-      services: readonly (Config extends { services: infer Services }
-        ? Extract<keyof Services, string>
-        : never)[];
+      services: readonly NamedPublisherServiceNames<Config>[];
     };
   };
 } & {
   [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
-    [Name in keyof Config[Field]]: ObjectReference<
-      Field extends "webhooks" ? WebhookService<Config> : HTTPServiceNames<Config>
-    >;
+    [Name in keyof Config[Field]]: ObjectReference<PublicLocalHTTPServiceNames<Config>>;
   };
 } & {
   [Field in keyof Config as Field extends "services" ? Field : never]: {

@@ -1,4 +1,4 @@
-package httpstream
+package httpstream_test
 
 import (
 	"bufio"
@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -54,7 +55,7 @@ func observedProxyAddress(t *testing.T, kind, backend string, m *observability.M
 			return
 		}
 		defer conn.Close()
-		_ = Serve(ctx, conn, target, func(ctx context.Context) (net.Conn, error) {
+		_ = httpstream.Serve(ctx, conn, target, func(ctx context.Context) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", target.Host)
 		}, nil)
 	}()

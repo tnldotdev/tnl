@@ -78,7 +78,7 @@ Parameters:
     MaxLength: 20
   FileSystemKMSKeyArn:
     Type: String
-    Description: Key for the stack's encrypted Regional filesystem. EFS service uses this key; task roles need no KMS decrypt permission.
+    Description: Immutable storage binding. Preserve this value for the deployment's lifetime; changing it would replace EFS with an empty filesystem. EFS uses the key, not task roles.
     Default: ""
     AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
     MaxLength: 256

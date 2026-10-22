@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
 import httpx
 import pytest
@@ -336,6 +337,8 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FailingNative(FakeNative):
+        fail_cleanup = True
+
         async def request(
             self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
         ) -> object:
@@ -346,7 +349,7 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
                 services[0]["routable"] = False
                 services[0]["failure"] = "runtime.publication_failed"
                 return snapshot
-            if operation == "unregister":
+            if operation == "unregister" and self.fail_cleanup:
                 raise tnl.TnlError("sdk.request_rejected", "cleanup failed")
             return await super().request(endpoint, operation, payload)
 
@@ -360,13 +363,31 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
                     await send({"type": "lifespan.shutdown.complete"})
                     return
 
-    monkeypatch.setattr(_asgi, "_native", FailingNative([]))
+    native = FailingNative([])
+    monkeypatch.setattr(_asgi, "_native", native)
+    servers: list[_asgi._OwnedServer] = []
+    start_asgi = _asgi._start_asgi
+
+    async def capture(
+        app: _asgi.ASGIApp,
+    ) -> tuple[_asgi._OwnedServer, asyncio.Task[None], socket.socket]:
+        server, task, listener = await start_asgi(app)
+        servers.append(server)
+        return server, task, listener
+
+    monkeypatch.setattr(_asgi, "_start_asgi", capture)
 
     async def scenario() -> None:
-        async with tnl.open(app, publisher_id=_publisher):
-            pytest.fail("publication failure was accepted")
+        with pytest.raises(ExceptionGroup) as caught:
+            async with tnl.open(app, publisher_id=_publisher):
+                pytest.fail("publication failure was accepted")
+        codes = [error.code for error in caught.value.exceptions if isinstance(error, tnl.TnlError)]
+        assert codes == ["sdk.publication_failed", "sdk.request_rejected"]
+        tunnel = servers[0].tunnel
+        assert tunnel is not None and not tunnel._serve_task.done()
+        assert not tunnel._server.should_exit
+        native.fail_cleanup = False
+        await tunnel.close()
+        assert tunnel._serve_task.done()
 
-    with pytest.raises(ExceptionGroup) as caught:
-        asyncio.run(scenario())
-    codes = [error.code for error in caught.value.exceptions if isinstance(error, tnl.TnlError)]
-    assert codes == ["sdk.publication_failed", "sdk.request_rejected"]
+    asyncio.run(scenario())

@@ -10,6 +10,7 @@
   },
   "files": [
     "config-type-test.ts",
+    "sdk-type-test.ts",
     "next-type-test.ts",
     "runtime-type-test.ts",
     "vite-type-test.ts",

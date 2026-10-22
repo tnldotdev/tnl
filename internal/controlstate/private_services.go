@@ -57,8 +57,7 @@ func lockManagedPrivateService(ctx context.Context, tx pgx.Tx, serviceID, actorI
 	if err != nil {
 		return controlstatedb.ControlPrivateService{}, err
 	}
-	var locked string
-	err = tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, teamID).Scan(&locked)
+	_, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return controlstatedb.ControlPrivateService{}, ErrPrivateServiceAccess
 	}
@@ -275,9 +274,8 @@ func (d *Database) CreatePrivateServiceAt(ctx context.Context, teamID, actorID, 
 		return result, err
 	}
 	defer rollback(ctx, tx, "create private service", &retErr)()
-	// the team lock serializes policy changes and private service creation.
-	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, teamID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+	// queue on the team advisory guard before taking its row, as apply does.
+	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, teamID); errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrPrivateServiceAccess
 	} else if err != nil {
 		return result, err
@@ -452,8 +450,7 @@ func (d *Database) DeletePrivateService(ctx context.Context, serviceID, actorID 
 	} else if err != nil {
 		return err
 	}
-	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id FROM control.teams WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, teamID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, teamID); errors.Is(err, pgx.ErrNoRows) {
 		return ErrPrivateServiceAccess
 	} else if err != nil {
 		return err

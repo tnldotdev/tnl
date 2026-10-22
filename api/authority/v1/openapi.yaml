@@ -9,6 +9,25 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/service/teams/{team_id}/usage-authorization:
+    parameters:
+      - { $ref: "#/components/parameters/TeamID" }
+      - { $ref: "#/components/parameters/ServiceActorToken" }
+    get:
+      operationId: authorizeWebsiteTeamUsage
+      security: [{ webServiceAuth: [] }]
+      description: >-
+        Authorize one website usage read for any current active team member,
+        including a personal-team owner. Requires a fresh configured-issuer
+        assertion with auth_time, a unique jti and nonce using the
+        tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped
+        path, raw query and empty body. Control consumes the assertion and
+        rechecks identity, membership and current company source/eligibility.
+        Success grants no service management or visitor credential and is not
+        reusable authorization. No saved service or inventory read is required.
+      responses:
+        "204": { description: This usage read is currently authorized; do not cache }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/service/teams/{team_id}/private-services:
     parameters:
       - { $ref: "#/components/parameters/TeamID" }
@@ -378,10 +397,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [expected_revision, setup_token]
+              required: [expected_revision, setup_token, provisioning_token]
               properties:
                 expected_revision: { type: integer, format: int64, minimum: 1 }
                 setup_token: { type: string }
+                provisioning_token:
+                  type: string
+                  minLength: 43
+                  maxLength: 43
+                  pattern: "^[A-Za-z0-9_-]{43}$"
+                  description: Random 256-bit credential durably chosen by the owner before activation. Exact retries return this credential only while its digest remains current; they never rotate it. Requires the same setup capability and fresh current owner/source authorization.
       responses:
         "200":
           description: Consent verified; source revision advanced and provisioning token issued
@@ -480,13 +505,18 @@ paths:
     get:
       operationId: listCompanyAdmissions
       security: [{ webServiceAuth: [] }]
+      description: Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
+      parameters:
+        - name: cursor
+          in: query
+          description: The previous page's next_cursor, scoped to this team. Omit for the first page.
+          schema: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
       responses:
         "200":
-          description: Control-owned admission requests
+          description: At most 100 control-owned admission requests and a cursor when more remain
           content:
             application/json:
-              schema:
-                { type: array, items: { $ref: "#/components/schemas/CompanyAdmissionRequest" } }
+              schema: { $ref: "#/components/schemas/CompanyAdmissionPage" }
         default: { $ref: "#/components/responses/Problem" }
   /v1/service/teams/{team_id}/company-admissions/{request_id}:
     parameters:
@@ -1400,6 +1430,16 @@ components:
       properties:
         active: { $ref: "#/components/schemas/IdentityConnection" }
         setup: { $ref: "#/components/schemas/IdentityConnection" }
+    CompanyAdmissionPage:
+      type: object
+      additionalProperties: false
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/CompanyAdmissionRequest" }
+        next_cursor: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
     CompanyAdmissionRequest:
       type: object
       additionalProperties: false
@@ -2227,6 +2267,7 @@ components:
               verified_email_required,
               not_found,
               conflict,
+              project_managed,
               rate_limited,
               unavailable,
               internal,

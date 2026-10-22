@@ -84,7 +84,7 @@ func (h *handler) ListWebsitePrivateServices(w http.ResponseWriter, r *http.Requ
 	}
 	page := controlv1.PrivateServicePage{Services: make([]controlv1.PrivateService, 0, len(rows))}
 	for _, row := range rows {
-		page.Services = append(page.Services, serviceaccess.Service(row))
+		page.Services = append(page.Services, serviceaccess.Summary(row))
 	}
 	if next != "" {
 		page.NextCursor = &next

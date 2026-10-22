@@ -93,8 +93,14 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second,
 		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
-	config.ControlListen, config.PrivateControlListen = privateUnusedTCPAddress(t), privateUnusedTCPAddress(t)
-	config.ServicePortRanges = integrationServicePorts(t)
+	controlListener, privateControlListener := privateRuntimeListener(t), privateRuntimeListener(t)
+	config.ControlListen, config.PrivateControlListen = controlListener.Addr().String(), privateControlListener.Addr().String()
+	var serviceListeners []net.Listener
+	if standalone {
+		config.ServicePortRanges, serviceListeners = reserveIntegrationServicePorts(t)
+	} else {
+		config.ServicePortRanges = integrationServicePorts(t)
+	}
 	ports, err := config.ServicePortInventory()
 	if err != nil {
 		t.Fatal(err)
@@ -103,16 +109,22 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"
-	publicControlAddress := privateUnusedTCPAddress(t)
+	publicControlAddress := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, nil, publicControlAddress, config.ControlListen, controlTLS)
 	pebble, dnsProvider := privateFixtureACME(t, database, &config)
 	if defaults {
 		config.IngressLeaseDuration, config.RelayLeaseDuration = 30*time.Second, 30*time.Second
 		config.LeaseRenewalInterval, config.ControlRetryInterval = 10*time.Second, time.Second
 	}
+	var publicListener net.Listener
 	if standalone {
 		config.Role = tnldconfig.RoleStandalone
-		config.IngressListen = privateUnusedTCPAddress(t)
+		publicListener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = publicListener.Close() })
+		config.IngressListen = publicListener.Addr().String()
 		config.RelayUDPListen = "127.0.0.1:0"
 	}
 	serviceTransport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
@@ -141,6 +153,12 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	startPrivateFixtureWorkers(t, ctx, control, database, config, pebble, dnsProvider)
 	if standalone {
 		settings := standaloneSettingsFrom(config)
+		settings.control.listener = controlListener
+		settings.publicListener = publicListener
+		if !config.RequireProxyHeader {
+			settings.publicListener = combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...))
+		}
+		t.Cleanup(func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = privateRuntimeTLS(t, ca, settings.relayHostname)
 		settings.configurePrivate = func(id string, config *ingress.PrivateConnectorConfig) {
 			if !defaults {
@@ -158,12 +176,16 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			return control.ready(ctx, tnldconfig.RoleStandalone, time.Now()) == nil, nil
 		})
 	} else {
-		if err := control.startControl(config.ControlListen, controlProxyConfig(config), handler); err != nil {
+		settings := controlSettingsFrom(config)
+		settings.listener = controlListener
+		if err := control.startControl(settings, handler); err != nil {
 			cancel()
 			database.Close()
 			t.Fatal(err)
 		}
-		if err := control.startPrivateControlAPIs(ctx, privateControlSettingsFrom(config), metrics); err != nil {
+		privateSettings := privateControlSettingsFrom(config)
+		privateSettings.listener = privateControlListener
+		if err := control.startPrivateControlAPIs(ctx, privateSettings, metrics); err != nil {
 			cancel()
 			database.Close()
 			t.Fatal(err)
@@ -221,9 +243,10 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 			relayMetrics = observability.FromContext(lifetime)
 		}
 		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
-		internal := privateUnusedTCPAddress(t)
+		internalListener := privateRuntimeListener(t)
+		internal := internalListener.Addr().String()
 		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: privateRuntimeClusterSecret,
-			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: privateRuntimeTLS(t, ca, name), internalListen: internal, internalAddress: internal,
+			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: privateRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
 			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
@@ -272,15 +295,14 @@ func privateRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname stri
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 }
 
-func privateUnusedTCPAddress(t *testing.T) string {
+func privateRuntimeListener(t *testing.T) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.Addr().String()
-	_ = listener.Close()
-	return address
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener
 }
 
 func privateWait(t *testing.T, timeout time.Duration, condition func(context.Context) (bool, error)) {

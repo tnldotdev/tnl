@@ -31,7 +31,7 @@ type Workload struct {
 	Audience    string            `json:"audience,omitempty" yaml:"audience,omitempty"`
 	Claims      map[string]string `json:"claims,omitempty" yaml:"claims,omitempty"`
 	TokenFile   string            `json:"token_file,omitempty" yaml:"token_file,omitempty"`
-	Services    []string          `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true"`
+	Services    []string          `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
 	MaxDuration *Duration         `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Fixed session window; defaults to 1h and must be positive and at most 6h."`
 }
 
@@ -150,8 +150,12 @@ func ValidateWorkloads(c TNL) error {
 		}
 		seen := map[string]bool{}
 		for _, s := range p.Services {
-			if _, ok := c.Services[s]; !ok || seen[s] {
+			service, ok := c.Services[s]
+			if !ok || seen[s] {
 				return bad()
+			}
+			if PublisherName(service) == "local" {
+				return fmt.Errorf("workloads.%s: service %q must use a named publisher group", name, s)
 			}
 			seen[s] = true
 		}

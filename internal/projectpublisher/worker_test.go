@@ -229,6 +229,9 @@ func TestLifecycleAttachmentIsFencedAndJoined(t *testing.T) {
 	if err := w.Manager.UnregisterTarget(id, "owner", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
+	if service := w.Manager.Snapshot().Services[0]; service.RegistrationID != "" || service.Target != "" || service.TunnelID != "" || service.PublishRunNumber != 0 || service.ProvisioningStage != "" {
+		t.Fatalf("stopped service retained lifecycle identity: %+v", service)
+	}
 	select {
 	case <-stopped:
 	default:
@@ -278,6 +281,9 @@ func TestWorkerFollowsReplacedTargetWithoutChangingItsRun(t *testing.T) {
 	if err := cfg.AdmitRequest(httptest.NewRequest("GET", "http://public.example/", nil), run); err != nil {
 		t.Fatalf("replacement container blocked new HTTP request: %v", err)
 	}
+	if snapshot := w.Manager.Snapshot(); snapshot.Services[0].Ready {
+		t.Fatal("target replacement kept readiness from the previous target")
+	}
 	if aliasAdmit == nil || aliasAdmit(httptest.NewRequest("GET", "http://public.example/", nil), run) != nil {
 		t.Fatal("alias attachment did not follow the selected target")
 	}
@@ -305,5 +311,41 @@ func TestWorkerFollowsReplacedTargetWithoutChangingItsRun(t *testing.T) {
 	}
 	if err := cfg.AdmitVisitor(t.Context(), publisher.Visitor{Run: run}); err == nil {
 		t.Fatal("stopped service still admitted a visitor")
+	}
+}
+
+func TestPublicWorkerStartsAutomaticReadiness(t *testing.T) {
+	w, ready := testWorkers(t)
+	w.AutomaticReadiness = true
+	probed := make(chan struct{}, 1)
+	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+		if len(r.Header.Get(clientruntime.ProbeHeader)) != 64 {
+			t.Error("automatic readiness omitted proof")
+		}
+		select {
+		case probed <- struct{}{}:
+		default:
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	id, err := w.Manager.Reserve("web", "owner", 1, "https://public.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
+		t.Fatal(err)
+	}
+	receiveConfig(t, ready)
+	select {
+	case <-probed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("public readiness was never started")
+	}
+	deadline := time.Now().Add(time.Second)
+	for !w.Manager.Snapshot().Services[0].Ready {
+		if time.Now().After(deadline) {
+			t.Fatal("automatic readiness was not recorded")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

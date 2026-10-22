@@ -91,7 +91,9 @@ func (p *PrivateConnector) AcceptDirect(ctx context.Context, connection net.Conn
 			Direct:   &tunnelv1.DirectAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: destination.Port()},
 			SourceIP: source.Addr().Unmap().String(), VisitorConnectionID: visitor, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: claimed.ExpiresAt,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
-		backend, err := p.openPrivateRelay(setup, relay, header, proxy, deadline)
+		attemptCtx, stopAttempt := backendAttemptContext(setup, len(claimed.ConnectedRelays)-attempt)
+		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, deadline)
+		stopAttempt()
 		if err != nil {
 			continue
 		}
@@ -135,9 +137,11 @@ func (p *PrivateConnector) openPrivateRelay(ctx context.Context, relay ingressv1
 	if err != nil {
 		return nil, err
 	}
-	if err = connection.SetDeadline(deadline); err == nil {
-		err = writePrivateProxy(connection, proxy)
-	}
+	setup, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	// PROXY metadata is retryable; use the same joined cancellation/deadline
+	// handling as public setup, without sending any visitor bytes.
+	_, err = writeSetup(setup, connection, proxy, nil)
 	if err != nil {
 		return nil, errors.Join(err, connection.Close())
 	}
@@ -211,6 +215,13 @@ type pendingDirectConn struct {
 	promoted         chan struct{}
 	authorized       atomic.Bool
 	upload, download atomic.Int64
+}
+
+func (c *pendingDirectConn) CloseWrite() error {
+	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func (c *pendingDirectConn) Read(b []byte) (int, error) {

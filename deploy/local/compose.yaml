@@ -26,10 +26,33 @@ services:
       default:
       control:
         ipv4_address: 172.31.254.4
+  oidc-certificates:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        cp /source/local.crt /source/local.key /etc/tnl/;
+        chmod 0644 /etc/tnl/local.crt;
+        chmod 0600 /etc/tnl/local.key;
+        chown 65532:65532 /etc/tnl/local.crt /etc/tnl/local.key
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    volumes:
+      - ${TNL_LOCAL_CERTS_DIR:-../../.local/certs}/local.crt:/source/local.crt:ro
+      - ${TNL_LOCAL_CERTS_DIR:-../../.local/certs}/local.key:/source/local.key:ro
+      - oidc-tls:/etc/tnl
+
   oidc:
     build:
       context: ../..
       dockerfile: deploy/local/oidc.Dockerfile
+    depends_on:
+      oidc-certificates:
+        condition: service_completed_successfully
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -39,8 +62,7 @@ services:
       default:
         aliases: [identity.127.0.0.1.nip.io]
     volumes:
-      - ../../.local/certs/local.crt:/etc/tnl/local.crt:ro
-      - ../../.local/certs/local.key:/etc/tnl/local.key:ro
+      - oidc-tls:/etc/tnl:ro
 
   postgres:
     image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
@@ -172,3 +194,4 @@ networks:
 
 volumes:
   postgres-state:
+  oidc-tls:

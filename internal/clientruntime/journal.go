@@ -19,6 +19,8 @@ var ErrCursorExpired = clientstate.ErrRuntimeCursorExpired
 var ErrOwnerConflict = errors.New("another live app owns this service")
 var ErrRegistrationStale = errors.New("app registration is stale")
 
+// Service uses Name as its registration key: a configured service name or an
+// invocation ID. an invocation key is never a configured tunnel service name.
 type Service struct {
 	Project           string       `json:"project,omitempty"`
 	Name              string       `json:"service"`

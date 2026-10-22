@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -661,7 +660,9 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 		if err := header.Validate(); err != nil {
 			return err
 		}
-		candidate, err := p.openPrivateRelay(streamCtx, relay, header, proxy, deadline)
+		attemptCtx, stopAttempt := backendAttemptContext(streamCtx, len(*projection.ConnectedRelays)-attempt)
+		candidate, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, deadline)
+		stopAttempt()
 		if err != nil {
 			continue
 		}
@@ -703,18 +704,4 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 	}
 	audit.Outcome, audit.Reason = "failed", "forwarding"
 	return ErrPrivateAdmission
-}
-
-func writePrivateProxy(conn net.Conn, header []byte) error {
-	for len(header) != 0 {
-		n, err := conn.Write(header)
-		if err != nil {
-			return err
-		}
-		if n <= 0 || n > len(header) {
-			return io.ErrShortWrite
-		}
-		header = header[n:]
-	}
-	return nil
 }

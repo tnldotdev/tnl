@@ -204,7 +204,11 @@ SDK views enforce per-instrument attribute allowlists and fixed enum values. eac
 instrument is capped at 2000 series per collection. overflow points carry only
 `otel.metric.overflow=true` as a boolean, replacing application dimensions.
 collectors must preserve that validated marker. instrument callers cannot supply
-it themselves. absolute gauge state is reserved for bounded process-wide enums.
+it themselves. exemplar reservoirs discard all view-rejected attributes before
+storing a sample, including trace/log-only keys and wrong value types. exemplars
+retain their timestamp, value, and trace/span IDs under both trace-based and
+always-on sampling; changing the SDK exemplar filter cannot bypass the allowlist.
+absolute gauge state is reserved for bounded process-wide enums.
 spans are limited to 32 attributes, 256 characters per value, eight events with
 eight attributes each, and eight attribute-free links. the native SDK's raw
 per-link attribute limit is zero, including links added after span creation.
@@ -244,6 +248,11 @@ independent of pseudonymous CLI usage telemetry.
 | `OTEL_TRACES_SAMPLER_ARG`                                                           | ratio in `[0,1]` for ratio samplers                                                                                                                 |
 | `OTEL_SERVICE_NAME`                                                                 | one approved service name, overriding resource `service.name`                                                                                       |
 | `OTEL_RESOURCE_ATTRIBUTES`                                                          | approved resource keys above; values at most 128 characters; namespace must remain `tnl`                                                            |
+
+disabled owners use the no-op meter and tracer APIs without constructing SDK
+providers or their default resources. malformed ambient provider, resource, and
+exporter settings therefore do not block disabled startup or enter constructor
+diagnostics. the owner does not mutate the process environment.
 
 exporter TLS/header/compression/timeout/protocol settings accept signal-specific
 `OTEL_EXPORTER_OTLP_{METRICS,TRACES,LOGS}_*` overrides. HTTPS verification is required;
@@ -315,6 +324,20 @@ matter when reading it:
 - service audit events are `queued|delivered|retry|dropped|accepted|duplicate`.
   they describe separate queue/ingestion stages, not distinct visitors or durable
   audit totals. usage item events likewise count different item types.
+- service audit cleanup is measured by the runtime worker once per database call,
+  including its committed row count. the instrumented database does not record
+  that same cleanup again.
+- website company reconciliation events use `busy|completed|partial_failed`.
+  `busy` means another reconciliation owns the lease; `partial_failed` retains
+  that some reconciliation work committed before a later step failed. sync the
+  generated vocabulary to the website before qualifying its receiver.
+- `KindGauge` describes current state. native Set/Add bindings and scoped
+  publisher active HTTP requests, visitor streams, and connections use SDK
+  up/down counters: their OTLP type is a cumulative, non-monotonic sum. SDK
+  synchronous and observable gauges export actual OTLP gauges. the hosted receiver
+  accepts both shapes for semantic gauges; neither shape is a monotonic activity
+  total. the local HTTPS export regression decodes both wire shapes and verifies
+  their current values.
 - pool/active SQL snapshots are passive. scraping never acquires a database
   connection or queries a remote service. SQL operation names come from the compiled
   query sanitizer, never SQL text or parameters.

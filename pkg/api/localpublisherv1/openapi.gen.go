@@ -183,30 +183,6 @@ func (e PublicationCommand) Valid() bool {
 	}
 }
 
-// Defines values for PublicationServiceProtocol.
-const (
-	Http     PublicationServiceProtocol = "http"
-	Mysql    PublicationServiceProtocol = "mysql"
-	Postgres PublicationServiceProtocol = "postgres"
-	Tcp      PublicationServiceProtocol = "tcp"
-)
-
-// Valid indicates whether the value is a known member of the PublicationServiceProtocol enum.
-func (e PublicationServiceProtocol) Valid() bool {
-	switch e {
-	case Http:
-		return true
-	case Mysql:
-		return true
-	case Postgres:
-		return true
-	case Tcp:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PublicationState.
 const (
 	Draining     PublicationState = "draining"
@@ -327,16 +303,17 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AccessMode    *InvocationAccessMode `json:"access_mode,omitempty"`
-	InvocationId  string                `json:"invocation_id"`
-	Ip            *[]string             `json:"ip,omitempty"`
-	Owner         string                `json:"owner"`
-	Pid           int                   `json:"pid"`
-	PublisherFile string                `json:"publisher_file,omitempty"`
-	PublisherId   string                `json:"publisher_id,omitempty"`
-	ServerUrl     *string               `json:"server_url,omitempty"`
-	Target        string                `json:"target"`
-	Version       InvocationVersion     `json:"version"`
+	AccessMode    *InvocationAccessMode                    `json:"access_mode,omitempty"`
+	InvocationId  string                                   `json:"invocation_id"`
+	Ip            *[]string                                `json:"ip,omitempty"`
+	Limits        *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
+	Owner         string                                   `json:"owner"`
+	Pid           int                                      `json:"pid"`
+	PublisherFile string                                   `json:"publisher_file,omitempty"`
+	PublisherId   string                                   `json:"publisher_id,omitempty"`
+	ServerUrl     *string                                  `json:"server_url,omitempty"`
+	Target        string                                   `json:"target"`
+	Version       InvocationVersion                        `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.
@@ -389,35 +366,32 @@ type Problem struct {
 
 // Publication defines model for Publication.
 type Publication struct {
-	Command          PublicationCommand             `json:"command"`
-	Failure          *string                        `json:"failure,omitempty"`
-	Framework        *string                        `json:"framework,omitempty"`
-	HeartbeatAt      time.Time                      `json:"heartbeat_at"`
-	Hostname         *string                        `json:"hostname,omitempty"`
-	LeaseExpiresAt   time.Time                      `json:"lease_expires_at"`
-	PrivateRunId     *externalRef0.PrivateRunID     `json:"private_run_id,omitempty"`
-	PrivateServiceId *externalRef0.PrivateServiceID `json:"private_service_id,omitempty"`
-	ProcessId        int                            `json:"process_id"`
-	Project          string                         `json:"project"`
-	PublicUrl        *string                        `json:"public_url,omitempty"`
-	PublicUrlId      *string                        `json:"public_url_id,omitempty"`
-	PublishRunNumber *int64                         `json:"publish_run_number,omitempty"`
-	RunNumber        *int64                         `json:"run_number,omitempty"`
-	Server           string                         `json:"server"`
-	Service          *string                        `json:"service,omitempty"`
-	ServiceProtocol  *PublicationServiceProtocol    `json:"service_protocol,omitempty"`
-	StartedAt        time.Time                      `json:"started_at"`
-	State            PublicationState               `json:"state"`
-	Target           *string                        `json:"target,omitempty"`
-	TunnelId         string                         `json:"tunnel_id"`
-	UpdatedAt        time.Time                      `json:"updated_at"`
+	Command          PublicationCommand                   `json:"command"`
+	Failure          *string                              `json:"failure,omitempty"`
+	Framework        *string                              `json:"framework,omitempty"`
+	HeartbeatAt      time.Time                            `json:"heartbeat_at"`
+	Hostname         *string                              `json:"hostname,omitempty"`
+	LeaseExpiresAt   time.Time                            `json:"lease_expires_at"`
+	PrivateRunId     *externalRef0.PrivateRunID           `json:"private_run_id,omitempty"`
+	PrivateServiceId *externalRef0.PrivateServiceID       `json:"private_service_id,omitempty"`
+	ProcessId        int                                  `json:"process_id"`
+	Project          string                               `json:"project"`
+	PublicUrl        *string                              `json:"public_url,omitempty"`
+	PublicUrlId      *string                              `json:"public_url_id,omitempty"`
+	PublishRunNumber *int64                               `json:"publish_run_number,omitempty"`
+	RunNumber        *int64                               `json:"run_number,omitempty"`
+	Server           string                               `json:"server"`
+	Service          *string                              `json:"service,omitempty"`
+	ServiceProtocol  *externalRef0.PrivateServiceProtocol `json:"service_protocol,omitempty"`
+	StartedAt        time.Time                            `json:"started_at"`
+	State            PublicationState                     `json:"state"`
+	Target           *string                              `json:"target,omitempty"`
+	TunnelId         string                               `json:"tunnel_id"`
+	UpdatedAt        time.Time                            `json:"updated_at"`
 }
 
 // PublicationCommand defines model for Publication.Command.
 type PublicationCommand string
-
-// PublicationServiceProtocol defines model for Publication.ServiceProtocol.
-type PublicationServiceProtocol string
 
 // PublicationState defines model for Publication.State.
 type PublicationState string
@@ -440,23 +414,23 @@ type RegistrationVersion int
 
 // Service defines model for Service.
 type Service struct {
-	Directory         string                                 `json:"directory"`
-	Failure           *string                                `json:"failure,omitempty"`
-	Framework         *string                                `json:"framework,omitempty"`
-	Observation       *Observation                           `json:"observation,omitempty"`
-	Project           *string                                `json:"project,omitempty"`
-	ProvisioningStage *string                                `json:"provisioning_stage,omitempty"`
-	PublicUrl         *string                                `json:"public_url,omitempty"`
-	PublishRunNumber  *int64                                 `json:"publish_run_number,omitempty"`
-	Readiness         Readiness                              `json:"readiness"`
-	Ready             bool                                   `json:"ready"`
-	Registered        bool                                   `json:"registered"`
-	RegistrationId    *string                                `json:"registration_id,omitempty"`
-	Routable          bool                                   `json:"routable"`
-	Service           string                                 `json:"service"`
-	ServiceProtocol   *externalRef0.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
-	Target            *string                                `json:"target,omitempty"`
-	TunnelId          *string                                `json:"tunnel_id,omitempty"`
+	Directory         string                               `json:"directory"`
+	Failure           *string                              `json:"failure,omitempty"`
+	Framework         *string                              `json:"framework,omitempty"`
+	Observation       *Observation                         `json:"observation,omitempty"`
+	Project           *string                              `json:"project,omitempty"`
+	ProvisioningStage *string                              `json:"provisioning_stage,omitempty"`
+	PublicUrl         *string                              `json:"public_url,omitempty"`
+	PublishRunNumber  *int64                               `json:"publish_run_number,omitempty"`
+	Readiness         Readiness                            `json:"readiness"`
+	Ready             bool                                 `json:"ready"`
+	Registered        bool                                 `json:"registered"`
+	RegistrationId    *string                              `json:"registration_id,omitempty"`
+	Routable          bool                                 `json:"routable"`
+	Service           string                               `json:"service"`
+	ServiceProtocol   *externalRef0.PrivateServiceProtocol `json:"service_protocol,omitempty"`
+	Target            *string                              `json:"target,omitempty"`
+	TunnelId          *string                              `json:"tunnel_id,omitempty"`
 }
 
 // Snapshot defines model for Snapshot.
@@ -475,6 +449,12 @@ type SnapshotSchemaVersion int
 // EventsParams defines parameters for Events.
 type EventsParams struct {
 	After string `form:"after" json:"after"`
+}
+
+// HealthParams defines parameters for Health.
+type HealthParams struct {
+	// ConfigurationDigest Owner only. Fence reuse of an evaluated project configuration; a mismatch returns 409.
+	ConfigurationDigest *string `form:"configuration_digest,omitempty" json:"configuration_digest,omitempty"`
 }
 
 // RegisterInvocationJSONRequestBody defines body for RegisterInvocation for application/json ContentType.
@@ -578,13 +558,13 @@ type ClientInterface interface {
 	// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -617,7 +597,7 @@ type ClientInterface interface {
 	Events(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Health performs a GET /v1/health (the `Health` operationId) request.
-	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	Health(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcquireLeaseWithBody performs a POST /v1/leases (the `AcquireLease` operationId) request,
 	// with any type of body and a specified content type.
@@ -688,7 +668,7 @@ type ClientInterface interface {
 // RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -704,7 +684,7 @@ func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType str
 // RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequest(c.Server, body)
 	if err != nil {
@@ -797,8 +777,8 @@ func (c *Client) Events(ctx context.Context, params *EventsParams, reqEditors ..
 }
 
 // Health performs a GET /v1/health (the `Health` operationId) request.
-func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewHealthRequest(c.Server)
+func (c *Client) Health(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHealthRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1155,7 +1135,7 @@ func NewEventsRequest(server string, params *EventsParams) (*http.Request, error
 }
 
 // NewHealthRequest constructs an http.Request for the Health method
-func NewHealthRequest(server string) (*http.Request, error) {
+func NewHealthRequest(server string, params *HealthParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1171,6 +1151,33 @@ func NewHealthRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ConfigurationDigest != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "configuration_digest", *params.ConfigurationDigest, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -1455,7 +1462,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
@@ -1463,7 +1470,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
 
 	// IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -1504,7 +1511,7 @@ type ClientWithResponsesInterface interface {
 	// HealthWithResponse performs a GET /v1/health (the `Health` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthResponse, error)
+	HealthWithResponse(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*HealthResponse, error)
 
 	// AcquireLeaseWithBodyWithResponse performs a POST /v1/leases (the `AcquireLease` operationId) request,
 	// with any type of body and a specified content type.
@@ -2087,7 +2094,7 @@ func (r UnregisterResponse) ContentType() string {
 // RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
@@ -2101,7 +2108,7 @@ func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context
 // RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. No bearer publication credentials are accepted.
+// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
 func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
 	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
 	if err != nil {
@@ -2178,8 +2185,8 @@ func (c *ClientWithResponses) EventsWithResponse(ctx context.Context, params *Ev
 // HealthWithResponse performs a GET /v1/health (the `Health` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthResponse, error) {
-	rsp, err := c.Health(ctx, reqEditors...)
+func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, params *HealthParams, reqEditors ...RequestEditorFn) (*HealthResponse, error) {
+	rsp, err := c.Health(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2692,7 +2699,7 @@ type ServerInterface interface {
 	Events(w http.ResponseWriter, r *http.Request, params EventsParams)
 
 	// (GET /v1/health)
-	Health(w http.ResponseWriter, r *http.Request)
+	Health(w http.ResponseWriter, r *http.Request, params HealthParams)
 
 	// (POST /v1/leases)
 	AcquireLease(w http.ResponseWriter, r *http.Request)
@@ -2800,8 +2807,27 @@ func (siw *ServerInterfaceWrapper) Events(w http.ResponseWriter, r *http.Request
 // Health operation middleware
 func (siw *ServerInterfaceWrapper) Health(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params HealthParams
+
+	// ------------- Optional query parameter "configuration_digest" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "configuration_digest", r.URL.Query(), &params.ConfigurationDigest, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "configuration_digest"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "configuration_digest", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Health(w, r)
+		siw.Handler.Health(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

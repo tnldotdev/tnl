@@ -126,33 +126,56 @@ func (d *Database) admitCompanyMember(ctx context.Context, tx pgx.Tx, q *control
 	return err
 }
 
-func (d *Database) ListCompanyAdmissions(ctx context.Context, p ControlPrincipal, team string, now time.Time) (result []CompanyAdmissionRequest, retErr error) {
+type CompanyAdmissionPage struct {
+	Requests   []CompanyAdmissionRequest `json:"requests"`
+	NextCursor string                    `json:"next_cursor,omitempty"`
+}
+
+func (d *Database) ListCompanyAdmissions(ctx context.Context, p ControlPrincipal, team, after string, now time.Time) (result CompanyAdmissionPage, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer rollback(ctx, tx, "list company admissions", &retErr)()
 	q := controlstatedb.New(tx)
 	if _, _, err = lockCompanyOwner(ctx, tx, q, p, team, now); err != nil {
-		return nil, err
+		return result, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id,team_id,identity_connection_id,connection_revision,identity_id,subject,member_slug,state,created_at FROM control.company_admission_requests WHERE team_id=$1 ORDER BY created_at,id LIMIT 1000`, team)
+	var afterTime *time.Time
+	if after != "" {
+		if !opaqueid.Valid(after, "caq_") {
+			return result, ErrAuthorityInvalid
+		}
+		var at time.Time
+		if err := tx.QueryRow(ctx, `SELECT created_at FROM control.company_admission_requests WHERE team_id=$1 AND id=$2`, team, after).Scan(&at); err != nil {
+			return result, publisherLookupError(err, ErrAuthorityInvalid)
+		}
+		afterTime = &at
+	}
+	rows, err := tx.Query(ctx, `SELECT id,team_id,identity_connection_id,connection_revision,identity_id,subject,member_slug,state,created_at
+		FROM control.company_admission_requests WHERE team_id=$1
+		AND ($2::timestamptz IS NULL OR (created_at,id COLLATE "C") > ($2,$3 COLLATE "C"))
+		ORDER BY created_at,id COLLATE "C" LIMIT 101`, team, afterTime, after)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	result = []CompanyAdmissionRequest{}
+	result.Requests = []CompanyAdmissionRequest{}
 	for rows.Next() {
+		if len(result.Requests) == 100 {
+			result.NextCursor = result.Requests[99].ID
+			break
+		}
 		var r CompanyAdmissionRequest
 		if err = rows.Scan(&r.ID, &r.TeamID, &r.IdentityConnectionID, &r.ConnectionRevision, &r.IdentityID, &r.Subject, &r.MemberSlug, &r.State, &r.CreatedAt); err != nil {
 			rows.Close()
-			return nil, err
+			return result, err
 		}
-		result = append(result, r)
+		result.Requests = append(result.Requests, r)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	return result, tx.Commit(ctx)
 }

@@ -27,6 +27,13 @@ func managedPrivateService(ctx context.Context, session *teamSession, id string)
 	if !service.Enabled {
 		return service, nativeauth.ErrScope
 	}
+	service, err = session.authenticated.Control.GetPrivateService(ctx, service.Id)
+	if err != nil {
+		return service, err
+	}
+	if service.Id != id || service.TeamId != current.team.Id || !service.Enabled {
+		return service, nativeauth.ErrScope
+	}
 	_, err = nativeauth.PrivateServiceTrust(service)
 	return service, err
 }

@@ -33,8 +33,9 @@ const (
 )
 
 type harnessArguments struct {
-	Service string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime,publisher-install" help:"Disposable service for the test command."`
-	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
+	TestShard string   `name:"tnl-test-shard" help:"Run one stable test-name shard, numbered 1/N through N/N."`
+	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime,publisher-install" help:"Disposable service for the test command."`
+	Command   []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
 func parseHarnessArguments(arguments []string) (harnessArguments, error) {
@@ -47,15 +48,18 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 		return parsed, err
 	}
 	if parsed.Service == "dns" || parsed.Service == "runtime" || parsed.Service == "publisher-install" {
-		if len(arguments) != 1 {
-			return parsed, errors.New("dns and runtime do not take a test command")
+		if len(parsed.Command) != 0 || parsed.TestShard != "" {
+			return parsed, errors.New("dns, runtime, and publisher-install do not take a test command or shard")
 		}
-	} else if len(arguments) < 3 || arguments[1] != "--" || len(parsed.Command) == 0 {
+	} else if len(parsed.Command) < 2 || parsed.Command[0] != "--" {
 		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis -- go test [arguments...], or testharness dns|runtime")
 	} else {
 		// kong's passthrough includes the separator; only the child command
 		// and its arguments belong in the process we launch.
 		parsed.Command = parsed.Command[1:]
+	}
+	if _, err := parseTestShard(parsed.TestShard); err != nil {
+		return parsed, err
 	}
 	return parsed, nil
 }
@@ -88,7 +92,10 @@ func run() error {
 	if arguments.Service == "publisher-install" {
 		return runPublisherInstall(ctx, root)
 	}
-	command := arguments.Command
+	command, err := shardGoTestCommand(ctx, root, arguments.Command, arguments.TestShard)
+	if err != nil {
+		return err
+	}
 	switch arguments.Service {
 	case "postgres-tls", "mysql", "mysql-tls":
 		fixture, err := startDatabaseTLS(ctx, arguments.Service)

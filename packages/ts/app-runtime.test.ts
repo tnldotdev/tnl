@@ -13,6 +13,33 @@ import { withProcessEnvironment } from "./test-helper/environment.js";
 
 afterEach(() => vi.useRealTimers());
 
+test("close cancels a queued listener wait and removes its listeners before unregistering", async () => {
+  const request = vi.fn(async (_endpoint: RuntimeEndpoint, operation: string) =>
+    operation === "prepare" ? assignment() : undefined,
+  );
+  const handle = await createPreparedService({}, "node", {
+    start: async () => testEndpoint,
+    request,
+  });
+  const server = createServer();
+  const listeningListeners = server.listenerCount("listening");
+  const registering = handle.register(server).catch((error: unknown) => error);
+  await vi.waitFor(() => expect(server.listenerCount("listening")).toBe(listeningListeners + 1));
+  const closed = handle.close();
+  const outcome = await Promise.race([
+    closed.then(() => "closed"),
+    new Promise((resolve) => setTimeout(() => resolve("waiting"), 100)),
+  ]);
+  // release the old implementation's ten-minute timer even on RED.
+  server.emit("close");
+  await closed;
+  expect(outcome).toBe("closed");
+  expect(await registering).toMatchObject({ code: "sdk.registration_stale" });
+  expect(server.listenerCount("listening")).toBe(listeningListeners);
+  expect(server.listenerCount("error")).toBe(0);
+  expect(request.mock.calls.filter(([, op]) => op === "register")).toHaveLength(0);
+});
+
 test("discovers a scoped HTTP endpoint through native and authenticates health", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-runtime-"));
   const binary = join(directory, "fake-tnl.mjs");

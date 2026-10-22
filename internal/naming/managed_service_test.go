@@ -24,3 +24,20 @@ func TestManagedGroupUsesExistingNamespace(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestProjectDNSLabelFitsLongMonorepoNamespace(t *testing.T) {
+	directory := strings.Repeat("platform/", 12) + "accounts"
+	label := ProjectDNSLabel("company-monorepo", directory)
+	if label == "" || len(label) > 63 {
+		t.Fatalf("generated project label exceeds DNS bounds: %q", label)
+	}
+	if _, err := ManagedGroupNamespace("production", label, "alex.example.test"); err != nil {
+		t.Fatalf("automatic namespace rejected: %v", err)
+	}
+	if label != ProjectDNSLabel("company-monorepo", directory) || label == ProjectDNSLabel("company-monorepo", directory+"-other") {
+		t.Fatal("long labels must be stable and preserve distinguishing suffixes")
+	}
+	if got := ProjectDNSLabel("...", "."); got == "" {
+		t.Fatal("empty normalized repository needs a usable fallback")
+	}
+}

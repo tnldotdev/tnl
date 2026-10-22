@@ -39,20 +39,90 @@ func companyTestConnection(t *testing.T, d *Database, team string, owner Control
 	if err != nil {
 		t.Fatal(err)
 	}
-	return companyActivateTestSetup(t, d, c, owner, now)
+	return companyActivateTestSetup(t, d, c, owner, now, companyTestProvisioningToken(t))
 }
 
-func companyActivateTestSetup(t *testing.T, d *Database, c IdentityConnectionSetup, owner ControlPrincipal, now time.Time) IdentityConnectionSecret {
+func companyTestProvisioningToken(t *testing.T) string {
+	t.Helper()
+	token, err := companyRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func companyActivateTestSetup(t *testing.T, d *Database, c IdentityConnectionSetup, owner ControlPrincipal, now time.Time, provisioningToken string) IdentityConnectionSecret {
 	t.Helper()
 	if err := d.ProvisionCompanyEligibility(t.Context(), c.SetupToken, ProvisionCompanyEligibilityRequest{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, IdentityID: owner.IdentityID, Subject: "directory/" + owner.IdentityID, Revision: 1, Eligible: true, ValidUntil: now.Add(4 * time.Hour), MemberSlug: "owner"}, now); err != nil {
 		t.Fatal(err)
 	}
 	source := OIDCIdentity{Issuer: c.Issuer, Subject: owner.IdentityID, AssertionDigest: sha256.Sum256([]byte("activate/" + c.ID)), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: c.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Subject: "directory/" + owner.IdentityID, AuthenticatedAt: now.Unix()}}}
-	active, err := d.ActivateIdentityConnection(t.Context(), owner, c.TeamID, c.ID, c.SetupToken, c.Revision, source, now)
+	active, err := d.ActivateIdentityConnection(t.Context(), owner, c.TeamID, c.ID, c.SetupToken, c.Revision, source, now, provisioningToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return active
+}
+
+func TestIntegrationCompanyActivationRetryKeepsPrecommittedCredential(t *testing.T) {
+	d, now, _, team := newAuthorityTeam(t)
+	p := companyTestPrincipal(t, d, newOIDCSession(t, d, now), now)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET kind='oidc',issuer='https://company.example',subject=id WHERE id=$1`, p.IdentityID); err != nil {
+		t.Fatal(err)
+	}
+	setup, err := d.BeginIdentityConnectionSetup(t.Context(), p, CreateIdentityConnectionRequest{TeamID: team.ID, Issuer: "https://company.example", SourceID: "retry-source", Admission: "approval"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.Repeat("a", 42) + "A"
+	for _, invalid := range []string{"", "short", strings.Repeat("a", 43)} {
+		if _, err := d.ActivateIdentityConnection(t.Context(), p, team.ID, setup.ID, setup.SetupToken, setup.Revision, OIDCIdentity{}, now, invalid); !errors.Is(err, ErrAuthorityInvalid) {
+			t.Fatal("invalid precommitted credential accepted", err)
+		}
+	}
+	active := companyActivateTestSetup(t, d, setup, p, now, token)
+	if active.ProvisioningToken != token {
+		t.Fatal("activation changed precommitted token")
+	}
+	for attempt := range 2 {
+		source := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, AssertionDigest: sha256.Sum256([]byte(fmt.Sprint("retry", attempt))), AssertionExpiry: now.Add(5 * time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
+		source.Nonce, source.IssuedAt = "retry-nonce", now
+		retry, err := d.ActivateIdentityConnection(WithCompanyActorProof(t.Context(), source, source.Nonce), p, team.ID, setup.ID, setup.SetupToken, setup.Revision, source, now, token)
+		if err != nil || retry.ProvisioningToken != token || retry.Revision != active.Revision {
+			t.Fatalf("retry changed operation: %+v %v", retry, err)
+		}
+	}
+	proof := OIDCIdentity{Issuer: setup.Issuer, Subject: p.IdentityID, Nonce: "rotate", IssuedAt: now, AssertionDigest: sha256.Sum256([]byte("rotate")), AssertionExpiry: now.Add(time.Minute), TeamContexts: []oidcauth.TeamContext{{TeamID: team.ID, IdentityConnectionID: setup.ID, ConnectionRevision: active.Revision, SourceID: setup.SourceID, Subject: "directory/" + p.IdentityID, AuthenticatedAt: now.Unix()}}}
+	rotated, err := d.RotateCompanyProvisioningToken(WithCompanyActorProof(t.Context(), proof, proof.Nonce), p, team.ID, setup.ID, active.Revision, now)
+	if err != nil || rotated.ProvisioningToken == token {
+		t.Fatal("rotation", err)
+	}
+	proof.Nonce, proof.AssertionDigest = "late-retry", sha256.Sum256([]byte("late-retry"))
+	if _, err = d.ActivateIdentityConnection(WithCompanyActorProof(t.Context(), proof, proof.Nonce), p, team.ID, setup.ID, setup.SetupToken, setup.Revision, proof, now, token); !errors.Is(err, ErrAuthorityConflict) {
+		t.Fatal("late retry restored revoked credential", err)
+	}
+}
+
+func TestIntegrationCompanyDisabledIdentityAcceptsOnlyNegativeEligibility(t *testing.T) {
+	d, now, _, team := newAuthorityTeam(t)
+	owner := companyTestPrincipal(t, d, newOIDCSession(t, d, now), now)
+	c := companyTestConnection(t, d, team.ID, owner, "approval", now)
+	person := companyTestPrincipal(t, d, newOIDCSession(t, d, now.Add(time.Second)), now)
+	r := companyTestEligibility(t, d, c, person.IdentityID, 1, true, now)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, person.IdentityID, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	r.Revision, r.Eligible = 2, false
+	if err := d.ProvisionCompanyEligibility(t.Context(), c.ProvisioningToken, r, now); err != nil {
+		t.Fatal("offboarding disabled identity", err)
+	}
+	if err := d.ProvisionCompanyEligibility(t.Context(), c.ProvisioningToken, r, now); err != nil {
+		t.Fatal("negative retry", err)
+	}
+	r.Revision, r.Eligible = 3, true
+	if err := d.ProvisionCompanyEligibility(t.Context(), c.ProvisioningToken, r, now); !errors.Is(err, ErrAuthorityAccess) {
+		t.Fatal("disabled identity reactivated", err)
+	}
 }
 
 func companyBindTestIntent(t *testing.T, d *Database, i OIDCIdentity, now time.Time) (OIDCIdentity, error) {
@@ -267,7 +337,7 @@ func TestIntegrationCompanyManagedMembershipPreservesManualAuthority(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement := companyActivateTestSetup(t, d, setup, p, now)
+	replacement := companyActivateTestSetup(t, d, setup, p, now, companyTestProvisioningToken(t))
 	if err = d.ProvisionCompanyEligibility(t.Context(), c.ProvisioningToken, r, now); !errors.Is(err, ErrAuthorityAccess) {
 		t.Fatal("retired source accepted", err)
 	}

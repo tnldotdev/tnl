@@ -142,3 +142,66 @@ func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }
+
+func TestOIDCAdmissionFileRelativeToConfigAndPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tnl.yml")
+	contents := `version: 1
+tnld:
+  role: control
+  database_url: postgres://tnl:secret@database.example/tnl
+  server_domain: tnl.example.com
+  managed_domain: tunnels.example.com
+  cluster_secret: 0123456789abcdef0123456789abcdef
+  storage_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  acme_email: operator@example.com
+  acme_accept_terms: true
+  oidc_issuer: https://identity.example.test
+  oidc_client_id: server
+  oidc_admission_file: admissions.json
+  private_control_tls_certificate_file: control.pem
+  private_control_tls_private_key_file: control.key
+`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("config_check_requires_internal_tls", func(t *testing.T) {
+		missing := strings.ReplaceAll(contents, "  private_control_tls_certificate_file: control.pem\n", "")
+		missing = strings.ReplaceAll(missing, "  private_control_tls_private_key_file: control.key\n", "")
+		file := filepath.Join(dir, "missing-tls.yml")
+		if err := os.WriteFile(file, []byte(missing), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err := run(t.Context(), []string{"config", "check", "--config", file}, &output)
+		typed, ok := failure.Of(err)
+		if !ok || typed.Reason() != failure.ServerConfigInvalid || typed.Setting() != failure.SettingPrivateControlCert || output.Len() != 0 {
+			t.Fatalf("missing private control TLS: err=%v stdout=%q", err, output.String())
+		}
+	})
+	for _, precedence := range []string{"file", "env", "flag"} {
+		t.Run(precedence, func(t *testing.T) {
+			base, err := parseDefaultsAndEnvironment()
+			if err != nil {
+				t.Fatal(err)
+			}
+			flags := map[string]bool{}
+			want := filepath.Join(dir, "admissions.json")
+			if precedence != "file" {
+				want, base.OIDCAdmissionFile = "override.json", "override.json"
+				if precedence == "env" {
+					t.Setenv("TNLD_OIDC_ADMISSION_FILE", "override.json")
+				} else {
+					flags["oidc_admission_file"] = true
+				}
+			}
+			cfg, err := resolveConfigFile(path, base, flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.OIDCAdmissionFile != want {
+				t.Fatalf("admission path = %q, want %q", cfg.OIDCAdmissionFile, want)
+			}
+		})
+	}
+}

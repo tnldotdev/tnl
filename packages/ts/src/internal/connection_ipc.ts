@@ -7,8 +7,64 @@ import { record, exactKeys } from "./runtime.js";
 import { operation, traceHeaders } from "./tracing.js";
 
 export interface OwnerIPC {
+  readonly expiresAt: number;
   prepare(service: string, assertion?: string): Promise<unknown>;
   close(): void;
+}
+
+interface CachedIPC {
+  readonly loading: Promise<OwnerIPC>;
+  active: number;
+  failed?: boolean;
+  expiresAt?: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+const external = new Map<string, CachedIPC>();
+function retire(filename: string, entry: CachedIPC): void {
+  if (external.get(filename) === entry) external.delete(filename);
+  clearTimeout(entry.timer);
+  void entry.loading.then(
+    (ipc) => ipc.close(),
+    () => {},
+  );
+}
+
+/** retire idle agents without stopping the caller-owned native process. */
+export async function prepareExternal(filename: string, service: string): Promise<unknown> {
+  let entry = external.get(filename);
+  if (entry === undefined) {
+    if (external.size >= 32) {
+      const idle = [...external].find(([, candidate]) => candidate.active === 0);
+      if (idle === undefined) throw new TnlError("sdk.connection_unavailable");
+      retire(...idle);
+    }
+    entry = { loading: ownerIPC(filename), active: 0 };
+    external.set(filename, entry);
+  }
+  clearTimeout(entry.timer);
+  if (entry.failed === true) throw new TnlError("sdk.connection_unavailable");
+  entry.active++;
+  try {
+    const client = await entry.loading;
+    entry.expiresAt = client.expiresAt;
+    return await client.prepare(service);
+  } catch (error) {
+    entry.failed = true;
+    throw error;
+  } finally {
+    entry.active--;
+    if (entry.active === 0) {
+      if (entry.failed === true) retire(filename, entry);
+      else {
+        const selected = entry;
+        entry.timer = setTimeout(
+          () => retire(filename, selected),
+          Math.min(30_000, (entry.expiresAt ?? Date.now()) - Date.now()),
+        );
+        entry.timer.unref();
+      }
+    }
+  }
 }
 
 /** private capability loading mirrors native ownership/symlink/size checks. */
@@ -99,7 +155,15 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     const agent = new Agent({ keepAlive: true, maxSockets: 4, maxFreeSockets: 4 });
     let pending = 0;
     let closed = false;
+    const close = () => {
+      closed = true;
+      clearTimeout(expiry);
+      agent.destroy();
+    };
+    const expiry = setTimeout(close, Math.min(expires - Date.now(), 2 ** 31 - 1));
+    expiry.unref();
     return Object.freeze({
+      expiresAt: expires,
       prepare(service: string, assertion?: string): Promise<unknown> {
         return operation("sdk.native.request", async () => {
           if (closed || pending >= 64 || Date.now() >= expires)
@@ -157,17 +221,14 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
               req.once("error", () => reject(new TnlError("sdk.connection_unavailable")));
               req.end(body);
             });
-          } catch {
-            throw new TnlError("sdk.connection_unavailable");
+          } catch (cause) {
+            throw cause instanceof TnlError ? cause : new TnlError("sdk.connection_unavailable");
           } finally {
             pending--;
           }
         });
       },
-      close() {
-        closed = true;
-        agent.destroy();
-      },
+      close,
     });
   } catch {
     throw new TnlError("sdk.connection_unavailable");

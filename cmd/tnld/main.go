@@ -173,6 +173,7 @@ func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[stri
 	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
 	directory := filepath.Dir(path)
 	for name, target := range map[string]*string{
+		"oidc_admission_file":                  &base.OIDCAdmissionFile,
 		"private_control_tls_certificate_file": &base.ControlTLSCertificateFile,
 		"private_control_tls_private_key_file": &base.ControlTLSPrivateKeyFile,
 		"relay_tls_certificate_file":           &base.RelayTLSCertificateFile,

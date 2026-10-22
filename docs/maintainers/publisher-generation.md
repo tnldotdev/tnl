@@ -63,7 +63,7 @@ type Parameter struct {
 ```
 
 `Provider` is exactly `aws`. Paths are relative to the selected output root:
-`aws/NAME.yaml` and `aws/NAME.parameters.example.json`. Replica keys are fixed
+`aws/NAME.yaml`, `aws/NAME.storage-policy.json` and `aws/NAME.parameters.example.json`. the manifest requires the storage-policy path and hash alongside the template and parameter example. manifest schema 1 and template version 2 are fixed. Replica keys are fixed
 `replica-1` through `replica-N`; parameter names for replica 1 are exactly:
 
 ```text

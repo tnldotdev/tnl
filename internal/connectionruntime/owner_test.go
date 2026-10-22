@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
@@ -59,6 +61,79 @@ func fixtureScope(t *testing.T) Context {
 		t.Fatal(err)
 	}
 	return Context{Schema: 1, Directory: root, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example", Audience: "https://control.example", ProjectKey: "project-test", SourceID: "source-test", WorktreeKey: "worktree-test", Services: []string{"database"}}
+}
+
+func TestConnectionPreparedReadDoesNotWaitForSiblingNetwork(t *testing.T) {
+	scope := fixtureScope(t)
+	directory, err := NewDirectory(scope.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &fixtureBackend{deadline: time.Now().Add(time.Hour), started: make(chan struct{}), finished: make(chan struct{})}
+	b.credential.Store(1)
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer func() { cancel(); <-done }()
+	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", b, writer) }()
+	var status Status
+	if err := json.NewDecoder(reader).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: "sibling"}
+	stalled := make(chan error, 1)
+	go func() { stalled <- Call(ctx, status.PrivateHandle, "prepare", request, new(Prepared)) }()
+	<-b.started
+	request.Service = "database"
+	bounded, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	if err := Call(bounded, status.PrivateHandle, "prepared", request, new(Prepared)); err != nil {
+		t.Error("prepared sibling waited for unrelated network work", err)
+	}
+	cancel()
+	<-stalled
+}
+
+func TestConnectionHandleReadersRejectFIFOWithoutWaitingForWriter(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "handle", true: "stop result"}[stopped], func(t *testing.T) {
+			directory, err := NewDirectory(fixtureScope(t).Directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := "handle.json"
+			if stopped {
+				name = "stopped.json"
+			}
+			path := filepath.Join(directory, name)
+			if err := unix.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				if stopped {
+					done <- ReadStopResult(filepath.Join(directory, "handle.json"))
+					return
+				}
+				_, err := ReadHandle(path)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, ErrUnauthorized) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				// unblock the pre-fix reader so a red run leaves no goroutine behind.
+				fd, err := unix.Open(path, unix.O_WRONLY|unix.O_NONBLOCK, 0)
+				if err == nil {
+					_ = unix.Close(fd)
+				}
+				<-done
+				t.Fatal("reader blocked opening a FIFO before checking its type")
+			}
+		})
+	}
 }
 
 type lazyFixtureBackend struct {
