@@ -1,0 +1,59 @@
+paths:
+  /v1/auth/browser-handoff:
+    post:
+      operationId: issueControlBrowserHandoff
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public_url_id, refresh_token]
+              properties:
+                public_url_id: { type: string }
+                refresh_token: { type: string }
+      responses:
+        "201":
+          description: One-use handoff for an independent browser session
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [url]
+                properties:
+                  url: { type: string, pattern: "^https://" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshControlSession
+      summary: Rotate a control session's access and refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/RefreshControlSessionRequest"
+      responses:
+        "200":
+          description: Rotated control session
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ControlSessionResponse"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/auth/logout:
+    post:
+      operationId: logoutControlSession
+      summary: Revoke the authenticated control session
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Control session revoked
+        default:
+          $ref: "../openapi.yaml#/components/responses/BearerProblem"

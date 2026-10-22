@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	router "github.com/tnldotdev/tnl/internal/ingress/clienthello"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/streamcopy"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
 
 type committedVisitorStream struct {

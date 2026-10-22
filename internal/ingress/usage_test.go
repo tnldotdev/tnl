@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publicurlusage"
+	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 

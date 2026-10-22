@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 

@@ -15,7 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/targettransport"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 const managedMySQLSSL uint32 = 1 << 11

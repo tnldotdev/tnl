@@ -1,0 +1,21 @@
+schemas:
+  RelayTransportCertificate:
+    type: object
+    additionalProperties: false
+    required: [relay_service_id, tls_server_name, certificate_pem, private_key_pem, not_after]
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      certificate_pem:
+        type: string
+        minLength: 1
+        maxLength: 65536
+      private_key_pem:
+        type: string
+        minLength: 1
+        maxLength: 65536
+      not_after:
+        type: string
+        format: date-time

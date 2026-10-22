@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/privatetrust"
-	"github.com/tnldotdev/tnl/internal/streamcopy"
-	"github.com/tnldotdev/tnl/internal/targettransport"
+	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 func privateTCPPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {

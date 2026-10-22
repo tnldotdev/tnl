@@ -34,7 +34,7 @@ func TestIntegrationCLINativeConnectRequiresReadyPublisher(t *testing.T) {
 	}
 	configuration := filepath.Join(root, "tnl.json")
 	for _, public := range []bool{true, false} {
-		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.identity.PersonalTeamId, "publishers": map[string]any{"production": map[string]any{"public": public}}, "services": map[string]any{
+		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId, "publishers": map[string]any{"production": map[string]any{"public": public}}, "services": map[string]any{
 			"inventory": map[string]any{"publisher": "production", "target": map[string]any{"type": "address", "address": "http://do-not-dial.invalid:3000"}},
 			"orders":    map[string]any{"publisher": "production", "protocol": "postgres", "target": map[string]any{"type": "address", "address": "do-not-dial.invalid:5432"}},
 			"profile":   map[string]any{"publisher": "production", "protocol": "mysql", "target": map[string]any{"type": "address", "address": "do-not-dial.invalid:3306"}},

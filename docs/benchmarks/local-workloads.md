@@ -37,7 +37,7 @@ mise exec -- task go:test:load:database RUN='^TestProfile' DELAY=0ms
 `DURATION` opts in to the paced cadence test (2m–10m); `RETENTION` adds
 routing-history cleanup to that run. Database tests do not send real visitor
 traffic or make ACME network calls. See the test cases in
-`internal/controlstate` for their exact checks.
+`internal/control/state` for their exact checks.
 
 ## runtime load
 

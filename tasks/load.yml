@@ -1,0 +1,90 @@
+version: "3"
+
+tasks:
+  go:test:load:database:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
+    vars:
+      DELAY: '{{default "0ms" .DELAY}}'
+      PUBLIC_URLS: '{{default "1000" .PUBLIC_URLS}}'
+      HISTORY: '{{default "1" .HISTORY}}'
+      DURATION: '{{default "0s" .DURATION}}'
+      RETENTION: '{{default "0s" .RETENTION}}'
+      RUN: '{{default "^TestLoad" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -v ./internal/control/state -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
+
+  go:test:load:runtime:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run per-component constrained real visitor/recovery/shutdown load
+    vars:
+      PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
+      HELD_MEASURE: '{{default "0s" .HELD_MEASURE}}'
+      HA_TOPOLOGY: '{{default "1" .HA_TOPOLOGY}}'
+      SCENARIO: '{{default "relay-restart" .SCENARIO}}'
+      NETWORK_PATH: '{{default "forwarding" .NETWORK_PATH}}'
+      RTT: '{{default "20ms" .RTT}}'
+      LOSS: '{{default "0.1" .LOSS}}'
+      SEED: '{{default "0" .SEED}}'
+      RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
+    env:
+      PUBLIC_URLS: "{{.PUBLIC_URLS}}"
+      START_PARALLEL: '{{default "" .START_PARALLEL}}'
+      READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
+      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
+      RPS: '{{default "" .RPS}}'
+      DURATION: '{{default "" .DURATION}}'
+      WORKERS: '{{default "" .WORKERS}}'
+      QUEUE: '{{default "" .QUEUE}}'
+      HELD_STREAMS: '{{default "" .HELD_STREAMS}}'
+      HELD_WARMUP: '{{default "" .HELD_WARMUP}}'
+      HELD_MEASURE: "{{.HELD_MEASURE}}"
+      HEAP_PROFILE: '{{default "" .HEAP_PROFILE}}'
+      CPU_PROFILE: '{{default "" .CPU_PROFILE}}'
+      CAPACITY_ONLY: '{{default "" .CAPACITY_ONLY}}'
+      COMBINED: '{{default "" .COMBINED}}'
+      HA_TOPOLOGY: "{{.HA_TOPOLOGY}}"
+      DIRECT_PATH: '{{default "" .DIRECT_PATH}}'
+      BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
+      BANDWIDTH_MBITS_PER_SECOND: '{{default "" .BANDWIDTH_MBITS_PER_SECOND}}'
+      BANDWIDTH_STREAMS: '{{default "" .BANDWIDTH_STREAMS}}'
+      BANDWIDTH_MEASURE: '{{default "" .BANDWIDTH_MEASURE}}'
+      CLIENT_HELLO_CONNECTION_LIMIT: '{{default "" .CLIENT_HELLO_CONNECTION_LIMIT}}'
+      VISITOR_CONNECTION_LIMIT: '{{default "" .VISITOR_CONNECTION_LIMIT}}'
+      PUBLISHER_CONNECTION_LIMIT: '{{default "" .PUBLISHER_CONNECTION_LIMIT}}'
+      PUBLISHER_CONCURRENCY: '{{default "" .PUBLISHER_CONCURRENCY}}'
+      RELAY_STREAM_CAPACITY: '{{default "" .RELAY_STREAM_CAPACITY}}'
+      QUIC_MAX_INCOMING_STREAMS: '{{default "" .QUIC_MAX_INCOMING_STREAMS}}'
+      SCENARIO: "{{.SCENARIO}}"
+      NETWORK_PATH: "{{.NETWORK_PATH}}"
+      RTT: "{{.RTT}}"
+      LOSS: "{{.LOSS}}"
+      SEED: "{{.SEED}}"
+      TRACE: '{{default "" .TRACE}}'
+      RACE: '{{default "" .RACE}}'
+      RESULTS: "{{.RESULTS}}"
+    cmds:
+      - go -C tools/testharness run . runtime
+
+  go:bench:plan:
+    dir: "{{.ROOT_DIR}}"
+    desc: Describe a local workload against an explicit tnl server without creating resources
+    cmds:
+      - go run ./cmd/tnlbench plan
+
+  go:bench:run:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run an explicitly approved benchmark against the selected tnl server
+    cmds:
+      - |
+        set -eu
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnlbench.XXXXXXXX")"
+        trap 'rm -rf "$build_dir"' EXIT
+        go build -o "$build_dir/tnlbench" ./cmd/tnlbench
+        "$build_dir/tnlbench" run
+
+  go:bench:report:
+    dir: "{{.ROOT_DIR}}"
+    desc: Display results from a deployed benchmark
+    cmds:
+      - go run ./cmd/tnlbench report

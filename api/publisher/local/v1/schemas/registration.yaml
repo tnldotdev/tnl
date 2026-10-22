@@ -1,0 +1,23 @@
+schemas:
+  Prepare:
+    type: object
+    additionalProperties: false
+    required: [version, directory, framework, owner, pid]
+    properties:
+      version: { type: integer, enum: [1] }
+      directory: { type: string, maxLength: 4096 }
+      service: { type: string, maxLength: 63, x-go-type-skip-optional-pointer: true }
+      framework: { type: string, enum: [node, bun, vite, next, python] }
+      owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      pid: { type: integer, minimum: 1, x-go-name: PID }
+  Assignment:
+    type: object
+    additionalProperties: false
+    required: [version, registration_id, service, hostname, public_url, project]
+    properties:
+      version: { type: integer, enum: [1] }
+      registration_id: { type: string }
+      service: { type: string }
+      hostname: { type: string }
+      public_url: { type: string }
+      project: { type: object, additionalProperties: true }

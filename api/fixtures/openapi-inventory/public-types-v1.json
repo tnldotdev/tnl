@@ -1,0 +1,22 @@
+{
+  "baseline": "bc1efd09",
+  "packages": {
+    "controlv1": "ef9d2eac108e2eb54c9ff4453e1a43188b24d49af3d6cfc324c1676be8835644",
+    "authorityv1": "5dd581149e6f0ae7c782024a10c52c313989862e5fa762d0f0d8040ee0986f95",
+    "ingressv1": "771e3a31c802bba4cda20d1e063b357ccb30339884fbb470680010941e687573",
+    "relayv1": "940f7a57ef613924477033733d8c4228b1f18ae0add8872a5c7790096dff67c8",
+    "publicurlusagev1": "db17cce77611c8486ff286fb7d92fa8fb97fc15f7b904f17d8bfedabb4e74180",
+    "publisherv1": "c874484d68a9eb0adfaedc0d092a665d2a135d3d021d386a30347144377c9888",
+    "localpublisherv1": "3eae06f64f447106c5384cfd4abaf208d84fff8ce20559a963193f723213064b"
+  },
+  "registrations": {
+    "controlv1": "26ca90aa6bb9c620a5f0b89acaa63a1a1182ea7d37ed1db69e4df43896618cf3",
+    "authorityv1": "a2c6afd5f0762fe81dfc6a8dd10a16b59f18828a9c81e46cfcb25dceb6a1975f",
+    "ingressv1": "2086b83433e7bf28edc35ae4964b9a3d816abae084a2fd7c69c50ef22a1bc894",
+    "relayv1": "e51ad9d3b1e73ea3251fa5199fb81d96abdbea2eaa83c72b78b78009d5552d5b",
+    "publicurlusagev1": "153827d19d28c7934cd3622f449b5ea6f13abe15bd2bcee99191a7465d94fb9b",
+    "publisherv1": "7a14fe5f714edff893120ca22ffb3109e4d0a6b0f92218b7fa877424aabb7939",
+    "localpublisherv1": "c78b065fb208846768bf010ec1215255a542381be99b3c2115962bc22619f748"
+  },
+  "browserModelSHA256": "59fda36ddd87af2df2107e1c8ef8e1160c20273d65608e5f608b6fd4e99ec012"
+}

@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/localpublisher"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	localpublisher "github.com/tnldotdev/tnl/internal/publisher/localapi"
+	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 func main() {

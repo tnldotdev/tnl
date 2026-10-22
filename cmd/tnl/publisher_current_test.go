@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 

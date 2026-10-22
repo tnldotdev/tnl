@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
 type reportCommand struct {

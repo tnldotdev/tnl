@@ -7,10 +7,10 @@ import (
 	"io"
 	"strconv"
 
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -50,7 +50,7 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 		return err
 	}
 	defer session.Close()
-	items, err := visitorURLList(ctx, session.authenticated.Control, command.Team)
+	items, err := visitorURLList(ctx, session.Authenticated().Control, command.Team)
 	if err != nil {
 		return err
 	}
@@ -118,17 +118,17 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
+	routes, err := session.Authenticated().Control.ListPublicURLs(ctx, current.Team().Id)
 	if err != nil {
 		return err
 	}
 	blocks := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
-		clioutput.Field{Label: "team", Value: current.team.DisplayName},
+		clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
+		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
 	)}
 	for _, route := range routes {
 		fields := []clioutput.Field{
@@ -156,18 +156,18 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	selected, err := session.authenticated.Control.GetPublicURL(ctx, command.PublicURLID)
+	selected, err := session.Authenticated().Control.GetPublicURL(ctx, command.PublicURLID)
 	if err != nil {
 		return err
 	}
-	if selected.TeamId != current.team.Id {
+	if selected.TeamId != current.Team().Id {
 		return controlclient.ErrNotFound
 	}
-	if err := session.authenticated.Control.DeletePublicURL(ctx, selected.Id); err != nil {
+	if err := session.Authenticated().Control.DeletePublicURL(ctx, selected.Id); err != nil {
 		return err
 	}
 	return writeHumanTransition(output, "tnl url delete", "deleted", selected.CanonicalHostname, "", "public URL deleted", "",
@@ -183,15 +183,15 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	route, err := session.authenticated.Control.GetPublicURL(ctx, flags.PublicURLID)
+	route, err := session.Authenticated().Control.GetPublicURL(ctx, flags.PublicURLID)
 	if err != nil {
 		return err
 	}
-	if route.TeamId != current.team.Id {
+	if route.TeamId != current.Team().Id {
 		return controlclient.ErrNotFound
 	}
 	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
@@ -209,7 +209,7 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if route.AllowedIpPrefixes != nil {
 		allowed = *route.AllowedIpPrefixes
 	}
-	updated, err := session.authenticated.Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
+	updated, err := session.Authenticated().Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
 		Target: target, AllowedIpPrefixes: allowed,
 	})
 	if err != nil {

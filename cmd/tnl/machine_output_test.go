@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 

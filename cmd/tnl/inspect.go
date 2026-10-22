@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
 
 type inspectCommand struct {
@@ -137,7 +138,7 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 		return err
 	}
 	defer state.Close()
-	_, shared, err := inspectionRoots(ctx, project)
+	_, shared, err := invocation.InspectionRoots(ctx, project)
 	if err != nil {
 		return err
 	}
@@ -221,7 +222,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		return err
 	}
 	defer state.Close()
-	primary, _, err := inspectionRoots(ctx, project)
+	primary, _, err := invocation.InspectionRoots(ctx, project)
 	if err != nil {
 		return err
 	}

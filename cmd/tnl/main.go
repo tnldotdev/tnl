@@ -12,16 +12,17 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"golang.org/x/term"
 )
 
@@ -567,7 +568,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			break
 		}
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.PublisherFile != "" {
-			flags.Publish.ServerURL, err = publisherFileServer(flags.Publish.ServerURL, flags.Publish.PublisherFile)
+			flags.Publish.ServerURL, err = invocation.PublisherFileServer(flags.Publish.ServerURL, flags.Publish.PublisherFile)
 			if err != nil {
 				return err
 			}

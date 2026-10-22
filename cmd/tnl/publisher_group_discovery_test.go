@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/testutil/groupdiscovery"
 )
 

@@ -1,0 +1,142 @@
+schemas:
+  PublisherConnectionIdentity:
+    type: object
+    additionalProperties: false
+    required:
+      - publish_run_id
+      - public_url_id
+      - publish_run_number
+      - publisher_connection_id
+      - connection_slot
+      - connection_assignment_revision
+      - relay_service_id
+    properties:
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      publisher_connection_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      connection_slot:
+        type: integer
+        minimum: 0
+        maximum: 1
+      connection_assignment_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+  PublisherConnectionProcessIdentity:
+    type: object
+    additionalProperties: false
+    required: [relay_id, relay_run_id, relay_lease_revision, claim_id]
+    properties:
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      claim_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+  PublisherConnectionTransition:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/PublisherConnectionIdentity"
+      - $ref: "../openapi.yaml#/components/schemas/PublisherConnectionProcessIdentity"
+  PublisherConnectionClaim:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/PublisherConnectionIdentity"
+      - $ref: "../openapi.yaml#/components/schemas/PublisherConnectionProcessIdentity"
+      - type: object
+        required: [publisher_connection_credential]
+        properties:
+          publisher_connection_credential:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^tnl_connection_[A-Za-z0-9_-]{21}[AQgw]\.[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+  PublisherConnectionDisconnect:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/PublisherConnectionTransition"
+      - type: object
+        required: [unexpected]
+        properties:
+          unexpected:
+            type: boolean
+  ClaimedPublisherConnection:
+    type: object
+    additionalProperties: false
+    required:
+      - publish_run_id
+      - public_url_id
+      - publish_run_number
+      - publisher_connection_id
+      - connection_slot
+      - connection_assignment_revision
+      - relay_service_id
+      - relay_id
+      - relay_run_id
+      - relay_lease_revision
+      - claim_id
+      - relay_address
+      - tls_server_name
+      - state
+      - publisher_connection_credential_expires_at
+      - connected_at
+    properties:
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      publisher_connection_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      connection_slot:
+        type: integer
+        minimum: 0
+        maximum: 1
+      connection_assignment_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      claim_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      state:
+        type: string
+        enum: [connected, ready, closed]
+      publisher_connection_credential_expires_at:
+        type: string
+        format: date-time
+      connected_at:
+        type: string
+        format: date-time
+      ready_at:
+        type: string
+        format: date-time

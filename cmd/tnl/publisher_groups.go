@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"sync"
 
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 )
 
 func (f publisherServeCommand) fixedList() bool {

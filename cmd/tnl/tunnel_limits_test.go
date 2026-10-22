@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {

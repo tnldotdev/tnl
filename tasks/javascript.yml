@@ -1,0 +1,137 @@
+version: "3"
+
+tasks:
+  test:client-tracing:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check SDK and framework tracing, native carriers and lifecycle cleanup
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/native/tracing.test.ts packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/connector/connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/publisher/adhoc-fetch.test.ts packages/ts/test/frameworks/vite.test.ts packages/ts/test/frameworks/next.test.ts
+
+  format:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm format
+
+  format-check:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm format:check
+
+  lint:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm lint
+
+  typecheck:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm typecheck
+
+  test:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm test
+
+  test:connections:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check native connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/connector/connection.test.ts packages/ts/test/connector/awaitable-connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-ipc.test.ts packages/ts/test/connector/connection-installed.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/connector/workload-native.test.ts packages/ts/test/connector/workload-provider.test.ts packages/ts/test/connector/workload-contract.test.ts packages/ts/test/project/service-metadata.test.ts
+
+  test:frameworks:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check app preparation and real Node, Bun, Vite and Next framework lifetimes
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/native/bun.test.ts packages/ts/test/frameworks/vite.test.ts packages/ts/test/frameworks/next.test.ts packages/ts/test/project/runtime.test.ts
+
+  connect:check:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Build and check the GitHub connection action without cloud access
+    cmds:
+      - pnpm --filter @tnldotdev/connect-action build
+      - pnpm --filter @tnldotdev/connect-action typecheck:run
+      - pnpm --filter @tnldotdev/connect-action test:run
+      - pnpm exec oxlint --deny-warnings connect/src connect/test connect/scripts
+      - pnpm exec oxfmt --check connect
+      - actionlint connect/test/workflow.yml
+      - zizmor connect/action.yml connect/test/workflow.yml
+
+  connect:generate-check:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Regenerate and compare the committed action bundles
+    cmds:
+      - pnpm --filter @tnldotdev/connect-action build
+      - git diff --exit-code HEAD -- connect/dist
+      - test -z "$(git ls-files --others --exclude-standard -- connect/dist)"
+
+  connect:fixture:prepare:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Prepare the local action workflow fixture
+    cmds:
+      - node connect/test/workflow.ts prepare
+
+  connect:fixture:observe:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify a prepared action owner from a later workflow step
+    cmds:
+      - node connect/test/workflow.ts observe
+
+  connect:fixture:remove-original:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Remove the fixture's original CLI to qualify action-owned cleanup
+    cmds:
+      - node connect/test/workflow.ts remove-original
+
+  connect:fixture:stop-oidc:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Stop the local action workflow issuer
+    cmds:
+      - node connect/test/workflow.ts stop-oidc
+
+  test:coverage:
+    dir: "{{.ROOT_DIR}}"
+    desc: Produce a diagnostic TypeScript coverage report
+    cmds:
+      - pnpm test:coverage
+
+  test:browser:
+    dir: "{{.ROOT_DIR}}"
+    desc: Test the embedded feedback toolbar in Chromium
+    cmds:
+      - pnpm exec vitest run --config vitest.browser.config.ts
+
+  build:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm build
+
+  check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build once and run JavaScript checks
+    cmds:
+      - task: :js:build
+      - pnpm typecheck:run
+      - pnpm test:run
+      - task: :js:lint
+      - task: :js:format-check
+      - task: :js:pack
+
+  pack:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - pnpm run pack
+
+  test:packaging:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check manifest-driven npm export targets
+    cmds:
+      - pnpm exec vitest run scripts/package/npm-artifacts.test.ts

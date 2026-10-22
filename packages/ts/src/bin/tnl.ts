@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
-import { resolveNativeBinary } from "../internal/launcher.js";
+import { resolveNativeBinary } from "../internal/native/launcher.js";
 import { TnlError, safeTnlMessage, classifyTnlError } from "../errors.js";
 
 try {

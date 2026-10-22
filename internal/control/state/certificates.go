@@ -1,0 +1,429 @@
+package controlstate
+
+import (
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+)
+
+var (
+	ErrCertificateIssuanceGated       = errors.New("controlstate: certificate issuance is disabled")
+	ErrCertificateIssuanceIdempotency = errors.New("controlstate: certificate issuance idempotency conflict")
+	ErrCertificateIssuanceInvalid     = errors.New("controlstate: certificate issuance request is invalid")
+	ErrCertificateIssuanceNotFound    = errors.New("controlstate: certificate issuance not found")
+)
+
+type ACMEAccount struct {
+	ID            string
+	DirectoryURL  string
+	ContactEmail  string
+	AccountKeyDER []byte
+	AccountURL    string
+	AcceptedTerms string
+}
+
+type CertificatePlan struct {
+	CacheKey        string                              `json:"cache_key"`
+	Scope           string                              `json:"scope"`
+	Identifiers     []string                            `json:"identifiers"`
+	ChallengeMethod certificateidentity.ChallengeMethod `json:"challenge_method"`
+}
+
+type CertificateIssuance struct {
+	// new order facts describe a committed insertion, not an idempotent retry.
+	NewOrder            bool
+	DomainKind          DomainKind
+	ID                  string
+	PublishRunID        string
+	PublicURLID         string
+	PublishRunNumber    uint64
+	PrivateRunID        string
+	PrivateServiceID    string
+	PrivateRunNumber    uint64
+	PublisherIdentityID string
+	CertificatePlan     CertificatePlan
+	State               ACMEOrderState
+	CertificatePEM      string
+	RetryAt             *time.Time
+	NotBefore           *time.Time
+	NotAfter            *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type CreateCertificateIssuanceRequest struct {
+	Authentication PublishRunAuthentication
+	DirectoryURL   string
+	IdempotencyKey string
+	RequestDigest  [32]byte
+	CSRDER         []byte
+}
+
+func (d *Database) EnsureACMEAccount(
+	ctx context.Context,
+	directoryURL string,
+	contactEmail string,
+	now time.Time,
+) (ACMEAccount, error) {
+	if !validStateText(directoryURL) || !validStateText(contactEmail) {
+		return ACMEAccount{}, ErrCertificateIssuanceInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return ACMEAccount{}, err
+	}
+	queries := controlstatedb.New(d.pool)
+	existing, err := queries.GetACMEAccountByDirectory(ctx, directoryURL)
+	if err == nil && existing.ContactEmail == contactEmail {
+		return d.acmeAccount(ctx, queries, existing)
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return ACMEAccount{}, fmt.Errorf("controlstate: read ACME account: %w", err)
+	}
+	accountID, err := opaqueid.New(opaqueid.ACMEAccountPrefix)
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: generate ACME account ID: %w", err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: generate ACME account key: %w", err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: encode ACME account key: %w", err)
+	}
+	if existing.ID != "" {
+		accountID = existing.ID
+	}
+	keyCiphertext, err := d.sealSecret(acmeAccountKeyContext(accountID), keyDER)
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: encrypt ACME account key: %w", err)
+	}
+	if existing.ID != "" {
+		keyCiphertext = existing.AccountKeyCiphertext
+	}
+	row, err := queries.EnsureACMEAccount(ctx, controlstatedb.EnsureACMEAccountParams{
+		ID: accountID, DirectoryUrl: directoryURL, ContactEmail: contactEmail,
+		AccountKeyCiphertext: keyCiphertext, AccountKeyStorageKeyID: d.storageKey.CurrentID(), CreatedAt: timestamptz(now),
+	})
+	if err != nil {
+		return ACMEAccount{}, fmt.Errorf("controlstate: ensure ACME account: %w", err)
+	}
+	return d.acmeAccount(ctx, queries, row)
+}
+
+func (d *Database) CreateCertificateIssuance(
+	ctx context.Context,
+	request CreateCertificateIssuanceRequest,
+	now time.Time,
+) (result CertificateIssuance, retErr error) {
+	csrDigest, err := validateCertificateIssuanceRequest(request)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	if err := d.requireOpen(); err != nil {
+		return CertificateIssuance{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "create certificate issuance", &retErr)()
+	queries := controlstatedb.New(tx)
+	_, session, err := lockAuthenticatedPublishRun(ctx, queries, request.Authentication, now)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	csr, _ := x509.ParseCertificateRequest(request.CSRDER)
+	csrIdentifiers, err := canonicalCertificateIdentifiers(csr.DNSNames)
+	if err != nil {
+		return CertificateIssuance{}, ErrCertificateIssuanceInvalid
+	}
+	planIdentifiers, err := canonicalCertificateIdentifiers(session.CertificateIdentifiers)
+	if err != nil || !slices.Equal(csrIdentifiers, planIdentifiers) {
+		return CertificateIssuance{}, ErrCertificateIssuanceInvalid
+	}
+	account, err := queries.GetACMEAccountByDirectory(ctx, request.DirectoryURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CertificateIssuance{}, ErrCertificateIssuanceInvalid
+	}
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: read ACME account: %w", err)
+	}
+	existing, err := queries.GetACMEOrderByIdempotency(ctx, controlstatedb.GetACMEOrderByIdempotencyParams{
+		PublishRunID: session.ID, IdempotencyKey: request.IdempotencyKey,
+	})
+	if err == nil {
+		if subtle.ConstantTimeCompare(existing.RequestDigest, request.RequestDigest[:]) != 1 {
+			return CertificateIssuance{}, ErrCertificateIssuanceIdempotency
+		}
+		result, err = loadCertificateIssuance(ctx, queries, existing, now)
+		if err != nil {
+			return CertificateIssuance{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: commit retry: %w", err)
+		}
+		return result, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: read idempotent order: %w", err)
+	}
+	enabled, err := queries.LockCertificateIssuanceControl(ctx)
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: read maintenance control: %w", err)
+	}
+	if !enabled {
+		return CertificateIssuance{}, ErrCertificateIssuanceGated
+	}
+	issuanceID, err := opaqueid.New(opaqueid.IssuancePrefix)
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: generate certificate issuance ID: %w", err)
+	}
+	row, err := queries.InsertACMEOrder(ctx, controlstatedb.InsertACMEOrderParams{
+		ID: issuanceID, AccountID: account.ID, PublishRunID: session.ID, PublicURLID: session.PublicURLID,
+		PublishRunNumber: session.PublishRunNumber, IdempotencyKey: request.IdempotencyKey,
+		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
+		ChallengeMethod: session.CertificateChallengeMethod.String, CsrDer: slices.Clone(request.CSRDER),
+		CsrDigest: csrDigest[:], CreatedAt: timestamptz(now),
+	})
+	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return CertificateIssuance{}, ErrCertificateIssuanceIdempotency
+		}
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: insert order: %w", err)
+	}
+	if err := queries.InsertCertificateIssuanceAuditEvent(ctx, controlstatedb.InsertCertificateIssuanceAuditEventParams{
+		ActorIdentityID: text(session.ActingIdentityID), RequestID: request.IdempotencyKey,
+		IssuanceID: issuanceID, OccurredAt: timestamptz(now),
+	}); err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: insert audit event: %w", err)
+	}
+	result, err = loadCertificateIssuance(ctx, queries, row, now)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	kind, err := queries.GetCertificateOrderDomainKind(ctx, session.PublicURLID)
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: read certificate order domain kind: %w", err)
+	}
+	result.DomainKind = DomainKind(kind)
+	if err := tx.Commit(ctx); err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: commit: %w", err)
+	}
+	result.NewOrder = true
+	return result, nil
+}
+
+func (d *Database) GetCertificateIssuance(
+	ctx context.Context,
+	issuanceID string,
+	token credentials.PublishRunToken,
+	now time.Time,
+) (result CertificateIssuance, retErr error) {
+	if !validStateText(issuanceID) {
+		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
+	}
+	if err := d.requireOpen(); err != nil {
+		return CertificateIssuance{}, err
+	}
+	authentication, err := d.publishRunAuthenticationForToken(ctx, token)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: get certificate issuance: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "get certificate issuance", &retErr)()
+	queries := controlstatedb.New(tx)
+	_, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	order, err := queries.GetACMEOrder(ctx, issuanceID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && order.PublishRunID != session.ID {
+		return CertificateIssuance{}, ErrCertificateIssuanceNotFound
+	}
+	if err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: get certificate issuance: read order: %w", err)
+	}
+	result, err = loadCertificateIssuance(ctx, queries, order, now)
+	if err != nil {
+		return CertificateIssuance{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CertificateIssuance{}, fmt.Errorf("controlstate: get certificate issuance: commit: %w", err)
+	}
+	return result, nil
+}
+
+func (d *Database) publishRunAuthenticationForToken(
+	ctx context.Context,
+	token credentials.PublishRunToken,
+) (PublishRunAuthentication, error) {
+	tokenID, tokenHash, err := credentials.ParsePublishRunToken(token)
+	if err != nil {
+		return PublishRunAuthentication{}, ErrPublishRunCredential
+	}
+	session, err := controlstatedb.New(d.pool).GetPublishRunByTokenID(ctx, tokenID.String())
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !credentials.SecretHashMatches(session.PublishRunTokenDigest, tokenHash) {
+		return PublishRunAuthentication{}, ErrPublishRunCredential
+	}
+	if err != nil {
+		return PublishRunAuthentication{}, fmt.Errorf("controlstate: read publish run by credential: %w", err)
+	}
+	return PublishRunAuthentication{
+		PublishRunID: session.ID, PublicURLID: session.PublicURLID,
+		PublishRunNumber: uint64(session.PublishRunNumber), PublishRunToken: token,
+	}, nil
+}
+
+func validateCertificateIssuanceRequest(request CreateCertificateIssuanceRequest) ([32]byte, error) {
+	if err := validatePublishRunAuthentication(request.Authentication); err != nil {
+		return [32]byte{}, err
+	}
+	return validateCertificateCSR(request.DirectoryURL, request.IdempotencyKey, request.CSRDER)
+}
+
+func validateCertificateCSR(directory, key string, der []byte) ([32]byte, error) {
+	if !validStateText(directory) || !validStateText(key) ||
+		len(key) > 128 || len(der) == 0 || len(der) > 65536 {
+		return [32]byte{}, ErrCertificateIssuanceInvalid
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil || csr.CheckSignature() != nil || len(csr.DNSNames) == 0 || len(csr.EmailAddresses) != 0 ||
+		len(csr.IPAddresses) != 0 || len(csr.URIs) != 0 || csr.Subject.String() != "" ||
+		!certificateidentity.DNSNamesOnly(csr.Extensions, csr.DNSNames) {
+		return [32]byte{}, ErrCertificateIssuanceInvalid
+	}
+	if _, err := canonicalCertificateIdentifiers(csr.DNSNames); err != nil {
+		return [32]byte{}, ErrCertificateIssuanceInvalid
+	}
+	return sha256.Sum256(der), nil
+}
+
+func canonicalCertificateIdentifiers(identifiers []string) ([]string, error) {
+	if len(identifiers) == 0 {
+		return nil, ErrCertificateIssuanceInvalid
+	}
+	result := make([]string, 0, len(identifiers))
+	seen := make(map[string]struct{}, len(identifiers))
+	for _, identifier := range identifiers {
+		canonicalInput := strings.TrimPrefix(identifier, "*.")
+		if strings.Contains(identifier, "*") && canonicalInput == identifier {
+			return nil, ErrCertificateIssuanceInvalid
+		}
+		canonical, err := naming.CanonicalizeHostname(canonicalInput)
+		if err != nil || canonical != canonicalInput {
+			return nil, ErrCertificateIssuanceInvalid
+		}
+		canonicalIdentifier := canonical
+		if canonicalInput != identifier {
+			canonicalIdentifier = "*." + canonical
+		}
+		if _, exists := seen[canonicalIdentifier]; exists {
+			return nil, ErrCertificateIssuanceInvalid
+		}
+		seen[canonicalIdentifier] = struct{}{}
+		result = append(result, canonicalIdentifier)
+	}
+	slices.Sort(result)
+	return result, nil
+}
+
+func validInstalledCertificate(order controlstatedb.ControlAcmeOrder, hostname string, now time.Time) bool {
+	digest := sha256.Sum256(order.CsrDer)
+	if !bytes.Equal(digest[:], order.CsrDigest) || !order.NotBefore.Valid || !order.NotAfter.Valid {
+		return false
+	}
+	leaf, err := certificateidentity.ValidateIssuedCertificate(order.CertificatePem, order.CsrDer, order.CertificateIdentifiers, now)
+	return err == nil && leaf.VerifyHostname(hostname) == nil &&
+		leaf.NotBefore.Equal(order.NotBefore.Time) && leaf.NotAfter.Equal(order.NotAfter.Time)
+}
+
+func loadCertificateIssuance(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	order controlstatedb.ControlAcmeOrder,
+	now time.Time,
+) (CertificateIssuance, error) {
+	method := certificateidentity.ChallengeMethod(order.ChallengeMethod)
+	state := ACMEOrderState(order.State)
+	if !method.Valid() {
+		return CertificateIssuance{}, errors.New("controlstate: invalid certificate challenge method")
+	}
+	if !state.valid() {
+		return CertificateIssuance{}, errors.New("controlstate: invalid certificate issuance state")
+	}
+	result := CertificateIssuance{
+		ID: order.ID, PublishRunID: order.PublishRunID, PublicURLID: order.PublicURLID,
+		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
+		PublishRunNumber: uint64(order.PublishRunNumber), CertificatePlan: CertificatePlan{
+			CacheKey: order.CertificateCacheKey, Scope: order.CertificateScope,
+			Identifiers: slices.Clone(order.CertificateIdentifiers), ChallengeMethod: method,
+		},
+		State:          state,
+		CertificatePEM: string(order.CertificatePem), CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
+	}
+	if order.AvailableAt.Valid && order.AvailableAt.Time.After(now) {
+		retryAt := order.AvailableAt.Time
+		result.RetryAt = &retryAt
+	}
+	if order.NotBefore.Valid {
+		notBefore := order.NotBefore.Time
+		result.NotBefore = &notBefore
+	}
+	if order.NotAfter.Valid {
+		notAfter := order.NotAfter.Time
+		result.NotAfter = &notAfter
+	}
+	return result, nil
+}
+
+func (d *Database) acmeAccount(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	row controlstatedb.ControlAcmeAccount,
+) (ACMEAccount, error) {
+	key, previous, err := d.openSecret(row.AccountKeyStorageKeyID, acmeAccountKeyContext(row.ID), row.AccountKeyCiphertext)
+	if err != nil {
+		return ACMEAccount{}, errors.New("controlstate: ACME account key ciphertext is invalid")
+	}
+	if previous {
+		rotated, err := d.sealSecret(acmeAccountKeyContext(row.ID), key)
+		if err != nil {
+			return ACMEAccount{}, fmt.Errorf("controlstate: re-encrypt ACME account key: %w", err)
+		}
+		if err := queries.RotateACMEAccountKey(ctx, controlstatedb.RotateACMEAccountKeyParams{
+			AccountKeyCiphertext: rotated, AccountKeyStorageKeyID: d.storageKey.CurrentID(), UpdatedAt: timestamptz(time.Now()),
+			AccountID: row.ID, PreviousKeyID: row.AccountKeyStorageKeyID, PreviousCiphertext: row.AccountKeyCiphertext,
+		}); err != nil {
+			return ACMEAccount{}, fmt.Errorf("controlstate: store re-encrypted ACME account key: %w", err)
+		}
+	}
+	return ACMEAccount{
+		ID: row.ID, DirectoryURL: row.DirectoryUrl, ContactEmail: row.ContactEmail,
+		AccountKeyDER: key, AccountURL: row.AccountUrl.String,
+		AcceptedTerms: row.AcceptedTermsUrl.String,
+	}, nil
+}

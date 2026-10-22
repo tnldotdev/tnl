@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )

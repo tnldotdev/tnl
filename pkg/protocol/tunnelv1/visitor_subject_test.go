@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func TestVisitorSubjectVariants(t *testing.T) {

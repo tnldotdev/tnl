@@ -1,0 +1,79 @@
+schemas:
+  ServiceObservation:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        event_id,
+        service_id,
+        service_kind,
+        event_type,
+        occurred_at,
+        run_id,
+        run_number,
+        visitor_connection_id,
+        outcome,
+      ]
+    properties:
+      event_id: { type: string, pattern: "^sae_([A-Za-z0-9]{22}|[A-Za-z0-9]{64})$" }
+      service_id: { type: string, maxLength: 128 }
+      service_kind: { type: string, enum: [public_url, private_service] }
+      event_type:
+        type: string
+        enum: [connection.open, connection.close, http.decision]
+        x-enum-varnames:
+          [ObservationConnectionOpen, ObservationConnectionClose, ObservationHTTPDecision]
+      occurred_at: { type: string, format: date-time }
+      run_id: { type: string }
+      run_number: { type: integer, format: int64, minimum: 0 }
+      connector_session_id: { type: string }
+      visitor_connection_id: { type: string }
+      source_ip: { type: string }
+      outcome:
+        type: string
+        enum: [allowed, denied, failed, forwarded, closed]
+        x-enum-varnames:
+          [
+            ObservationAllowed,
+            ObservationDenied,
+            ObservationFailed,
+            ObservationForwarded,
+            ObservationClosed,
+          ]
+      reason:
+        type: string
+        enum:
+          [
+            ip_policy,
+            capacity,
+            draining,
+            unavailable,
+            authorization,
+            invalid_request,
+            forwarding,
+            closed,
+            revoked,
+            expired,
+            cancelled,
+          ]
+        x-enum-varnames:
+          [
+            ObservationIPPolicy,
+            ObservationCapacity,
+            ObservationDraining,
+            ObservationUnavailable,
+            ObservationAuthorization,
+            ObservationInvalidRequest,
+            ObservationForwarding,
+            ObservationReasonClosed,
+            ObservationRevoked,
+            ObservationExpired,
+            ObservationCancelled,
+          ]
+  ServiceObservationResult:
+    type: object
+    additionalProperties: false
+    required: [accepted, duplicates]
+    properties:
+      accepted: { type: integer, minimum: 0, maximum: 256 }
+      duplicates: { type: integer, minimum: 0, maximum: 256 }

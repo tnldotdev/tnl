@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -83,7 +85,7 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := &teamSession{authenticated: &clientauth.Client{Control: control}}
+			session := clientteam.NewSession(nil, nil, &clientauth.Client{Control: control}, authorityv1.IdentityContext{}, clientteam.Options{})
 			var output bytes.Buffer
 			if kind == "invite" {
 				err = createShareInvitation(t.Context(), session, shareInviteCreateCommand{URL: id, Email: "reviewer@example.test"}, time.Hour, &output)

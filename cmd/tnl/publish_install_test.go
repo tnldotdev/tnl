@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
 )
 
 func TestSystemInstallLoadsConfiguredTargetBeforeSetup(t *testing.T) {
@@ -39,7 +40,7 @@ func TestPrivateInstallationResultPreservesOnlyAnOwnedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result publicationRegistrationResult
+	var result publisherprovision.RegistrationResult
 	if json.Unmarshal(output.Bytes(), &result) != nil || result.Reason != failure.InvalidTunnelFlags || result.Output != "" || bytes.Contains(output.Bytes(), []byte("human-secret")) {
 		t.Fatal("private installer exposed raw input or lost its failure reason")
 	}

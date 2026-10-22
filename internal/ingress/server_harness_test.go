@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
+	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/routebackend"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
 const fixtureTimeout = 5 * time.Second

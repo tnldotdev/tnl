@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/httpstream"
-	"github.com/tnldotdev/tnl/internal/httpsubject"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -67,20 +67,7 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 	if target.Transport.TLS != nil {
 		scheme = "https"
 	}
-	return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: target.Address}, func(ctx context.Context) (net.Conn, error) {
-		setup, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		conn, err := observability.DialTarget(setup, "tcp", target.Address)
-		if err != nil {
-			return nil, err
-		}
-		secured, err := target.Transport.Secure(setup, conn)
-		if err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
-		return secured, nil
-	}, func(next http.Handler) http.Handler {
+	return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: target.Address}, target.dial, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// consume the reserved header even for denied and internal dispatch.
 			credential, credentialErr := managedHTTPCredential(r, client.ConnectionState())

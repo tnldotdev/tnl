@@ -1,0 +1,74 @@
+schemas:
+  MembershipID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  Membership:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        id,
+        team_id,
+        identity_id,
+        team_display_name,
+        team_kind,
+        role,
+        member_slug,
+        managed_label,
+        policy_revision,
+        created_at,
+        updated_at,
+      ]
+    properties:
+      identity_connection_id:
+        {
+          type: string,
+          description: Immutable managed admission source; absent for manually admitted members,
+        }
+      manual_suspended_at: { type: string, format: date-time }
+      personal_account_exception: { type: boolean }
+      company_sign_in_required: { type: boolean }
+      active: { type: boolean }
+      id:
+        $ref: "../openapi.yaml#/components/schemas/MembershipID"
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      identity_id:
+        $ref: "../openapi.yaml#/components/schemas/IdentityID"
+      team_display_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      team_kind:
+        $ref: "../openapi.yaml#/components/schemas/TeamKind"
+      role:
+        $ref: "../openapi.yaml#/components/schemas/TeamRole"
+      member_slug:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      managed_label:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      policy_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+  MembershipPage:
+    type: object
+    additionalProperties: false
+    required: [memberships]
+    properties:
+      memberships:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/Membership"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/MembershipID"
+  SetMembershipRoleRequest:
+    type: object
+    additionalProperties: false
+    required: [role]
+    properties:
+      role:
+        $ref: "../openapi.yaml#/components/schemas/TeamRole"

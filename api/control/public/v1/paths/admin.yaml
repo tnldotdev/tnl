@@ -1,0 +1,122 @@
+paths:
+  /v1/teams/{team_id}/service-audit:
+    get:
+      operationId: listServiceAudit
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: team_id, in: path, required: true, schema: { type: string } }
+        - { name: service_id, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: service, in: query, schema: { type: string, maxLength: 253 } }
+        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 256, default: 100 },
+          }
+      responses:
+        "200":
+          {
+            description: Bounded safe service audit page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceAuditPage" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/admin/status:
+    get:
+      operationId: getAdminServerStatus
+      summary: Read control, ingress, and relay status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/AdminServerStatus"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/admin/relays:
+    get:
+      operationId: listAdminRelays
+      summary: List relay leases
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Relay lease page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/AdminRelayPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/admin/relays/{relay_id}/drain:
+    post:
+      operationId: drainAdminRelay
+      summary: Remove a matching relay lease from placement and begin draining
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AdminDrainRelayRequest"
+      responses:
+        "200":
+          description: Draining relay lease
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/AdminRelayLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/admin/maintenance-controls:
+    get:
+      operationId: listMaintenanceControls
+      summary: List maintenance controls
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Maintenance controls
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "../openapi.yaml#/components/schemas/MaintenanceControl"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/admin/maintenance-controls/{control_name}:
+    put:
+      operationId: setMaintenanceControl
+      summary: Set one maintenance control
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/MaintenanceControlName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/SetMaintenanceControlRequest"
+      responses:
+        "200":
+          description: Maintenance control
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/MaintenanceControl"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

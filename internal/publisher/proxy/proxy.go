@@ -1,0 +1,478 @@
+// Package localproxy forwards one public hostname to one HTTP or HTTPS target.
+package localproxy
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
+)
+
+const maxHeaderFields = 100
+
+// readiness probes keep HTML responses streaming and observe headers only.
+const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
+
+// DefaultRequestLimit bounds active requests to one public URL's local service,
+// across all visitor connections and HTTP/2 streams.
+const DefaultRequestLimit = 64
+
+// Preflight validates the target and verifies that it accepts a connection.
+func Preflight(ctx context.Context, target string) error {
+	return PreflightWithOptions(ctx, target, TargetOptions{})
+}
+
+// TargetOptions configures trust for one target, independently of control and relays.
+type TargetOptions struct {
+	RootCAs    *x509.CertPool
+	ServerName string
+}
+
+// LoadTargetRootCAs adds a PEM file to the system roots used for one HTTPS target.
+func LoadTargetRootCAs(path string) (*x509.CertPool, error) {
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, fmt.Errorf("read system certificate roots: %w", err))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, fmt.Errorf("open target CA file: %w", err))
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil || len(data) > 1<<20 || !roots.AppendCertsFromPEM(data) {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target CA file must contain PEM certificates and be at most 1 MiB"))
+	}
+	return roots, nil
+}
+
+// PreflightWithOptions checks target reachability and HTTPS certificate trust.
+func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) (result error) {
+	ctx = observability.WithPublisherProtocol(ctx, "http")
+	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
+	defer func() { finish(result) }()
+	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
+	if err != nil {
+		return err
+	}
+	parsed, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "https" && options.ServerName != "" {
+		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
+	}
+	setup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	connection, err := observability.DialTarget(setup, "tcp", parsed.Host)
+	if err != nil {
+		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+	}
+	if parsed.Scheme == "https" {
+		name := options.ServerName
+		if name == "" {
+			name = parsed.Hostname()
+		}
+		secured := tls.Client(connection, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: name})
+		tlsCtx, finish := observability.PublisherOperation(setup, "target_tls")
+		err = secured.HandshakeContext(tlsCtx)
+		observability.PublisherTLS(tlsCtx, "target", secured.ConnectionState(), err)
+		finish(err)
+		if err != nil {
+			_ = connection.Close()
+			return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+		}
+		connection = secured
+	}
+	if err := connection.Close(); err != nil {
+		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: close target connection: %w", err))
+	}
+	return nil
+}
+
+// WaitForTarget waits until a valid target accepts a connection.
+func WaitForTarget(ctx context.Context, target string) error {
+	return waitForTarget(ctx, target, Preflight)
+}
+
+func WaitForTargetWithOptions(ctx context.Context, target string, options TargetOptions) error {
+	return waitForTarget(ctx, target, func(ctx context.Context, target string) error {
+		return PreflightWithOptions(ctx, target, options)
+	})
+}
+
+func waitForTarget(ctx context.Context, target string, preflight func(context.Context, string) error) error {
+	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for {
+		lastErr = preflight(ctx, canonicalTarget)
+		if lastErr == nil {
+			return nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("localproxy: wait for target: %w", errors.Join(ctx.Err(), lastErr))
+		case <-timer.C:
+		}
+	}
+}
+
+// NewWithMounts shares one hostname check and request limit across the base
+// service and all mounted local services.
+func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
+	return NewWithMountsHooks(target, hostname, requestLimit, mounts, ResponseHooks{}, onTargetFailure...)
+}
+
+// ResponseHooks separates header observation from body modification. observing
+// a response must not disable upstream compression or consume its body.
+type ResponseHooks struct {
+	ModifyHTML    func(*http.Response) error
+	Observe       func(*http.Response) error
+	ObserveStatus func(*http.Request, int)
+	OnForwarded   func(*http.Request)
+}
+
+func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, onTargetFailure ...func()) (http.Handler, error) {
+	return NewWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, TargetOptions{}, onTargetFailure...)
+}
+
+func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, true, nil, onTargetFailure)
+}
+
+// NewWithMountsHooksOptionsAdmitted forwards requests already admitted by the publisher.
+// the publisher owns the shared admission budget for proxied and inline handlers.
+func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, nil, onTargetFailure)
+}
+
+// NewWithMountsHooksOptionsAdmittedDynamic resolves the base service before
+// each new request. an immutable identity fences pooled connections when a
+// container is replaced at the same address; mounted paths keep their own
+// independent target selection.
+func NewWithMountsHooksOptionsAdmittedDynamic(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, resolve func(*http.Request) (string, string, error), onTargetFailure ...func()) (http.Handler, error) {
+	if resolve == nil {
+		return nil, errors.New("localproxy: target resolver is required")
+	}
+	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, resolve, onTargetFailure)
+}
+
+func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, resolve func(*http.Request) (string, string, error), onTargetFailure []func()) (http.Handler, error) {
+	if requestLimit < 0 {
+		return nil, errors.New("localproxy: request limit cannot be negative")
+	}
+	if requestLimit == 0 {
+		requestLimit = DefaultRequestLimit
+	}
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if err != nil || canonical != hostname {
+		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
+	}
+	base, err := newReverseProxy(target, requestLimit, hooks, options, onTargetFailure)
+	if err != nil {
+		return nil, err
+	}
+	var baseHandler http.Handler = base
+	if resolve != nil {
+		var mu sync.Mutex
+		var currentAddress, currentIdentity string
+		baseHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			address, identity, err := resolve(r)
+			if err != nil || address == "" || identity == "" {
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			canonical, err := targetsyntax.NormalizeTarget(address)
+			if err != nil {
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			mu.Lock()
+			if currentAddress != canonical || currentIdentity != identity {
+				selected, err := newReverseProxy(canonical, requestLimit, hooks, options, onTargetFailure)
+				if err != nil {
+					mu.Unlock()
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					return
+				}
+				if transport, ok := base.Transport.(interface{ CloseIdleConnections() }); ok {
+					transport.CloseIdleConnections()
+				}
+				base, currentAddress, currentIdentity = selected, canonical, identity
+			}
+			selected := base
+			mu.Unlock()
+			selected.ServeHTTP(w, r)
+		})
+	}
+	type mountedProxy struct {
+		Mount
+		proxy http.Handler
+	}
+	routes := make([]mountedProxy, 0, len(mounts))
+	seen := make(map[string]bool, len(mounts))
+	for _, mount := range mounts {
+		if !targetsyntax.ValidMountPrefix(mount.Prefix) || seen[mount.Prefix] {
+			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
+		}
+		seen[mount.Prefix] = true
+		var proxy http.Handler
+		if mount.ResolveTarget != nil {
+			var mu sync.Mutex
+			var current string
+			var upstream *httputil.ReverseProxy
+			proxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				target := mount.ResolveTarget()
+				if target == "" {
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					return
+				}
+				mu.Lock()
+				if current != target {
+					if upstream != nil {
+						if transport, ok := upstream.Transport.(interface{ CloseIdleConnections() }); ok {
+							transport.CloseIdleConnections()
+						}
+					}
+					var err error
+					upstream, err = newReverseProxy(target, requestLimit, hooks, mount.Options, onTargetFailure)
+					if err != nil {
+						mu.Unlock()
+						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+						return
+					}
+					current = target
+				}
+				selected := upstream
+				mu.Unlock()
+				selected.ServeHTTP(w, r)
+			})
+		} else {
+			proxy, err = newReverseProxy(mount.Target, requestLimit, hooks, mount.Options, onTargetFailure)
+			if err != nil {
+				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
+			}
+		}
+		routes = append(routes, mountedProxy{Mount: mount, proxy: proxy})
+	}
+	slices.SortFunc(routes, func(left, right mountedProxy) int {
+		if len(left.Prefix) != len(right.Prefix) {
+			return len(right.Prefix) - len(left.Prefix)
+		}
+		return strings.Compare(left.Prefix, right.Prefix)
+	})
+	var requests chan struct{}
+	if admit {
+		requests = make(chan struct{}, requestLimit)
+	}
+	return httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if code := ValidateRequest(request, hostname); code != "" {
+			diagnostic.WriteHTTP(response, request, code)
+			return
+		}
+		if admit {
+			// callers without a publisher keep the same per-URL admission boundary.
+			select {
+			case requests <- struct{}{}:
+				defer func() { <-requests }()
+			default:
+				if request.ProtoMajor == 1 {
+					// avoid draining an unread body before sending the rejection.
+					response.Header().Set("Connection", "close")
+				}
+				response.Header().Set("Retry-After", "1")
+				diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
+				return
+			}
+		}
+		escapedPath := request.URL.EscapedPath()
+		for _, mount := range routes {
+			if !matchesMountPath(escapedPath, mount.Prefix) {
+				continue
+			}
+			if mount.StripPrefix {
+				copy := request.Clone(request.Context())
+				location := *request.URL
+				location.Path = strings.TrimPrefix(location.Path, mount.Prefix)
+				if location.Path == "" {
+					location.Path = "/"
+				}
+				if location.RawPath != "" {
+					location.RawPath = strings.TrimPrefix(escapedPath, mount.Prefix)
+					if location.RawPath == "" {
+						location.RawPath = "/"
+					}
+				}
+				copy.URL = &location
+				request = copy
+			}
+			mount.proxy.ServeHTTP(response, request)
+			return
+		}
+		baseHandler.ServeHTTP(response, request)
+	}), httpstream.RequestBodyTimeout), nil
+}
+
+func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, options TargetOptions, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
+	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	targetURL, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return nil, err
+	}
+	if targetURL.Scheme != "https" && options.ServerName != "" {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
+	}
+	targetAddress := targetURL.Host
+	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
+	var failing atomic.Bool
+	transport := &http.Transport{
+		Proxy:               nil,
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   false,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: options.ServerName},
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 16,
+		MaxConnsPerHost:     requestLimit,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" || address != targetAddress {
+				return nil, errors.New("localproxy: refused unexpected upstream")
+			}
+			ctx, finish := observability.PublisherOperation(ctx, "target_connect")
+			connection, err := dialer.DialContext(ctx, "tcp", targetAddress)
+			finish(err)
+			return connection, err
+		},
+	}
+	proxy := &httputil.ReverseProxy{
+		Transport:     transport,
+		FlushInterval: -1,
+		Rewrite: func(request *httputil.ProxyRequest) {
+			httpstream.ForwardTrailers(request.In, request.Out)
+			observability.PublisherHTTPForward(request.Out.Context())
+			request.Out = observability.TargetRequest(request.Out)
+			host := request.In.Host
+			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
+				request.Out.Header.Del("Accept-Encoding")
+			}
+			// remove client forwarding identity before deriving trusted headers.
+			removeForwardingHeaders(request.Out.Header)
+			request.Out.Header.Del(ReadinessProbeHeader)
+			request.SetURL(targetURL)
+			request.Out.Host = host
+			request.SetXForwarded()
+		},
+		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
+			observability.PublisherHTTPError(request.Context(), targetErr)
+			if code, ok := diagnostic.CodeOf(targetErr); ok {
+				diagnostic.WriteHTTP(response, request, code)
+				return
+			}
+			if hooks.ObserveStatus != nil {
+				hooks.ObserveStatus(request, 0)
+			}
+			if failing.CompareAndSwap(false, true) && len(onTargetFailure) != 0 && onTargetFailure[0] != nil {
+				onTargetFailure[0]()
+			}
+			caseID := ""
+			if errors.Is(targetErr, syscall.ECONNREFUSED) {
+				caseID = "connection-refused"
+			} else if errors.Is(targetErr, context.DeadlineExceeded) {
+				caseID = "timeout"
+			}
+			diagnostic.WriteHTTP(response, request, diagnostic.TargetUnavailable, caseID)
+		},
+		ModifyResponse: func(response *http.Response) error {
+			failing.Store(false)
+			if hooks.ObserveStatus != nil && response.StatusCode >= 400 {
+				hooks.ObserveStatus(response.Request, response.StatusCode)
+			}
+			if hooks.Observe != nil {
+				if err := hooks.Observe(response); err != nil {
+					return err
+				}
+			}
+			if hooks.ModifyHTML != nil && !IsReadinessProbe(response.Request) {
+				if err := hooks.ModifyHTML(response); err != nil {
+					return err
+				}
+			}
+			if hooks.OnForwarded != nil {
+				hooks.OnForwarded(response.Request)
+			}
+			observability.PublisherHTTPResponse(response.Request.Context())
+			observability.PublisherHTTPUpgrade(response)
+			return nil
+		},
+	}
+	return proxy, nil
+}
+
+// ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.
+func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
+	// bind origin-form authority and TLS SNI to this public URL's hostname.
+	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
+		return diagnostic.RequestRejected
+	}
+	authority, err := naming.CanonicalizeAuthority(request.Host)
+	if err != nil || request.TLS == nil {
+		return diagnostic.RequestRejected
+	}
+	serverName, err := naming.CanonicalizeHostname(request.TLS.ServerName)
+	if err != nil || serverName != hostname {
+		return diagnostic.RequestRejected
+	}
+	if authority != hostname {
+		// HTTP/2 clients may reuse a TLS connection for sibling hostnames on
+		// the same wildcard certificate. A 421 asks them to retry on a new
+		// connection with the requested hostname as SNI.
+		if request.ProtoMajor == 2 {
+			return diagnostic.RequestMisdirected
+		}
+		return diagnostic.RequestRejected
+	}
+	fields := 0
+	for _, values := range request.Header {
+		fields += len(values)
+		if fields > maxHeaderFields {
+			return diagnostic.RequestRejected
+		}
+	}
+	return ""
+}
+
+func removeForwardingHeaders(headers http.Header) {
+	for name := range headers {
+		lower := strings.ToLower(name)
+		if lower == "forwarded" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") {
+			headers.Del(name)
+		}
+	}
+}

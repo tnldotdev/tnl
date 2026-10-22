@@ -1,0 +1,200 @@
+paths:
+  /v1/public-urls/{public_url_id}/publish-runs:
+    post:
+      operationId: createPublishRun
+      summary: Create a publish run and allocate its publish run number
+      security:
+        - publisherAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+        - name: Publisher-Run-Proof
+          in: header
+          required: true
+          schema: { type: string, minLength: 86, maxLength: 86 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreatePublishRunRequest"
+      responses:
+        "201":
+          description: Publish run and two publisher connection assignments
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublishRunSetup"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/heartbeat:
+    post:
+      operationId: heartbeatPublishRun
+      summary: Renew a publish run and replace missing publisher connections
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Renewed publish run plan
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublishRunHeartbeat"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-access:
+    post:
+      operationId: enableShareAccess
+      summary: Enable share-aware HTTP handling for this preview publish run
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/EnableShareAccessRequest"
+      responses:
+        "204":
+          description: Publisher can check shares for this publish run
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-state:
+    post:
+      operationId: getPublishRunShareState
+      summary: Read short-lived share access state for this publisher
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Current share fingerprints and cookie hashes for this public URL
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublishRunShareState"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/share-redemptions:
+    post:
+      operationId: redeemPublishRunShare
+      summary: Redeem a share link or one short-lived cross-host handoff
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/RedeemShareRequest"
+      responses:
+        "200":
+          description: Host-only cookie secret and the next review hostname
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ShareRedemption"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/ready:
+    post:
+      operationId: markPublishRunReady
+      summary: Mark a publish run ready after its certificate and two publisher connections are ready
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Ready publish run
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublishRun"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/certificate-installed:
+    post:
+      operationId: markPublishRunCertificateInstalled
+      summary: Record installation of the current public URL certificate
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CertificateInstalledRequest"
+      responses:
+        "200":
+          description: Updated publish run
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublishRun"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}:
+    delete:
+      operationId: closePublishRun
+      summary: Close and drain a publish run without deleting its public URL
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      responses:
+        "204":
+          description: Publish run closed
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/certificate-issuances:
+    post:
+      operationId: createCertificateIssuance
+      summary: Begin issuance for the publish run's certificate plan
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateCertificateIssuanceRequest"
+      responses:
+        "201":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

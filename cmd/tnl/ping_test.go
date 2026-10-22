@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 func TestPingDoesNotLoadProjectOrSendCredentials(t *testing.T) {

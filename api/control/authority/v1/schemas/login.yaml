@@ -1,0 +1,72 @@
+schemas:
+  IdentityID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  StartDeviceLoginRequest:
+    type: object
+    additionalProperties: false
+    properties:
+      team: { type: string, maxLength: 128 }
+      refresh_token: { type: string, maxLength: 4096 }
+  DeviceLoginCredential:
+    type: object
+    additionalProperties: false
+    required: [polling_credential]
+    properties:
+      polling_credential:
+        type: string
+        minLength: 43
+        maxLength: 43
+  DeviceLoginChallenge:
+    type: object
+    additionalProperties: false
+    required: [polling_credential, approval_url, user_code, expires_at, interval_seconds]
+    properties:
+      polling_credential: { type: string, minLength: 43, maxLength: 43 }
+      approval_url: { type: string, format: uri }
+      user_code: { type: string, minLength: 13, maxLength: 13 }
+      expires_at: { type: string, format: date-time }
+      interval_seconds: { type: integer, minimum: 1, maximum: 30 }
+  DeviceLoginResult:
+    type: object
+    additionalProperties: false
+    required: [status]
+    properties:
+      status: { type: string, enum: [pending, approved, cancelled, denied] }
+      session: { $ref: "../openapi.yaml#/components/schemas/ControlSessionResponse" }
+  Identity:
+    type: object
+    additionalProperties: false
+    required: [id, display_name, administrator, created_at]
+    properties:
+      id:
+        $ref: "../openapi.yaml#/components/schemas/IdentityID"
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 256
+      normalized_email:
+        type: string
+        format: email
+      email_verified:
+        type: boolean
+        default: false
+      administrator:
+        type: boolean
+      created_at:
+        type: string
+        format: date-time
+  IdentityContext:
+    type: object
+    additionalProperties: false
+    required: [identity, personal_team_id, memberships]
+    properties:
+      identity:
+        $ref: "../openapi.yaml#/components/schemas/Identity"
+      personal_team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      default_team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      memberships:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/Membership"

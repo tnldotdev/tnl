@@ -1,0 +1,28 @@
+paths:
+  /v1/health:
+    get:
+      operationId: health
+      parameters:
+        - name: configuration_digest
+          in: query
+          description: Owner only. Fence reuse of an evaluated project configuration; a mismatch returns 409.
+          schema: { type: string, pattern: "^[a-f0-9]{64}$" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: authenticated owner is available }
+  /v1/capabilities:
+    post:
+      operationId: issueCapability
+      description: Owner only. Issue an app capability for one service or an invocation capability for one invocation ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CapabilityRequest" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: private endpoint descriptor
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Endpoint" }

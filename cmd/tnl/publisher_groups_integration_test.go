@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -46,11 +46,11 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := session.authenticated.Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "other-team"}, key)
+	other, err := session.Authenticated().Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "other-team"}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	teams := []string{session.identity.PersonalTeamId, other.Id}
+	teams := []string{session.Identity().PersonalTeamId, other.Id}
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/same/project.git"}} {
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
@@ -167,7 +167,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	var visitorAddresses []string
 	var visitorKeys [][]byte
 	for i, team := range teams {
-		service, err := session.authenticated.Control.GetPrivateService(t.Context(), *applied[i].Services[0].ServiceId)
+		service, err := session.Authenticated().Control.GetPrivateService(t.Context(), *applied[i].Services[0].ServiceId)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +259,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	writeJSON(configuration, document)
 	cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--state-dir", person})
 	workflowWait(t, 35*time.Second, func() bool {
-		status, err := session.authenticated.Control.GetProjectConfiguration(t.Context(), teams[0], applied[0].ProjectKey)
+		status, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), teams[0], applied[0].ProjectKey)
 		return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].ObservedRevision > applied[0].Revision
 	})
 	if current(1) != runs[1] {
@@ -270,7 +270,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	}
 	assertVisitor(0, "updated-team-a")
 	assertVisitor(1, "team-b-token")
-	if err := session.authenticated.Control.RevokePublisherGroupMember(t.Context(), teams[0], applied[0].ProjectKey, "production", identities[0].Member.PublisherIdentityId); err != nil {
+	if err := session.Authenticated().Control.RevokePublisherGroupMember(t.Context(), teams[0], applied[0].ProjectKey, "production", identities[0].Member.PublisherIdentityId); err != nil {
 		t.Fatal(err)
 	}
 	workflowWait(t, 15*time.Second, func() bool {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func testOpaqueID(prefix string) string { return prefix + strings.Repeat("a", 22) }

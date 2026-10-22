@@ -9,8 +9,8 @@ import (
 
 	"github.com/oapi-codegen/runtime/types"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/ingressapi"
+	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )

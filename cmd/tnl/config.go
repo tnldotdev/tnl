@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -24,56 +21,26 @@ type projectConfiguration struct {
 	projectconfig.Project
 }
 
+func projectOptions(flags cli) resolve.Options {
+	return resolve.Options{ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig}
+}
+
 func selectProjectConfiguration(ctx context.Context, flags cli) (projectconfig.Selection, string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return projectconfig.Selection{}, "", failure.Wrap("read working directory", failure.CurrentDirectoryUnavailable, err)
-	}
-	selection, err := projectconfig.SelectProjectConfig(ctx, cwd, flags.ConfigPath, os.Getenv("TNL_CONFIG"), flags.NoConfig)
-	return selection, cwd, failure.Wrap("select project configuration", failure.ProjectConfigInvalid, err)
+	return resolve.Select(ctx, projectOptions(flags))
 }
 
 func loadProjectConfiguration(ctx context.Context, flags cli, stateRoot string) (projectConfiguration, error) {
-	state, err := clientstate.Open(ctx, stateRoot)
-	if err != nil {
-		return projectConfiguration{}, failure.Wrap("open client state", failure.ClientStateUnavailable, err)
-	}
-	salt, err := state.WorktreeHashSalt(ctx)
-	closeErr := state.Close()
-	if err != nil {
-		return projectConfiguration{}, failure.Wrap("read worktree identity", failure.ClientStateUnavailable, err)
-	}
-	if closeErr != nil {
-		return projectConfiguration{}, failure.Wrap("close client state", failure.ClientStateUnavailable, closeErr)
-	}
-	return loadProjectConfigurationWithSalt(ctx, flags, salt)
+	project, err := resolve.Load(ctx, projectOptions(flags), stateRoot)
+	return projectConfiguration{Project: project}, err
 }
 
 func loadProjectConfigurationWithSalt(ctx context.Context, flags cli, salt [32]byte) (projectConfiguration, error) {
-	selection, cwd, err := selectProjectConfiguration(ctx, flags)
-	if err != nil {
-		return projectConfiguration{}, err
-	}
-	project, err := projectconfig.Resolve(ctx, selection, cwd, salt)
-	if err != nil {
-		return projectConfiguration{}, failure.Wrap("load project configuration", failure.ProjectConfigInvalid, err)
-	}
-	return projectConfiguration{Project: project}, nil
+	project, err := resolve.LoadWithSalt(ctx, projectOptions(flags), salt)
+	return projectConfiguration{Project: project}, err
 }
 
 func projectRoot(ctx context.Context, flags cli) (string, error) {
-	selection, cwd, err := selectProjectConfiguration(ctx, flags)
-	if err != nil {
-		return "", err
-	}
-	if selection.Path != "" {
-		return filepath.Dir(selection.Path), nil
-	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
-	if err != nil {
-		return "", fmt.Errorf("resolve project worktree: %w", err)
-	}
-	return worktree.Root, nil
+	return resolve.Root(ctx, projectOptions(flags))
 }
 
 func (c projectConfiguration) applyPublish(flags *publishCommand) error {
@@ -85,7 +52,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		service, flags.Target = flags.Target, ""
 	} else if flags.Target == "" && !enrolled {
 		var err error
-		service, err = c.defaultService()
+		service, err = resolve.DefaultService(c.Config.Services)
 		if err != nil {
 			return err
 		}
@@ -104,14 +71,14 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if enrolled && credential == "" {
 		credential = "publisher selection"
 	}
-	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, credential)
+	flags.ServerURL, flags.serverFromConfig, err = resolve.Server(flags.ServerURL, effective.Server, credential)
 	if err != nil {
 		return err
 	}
 	if flags.Team != "" {
 		flags.selectedTeam = flags.Team
 	} else {
-		flags.selectedTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, effective.Team)
+		flags.selectedTeam, err = resolve.TeamForServer(flags.ServerURL, effective.Server, effective.Team)
 		if err != nil {
 			return err
 		}
@@ -212,7 +179,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	flags.privateService = !config.IsPublicService(definition)
 	flags.ServiceName = service
 	flags.Target = ""
-	selected, _, err := resolveProjectServer(flags.ServerURL, effective.Server, "")
+	selected, _, err := resolve.Server(flags.ServerURL, effective.Server, "")
 	if err != nil {
 		return err
 	}
@@ -263,7 +230,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	if err := applyProtocolLimits(&flags.tunnelFlags, flags.Protocol); err != nil {
 		return err
 	}
-	flags.Target, err = normalizePublishTarget(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
+	flags.Target, err = targetplan.NormalizePublicAddress(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
 	return err
 }
 
@@ -278,22 +245,6 @@ func validateConfiguredTargetTrust(flags publishCommand, local *config.Publish) 
 		return publisherCLIError("target TLS flags differ from the configured target.tls")
 	}
 	return nil
-}
-
-func (c projectConfiguration) defaultService() (string, error) {
-	if len(c.Config.Services) == 0 {
-		return "", nil
-	}
-	names := make([]string, 0, len(c.Config.Services))
-	for name := range c.Config.Services {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	if len(names) == 1 {
-		return names[0], nil
-	}
-	message := fmt.Sprintf("service is required; configured services: %s", strings.Join(names, ", "))
-	return "", diagnostic.WrapMessage(diagnostic.ServiceAmbiguous, message, errors.New(message))
 }
 
 func applyBuiltInHostname(flags *tunnelFlags, service string, worktree projectconfig.Worktree) {
@@ -418,47 +369,15 @@ func projectSensitiveCommand(command string) bool {
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
 
-// resolveProjectServer preserves invocation selection and its provenance. A
-// project must not choose the destination for an explicitly supplied credential.
-func resolveProjectServer(selected string, project *string, token string) (server string, fromProject bool, err error) {
-	if selected != "" || project == nil {
-		return selected, false, nil
-	}
-	if token != "" {
-		return "", false, errors.New("an explicit access token with a project-provided server requires --server or TNL_SERVER")
-	}
-	return *project, true, nil
-}
-
-func projectTeamForServer(server string, configuredServer, configuredTeam *string) (string, error) {
-	if configuredTeam == nil {
-		return "", nil
-	}
-	if server != "" && configuredServer != nil {
-		selected, err := clientstate.CanonicalServer(server)
-		if err != nil {
-			return "", err
-		}
-		project, err := clientstate.CanonicalServer(*configuredServer)
-		if err != nil {
-			return "", err
-		}
-		if selected != project {
-			return "", nil
-		}
-	}
-	return *configuredTeam, nil
-}
-
 func applyProjectCommandContext(command string, project projectConfiguration, flags *cli) error {
 	var contextErr error
 	apply := func(remote *remoteFlags, useTeam bool) {
 		if contextErr != nil {
 			return
 		}
-		remote.ServerURL, _, contextErr = resolveProjectServer(remote.ServerURL, project.Config.Server, remote.AccessToken)
+		remote.ServerURL, _, contextErr = resolve.Server(remote.ServerURL, project.Config.Server, remote.AccessToken)
 		if contextErr == nil && useTeam {
-			remote.ProjectTeam, contextErr = projectTeamForServer(remote.ServerURL, project.Config.Server, project.Config.Team)
+			remote.ProjectTeam, contextErr = resolve.TeamForServer(remote.ServerURL, project.Config.Server, project.Config.Team)
 		}
 	}
 	switch command {
@@ -474,9 +393,9 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		if credential == "" {
 			credential = serve.EnrollmentKey
 		}
-		serve.ServerURL, _, contextErr = resolveProjectServer(serve.ServerURL, project.Config.Server, credential)
+		serve.ServerURL, _, contextErr = resolve.Server(serve.ServerURL, project.Config.Server, credential)
 		if contextErr == nil {
-			serve.ProjectTeam, contextErr = projectTeamForServer(serve.ServerURL, project.Config.Server, project.Config.Team)
+			serve.ProjectTeam, contextErr = resolve.TeamForServer(serve.ServerURL, project.Config.Server, project.Config.Team)
 		}
 	case "connect available":
 		apply(&flags.Connect.Available.remoteFlags, false)
@@ -491,14 +410,14 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	case "auth status":
 		apply(&flags.Auth.Status.remoteFlags, false)
 	case "auth login", "auth login run", "auth login start":
-		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
+		flags.Auth.Login.ServerURL, _, contextErr = resolve.Server(flags.Auth.Login.ServerURL, project.Config.Server, "")
 		if flags.Auth.Login.Team == "" && project.Config.Team != nil {
 			flags.Auth.Login.Team = *project.Config.Team
 		}
 	case "auth login wait <operation-id>", "auth login inspect <operation-id>", "auth login cancel <operation-id>":
-		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
+		flags.Auth.Login.ServerURL, _, contextErr = resolve.Server(flags.Auth.Login.ServerURL, project.Config.Server, "")
 	case "auth logout":
-		flags.Auth.Logout.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Logout.ServerURL, project.Config.Server, "")
+		flags.Auth.Logout.ServerURL, _, contextErr = resolve.Server(flags.Auth.Logout.ServerURL, project.Config.Server, "")
 	case "team current":
 		apply(&flags.Team.Current.remoteFlags, true)
 	case "team list":

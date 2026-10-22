@@ -1,7 +1,5 @@
 package main
 
-import "github.com/tnldotdev/tnl/internal/publishertarget"
+import "github.com/tnldotdev/tnl/internal/publisher/target"
 
-func init() {
-	runtimeTargetResolver = publishertarget.Resolver{}
-}
+var runtimeTargetResolver target.TargetResolver = target.Resolver{}

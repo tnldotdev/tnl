@@ -1,0 +1,44 @@
+paths:
+  /v1/status:
+    get:
+      operationId: status
+      description: Owner sees the transactional project snapshot; app sees only its service; invocation sees only its publication. Does not probe.
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: snapshot with one opaque exclusive event cursor
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Snapshot" }
+  /v1/events:
+    get:
+      operationId: events
+      description: Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: bounded retained events
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "../openapi.yaml#/components/schemas/Event" } }
+  /v1/check:
+    post:
+      operationId: check
+      description: Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Check" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: fresh project snapshot
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Snapshot" }

@@ -1,8 +1,12 @@
-import { serviceHostnames, serializeRuntimePayload } from "./internal/runtime.js";
-import { canonicalLoopbackTarget } from "./internal/target.js";
+import { serviceHostnames, serializeRuntimePayload } from "./internal/project/runtime.js";
+import { canonicalLoopbackTarget } from "./internal/publisher/target.js";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
-import { prepareService, type PrepareOptions, type PreparedService } from "./internal/app.js";
+import {
+  prepareService,
+  type PrepareOptions,
+  type PreparedService,
+} from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";

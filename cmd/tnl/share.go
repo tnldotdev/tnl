@@ -17,12 +17,16 @@ import (
 	"strings"
 	"time"
 
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -157,7 +161,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 	return controlv1.PublicURL{}, controlclient.ErrNotFound
 }
 
-func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer, services map[string]shareServiceResult) (*teamSession, controlv1.Preview, []controlv1.PublicURL, error) {
+func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer, services map[string]shareServiceResult) (*clientteam.Session, controlv1.Preview, []controlv1.PublicURL, error) {
 	if !project.Found() || len(project.Config.Services) == 0 {
 		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services, then start your app"))
 	}
@@ -165,12 +169,12 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	if err != nil {
 		return nil, controlv1.Preview{}, nil, err
 	}
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		session.Close()
 		return nil, controlv1.Preview{}, nil, err
 	}
-	id, found, err := session.store.PreviewID(ctx, current.team.Id, project.Root)
+	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
 	if err != nil || !found {
 		session.Close()
 		if err != nil {
@@ -178,16 +182,18 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		}
 		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start a configured app service first"))
 	}
-	preview, err := session.authenticated.Control.GetPreview(ctx, id)
-	if err != nil || preview.TeamId != current.team.Id || preview.Id != id {
+	preview, err := session.Authenticated().Control.GetPreview(ctx, id)
+	if err != nil || preview.TeamId != current.Team().Id || preview.Id != id {
 		session.Close()
 		if err != nil {
 			return nil, controlv1.Preview{}, nil, err
 		}
 		return nil, controlv1.Preview{}, nil, failure.Wrap("read share preview", failure.ServerResponseInvalid, errors.New("server returned a preview for another team"))
 	}
-	resolver := newProjectMetadataResolver(session.database, project, os.Stdin, diagnostics, command)
-	resolver.Seed(session.authenticated.ServerEndpoint, session.authenticated)
+	resolver := resolve.NewMetadataResolver(session.Database(), project.Project, func(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
+		return projectAuthentication(ctx, state, server, command, os.Stdin, diagnostics)
+	})
+	resolver.Seed(session.Authenticated().ServerEndpoint, session.Authenticated())
 	metadata, err := resolver.Generate(ctx)
 	if err != nil {
 		session.Close()
@@ -201,7 +207,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	routes := make([]controlv1.PublicURL, 0, len(names))
 	hostnames := make(map[string]string, len(names))
 	for _, name := range names {
-		route, routeErr := session.authenticated.Control.GetPublicURLByHostname(ctx, current.team.Id, metadata.Services[name].Hostname)
+		route, routeErr := session.Authenticated().Control.GetPublicURLByHostname(ctx, current.Team().Id, metadata.Services[name].Hostname)
 		if routeErr == nil && route.ServiceProtocol != controlv1.Http {
 			continue
 		}
@@ -247,7 +253,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	if token {
 		command = "tnl share token create"
 	}
-	var session *teamSession
+	var session *clientteam.Session
 	var preview controlv1.Preview
 	var routes []controlv1.PublicURL
 	services := make(map[string]shareServiceResult)
@@ -256,11 +262,11 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	} else {
 		session, err = openTeamSession(ctx, flags.selection(), command, diagnostics)
 		if err == nil {
-			current, currentErr := session.current(ctx)
+			current, currentErr := session.Current(ctx)
 			if currentErr != nil {
 				err = currentErr
 			} else {
-				routes, err = session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
+				routes, err = session.Authenticated().Control.ListPublicURLs(ctx, current.Team().Id)
 			}
 		}
 	}
@@ -297,9 +303,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	}
 	var share controlv1.Share
 	if flags.Preview {
-		share, err = session.authenticated.Control.CreateShare(ctx, preview.Id, key, request)
+		share, err = session.Authenticated().Control.CreateShare(ctx, preview.Id, key, request)
 	} else {
-		share, err = session.authenticated.Control.CreateURLShare(ctx, key, request)
+		share, err = session.Authenticated().Control.CreateURLShare(ctx, key, request)
 	}
 	if err != nil {
 		return err
@@ -364,17 +370,17 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	shares, err := session.authenticated.Control.ListTeamShares(ctx, current.team.Id)
+	shares, err := session.Authenticated().Control.ListTeamShares(ctx, current.Team().Id)
 	if err != nil {
 		return err
 	}
 	selectedID := ""
 	if flags.URL != "" {
-		routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
+		routes, err := session.Authenticated().Control.ListPublicURLs(ctx, current.Team().Id)
 		if err != nil {
 			return err
 		}
@@ -390,16 +396,16 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	blocks := make([]clioutput.Block, 0, len(shares))
 	teamGrant := false
 	if project.Found() && project.Root != "" {
-		id, found, err := session.store.PreviewID(ctx, current.team.Id, project.Root)
+		id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
 		if err != nil {
 			return err
 		}
 		if found {
-			preview, err := session.authenticated.Control.GetPreview(ctx, id)
+			preview, err := session.Authenticated().Control.GetPreview(ctx, id)
 			if err != nil {
 				return err
 			}
-			if preview.TeamId == current.team.Id && preview.TeamAccessEnabled != nil && *preview.TeamAccessEnabled &&
+			if preview.TeamId == current.Team().Id && preview.TeamAccessEnabled != nil && *preview.TeamAccessEnabled &&
 				(selectedID == "" || slices.Contains(preview.PublicUrlIds, selectedID)) {
 				teamGrant = true
 				blocks = append(blocks, clioutput.Section("team", clioutput.Fields(
@@ -451,15 +457,15 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 	if err != nil {
 		return err
 	}
-	grants, err := s.authenticated.Control.ListVisitorGrants(ctx, item.Id)
+	grants, err := s.Authenticated().Control.ListVisitorGrants(ctx, item.Id)
 	if err != nil {
 		return err
 	}
-	invitations, err := s.authenticated.Control.ListVisitorInvitations(ctx, item.Id)
+	invitations, err := s.Authenticated().Control.ListVisitorInvitations(ctx, item.Id)
 	if err != nil {
 		return err
 	}
-	shares, err := s.authenticated.Control.ListTeamShares(ctx, item.TeamId)
+	shares, err := s.Authenticated().Control.ListTeamShares(ctx, item.TeamId)
 	if err != nil {
 		return err
 	}
@@ -518,10 +524,10 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	if err != nil {
 		return err
 	}
-	if session.authenticated.Discovery.BrowserLoginAvailable == nil || !*session.authenticated.Discovery.BrowserLoginAvailable {
+	if session.Authenticated().Discovery.BrowserLoginAvailable == nil || !*session.Authenticated().Discovery.BrowserLoginAvailable {
 		return failure.Wrap("enable team browser access", failure.ServerOIDCInvalid, errors.New("team access requires a server with OIDC browser sign-in; configure OIDC before sharing with the team"))
 	}
-	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, preview.Id, true)
+	updated, err := session.Authenticated().Control.SetPreviewTeamAccess(ctx, preview.Id, true)
 	if err != nil {
 		return err
 	}
@@ -554,18 +560,18 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	id, found, err := session.store.PreviewID(ctx, current.team.Id, project.Root)
+	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return failure.Wrap("read share preview", failure.PreviewNotSaved, errors.New("preview is not saved for this checkout; start a configured app service first"))
 	}
-	updated, err := session.authenticated.Control.SetPreviewTeamAccess(ctx, id, false)
+	updated, err := session.Authenticated().Control.SetPreviewTeamAccess(ctx, id, false)
 	if err != nil {
 		return err
 	}
@@ -591,7 +597,7 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 	return exactTeamShare(ctx, session, selector, lifetime, revoke, mode, output)
 }
 
-func exactTeamShare(ctx context.Context, session *teamSession, selector, lifetime string, revoke bool, mode statusOutputMode, output io.Writer) error {
+func exactTeamShare(ctx context.Context, session *clientteam.Session, selector, lifetime string, revoke bool, mode statusOutputMode, output io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, session, selector)
 	if err != nil {
 		return err
@@ -599,13 +605,13 @@ func exactTeamShare(ctx context.Context, session *teamSession, selector, lifetim
 	var result controlv1.VisitorGrant
 	state := "shared"
 	if revoke {
-		grants, err := session.authenticated.Control.ListVisitorGrants(ctx, item.Id)
+		grants, err := session.Authenticated().Control.ListVisitorGrants(ctx, item.Id)
 		if err != nil {
 			return err
 		}
 		for _, grant := range grants {
 			if string(grant.Kind) == "team" && grant.RevokedAt == nil {
-				if err := session.authenticated.Control.RevokeVisitorGrant(ctx, item.Id, grant.Id); err != nil {
+				if err := session.Authenticated().Control.RevokeVisitorGrant(ctx, item.Id, grant.Id); err != nil {
 					return err
 				}
 			}
@@ -625,7 +631,7 @@ func exactTeamShare(ctx context.Context, session *teamSession, selector, lifetim
 		if err != nil {
 			return err
 		}
-		result, err = session.authenticated.Control.CreateTeamVisitorGrant(ctx, item.Id, key, controlv1.CreateTeamVisitorGrantRequest{ExpiresAt: expires})
+		result, err = session.Authenticated().Control.CreateTeamVisitorGrant(ctx, item.Id, key, controlv1.CreateTeamVisitorGrantRequest{ExpiresAt: expires})
 		if err != nil {
 			return err
 		}
@@ -647,18 +653,18 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	share, err := session.authenticated.Control.GetShare(ctx, flags.ShareID)
-	if err != nil || share.TeamId != current.team.Id {
+	share, err := session.Authenticated().Control.GetShare(ctx, flags.ShareID)
+	if err != nil || share.TeamId != current.Team().Id {
 		if err != nil {
 			return err
 		}
 		return controlclient.ErrNotFound
 	}
-	if _, err := session.authenticated.Control.RevokeShare(ctx, share.Id); err != nil {
+	if _, err := session.Authenticated().Control.RevokeShare(ctx, share.Id); err != nil {
 		return err
 	}
 	if flags.Output == statusOutputJSON {

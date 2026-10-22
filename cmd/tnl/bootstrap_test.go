@@ -9,8 +9,8 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/aws/smithy-go"
-	"github.com/tnldotdev/tnl/internal/awsbootstrap"
 	"github.com/tnldotdev/tnl/internal/failure"
+	awsbootstrap "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
 )
 
 func TestBootstrapCommandIsPositionalAndPrepareOnly(t *testing.T) {

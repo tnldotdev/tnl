@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -63,7 +64,7 @@ func TestScopedPrivateInstallCapturesTargetTrustForRuntime(t *testing.T) {
 	if job.Kind != publisherjob.KindPrivateService || job.Protocol != config.ProtocolTCP || job.Trust == nil || job.Trust.Digest != trust.Digest || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
 		t.Fatalf("private target trust was split or lost: %+v", job)
 	}
-	if err := publisherjob.PreflightPrivate(t.Context(), job.PrivateTargetPlan()); err != nil {
+	if err := targetplan.PreflightPrivate(t.Context(), job.PrivateTargetPlan()); err != nil {
 		t.Fatalf("installed preflight reopened a deleted source: %v", err)
 	}
 }

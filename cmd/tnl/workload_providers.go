@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/httpclient"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
 )
 
 var readVercelWorkload = vercelWorkloadMetadata

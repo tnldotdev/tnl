@@ -8,7 +8,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {

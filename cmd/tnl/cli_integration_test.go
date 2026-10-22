@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -161,16 +162,16 @@ func TestSummaryRecorderKeepsHTTPAndDatabaseResults(t *testing.T) {
 	}
 	defer tunnel.Finish(context.Background(), nil)
 	retention, budget := config.Duration(time.Hour), config.ByteSize(1<<20)
-	recorder, err := newInspectionRecorder(t.Context(), tunnel, root, "", config.InspectionSummary, &config.Inspection{Retention: &retention, MaxBytes: &budget})
+	recorder, err := invocation.NewInspectionRecorder(t.Context(), tunnel, root, "", config.InspectionSummary, &config.Inspection{Retention: &retention, MaxBytes: &budget})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observe := summaryObservation(recorder)
+	observe := invocation.SummaryObservation(recorder)
 	now := time.Now()
 	observe(inspection.Summary{Protocol: "http", ReceivedAt: now, Method: "GET", Path: "/orders", Status: 503, Result: inspection.ResultError, Duration: 2 * time.Millisecond, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: "mysql", ReceivedAt: now.Add(time.Millisecond), Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "HY000", MySQLErrorCode: 1045, Rows: 1, ResultSets: 2, Duration: 3 * time.Millisecond, Origin: "tnl"})
 	recorder.Close()
-	_, shared, err := inspectionRoots(t.Context(), root)
+	_, shared, err := invocation.InspectionRoots(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

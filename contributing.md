@@ -11,20 +11,38 @@ mise exec -- uv sync --frozen --project packages/py
 
 ## check your change
 
-Run the checks that fit your change. Before sending a broad change, use the full
-sequence:
+Run the focused check that fits your change first. For a broad change, use this
+sequence once on the integrated tree:
 
 ```console
 mise exec -- task generate
 mise exec -- task format
-mise exec -- task generate-check
 mise exec -- task format-check
-mise exec -- task lint
-mise exec -- task test
+mise exec -- task go:test
+mise exec -- task go:lint
+mise exec -- task js:check
+mise exec -- task py:check
+mise exec -- task connect:check
+mise exec -- task workflows:lint
+mise exec -- task go:vulncheck
 mise exec -- task go:test:race
+mise exec -- task go:test:harness
 mise exec -- task go:test:integration
 mise exec -- task build
 ```
+
+`go:test` includes `go test ./...` and the external public Go consumer fixture;
+`go:lint` includes root vet/staticcheck and `go:lint:harness` for the separate
+harness module. `js:check` builds once, then reuses that build for types, tests,
+lint, formatting, and source packing. `py:check` includes Ruff, mypy, native-owner
+pytest, and wheel-source checks. `test` and `lint` remain public aggregate aliases;
+when one already covered a check on the same tree, record that invocation rather
+than repeating its components.
+
+`Taskfile.yml` includes the implementation files in `tasks/`. Includes and tasks
+explicitly run at the repository root; cross-file dependencies use absolute
+public Task names. Use `task --list-all` to discover public targets. The ownership
+map is in [development architecture](docs/maintainers/development/architecture.md#tasks-generators-and-assets).
 
 Integration needs Docker and Pebble from `mise install`. The Task targets use
 Testcontainers for Go in the separate `tools/testharness` Go module to create
@@ -45,7 +63,12 @@ mise exec -- task go:test:integration:cli:shard SHARD=1/3
 
 The harness discovers tests with `go test -list` and assigns each complete
 top-level test to one stable name-based shard. New tests enter a shard
-automatically; unsupported selectors and empty shards fail. Runtime shards
+automatically; unsupported selectors and empty shards fail. The harness also
+discovers and accounts for unsharded and explicit `1/1` selection before starting
+a container, rejecting an empty top-level set. Single-shard subtest selectors
+pass through unchanged, with accounting at their top-level parent; that count
+does not prove a requested subtest ran. Multi-shard selection rejects subtests
+and assigns whole top-level tests exactly once. Runtime shards
 exclude only the two real-clock proofs, which CI runs separately through
 `go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
 The multi-cycle Git identity proof runs separately through
@@ -57,9 +80,14 @@ its transport checks, rather than repeating in the binary job.
 
 The Node 24 function-artifact fixture runs
 only through its explicit `go:test:integration:vercel` target and artifact input.
-`generate-check` regenerates files and compares them with `HEAD`, so intentional
-uncommitted generated changes also appear as drift. `format-check` only checks;
-`format` applies fixes.
+Run `mise exec -- task generate-check` against the intended committed generated
+tree before delivery. It regenerates files, compares the shared generated-path
+inventory with `HEAD`, and rejects untracked output. Intentional uncommitted
+generated changes therefore appear as drift; successful regeneration is separate
+from a clean `HEAD` comparison. `connect:generate-check` separately checks action
+bundles. `format-check` only checks; `format` applies fixes. For a Markdown-only
+change, use `mise exec -- pnpm exec oxfmt --write <owned-files>` and the same
+explicit files with `--check` instead of a repository-wide formatter.
 
 ### choose a test tier
 
@@ -162,7 +190,7 @@ For native database TLS and authentication, run `task go:test:database-native --
 `task go:test:integration:tcp-clients` owns disposable TLS PostgreSQL and MySQL,
 installs the Node SDK and Python wheel into isolated consumers, and checks real
 queries, selected connection lifetimes, and the
-[native cancellation boundary](docs/maintainers/database-cancellation.md).
+[native cancellation boundary](docs/maintainers/publisher/database-cancellation.md).
 
 For SDK connection lifetimes and owned HTTP transport, run
 `task js:test:connections` through `mise exec --`. Its installed ESM/CommonJS
@@ -171,13 +199,14 @@ managed Host/SNI and loopback dial boundary. This is local transport evidence;
 deployed provider freeze/thaw remains open. For action OIDC cancellation and
 late-result rejection, run `task connect:check`. The Python lifecycle checks in
 `task py:check` cover joined publication cleanup, fork ownership, and bounded
-native exchange. See the [review ledger](docs/maintainers/prerelease-review.md)
+native exchange. See the [review ledger](docs/maintainers/releases/prerelease-review.md)
 for commit evidence and outstanding integration/live work.
 
 Use `RUN` to select an integration test, for example:
 
 ```console
 mise exec -- task go:test:integration RUN='^TestIntegrationPublicURLRecovery$'
+mise exec -- task go:test:focused PACKAGES='./internal/publisher/app ./internal/publisher/target' RUN='^TestAutomaticReadiness'
 ```
 
 Binary integration changes subprocess trust and binds privileged ports. Run it
@@ -210,8 +239,14 @@ depending on an external service.
 Use the pinned Go toolchain for direct commands:
 
 ```console
-mise exec -- go test ./internal/tunnel
+mise exec -- go test ./internal/transport/tunnel
 ```
+
+Go unit and white-box integration tests stay beside the owning implementation,
+including daemon composition proofs. Built-CLI black-box suites live under
+`tests/integration/<boundary>`; shared subprocess/Compose assets live under
+`tests/integration/fixtures`. Package-local `testdata` moves with its parser or
+runtime. Shared test helpers stay in test-only `internal/testutil` children.
 
 ### test the javascript package
 
@@ -221,7 +256,7 @@ focused test:
 
 ```console
 mise exec -- pnpm --filter @tnldotdev/tnl build
-mise exec -- pnpm exec vitest run packages/ts/vite.test.ts
+mise exec -- pnpm exec vitest run packages/ts/test/frameworks/vite.test.ts
 ```
 
 Run `mise exec -- task js:check` to build once and run the JavaScript checks
@@ -246,7 +281,7 @@ the Checks workflow reuses its Python job's snapshot for this release-package ch
 the Vercel fixture builds its own packages and does not qualify this release path.
 
 For the opt-in emitted Vercel Node function check, see
-[local Vercel qualification](docs/maintainers/vercel-functions.md). its Tasks use
+[local Vercel qualification](docs/maintainers/connector/vercel-functions.md). its Tasks use
 Node `24.20.0` from `PATH`, including on CI; they do not invoke mise internally.
 the root mise environment defaults to Node 22, so select Node 24 explicitly:
 
@@ -261,12 +296,25 @@ real revocation against local server roles. optional Linux x64 container executi
 uses `LINUX_NODE_IMAGE`; deployed provider sandbox lifetime remains a separate
 qualification boundary described in the maintainer guide.
 
-The feedback toolbar source and Vitest tests live in `internal/feedbacktoolbar`.
+The feedback toolbar source and Vitest tests live in `internal/publisher/toolbar`.
 Its committed `toolbar.js` is generated by `task generate` for Go embedding.
 Install Chromium with `mise exec -- pnpm exec playwright install chromium`, then
 run `mise exec -- task js:test:browser` to test that bundle under browser CSP.
 
-Keep the package root safe to import in a browser. The public exports live in
+SDK tests and helpers live under `packages/ts/test`, grouped by publisher,
+connector, project, frameworks, native, helpers, types, and fixtures. Focused
+`js:test:{connections,frameworks,client-tracing}` targets select those paths and
+build first. Normal tests use built modules; coverage aliases instrument the
+matching source owners. Positive/negative compiler assertions stay in
+`test/types` and their explicit package-level TypeScript projects.
+
+Keep the package root safe to import in a browser. Public exports are the root,
+`/config`, `/next`, `/vite`, and Node-only `/workload`. The root supports ESM,
+CommonJS, and browser import/require; workload supports Node ESM/CommonJS with
+one shared configuration singleton. The lazy connector bridge is built at
+`dist/internal/connector/connection.cjs`; its errors retain public `TnlError`
+identity. Browser imports must not load native credentials or startup, and
+`/workload` must fail under browser conditions. The public export conditions live in
 `packages/ts/package.json`; the private development socket is not an extension
 API. Write npm runtime code and tooling in TypeScript. Validate external data
 before treating it as a known type. The
@@ -300,7 +348,7 @@ before serving.
 
 The single PostgreSQL baseline includes durable publisher certificate-plan
 checkpoints. Fresh identities have an empty plan inventory; submitted plans
-remain required after order cleanup. See [publisher groups](docs/maintainers/publisher-groups.md).
+remain required after order cleanup. See [publisher groups](docs/maintainers/publisher/publisher-groups.md).
 
 For local services, an explicit `publicURL` block (`public_url` in static files)
 enables public HTTPS. Without it, the service is private, including `protocol: http`.
@@ -316,7 +364,7 @@ optional `server_name` and project-relative `ca_file` (`serverName` and `caFile`
 in TypeScript); an empty block uses system roots. Omitting it permits a plaintext
 target and never disables managed visitor TLS. Service-level `tls` and
 `target.tls.mode` are rejected. An existing sshd is an
-ordinary private `tcp` target. See [private service boundaries](docs/maintainers/private-services.md).
+ordinary private `tcp` target. See [private service boundaries](docs/maintainers/control/private-services.md).
 
 Project configuration stays in Git. `tnl apply` stores an evaluated revision in
 control; named group publishers pull and acknowledge only their assignments.
@@ -325,26 +373,50 @@ default. Starting an app does not apply production configuration. Group entries
 accept `description`, `domain`, and `public`, plus an optional `aws: {replicas: 2}`
 deployment declaration. `tnl generate` writes a trackable group stack; detailed
 AWS settings remain CloudFormation deployment parameters. AWS capacity is excluded
-from control assignments. See [applied projects](docs/maintainers/applied-projects.md) and
-the [publisher infrastructure templates](deploy/publishers/readme.md).
+from control assignments. See [applied projects](docs/maintainers/control/applied-projects.md) and
+the [publisher infrastructure templates](deploy/publisher/fargate/readme.md).
 
-| Source                                                                                    | Generated output                                                                          |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Seven HTTP OpenAPI contracts under `api/*/v1`                                             | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
-| PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                    |
-| SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
-| `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |
-| `internal/projectconfig/loader.ts`                                                        | `internal/projectconfig/loader.mjs`, embedded by Go                                       |
-| `internal/publisherdeployment`                                                            | `deploy/publishers/fargate.yaml` and its example manifest/parameters                      |
-| `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                       |
-| `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
-| `internal/observability` vocabulary and instrument declarations                           | `api/observability/v1/vocabulary.json`, shared with tnl.dev                               |
+| Authoritative source                                              | Generator / configuration                                                          | Committed generated output                                                                                  |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `api/control/public/v1/openapi.yaml` and its fragments            | `scripts/generate/openapi.ts`; `pkg/api/controlv1/{generate.go,oapi-codegen.yaml}` | `pkg/api/controlv1/openapi.gen.go`                                                                          |
+| `api/control/authority/v1/openapi.yaml` and fragments             | Same generator; `pkg/api/authorityv1` configuration                                | `pkg/api/authorityv1/openapi.gen.go`                                                                        |
+| `api/control/private/ingress/v1/openapi.yaml` and fragments       | Same generator; `pkg/api/ingressv1` configuration                                  | `pkg/api/ingressv1/openapi.gen.go`                                                                          |
+| `api/control/private/relay/v1/openapi.yaml` and fragments         | Same generator; `pkg/api/relayv1` configuration                                    | `pkg/api/relayv1/openapi.gen.go`                                                                            |
+| `api/integrations/public-url-usage/v1/openapi.yaml` and fragments | Same generator; `pkg/api/publicurlusagev1` configuration                           | `pkg/api/publicurlusagev1/openapi.gen.go`                                                                   |
+| `api/publisher/browser/v1/openapi.yaml` and fragments             | Same Go generator plus `scripts/generate/publisher-model.ts`                       | `pkg/api/publisherv1/openapi.gen.go`, `internal/publisher/browserapi/model.gen.ts`                          |
+| `api/publisher/local/v1/openapi.yaml` and fragments               | Same Go generator; `pkg/api/localpublisherv1` configuration                        | `pkg/api/localpublisherv1/openapi.gen.go`                                                                   |
+| `internal/control/state/{migrations,queries,sqlc.yaml}`           | `internal/control/state/generate.go`, sqlc                                         | `internal/control/state/controlstatedb/*.go`                                                                |
+| `internal/client/state/{migrations,queries,sqlc.yaml}`            | `internal/client/state/generate.go`, sqlc                                          | `internal/client/state/clientstatedb/*.go`                                                                  |
+| `internal/config` types and project key mappings                  | `internal/config/cmd/configgen`, `scripts/generate/config-types.ts`                | `schema/v1.json`, `internal/client/project/keys.gen.json`, `packages/ts/src/config.gen.ts`                  |
+| `internal/client/project/loader.ts`                               | `scripts/generate/projectconfig-loader.ts`                                         | Neighboring `loader.mjs`, embedded by Go                                                                    |
+| `internal/publisher/toolbar` TS/TSX/CSS                           | `scripts/build/feedback-toolbar.ts`                                                | Neighboring `toolbar.js`, embedded by Go                                                                    |
+| `internal/publisher/deployment` renderer                          | Its `cmd/fixture` and `generate.go`                                                | `deploy/publisher/fargate/fargate.{yaml,parameters.example.json,manifest.example.json,storage-policy.json}` |
+| `internal/failure/diagnostic/catalog.json`                        | `scripts/generate/diagnostic-codes.ts`                                             | Neighboring `codes.gen.go`; sibling sync generates public diagnostic pages                                  |
+| `internal/failure/reasons.go`                                     | `internal/failure/cmd/cataloggen`                                                  | `internal/failure/catalog.gen.json`; sibling sync generates public error pages                              |
+| `internal/observability` declarations                             | Its vocabulary generator                                                           | `api/observability/v1/vocabulary.json`, shared with tnl.dev                                                 |
+| `scripts/installer/install.sh.in` and CLI renderer                | `scripts/installer/generate.go`, `internal/clioutput/generate.go`                  | `scripts/install.sh`, whose public download path is preserved                                               |
+| `connect/src` and its build inputs                                | `connect/scripts`, `task connect:check`                                            | `connect/dist`, checked separately by `connect:generate-check`                                              |
+
+The seven existing `pkg/api/*` paths stay canonical as a public compatibility
+exception, not as facades around new packages. `pkg/tnl.Publisher` remains a direct
+alias of `publisher/identity.Native`. Edit OpenAPI fragments and generator
+configuration before regenerating; never patch generated public models. Reference
+identical control schemas instead of copying them. The handwritten
+`pkg/protocol/tunnelv1` remains the only tunnel wire source.
+
+`task generate` first runs the seven Go API generators, then browser validators,
+then other Go directives while skipping those two scripts. `tasks/generate.yml`
+owns the committed-output inventory used for both `HEAD` comparison and untracked
+output detection. OpenAPI bundles are disposable generator inputs. External source
+consumers can run `node scripts/generate/openapi.ts --bundle-dir <absolute-dir>`
+through `mise exec --` to obtain all seven portable, cross-referencing bundles;
+copying an entrypoint alone omits its fragments.
 
 `packages/ts/dist` is disposable build output. `tnl generate` writes portable
 `.tnl/generated/project.d.ts` and applicable publisher AWS artifacts for source
 control. The runtime writes ignored `.tnl/local/project.json` values; it never
 writes declarations. Ignore only `/.tnl/local/` at the selected project root.
-See [portable generation](docs/maintainers/portable-generation.md) and the
+See [portable generation](docs/maintainers/development/portable-generation.md) and the
 [framework guide](https://tnl.dev/docs/frameworks) for their use.
 
 ## try the local stack
@@ -386,11 +458,11 @@ digests; deploying and qualifying them requires separate operator approval.
 - [Architecture](docs/maintainers/architecture.md) explains package ownership,
   APIs, and runtime boundaries. [AGENTS.md](AGENTS.md) defines the terms and CLI
   output rules used in this repo.
-- [Observability](docs/maintainers/metrics.md) lists the shared vocabulary, OTel
+- [Observability](docs/maintainers/development/metrics.md) lists the shared vocabulary, OTel
   process ownership, optional export settings, and instrument boundaries.
 - [Benchmarks](docs/benchmarks/readme.md) covers local results and deployed
   workloads. Deployed runs require explicit approval.
-- [Releasing](docs/maintainers/releasing.md) covers maintainer release rules.
+- [Releasing](docs/maintainers/releases/releasing.md) covers maintainer release rules.
 
 Prefer the smallest change that solves the problem. Reuse the package that owns
 the behavior, and test its boundaries instead of adding tests that only repeat

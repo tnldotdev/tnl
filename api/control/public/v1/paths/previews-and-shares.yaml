@@ -1,0 +1,226 @@
+paths:
+  /v1/publish-runs/{publish_run_id}/preview:
+    post:
+      operationId: createPublishRunPreview
+      summary: Create feedback context for one ephemeral demo publish run
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
+      responses:
+        "200":
+          description: Run-scoped preview
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Preview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/previews:
+    post:
+      operationId: createPreview
+      summary: Create or reuse a preview for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreatePreviewRequest"
+      responses:
+        "201":
+          description: Preview identity
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Preview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/previews/{preview_id}:
+    get:
+      operationId: getPreview
+      summary: Read a preview and its public URLs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PreviewID"
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Preview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/previews/{preview_id}/public-urls:
+    post:
+      operationId: addPreviewPublicURL
+      summary: Add an authorized public URL to a preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PreviewID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AddPreviewPublicURLRequest"
+      responses:
+        "200":
+          description: Preview with updated public URLs
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Preview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/previews/{preview_id}/team-access:
+    put:
+      operationId: setPreviewTeamAccess
+      summary: Enable or disable team visitor access for this preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PreviewID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/SetPreviewTeamAccessRequest"
+      responses:
+        "200":
+          description: Updated preview
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Preview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/previews/{preview_id}/shares:
+    post:
+      operationId: createShare
+      summary: Store one share for a snapshot of authorized public URLs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PreviewID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Share"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    get:
+      operationId: listShares
+      summary: List shares for a preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PreviewID"
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Share page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/SharePage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/shares:
+    post:
+      operationId: createURLShare
+      summary: Store one share for an exact authorized HTTP public URL
+      description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Share"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    get:
+      operationId: listTeamShares
+      summary: List manageable shares for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Share page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/SharePage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/shares/{share_id}:
+    get:
+      operationId: getShare
+      summary: Read one share
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Share"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/shares/{share_id}/revoke:
+    post:
+      operationId: revokeShare
+      summary: Stop new access through one share
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Revoked share
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Share"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )

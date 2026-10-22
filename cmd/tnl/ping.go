@@ -7,9 +7,9 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 type pingCommand struct {

@@ -8,25 +8,31 @@ roles that use them.
 
 This is the complete second-PR plan. The first PR follows the
 [domain boundaries plan](https://md.cormo-turtle.ts.net/.worktree/tnl/role-organization/docs/maintainers/domain-boundaries-plan.md).
-Status: planned. Target paths below are decisions to implement, not a description
-of completed moves. Implementation commits, generated-source checks, preserved
-assertions, and actual validation results belong in the ledgers at the end.
+Status: role/API/SDK/Task/script/deploy moves and documentation integration are
+implemented in the uncommitted role-organization tree. Final generated-source,
+behavioral/platform qualification, reviewed commit, and second-PR delivery remain
+pending with the parent. The detailed scope tables below retain the accepted
+proposal, including draft destination spellings; use the
+[current architecture](architecture.md) and [actual move inventories](development/documentation-move-ledger.md)
+for final paths. A source inventory or compile-only pass is not a behavioral pass.
 
-The first PR's domain implementation is complete in the shared tree; its final
-validation and delivery are still pending. The linked domain plan records that
-execution snapshot. All organization, coverage-move, and delivery entries in this
-second-PR plan remain pending.
+The parent reports first PR [#448](https://github.com/tnldotdev/tnl/pull/448)
+completed its checks after main reconciliation at `b6428e0d`. This worktree is
+still based on `bc1efd09`. The newer domain-plan completion record lives in the
+separate domain worktree and has not been merged here; its older snapshot is
+preserved intact for that merge. First-PR evidence does not qualify the moved tree.
 
 ## baseline and two-pr sequence
 
-| Item                   | Execution anchor                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| Latest baseline        | `5203676605d98999cfc012ec20fa857fa0271db9`                                                       |
-| Landed rewrite         | PR #442 at `48a2b8e5`; its tree matches `331def37`                                               |
-| Superseded checkpoints | Earlier `45c`, `b371`, and `e423` checkpoints are stale and supply no current execution evidence |
-| First PR branch        | `0xcadams/domain-boundaries`                                                                     |
-| Second PR branch       | `0xcadams/role-organization`, stacked on the first PR                                            |
-| Working directory      | `/Users/chase/.worktree/tnl/role-organization`                                                   |
+| Item                    | Execution anchor                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Original planning base  | `5203676605d98999cfc012ec20fa857fa0271db9`                                                                           |
+| Landed rewrite          | PR #442 at `48a2b8e5`; its tree matches `331def37`                                                                   |
+| Superseded checkpoints  | Earlier `45c`, `b371`, and `e423` checkpoints are stale and supply no current execution evidence                     |
+| First PR branch         | `0xcadams/domain-boundaries`                                                                                         |
+| Second PR branch        | `0xcadams/role-organization`, execution base `bc1efd09c871124a62281d968c7cad2ba9913a7b`                              |
+| First PR reconciliation | `b6428e0dde41cabc02432b6a4b321c23bb534057`; parent reports all first-PR checks passed; not merged into this worktree |
+| Working directory       | `/Users/chase/.worktree/tnl/role-organization`                                                                       |
 
 The execution request covers both comprehensive plans and two shipped PRs. Add
 both plans with the first PR. Complete domain ownership and correctness changes
@@ -62,9 +68,14 @@ new tree, and a plan entry is not implementation evidence.
 - Preserve unique test assertions before removing or consolidating old suites.
   Fix imports and test selection rather than dropping difficult coverage.
 
-## target ownership map
+## accepted ownership scope
 
-The tables give the complete migration scope from the execution baseline.
+The tables preserve the complete accepted migration scope from the execution baseline.
+Some proposed leaf spellings changed during implementation; they are historical
+plan evidence, not live source references. Actual maps are recorded in the
+[Go](development/go-move-ledger.md), [publisher](development/publisher-move-ledger.md),
+[connector](development/connector-move-ledger.md), and
+[contracts](development/contracts-move-ledger.md) ledgers.
 Paths are relative to the repository. A row can require more than a directory
 rename when files currently combine lifecycles; record that split and its callers
 in the move ledger. Keep a package's existing name when it is still clear, or
@@ -597,73 +608,74 @@ action bundles when they change.
 
 ## move and progress ledger
 
-All implementation rows are pending at plan authoring. The parent implementer
-fills in actual source/destination changes, commits, checks, and any unresolved
-scope. Existing code or an existing test name alone does not complete a row.
+The implementation rows below describe the frozen, uncommitted tree. Linked
+inventories contain original/destination assertions, scoped commands, results,
+and initial failures. Their earlier handoff notes remain historical. The parent
+must attach the final tested commit and integrated results before delivery.
 
-| ID  | Scope                                                              | Implementation evidence | Validation evidence | Status  |
-| --- | ------------------------------------------------------------------ | ----------------------- | ------------------- | ------- |
-| r01 | First PR complete and exact stacked base recorded                  | pending                 | pending             | pending |
-| r02 | Import/dependency graph and source-path inventory                  | pending                 | pending             | pending |
-| r03 | Publisher app/local/localapi/protocol/setup/invocation owners      | pending                 | pending             | pending |
-| r04 | Publisher managed/group/runtime/identity/adhoc owners              | pending                 | pending             | pending |
-| r05 | Publisher integrations/proxy/target/discovery/k8s owners           | pending                 | pending             | pending |
-| r06 | Publisher inspection/toolbar/browserapi/deployment/provenance/demo | pending                 | pending             | pending |
-| r07 | Connector root/stream/runtime/workload/kubeconfig split            | pending                 | pending             | pending |
-| r08 | Control APIs/state/SQL/certificates/DNS/email/usage/catalog/proxy  | pending                 | pending             | pending |
-| r09 | Focused ingress leaves and cohesive relay                          | pending                 | pending             | pending |
-| r10 | Transport and daemon/config composition                            | pending                 | pending             | pending |
-| r11 | Client-shared, policy, security, and retained focused leaves       | pending                 | pending             | pending |
-| r12 | Serving-owned OpenAPI roots and domain fragments                   | pending                 | pending             | pending |
-| r13 | Seven canonical `pkg/api/*` paths and public Go compatibility      | pending                 | pending             | pending |
-| r14 | TypeScript internal/test roles and public exports                  | pending                 | pending             | pending |
-| r15 | Flat Python binding and separate action consumers                  | pending                 | pending             | pending |
-| r16 | Test/fixture moves and unique assertion preservation               | pending                 | pending             | pending |
-| r17 | Complete source-generator-output/embed/drift inventory             | pending                 | pending             | pending |
-| r18 | Task includes, script ownership, CI selectors, and testharness     | pending                 | pending             | pending |
-| r19 | Deploy/development assets, Docker paths, and permissions           | pending                 | pending             | pending |
-| r20 | Architecture, contributor, maintainer, and agent guidance          | pending                 | pending             | pending |
-| r21 | Cycle resolution and removal of old internal facades/paths         | pending                 | pending             | pending |
-| r22 | Routine, race, integration, platform, and package validation       | pending                 | pending             | pending |
-| r23 | Full stacked diff reviewed and both PR URLs recorded               | pending                 | pending             | pending |
+| ID  | Scope                                | Actual implementation evidence                                                                                                                 | Qualification / status                                                                |
+| --- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| r01 | First PR and execution base          | PR #448; role tree at `bc1efd09`; main reconciliation `b6428e0d`                                                                               | first-PR checks passed per parent; newer plan/main merge pending here                 |
+| r02 | Imports and source inventory         | [Go integration sweep](development/go-move-ledger.md#frozen-path-integration-follow-up)                                                        | implemented; final graph/runtime qualification pending                                |
+| r03 | App/process/API/invocation/setup     | Combined `publisher/app`, `publisher/local`, `localapi/protocol`, `invocation`, `setup`; [publisher map](development/publisher-move-ledger.md) | implemented; scoped evidence recorded, final checks pending                           |
+| r04 | Managed/group/runtime/identity/adhoc | Defining publisher children and shared proof extraction                                                                                        | implemented; final behavioral/race/platform checks pending                            |
+| r05 | Integrations/proxy/target/cloud      | `publisher/{integrations,proxy,target}`, `target/{discovery,kubernetes}`                                                                       | implemented; exact targets and assertions inventoried                                 |
+| r06 | Browser/deployment/inspection/proof  | Publisher assets; shared inspection/provenance/proof have lower owners                                                                         | implemented; generator and browser/package qualification pending                      |
+| r07 | Connector operations and children    | [Connector map and command extractions](development/connector-move-ledger.md)                                                                  | implemented; callback test repair present; final execution pending                    |
+| r08 | Control APIs/state/workers           | `control/api/{public,authority,private}`, state/SQL, workers and maintenance                                                                   | implemented; SQL/baseline bytes preserved in inventory                                |
+| r09 | Ingress and relay                    | `ingress/{clienthello,backend,pool}`; routing/admission/usage and relay remain cohesive                                                        | implemented; no draft root-state callbacks or forced leaf packages                    |
+| r10 | Transport and daemon                 | `transport/{tunnel,muxsession,streamcopy,proxyproto,httpstream,targettransport}`, `daemon/config`                                              | implemented; topology/platform proof pending                                          |
+| r11 | Client and shared leaves             | `client/project`, `client/service`, policy/security/naming/failure/telemetry; static config and CLI renderer retained                          | implemented; actual map in Go ledger                                                  |
+| r12 | Seven fragmented HTTP sources        | [Contracts ledger](development/contracts-move-ledger.md)                                                                                       | source graph/inventory checks passed locally; regeneration/final consumers pending    |
+| r13 | Public Go compatibility              | Canonical seven `pkg/api/*`; direct `pkg/tnl.Publisher` alias                                                                                  | preserved in source; final generated/public-consumer review pending                   |
+| r14 | SDK roles/tests/exports              | [SDK map](development/sdk-move-ledger.md); public entrypoints and CJS/workload conditions retained                                             | scoped build/types/coverage/consumer evidence recorded; final matrix pending          |
+| r15 | Python and action                    | Flat Python and independent `connect` retained; fixture imports follow native owners                                                           | implemented; integrated native/action qualification pending                           |
+| r16 | Tests/fixtures/assertions            | Exact Go inventories, SDK assertion maps, black-box connector and shared fixture roots                                                         | preserved in source inventory; actual execution remains tier-specific                 |
+| r17 | Source/generator/output ownership    | [Contributor inventory](../../contributing.md#edit-generated-sources), generated-path checks and ordering                                      | implemented; final generation/drift review pending                                    |
+| r18 | Tasks/scripts/CI/harness             | [Tooling ledger](development/tooling-move-ledger.md); 142 baseline public Tasks retained plus harness vet                                      | dispatch/source accounting and scoped tooling checks recorded; full execution pending |
+| r19 | Deploy/development assets            | Server standalone/split, publisher Compose/Fargate, contributor local, shared test fixtures                                                    | implemented; scoped offline evidence recorded, Linux/package checks pending           |
+| r20 | Documentation and root guidance      | [Documentation map](development/documentation-move-ledger.md), six architecture pages, contributor and agent rules                             | implemented; scoped Markdown checks recorded in its ledger                            |
+| r21 | Cycles and internal facades          | Deleted old internal owners; lower proof/target/maintenance owners, actual operations outside commands                                         | implemented; final dependency/runtime review pending                                  |
+| r22 | Integrated qualification             | Parent validation sequence above                                                                                                               | pending final generated, routine/race, integration, platform and package results      |
+| r23 | Final diff and second PR             | No final role-organization commit or PR URL supplied                                                                                           | pending parent review/delivery and newer base reconciliation                          |
 
 ## coverage-preservation ledger
 
-Expand each row into individual assertions when moving or consolidating tests.
-The initial rows define required families; they are not claims that all tests
-have been inventoried or run.
+The individual source/assertion mappings are in the linked inventories. Their
+scoped pass results stay scoped to the uncommitted tree/platform they actually
+checked. This summary does not convert source counts into executed assertions.
 
-| Family                                                                                | Original assertion inventory | Destination/assertion and owning Task | Tested commit/platform/result | Status  |
-| ------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------- | ----------------------------- | ------- |
-| Public Go/HTTP/tunnel compatibility and golden bytes                                  | pending                      | pending                               | pending                       | pending |
-| PostgreSQL/SQLite baseline, transactions, locks, and generated queries                | pending                      | pending                               | pending                       | pending |
-| Company identity, setup/recovery, membership, and offboarding                         | pending                      | pending                               | pending                       | pending |
-| Native scopes, enrollment, device stages, and canceled/late completion                | pending                      | pending                               | pending                       | pending |
-| Local app/ad-hoc lifecycle, readiness accepted result, and once-per-run budget        | pending                      | pending                               | pending                       | pending |
-| Group/runtime identity, durable certificates, deployment, and replacement             | pending                      | pending                               | pending                       | pending |
-| Connector owner isolation, prepared reads, stream lifetime, and fixed workload expiry | pending                      | pending                               | pending                       | pending |
-| Ingress routing, pending promotion, retry commitment, usage, and retirement           | pending                      | pending                               | pending                       | pending |
-| Relay leases/claims, lost responses, exact assignments, capacity, and half-close      | pending                      | pending                               | pending                       | pending |
-| Visitor subjects, managed HTTP credentials, target TLS/database/Kubernetes            | pending                      | pending                               | pending                       | pending |
-| OAuth/aliases/webhooks, receiver selection, listener locks, and joined cleanup        | pending                      | pending                               | pending                       | pending |
-| Feedback/source/evidence, browser validation, toolbar bundle, and CSP                 | pending                      | pending                               | pending                       | pending |
-| Bounded subprocess buffers, typed-nil/CSR errors, parsers, and fuzz targets           | pending                      | pending                               | pending                       | pending |
-| Telemetry vocabulary, safe failures, trace carriers, and benchmark aggregates         | pending                      | pending                               | pending                       | pending |
-| SDK browser/Node/Bun/framework exports and installed native consumers                 | pending                      | pending                               | pending                       | pending |
-| Python ASGI/fork/cleanup/wheel and action OIDC/workflow/cleanup                       | pending                      | pending                               | pending                       | pending |
-| Linux CLI/binary/Compose/install/DNS, real lease cycles, and optional artifacts       | pending                      | pending                               | pending                       | pending |
-| Task discovery/shards, generated drift, package legal files, and script callers       | pending                      | pending                               | pending                       | pending |
+| Family                                                                                | Original assertion inventory                | Destination/assertion and owning Task                                           | Tested commit/platform/result                                     | Status                                              |
+| ------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------- |
+| Public Go/HTTP/tunnel compatibility and golden bytes                                  | contracts and Go inventories                | canonical `pkg/api`, `pkg/tnl`, protocol; public-api and contract checks        | scoped evidence in contracts/Go ledgers                           | preserved; final generation/consumer review pending |
+| PostgreSQL/SQLite baseline, transactions, locks, and generated queries                | exact Go file/SQL inventory                 | `control/state`, `client/state`; state/lock tiers                               | baseline bytes compared, final database tiers pending             | implemented, qualification pending                  |
+| Company identity, setup/recovery, membership, and offboarding                         | Go inventory and first-PR domain assertions | `control/{state,api/authority,oidc}`; company tier                              | first-PR results stay separate                                    | implemented, final tier pending                     |
+| Native scopes, enrollment, device stages, and canceled/late completion                | publisher/connector/Go maps                 | client auth/state and publisher identity/setup/invocation                       | scoped source/compile evidence only where recorded                | implemented, final tier pending                     |
+| Local app/ad-hoc lifecycle, readiness accepted result, and once-per-run budget        | publisher assertion map                     | `publisher/{app,local,invocation}`; app-workflows/invocations                   | named readiness regressions retained                              | implemented, final routine/race pending             |
+| Group/runtime identity, durable certificates, deployment, and replacement             | publisher/Go/tooling maps                   | group/runtime, client state/service, deployment; group/state/replacement tiers  | scoped passes and failures retained in ledgers                    | implemented, final Linux/storage/package pending    |
+| Connector owner isolation, prepared reads, stream lifetime, and fixed workload expiry | connector assertion map                     | connector root/children and black-box connector suite                           | callback repair present; scoped results remain scoped             | implemented, final owner/workload tiers pending     |
+| Ingress routing, pending promotion, retry commitment, usage, and retirement           | Go inventory                                | cohesive ingress and daemon; ingress/runtime tiers                              | source entrypoints preserved                                      | implemented, final topology/race pending            |
+| Relay leases/claims, lost responses, exact assignments, capacity, and half-close      | Go and connector inventories                | relay, transport/tunnel, connector/stream; claims/lifecycle tiers               | source entrypoints preserved                                      | implemented, final tier pending                     |
+| Visitor subjects, managed HTTP credentials, target TLS/database/Kubernetes            | publisher/connector/Go maps                 | publisher, shared policy/security/targettransport, connector                    | target-TLS test split recorded                                    | implemented, final native/client tiers pending      |
+| OAuth/aliases/webhooks, receiver selection, listener locks, and joined cleanup        | publisher assertion map                     | publisher integrations/invocation and client state                              | source/assertion destinations retained                            | implemented, final runtime tier pending             |
+| Feedback/source/evidence, browser validation, toolbar bundle, and CSP                 | publisher/SDK/contracts maps                | publisher toolbar/browserapi and client project source state                    | scoped TS/DOM evidence recorded                                   | implemented, final generation/Chromium pending      |
+| Bounded subprocess buffers, typed-nil/CSR errors, parsers, and fuzz targets           | Go/connector/publisher maps                 | target, client/project, kubeconfig, inspection, security, transport             | every baseline fuzz selector retained                             | implemented, final race/fuzz pending                |
+| Telemetry vocabulary, safe failures, trace carriers, and benchmark aggregates         | Go/SDK/tooling maps                         | observability/failure and benchmark owners; focused tracing/observability tiers | scoped SDK/tooling evidence recorded                              | implemented, final integrated evidence pending      |
+| SDK browser/Node/Bun/framework exports and installed native consumers                 | exact SDK test/type/fixture map             | role-owned `packages/ts/test`; package/framework tiers                          | SDK ledger records local build/types/coverage/consumers           | implemented, remaining matrix/package pending       |
+| Python ASGI/fork/cleanup/wheel and action OIDC/workflow/cleanup                       | SDK/tooling native fixture maps             | flat `packages/py`, separate `connect`; py/action checks                        | no final integrated run claimed here                              | preserved, final native/action/package pending      |
+| Linux CLI/binary/Compose/install/DNS, real lease cycles, and optional artifacts       | tooling/connector/Go maps                   | `tests/integration/fixtures`, daemon and CLI; same public Tasks                 | source shard accounting and dry runs only where recorded          | implemented, platform execution pending             |
+| Task discovery/shards, generated drift, package legal files, and script callers       | tooling and contracts inventories           | included Tasks, scripts, separate testharness, generated-path list              | scoped harness/tooling checks passed; final drift/package pending | implemented, final qualification pending            |
 
 ## completion and delivery record
 
-| Deliverable                                                         | Evidence | Status  |
-| ------------------------------------------------------------------- | -------- | ------- |
-| Domain-boundaries implementation and first PR URL                   | pending  | pending |
-| Exact first-PR base used for role organization                      | pending  | pending |
-| Role-organization implementation and stacked PR URL                 | pending  | pending |
-| Final generated-source/public compatibility review                  | pending  | pending |
-| Unique assertions preserved and required checks passed              | pending  | pending |
-| Base updated and final second-PR diff reviewed after first PR lands | pending  | pending |
+| Deliverable                                                         | Evidence                                                                                                        | Status                                                                               |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Domain-boundaries implementation and first PR URL                   | [#448](https://github.com/tnldotdev/tnl/pull/448); parent reports checks passed after `b6428e0d` reconciliation | PR updated and checks passed per parent; newer domain-plan record pending merge here |
+| Exact first-PR base used for role organization                      | `bc1efd09c871124a62281d968c7cad2ba9913a7b`                                                                      | recorded; newer reconciliation not merged here                                       |
+| Role-organization implementation and stacked PR URL                 | six move inventories plus documentation ledger; no second PR URL supplied                                       | implementation present, final validation/delivery pending                            |
+| Final generated-source/public compatibility review                  | pending                                                                                                         | pending                                                                              |
+| Unique assertions preserved and required checks passed              | pending                                                                                                         | pending                                                                              |
+| Base updated and final second-PR diff reviewed after first PR lands | pending                                                                                                         | pending                                                                              |
 
 Complete this plan only after the parent execution supplies both implementations,
 their required validation, and confirmed PR URLs. Keep planned work, implemented

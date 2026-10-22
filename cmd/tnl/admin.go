@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -182,7 +182,7 @@ func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command strin
 		return err
 	}
 	defer state.Close()
-	if err := requireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
+	if err := clientauth.RequireSignInOutsideDemo(ctx, state, serverURL, flags.AccessToken); err != nil {
 		return err
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{

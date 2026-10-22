@@ -13,18 +13,16 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
@@ -324,37 +322,6 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	})
 	if flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
-	}
-}
-
-func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
-	current := teamContext{
-		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4},
-		membership: authorityv1.Membership{
-			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
-			MemberSlug: "chase", ManagedLabel: "chase-abc",
-		},
-		domains: []authorityv1.Domain{{
-			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
-		}},
-	}
-	hostname, domain, scope, err := resolvePublishHostname("", "api", "", current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member {
-		t.Fatalf("resolution = %q, %#v, %q", hostname, domain, scope)
-	}
-	if _, _, _, err := resolvePublishHostname("https://shared.tnl.dev", "", "", current); err == nil {
-		t.Fatal("member was allowed to create a shared route")
-	}
-	generated, _, generatedScope, err := resolvePublishHostname("", "", "", current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
-	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
-		t.Fatalf("generated route = %q, %q", generated, generatedScope)
 	}
 }
 

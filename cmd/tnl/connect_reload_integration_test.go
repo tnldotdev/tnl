@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/privatepublisher"
-	"github.com/tnldotdev/tnl/internal/privatetrust"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	privatepublisher "github.com/tnldotdev/tnl/internal/publisher/managed"
+	privatetrust "github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -77,12 +77,12 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			key, _ := randomIdempotencyKey()
-			service, err := session.authenticated.Control.CreatePrivateService(t.Context(), session.identity.PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
+			service, err := session.Authenticated().Control.CreatePrivateService(t.Context(), session.Identity().PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
 				controlv1.PrivateServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: nativeauth.PrivateServiceTLS(&trust)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := nativeauth.EnsurePrivateServiceOwner(t.Context(), session.store, session.authenticated.Control, session.authenticated.Authority, service)
+			native, identity, err := nativeauth.EnsurePrivateServiceOwner(t.Context(), session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,8 +91,8 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				ready, done := make(chan struct{}), make(chan error, 1)
 				go func() {
-					done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: session.authenticated.Control, Access: native.Access, Identity: identity,
-						State: session.store, PrivateServiceID: service.Id, Target: target.Addr().String(), Metadata: nativeauth.PrivateServiceMetadata(service),
+					done <- privatepublisher.Publish(ctx, privatepublisher.RunConfig{Control: session.Authenticated().Control, Access: native.Access, Identity: identity,
+						State: session.Store(), PrivateServiceID: service.Id, Target: target.Addr().String(), Metadata: nativeauth.PrivateServiceMetadata(service),
 						HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }})
 				}()
 				stop := sync.OnceFunc(func() {
@@ -182,7 +182,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				if enabled {
 					metadata.TargetTls = nativeauth.PrivateServiceTLS(&trust)
 				}
-				service, err = session.authenticated.Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
+				service, err = session.Authenticated().Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -222,7 +222,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			defer unblock()
 			metadata := nativeauth.PrivateServiceMetadata(service)
 			metadata.TargetTls = nil
-			service, err = session.authenticated.Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
+			service, err = session.Authenticated().Control.ConfigurePrivateService(t.Context(), service.Id, metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,12 +252,12 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			grants, _, err := database.ListPrivateServiceGrants(t.Context(), service.Id, session.identity.Identity.Id, "")
+			grants, _, err := database.ListPrivateServiceGrants(t.Context(), service.Id, session.Identity().Identity.Id, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, grant := range grants {
-				if err := database.RevokePrivateServiceGrant(t.Context(), service.Id, session.identity.Identity.Id, grant.ID, time.Now()); err != nil {
+				if err := database.RevokePrivateServiceGrant(t.Context(), service.Id, session.Identity().Identity.Id, grant.ID, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}

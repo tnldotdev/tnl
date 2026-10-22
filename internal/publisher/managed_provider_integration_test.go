@@ -29,8 +29,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 var managedPostgresAddress = flag.String("tnl-test-postgres-address", "", "disposable TLS PostgreSQL target address")

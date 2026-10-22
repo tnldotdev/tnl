@@ -39,9 +39,6 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 	if err != nil {
 		return nil, err
 	}
-	if shard.count == 1 {
-		return command, nil
-	}
 	if len(command) < 2 || command[0] != "go" || command[1] != "test" {
 		return nil, errors.New("test sharding requires a go test command")
 	}
@@ -49,8 +46,11 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 	if err != nil {
 		return nil, err
 	}
-	if runIndex == -1 || strings.Contains(run, "/") {
+	if shard.count > 1 && (runIndex == -1 || strings.Contains(run, "/")) {
 		return nil, errors.New("test sharding requires an explicit top-level -run expression")
+	}
+	if runIndex == -1 {
+		run = "."
 	}
 	_, skip, err := goTestOption(command, "skip")
 	if err != nil {
@@ -64,10 +64,27 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 		return nil, errors.New("test sharding cannot combine -run and -list")
 	}
 	listing := slices.Clone(command)
-	if strings.Contains(listing[runIndex], "=") {
-		listing[runIndex] = "-list=" + run
+	// single-shard commands preserve subtest selection. discovery accounts for
+	// their top-level parent; multiple shards always select complete tests.
+	discoveryRun := run
+	discoverySkip := skip
+	if shard.count == 1 {
+		discoveryRun, _ = topLevelTestExpression(run)
+		if _, subtest := topLevelTestExpression(skip); subtest {
+			discoverySkip = ""
+		}
+	}
+	if runIndex == -1 {
+		index := slices.Index(listing, "-args")
+		if index == -1 {
+			index = len(listing)
+		}
+		listing = slices.Insert(listing, index, "-list="+discoveryRun)
+	} else if strings.Contains(listing[runIndex], "=") {
+		listing[runIndex] = "-list=" + discoveryRun
 	} else {
 		listing[runIndex] = "-list"
+		listing[runIndex+1] = discoveryRun
 	}
 	child := exec.CommandContext(ctx, listing[0], listing[1:]...)
 	child.Dir, child.Stderr = root, os.Stderr
@@ -75,11 +92,14 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 	if err != nil {
 		return nil, fmt.Errorf("discover tests for shard: %w", err)
 	}
-	pattern, selected, total, err := shardTestPattern(string(output), run, skip, shard)
+	pattern, selected, total, err := shardTestPattern(string(output), discoveryRun, discoverySkip, shard)
 	if err != nil {
 		return nil, err
 	}
 	fmt.Fprintf(os.Stderr, "test shard %d/%d: %d of %d tests\n", shard.index, shard.count, selected, total)
+	if shard.count == 1 {
+		return command, nil
+	}
 	result := slices.Clone(command)
 	if strings.Contains(result[runIndex], "=") {
 		result[runIndex] = "-run=" + pattern
@@ -87,6 +107,19 @@ func shardGoTestCommand(ctx context.Context, root string, command []string, valu
 		result[runIndex+1] = pattern
 	}
 	return result, nil
+}
+
+// a level separator follows a complete expression, not an unfinished group,
+// character class, or escape. let the regexp parser own those syntax details.
+func topLevelTestExpression(pattern string) (string, bool) {
+	for index, char := range pattern {
+		if char == '/' {
+			if _, err := regexp.Compile(pattern[:index]); err == nil {
+				return pattern[:index], true
+			}
+		}
+	}
+	return pattern, false
 }
 
 func goTestOption(command []string, name string) (int, string, error) {
@@ -116,7 +149,7 @@ func shardTestPattern(output, run, skip string, shard testShard) (string, int, i
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("compile test shard -run: %w", err)
 	}
-	if strings.Contains(skip, "/") {
+	if shard.count > 1 && strings.Contains(skip, "/") {
 		return "", 0, 0, errors.New("test sharding requires a top-level -skip expression")
 	}
 	var exclude *regexp.Regexp

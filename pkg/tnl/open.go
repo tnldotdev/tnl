@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/adhoc"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 

@@ -1,16 +1,16 @@
-import { developmentPort } from "./internal/port.js";
-import { loadConnection } from "./internal/connection_bridge.js";
-import { serviceMetadata } from "./internal/service_metadata.js";
+import { developmentPort } from "./internal/publisher/port.js";
+import { loadConnection } from "./internal/connector/connection_bridge.js";
+import { serviceMetadata } from "./internal/project/service_metadata.js";
 import {
   parseRuntimePayload,
   parseProjectRuntime,
   type ProjectMetadata,
-} from "./internal/runtime.js";
+} from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
-import type { PrepareOptions, PreparedService } from "./internal/app.js";
-import type { AdHocTunnel, OpenOptions } from "./internal/open.js";
-import type { LocalHTTPServer } from "./internal/register.js";
-import type { FetchHandler } from "./internal/fetch_types.js";
+import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
+import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
+import type { LocalHTTPServer } from "./internal/publisher/register.js";
+import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
   TnlConnection,
   TnlConnectionHandle,
@@ -21,9 +21,14 @@ import type {
   TnlProtocolRegistry,
 } from "./project.js";
 export type * from "./project.js";
-export type { PrepareOptions, PreparedService } from "./internal/app.js";
-export type { AdHocTunnel, OpenOptions, PublisherFile, PublisherID } from "./internal/open.js";
-export type { FetchHandler } from "./internal/fetch_types.js";
+export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
+export type {
+  AdHocTunnel,
+  OpenOptions,
+  PublisherFile,
+  PublisherID,
+} from "./internal/publisher/open.js";
+export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
 /** extended by the portable `.tnl/generated/project.d.ts` declaration. */
@@ -85,7 +90,7 @@ export const tnl = Object.freeze({
   dev: runtime?.dev ?? false,
   async prepare(options: PrepareOptions = {}): Promise<PreparedService> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
-    const { prepareService } = await import("./internal/app.js");
+    const { prepareService } = await import("./internal/publisher/app.js");
     return prepareService(options, "Bun" in globalThis ? "bun" : "node");
   },
   async open(
@@ -93,7 +98,7 @@ export const tnl = Object.freeze({
     options: OpenOptions = {},
   ): Promise<AdHocTunnel> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
-    const { openServer, openFetch } = await import("./internal/open.js");
+    const { openServer, openFetch } = await import("./internal/publisher/open.js");
     return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
   },
   connect(name: string) {

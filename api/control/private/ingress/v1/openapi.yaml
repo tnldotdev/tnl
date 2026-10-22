@@ -1,0 +1,142 @@
+openapi: 3.1.0
+info:
+  title: tnl ingress API
+  version: 1.0.0
+  license:
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://ingress-control.internal
+security:
+  - clusterAuth: []
+paths:
+  /internal/v1/ingresses/{ingress_id}/direct-services/admit:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1admit"
+  /internal/v1/ingresses/{ingress_id}/direct-services/status:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1status"
+  /internal/v1/ingresses/{ingress_id}/direct-services/promote:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1promote"
+  /internal/v1/ingresses/{ingress_id}/direct-services/close:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1close"
+  /internal/v1/ingresses/{ingress_id}/service-observations:
+    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
+  /internal/v1/ingresses/{ingress_id}/transport-certificate:
+    $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1transport-certificate"
+  /internal/v1/ingresses/{ingress_id}/private-services/streams/{visitor_connection_id}:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1streams~1{visitor_connection_id}"
+  /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-connector-sessions~1claim"
+  /internal/v1/ingresses/{ingress_id}/private-services/snapshot:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1snapshot"
+  /internal/v1/ingresses/{ingress_id}/private-services/events:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1events"
+  /internal/v1/ingresses/{ingress_id}/private-services/claim:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1claim"
+  /internal/v1/ingresses/{ingress_id}/private-services/recheck:
+    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1private-services~1recheck"
+  /internal/v1/ingresses/register:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1register"
+  /internal/v1/ingresses/{ingress_id}/renew:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1renew"
+  /internal/v1/ingresses/{ingress_id}/drain:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1drain"
+  /internal/v1/ingresses/{ingress_id}/routing-table/snapshot:
+    $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1snapshot"
+  /internal/v1/ingresses/{ingress_id}/routing-table/events:
+    $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1events"
+  /internal/v1/ingresses/{ingress_id}/usage-reports:
+    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1usage-reports"
+  /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
+    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-url-recovery~1{recovery_episode_id}~1observed"
+components:
+  securitySchemes:
+    clusterAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/clusterAuth"
+  parameters:
+    IngressID:
+      $ref: "./schemas/common.yaml#/parameters/IngressID"
+    IngressRunID:
+      $ref: "./schemas/common.yaml#/parameters/IngressRunID"
+    IngressLeaseRevision:
+      $ref: "./schemas/common.yaml#/parameters/IngressLeaseRevision"
+  responses:
+    Problem:
+      $ref: "./schemas/common.yaml#/responses/Problem"
+  schemas:
+    IngressTransportCertificate:
+      $ref: "./schemas/certs.yaml#/schemas/IngressTransportCertificate"
+    PrivateServiceID:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceID"
+    PrivateRunID:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateRunID"
+    PrivateConnectorSessionID:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionID"
+    VisitorConnectionID:
+      $ref: "./schemas/admission.yaml#/schemas/VisitorConnectionID"
+    PrivateConnectorSessionClaim:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionClaim"
+    PrivateConnectorSessionResult:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateConnectorSessionResult"
+    DirectServiceVisitorClaim:
+      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorClaim"
+    DirectServiceVisitorLookup:
+      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorLookup"
+    DirectServiceVisitorAdmission:
+      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorAdmission"
+    DirectServiceVisitorStatus:
+      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorStatus"
+    PrivateServiceProjection:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceProjection"
+    PrivateServiceRelay:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceRelay"
+    PrivateServiceSnapshot:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceSnapshot"
+    PrivateServiceStreamClaim:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceStreamClaim"
+    PrivateServiceStreamResult:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceStreamResult"
+    PrivateServiceVisitorRecheck:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceVisitorRecheck"
+    PrivateServiceVisitorRecheckResult:
+      $ref: "./schemas/admission.yaml#/schemas/PrivateServiceVisitorRecheckResult"
+    Identifier:
+      $ref: "./schemas/common.yaml#/schemas/Identifier"
+    IngressRegistration:
+      $ref: "./schemas/leases.yaml#/schemas/IngressRegistration"
+    IngressLeaseIdentity:
+      $ref: "./schemas/leases.yaml#/schemas/IngressLeaseIdentity"
+    IngressRenewal:
+      $ref: "./schemas/leases.yaml#/schemas/IngressRenewal"
+    IngressDrainRequest:
+      $ref: "./schemas/leases.yaml#/schemas/IngressDrainRequest"
+    IngressLease:
+      $ref: "./schemas/leases.yaml#/schemas/IngressLease"
+    IngressRoutingPublisherConnection:
+      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingPublisherConnection"
+    IngressRoutingTableEntry:
+      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableEntry"
+    IngressTrafficLimits:
+      $ref: "./schemas/leases.yaml#/schemas/IngressTrafficLimits"
+    HashedIPPrefix:
+      $ref: "./schemas/routing.yaml#/schemas/HashedIPPrefix"
+    IngressRoutingTableEvent:
+      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableEvent"
+    IngressRoutingTableSnapshot:
+      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableSnapshot"
+    IngressRoutingTablePage:
+      $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTablePage"
+    IngressUsageReport:
+      $ref: "./schemas/reporting.yaml#/schemas/IngressUsageReport"
+    VisitorNetworkHashKey:
+      $ref: "./schemas/leases.yaml#/schemas/VisitorNetworkHashKey"
+    IngressUsageReportBatch:
+      $ref: "./schemas/reporting.yaml#/schemas/IngressUsageReportBatch"
+    PublicURLRecoveryObservationRequest:
+      $ref: "./schemas/reporting.yaml#/schemas/PublicURLRecoveryObservationRequest"
+    PublicURLRecoveryObservation:
+      $ref: "./schemas/reporting.yaml#/schemas/PublicURLRecoveryObservation"
+    ProblemCode:
+      $ref: "./schemas/routing.yaml#/schemas/ProblemCode"
+    Problem:
+      $ref: "./schemas/routing.yaml#/schemas/Problem"

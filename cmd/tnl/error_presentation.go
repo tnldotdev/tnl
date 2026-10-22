@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
 
 type presentedFailure struct {

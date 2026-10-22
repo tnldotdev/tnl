@@ -6,10 +6,10 @@ import (
 	"io"
 	"net/url"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 type authBrowserCommand struct {
@@ -30,14 +30,14 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 	if item.ServiceProtocol != "http" {
 		return failure.Wrap("select an HTTP public URL", failure.InvalidCommand, errors.New("browser handoff requires an HTTP public URL"))
 	}
-	saved, found, err := s.store.ControlSession(ctx)
+	saved, found, err := s.Store().ControlSession(ctx)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return failure.Wrap("select saved CLI session", failure.Authentication, errors.New("sign in with tnl auth login before creating a browser handoff"))
 	}
-	authority, err := authorityclient.New(s.authenticated.ServerEndpoint, nil, credentials.AccessToken(saved.AccessToken))
+	authority, err := authorityclient.New(s.Authenticated().ServerEndpoint, nil, credentials.AccessToken(saved.AccessToken))
 	if err != nil {
 		return err
 	}

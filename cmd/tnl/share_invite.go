@@ -10,6 +10,7 @@ import (
 	"io"
 	"time"
 
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -54,7 +55,7 @@ func runShareInviteCreate(ctx context.Context, f shareInviteCreateCommand, o, d 
 	return createShareInvitation(ctx, s, f, duration, o)
 }
 
-func createShareInvitation(ctx context.Context, s *teamSession, f shareInviteCreateCommand, duration time.Duration, o io.Writer) error {
+func createShareInvitation(ctx context.Context, s *clientteam.Session, f shareInviteCreateCommand, duration time.Duration, o io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
 	if err != nil {
 		return err
@@ -68,7 +69,7 @@ func createShareInvitation(ctx context.Context, s *teamSession, f shareInviteCre
 	if err != nil {
 		return err
 	}
-	invite, err := s.authenticated.Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(duration)})
+	invite, err := s.Authenticated().Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(duration)})
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d 
 		return err
 	}
 	defer s.Close()
-	grant, err := s.authenticated.Control.AcceptVisitorInvitation(ctx, f.Secret)
+	grant, err := s.Authenticated().Control.AcceptVisitorInvitation(ctx, f.Secret)
 	if err != nil {
 		return err
 	}
@@ -99,7 +100,7 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 	if err != nil {
 		return err
 	}
-	invites, err := s.authenticated.Control.ListVisitorInvitations(ctx, item.Id)
+	invites, err := s.Authenticated().Control.ListVisitorInvitations(ctx, item.Id)
 	if err != nil {
 		return err
 	}
@@ -123,7 +124,7 @@ func runShareInviteRevoke(ctx context.Context, f shareInviteRevokeCommand, o, d 
 	if err != nil {
 		return err
 	}
-	if err = s.authenticated.Control.RevokeVisitorInvitation(ctx, item.Id, f.InvitationID); err != nil {
+	if err = s.Authenticated().Control.RevokeVisitorInvitation(ctx, item.Id, f.InvitationID); err != nil {
 		return err
 	}
 	return writeHumanFrame(o, "tnl share invite revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "invitation ID", Value: f.InvitationID}))

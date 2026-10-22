@@ -1,0 +1,62 @@
+schemas:
+  RedeemPublisherEnrollmentRequest:
+    type: object
+    additionalProperties: false
+    required: [enrollment_key, public_key]
+    properties:
+      enrollment_key: { type: string, minLength: 1, maxLength: 256 }
+      public_key:
+        {
+          type: string,
+          minLength: 43,
+          maxLength: 43,
+          description: Base64url unpadded Ed25519 public key,
+        }
+  PublisherEnrollmentResult:
+    type: object
+    additionalProperties: false
+    required: [client_id, key_id, grant_id, team_id, kind]
+    properties:
+      client_id: { type: string }
+      key_id: { type: string }
+      grant_id: { type: string }
+      team_id: { type: string }
+      kind: { type: string, enum: [saved_url, namespace, private_service] }
+      public_url_id: { type: string }
+      private_service_id: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+      domain_id: { type: string }
+      namespace: { type: string }
+  PublisherTokenRequest:
+    type: object
+    additionalProperties: false
+    required: [grant_type, client_id, grant_id, client_assertion_type, client_assertion]
+    properties:
+      grant_type: { type: string, enum: [client_credentials] }
+      client_id: { type: string }
+      grant_id: { type: string }
+      client_assertion_type:
+        { type: string, enum: ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] }
+      client_assertion: { type: string, maxLength: 8192 }
+  PublisherTokenResponse:
+    type: object
+    additionalProperties: false
+    required: [access_token, token_type, expires_in, grant_id]
+    properties:
+      access_token: { type: string }
+      token_type: { type: string, enum: [Bearer] }
+      expires_in: { type: integer, minimum: 1, maximum: 300 }
+      grant_id: { type: string }
+  RotatePublisherKeyRequest:
+    type: object
+    additionalProperties: false
+    required: [key_id, public_key, proof, current_proof]
+    properties:
+      key_id: { type: string }
+      public_key: { type: string, minLength: 43, maxLength: 43 }
+      proof: { type: string, maxLength: 8192 }
+      current_proof:
+        {
+          type: string,
+          maxLength: 8192,
+          description: Current-key assertion whose audience binds the replacement key ID and public key,
+        }

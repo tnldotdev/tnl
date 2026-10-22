@@ -6,10 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
 
 // commandDiagnostic is shared by finite command failures and publish events.

@@ -11,7 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -84,11 +84,11 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	page, err := readServiceAudit(ctx, session.authenticated.Control, current.team.Id, params, flags.Limit)
+	page, err := readServiceAudit(ctx, session.Authenticated().Control, current.Team().Id, params, flags.Limit)
 	if err != nil {
 		return err
 	}

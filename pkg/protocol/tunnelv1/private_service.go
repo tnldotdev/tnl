@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // private forwarding includes up to three configured 256-byte process IDs,

@@ -31,18 +31,18 @@ func runPublisherNamespaceRename(ctx context.Context, flags publisherNamespaceRe
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	applied, err := session.authenticated.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
 	if err != nil {
 		return err
 	}
 	if applied.SourceFingerprint != source.Fingerprint {
 		return publisherCLIError("applied project belongs to another configuration source")
 	}
-	result, err := session.authenticated.Control.RenamePublisherNamespace(ctx, source.Key, flags.Group, controlv1.RenamePublisherNamespaceRequest{TeamId: current.team.Id, NamespaceLabel: flags.Label, ExpectedRevision: flags.ExpectedRevision, IdempotencyKey: flags.RequestID})
+	result, err := session.Authenticated().Control.RenamePublisherNamespace(ctx, source.Key, flags.Group, controlv1.RenamePublisherNamespaceRequest{TeamId: current.Team().Id, NamespaceLabel: flags.Label, ExpectedRevision: flags.ExpectedRevision, IdempotencyKey: flags.RequestID})
 	if err != nil {
 		return err
 	}

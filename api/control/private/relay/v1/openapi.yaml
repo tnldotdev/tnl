@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: tnl relay API
+  version: 1.0.0
+  license:
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://relay-control.internal
+security:
+  - clusterAuth: []
+paths:
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/claim:
+    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1claim"
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/ready:
+    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1ready"
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect:
+    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1disconnect"
+  /internal/v1/relays/register:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1relays~1register"
+  /internal/v1/relays/{relay_id}/renew:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1relays~1{relay_id}~1renew"
+  /internal/v1/relays/{relay_id}/drain:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1relays~1{relay_id}~1drain"
+  /internal/v1/relay-services/{relay_service_id}/certificate:
+    $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1relay-services~1{relay_service_id}~1certificate"
+  /internal/v1/publisher-connections/{publisher_connection_id}/claim:
+    $ref: "./paths/public-connections.yaml#/paths/~1internal~1v1~1publisher-connections~1{publisher_connection_id}~1claim"
+  /internal/v1/publisher-connections/{publisher_connection_id}/ready:
+    $ref: "./paths/public-connections.yaml#/paths/~1internal~1v1~1publisher-connections~1{publisher_connection_id}~1ready"
+  /internal/v1/publisher-connections/{publisher_connection_id}/disconnect:
+    $ref: "./paths/public-connections.yaml#/paths/~1internal~1v1~1publisher-connections~1{publisher_connection_id}~1disconnect"
+components:
+  securitySchemes:
+    clusterAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/clusterAuth"
+  parameters:
+    RelayID:
+      $ref: "./schemas/common.yaml#/parameters/RelayID"
+    RelayServiceID:
+      $ref: "./schemas/common.yaml#/parameters/RelayServiceID"
+    PublisherConnectionID:
+      $ref: "./schemas/common.yaml#/parameters/PublisherConnectionID"
+  responses:
+    Problem:
+      $ref: "./schemas/common.yaml#/responses/Problem"
+  schemas:
+    PrivateServiceID:
+      $ref: "./schemas/private-connections.yaml#/schemas/PrivateServiceID"
+    PrivateRunID:
+      $ref: "./schemas/private-connections.yaml#/schemas/PrivateRunID"
+    PrivatePublisherConnectionClaim:
+      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnectionClaim"
+    PrivatePublisherConnection:
+      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnection"
+    PrivatePublisherConnectionTransition:
+      $ref: "./schemas/private-connections.yaml#/schemas/PrivatePublisherConnectionTransition"
+    Identifier:
+      $ref: "./schemas/common.yaml#/schemas/Identifier"
+    RelayRegistration:
+      $ref: "./schemas/leases.yaml#/schemas/RelayRegistration"
+    RelayLeaseIdentity:
+      $ref: "./schemas/leases.yaml#/schemas/RelayLeaseIdentity"
+    RelayRenewal:
+      $ref: "./schemas/leases.yaml#/schemas/RelayRenewal"
+    RelayDrainRequest:
+      $ref: "./schemas/leases.yaml#/schemas/RelayDrainRequest"
+    RelayLease:
+      $ref: "./schemas/leases.yaml#/schemas/RelayLease"
+    RelayTransportCertificate:
+      $ref: "./schemas/certs.yaml#/schemas/RelayTransportCertificate"
+    PublisherConnectionIdentity:
+      $ref: "./schemas/public-connections.yaml#/schemas/PublisherConnectionIdentity"
+    PublisherConnectionProcessIdentity:
+      $ref: "./schemas/public-connections.yaml#/schemas/PublisherConnectionProcessIdentity"
+    PublisherConnectionTransition:
+      $ref: "./schemas/public-connections.yaml#/schemas/PublisherConnectionTransition"
+    PublisherConnectionClaim:
+      $ref: "./schemas/public-connections.yaml#/schemas/PublisherConnectionClaim"
+    PublisherConnectionDisconnect:
+      $ref: "./schemas/public-connections.yaml#/schemas/PublisherConnectionDisconnect"
+    ClaimedPublisherConnection:
+      $ref: "./schemas/public-connections.yaml#/schemas/ClaimedPublisherConnection"
+    ProblemCode:
+      $ref: "./schemas/common.yaml#/schemas/ProblemCode"
+    Problem:
+      $ref: "./schemas/common.yaml#/schemas/Problem"

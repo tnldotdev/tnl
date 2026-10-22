@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/localpublisher"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	localpublisher "github.com/tnldotdev/tnl/internal/publisher/localapi"
+	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 func gate(ctx context.Context, root, name string) error {

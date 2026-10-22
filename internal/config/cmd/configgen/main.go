@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/invopop/jsonschema"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/tcpport"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
-	"github.com/tnldotdev/tnl/internal/webhookips"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if err := writeFile(filepath.Join(root, "internal", "projectconfig", "keys.gen.json"), append(data, '\n')); err != nil {
+	if err := writeFile(filepath.Join(root, "internal", "client", "project", "keys.gen.json"), append(data, '\n')); err != nil {
 		fatal(err)
 	}
 }

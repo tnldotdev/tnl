@@ -4,34 +4,37 @@ import (
 	"context"
 	"io"
 
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/internal/connector"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func managedPrivateService(ctx context.Context, session *teamSession, id string) (controlv1.PrivateService, error) {
-	current, err := session.current(ctx)
+func managedPrivateService(ctx context.Context, session *clientteam.Session, id string) (controlv1.PrivateService, error) {
+	current, err := session.Current(ctx)
 	if err != nil {
 		return controlv1.PrivateService{}, err
 	}
-	services, err := session.authenticated.Control.ListPrivateServices(ctx, current.team.Id)
+	services, err := session.Authenticated().Control.ListPrivateServices(ctx, current.Team().Id)
 	if err != nil {
 		return controlv1.PrivateService{}, err
 	}
-	service, err := privateServiceSelection(services, id, current.team.Id)
+	service, err := connector.SelectService(services, id, current.Team().Id)
 	if err != nil {
 		return service, err
 	}
 	if !service.Enabled {
 		return service, nativeauth.ErrScope
 	}
-	service, err = session.authenticated.Control.GetPrivateService(ctx, service.Id)
+	service, err = session.Authenticated().Control.GetPrivateService(ctx, service.Id)
 	if err != nil {
 		return service, err
 	}
-	if service.Id != id || service.TeamId != current.team.Id || !service.Enabled {
+	if service.Id != id || service.TeamId != current.Team().Id || !service.Enabled {
 		return service, nativeauth.ErrScope
 	}
 	_, err = nativeauth.PrivateServiceTrust(service)
@@ -51,7 +54,7 @@ func runPrivatePublisherSetup(ctx context.Context, flags publisherSetupCommand, 
 	if err != nil {
 		return err
 	}
-	native, identity, err := nativeauth.EnsurePrivateServiceOwner(ctx, session.store, session.authenticated.Control, session.authenticated.Authority, service)
+	native, identity, err := nativeauth.EnsurePrivateServiceOwner(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
 	if err != nil {
 		return err
 	}
@@ -75,14 +78,14 @@ func runPrivatePublisherProvision(ctx context.Context, flags publisherProvisionC
 	if err != nil {
 		return err
 	}
-	enrollment, err := session.authenticated.Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Name: "deployment", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
+	enrollment, err := session.Authenticated().Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Name: "deployment", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 	if err != nil {
 		return err
 	}
 	if enrollment.Kind != "private_service" || enrollment.PrivateServiceId == nil || *enrollment.PrivateServiceId != service.Id || enrollment.TeamId != service.TeamId {
 		return nativeauth.ErrScope
 	}
-	native, identity, err := nativeauth.EnrollNative(ctx, session.store, session.authenticated.Control, session.authenticated.Authority, enrollment.EnrollmentKey)
+	native, identity, err := nativeauth.EnrollNative(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, enrollment.EnrollmentKey)
 	if err != nil {
 		return err
 	}
@@ -92,11 +95,11 @@ func runPrivatePublisherProvision(ctx context.Context, flags publisherProvisionC
 	if _, err := native.SavedPrivateService(ctx); err != nil {
 		return err
 	}
-	_, signing, err := privateSigningIdentity(ctx, session.store, identity.ClientId)
+	_, signing, err := invocation.SigningIdentity(ctx, session.Store(), identity.ClientId)
 	if err != nil {
 		return err
 	}
-	file, err := credentialfile.New(session.authenticated.ServerEndpoint, identity, signing)
+	file, err := credentialfile.New(session.Authenticated().ServerEndpoint, identity, signing)
 	if err != nil {
 		return err
 	}

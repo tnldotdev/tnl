@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@apidevtools/json-schema-ref-parser':
+        specifier: 14.0.1
+        version: 14.0.1
       '@floating-ui/dom':
         specifier: 1.8.0
         version: 1.8.0

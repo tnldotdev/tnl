@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
+	webhookips "github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
 // Webhook declares one exact endpoint on the project's stable webhook hostname.

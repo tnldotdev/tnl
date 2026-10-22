@@ -1,0 +1,73 @@
+paths:
+  /v1/teams/{team_id}/domains:
+    get:
+      operationId: listTeamDomains
+      summary: List domains available to the team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Domain page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/DomainPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    post:
+      operationId: claimTeamDomain
+      summary: Begin claiming one domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ClaimDomainRequest"
+      responses:
+        "201":
+          description: Domain claim
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Domain"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}/domains/{domain_id}/default:
+    post:
+      operationId: setTeamDefaultDomain
+      summary: Select a ready default domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/DomainID"
+      responses:
+        "200":
+          description: Updated team
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Team"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}/domains/{domain_id}:
+    delete:
+      operationId: releaseTeamDomain
+      summary: Release one custom domain
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/DomainID"
+      responses:
+        "204":
+          description: Domain release started
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -15,12 +16,12 @@ func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
 			t.Fatalf("protocol %q: %v", value, err)
 		}
 		for input, want := range map[string]string{"5432": "127.0.0.1:5432", "db.internal:5432": "db.internal:5432"} {
-			if got, err := normalizePublishTarget(input, protocol); err != nil || got != want {
+			if got, err := targetplan.NormalizePublicAddress(input, protocol); err != nil || got != want {
 				t.Fatalf("%s target %q = %q, %v", value, input, got, err)
 			}
 		}
 		for _, target := range []string{"http://db.internal:5432", "db.internal", "db.internal:0", "db.internal:65536"} {
-			if _, err := normalizePublishTarget(target, protocol); err == nil {
+			if _, err := targetplan.NormalizePublicAddress(target, protocol); err == nil {
 				t.Fatalf("invalid target %q accepted", target)
 			}
 		}

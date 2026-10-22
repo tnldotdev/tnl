@@ -12,16 +12,17 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
-	"github.com/tnldotdev/tnl/internal/publisherprovenance"
-	"github.com/tnldotdev/tnl/internal/targetdiscovery"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
+	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	targetdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -89,11 +90,11 @@ func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollComma
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	enrollment, err := session.authenticated.Control.CreatePublisherGroupEnrollment(ctx, key, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.team.Id, MaxMembers: members, ExpiresIn: expires})
+	enrollment, err := session.Authenticated().Control.CreatePublisherGroupEnrollment(ctx, key, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.Team().Id, MaxMembers: members, ExpiresIn: expires})
 	if err != nil {
 		return err
 	}
@@ -231,7 +232,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		if len(pending.ResultJSON) == 0 && (len(pending.EnrollmentSecret) == 0 || flags.EnrollmentKey != "") {
 			secret := ""
 			if flags.EnrollmentKey != "" {
-				secret, err = enrollmentKeyInput(flags.EnrollmentKey, os.Stdin)
+				secret, err = invocation.EnrollmentKeyInput(flags.EnrollmentKey, os.Stdin)
 			} else {
 				remote := flags.selection()
 				remote.ServerURL = server
@@ -240,11 +241,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 					return err
 				}
 				defer session.Close()
-				current, err := session.current(ctx)
+				current, err := session.Current(ctx)
 				if err != nil {
 					return err
 				}
-				enrollment, err := session.authenticated.Control.CreatePublisherGroupEnrollment(ctx, flags.ProjectKey, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.team.Id, MaxMembers: 1, ExpiresIn: 600})
+				enrollment, err := session.Authenticated().Control.CreatePublisherGroupEnrollment(ctx, flags.ProjectKey, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.Team().Id, MaxMembers: 1, ExpiresIn: 600})
 				if err != nil {
 					return err
 				}

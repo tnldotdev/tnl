@@ -28,28 +28,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/connector"
+
 	"github.com/jackc/pgx/v5"
 
-	"github.com/tnldotdev/tnl/internal/authorityapi"
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlapi"
-	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/devoidc"
+	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	authorityapi "github.com/tnldotdev/tnl/internal/control/api/authority"
+	ingressapi "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	relayapi "github.com/tnldotdev/tnl/internal/control/api/private/relay"
+	controlapi "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	devoidc "github.com/tnldotdev/tnl/internal/development/oidc"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/ingressapi"
-	"github.com/tnldotdev/tnl/internal/ippolicy"
-	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/local"
+	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/relay"
-	"github.com/tnldotdev/tnl/internal/relayapi"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
@@ -76,8 +79,8 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	team := session.identity.PersonalTeamId
-	control := session.authenticated.Control
+	team := session.Identity().PersonalTeamId
+	control := session.Authenticated().Control
 	t.Cleanup(func() { _ = session.Close() })
 	var operations atomic.Int64
 	var webhookBody atomic.Value
@@ -146,7 +149,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 			return false
 		}
 		endpoint, err = privateprotocol.ReadEndpoint(descriptor)
-		return err == nil && runtimeAvailable(t.Context(), endpoint)
+		return err == nil && local.Available(t.Context(), endpoint)
 	})
 	web := "web"
 	var appEndpoint privateprotocol.Endpoint
@@ -235,7 +238,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		if state != lastWebhookState {
 			t.Log(state)
 			lastWebhookState = state
-			if snapshot, err := session.database.SnapshotProject(t.Context(), root); err == nil {
+			if snapshot, err := session.Database().SnapshotProject(t.Context(), root); err == nil {
 				for _, integration := range snapshot.IntegrationURLs {
 					t.Logf("integration %s: %s %s", integration.Kind, integration.State, integration.Reason)
 					for _, endpoint := range integration.Endpoints {
@@ -310,7 +313,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localService, err := selectConnectService(t.Context(), control, project, internal, team)
+	localService, err := connector.Select(t.Context(), control, project.Project, internal, team)
 	if err != nil {
 		t.Fatal(err)
 	}

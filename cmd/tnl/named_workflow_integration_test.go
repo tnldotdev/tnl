@@ -18,9 +18,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/local"
+	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -108,13 +109,13 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team := session.identity.PersonalTeamId
+	team := session.Identity().PersonalTeamId
 	if !*cliWorkflowPersonalTeam {
 		key, err := randomIdempotencyKey()
 		if err != nil {
 			t.Fatal(err)
 		}
-		created, err := session.authenticated.Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "named-preview"}, key)
+		created, err := session.Authenticated().Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "named-preview"}, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +226,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		return stop
 	}
 	firstAPI, firstWeb := start("api"), start("web")
-	if _, err := session.authenticated.Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, controlclient.ErrNotFound) {
+	if _, err := session.Authenticated().Control.GetProjectConfiguration(t.Context(), team, source.Key); !errors.Is(err, controlclient.ErrNotFound) {
 		t.Fatalf("local startup implicitly applied production configuration: %v", err)
 	}
 	assertRealized := func() {
@@ -329,7 +330,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			firstAPI()
 			firstWeb()
 			firstSDK()
-			workflowWait(t, 15*time.Second, func() bool { return !runtimeAvailable(t.Context(), endpoint) })
+			workflowWait(t, 15*time.Second, func() bool { return !local.Available(t.Context(), endpoint) })
 			t.Logf("git transition %d: owner stopped after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
 			args := []string{"init", "--quiet", root}
 			if phase == 1 {

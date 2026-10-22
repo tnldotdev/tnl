@@ -1,0 +1,62 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/routing-table/snapshot:
+    get:
+      operationId: getIngressRoutingTableSnapshot
+      summary: Load a consistent ingress routing-table snapshot
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+        - $ref: "../openapi.yaml#/components/parameters/IngressRunID"
+        - $ref: "../openapi.yaml#/components/parameters/IngressLeaseRevision"
+      responses:
+        "200":
+          description: Current ingress routing-table snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/IngressRoutingTableSnapshot"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/routing-table/events:
+    get:
+      operationId: getIngressRoutingTableEvents
+      summary: Wait for ordered ingress routing-table events
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+        - $ref: "../openapi.yaml#/components/parameters/IngressRunID"
+        - $ref: "../openapi.yaml#/components/parameters/IngressLeaseRevision"
+        - name: after
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 256
+        - name: wait
+          in: query
+          description: Maximum long-poll wait as a whole-second duration.
+          schema:
+            type: string
+            pattern: "^(?:[0-9]|1[0-9]|2[0-5])s$"
+            default: 25s
+      responses:
+        "200":
+          description: Ordered ingress routing-table event page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/IngressRoutingTablePage"
+        "409":
+          description: Revision was compacted and a new snapshot is required
+          content:
+            application/problem+json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Problem"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

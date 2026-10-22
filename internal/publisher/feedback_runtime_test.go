@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/feedbacktoolbar"
+	feedbacktoolbar "github.com/tnldotdev/tnl/internal/publisher/toolbar"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
 )

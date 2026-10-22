@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 const goldenTraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"

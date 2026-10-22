@@ -1,0 +1,200 @@
+schemas:
+  ServiceAuditEvent:
+    type: object
+    additionalProperties: false
+    required: [id, cursor, team_id, service_id, service_kind, event_type, occurred_at]
+    properties:
+      id: { type: string, maxLength: 128 }
+      cursor: { type: string, pattern: "^[1-9][0-9]{0,18}$" }
+      team_id: { type: string }
+      service_id: { type: string }
+      service_kind: { type: string, enum: [public_url, private_service] }
+      event_type: { type: string, maxLength: 64 }
+      occurred_at: { type: string, format: date-time }
+      actor_identity_id: { type: string }
+      device_id: { type: string }
+      publisher_identity_id: { type: string }
+      run_id: { type: string }
+      visitor_connection_id: { type: string }
+      source_ip: { type: string }
+      outcome: { type: string, maxLength: 64 }
+      reason: { type: string, maxLength: 64 }
+      configuration_revision: { type: integer, format: int64, minimum: 1 }
+  ServiceAuditPage:
+    type: object
+    required: [events]
+    properties:
+      events:
+        {
+          type: array,
+          maxItems: 256,
+          items: { $ref: "../openapi.yaml#/components/schemas/ServiceAuditEvent" },
+        }
+      next_cursor: { type: string, pattern: "^[1-9][0-9]{0,18}$" }
+  RelayID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  AdminServerStatus:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        role,
+        started_at,
+        current_time,
+        enabled_public_urls,
+        suspended_public_urls,
+        starting_publish_runs,
+        ready_publish_runs,
+        ingress_leases,
+        relay_leases,
+      ]
+    properties:
+      role:
+        type: string
+        enum: [standalone, control]
+      started_at:
+        type: string
+        format: date-time
+      current_time:
+        type: string
+        format: date-time
+      enabled_public_urls:
+        type: integer
+        minimum: 0
+      suspended_public_urls:
+        type: integer
+        minimum: 0
+      starting_publish_runs:
+        type: integer
+        minimum: 0
+      ready_publish_runs:
+        type: integer
+        minimum: 0
+      ingress_leases:
+        type: integer
+        minimum: 0
+      relay_leases:
+        type: integer
+        minimum: 0
+  AdminRelayLease:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        relay_service_id,
+        relay_id,
+        relay_run_id,
+        relay_lease_revision,
+        protocol_version,
+        relay_address,
+        tls_server_name,
+        internal_relay_address,
+        connection_capacity,
+        stream_capacity,
+        reported_connections,
+        reported_streams,
+        draining,
+        renewed_at,
+        lease_expires_at,
+      ]
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/RelayServiceID"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/RelayID"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      protocol_version:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_address:
+        type: string
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      internal_relay_address:
+        type: string
+      connection_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      stream_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      reported_connections:
+        type: integer
+        format: int64
+        minimum: 0
+      reported_streams:
+        type: integer
+        format: int64
+        minimum: 0
+      draining:
+        type: boolean
+      drain_deadline:
+        type: string
+        format: date-time
+      renewed_at:
+        type: string
+        format: date-time
+      lease_expires_at:
+        type: string
+        format: date-time
+  AdminRelayPage:
+    type: object
+    additionalProperties: false
+    required: [relays]
+    properties:
+      relays:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/AdminRelayLease"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/RelayID"
+  AdminDrainRelayRequest:
+    type: object
+    additionalProperties: false
+    required: [relay_run_id, relay_lease_revision, deadline]
+    properties:
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      deadline:
+        type: string
+        format: date-time
+  MaintenanceControlName:
+    type: string
+    enum: [public_url_creation, publish_run_creation, certificate_issuance]
+  MaintenanceControl:
+    type: object
+    additionalProperties: false
+    required: [name, allowed, revision, updated_at, updated_by]
+    properties:
+      name:
+        $ref: "../openapi.yaml#/components/schemas/MaintenanceControlName"
+      allowed:
+        type: boolean
+      revision:
+        type: integer
+        format: int64
+        minimum: 1
+      updated_at:
+        type: string
+        format: date-time
+      updated_by:
+        $ref: "../openapi.yaml#/components/schemas/IdentityID"
+  SetMaintenanceControlRequest:
+    type: object
+    additionalProperties: false
+    required: [allowed]
+    properties:
+      allowed:
+        type: boolean

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func loadTNLDYAML(t *testing.T, contents string) (Document, error) {

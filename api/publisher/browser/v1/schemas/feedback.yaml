@@ -1,0 +1,50 @@
+schemas:
+  BrowserFeedbackReportRequest:
+    type: object
+    additionalProperties: false
+    required: [schema_version, text, page_path, evidence]
+    properties:
+      schema_version:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      text: { type: string, minLength: 1, maxLength: 4000 }
+      display_name: { type: string, maxLength: 64 }
+      page_path: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+      page_title: { type: string, maxLength: 256 }
+      anchor:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/FeedbackAnchor"
+      evidence:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/FeedbackEvidence"
+  BrowserFeedbackEventRequest:
+    type: object
+    additionalProperties: false
+    required: [schema_version, type]
+    properties:
+      schema_version:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      type: { type: string, enum: [reply, thread.resolved, thread.reopened] }
+      text: { type: string, minLength: 1, maxLength: 4000 }
+  BrowserFailedRequest:
+    type: object
+    additionalProperties: false
+    required: [method, path, status, duration_ms]
+    properties:
+      method: { type: string, minLength: 1, maxLength: 12 }
+      path: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
+      status:
+        type: integer
+        minimum: 0
+        maximum: 599
+        description: Zero for a forwarding failure, otherwise an HTTP failure status from 400 through 599
+      duration_ms: { type: integer, minimum: 0, maximum: 600000 }
+  BrowserFeedbackEvidence:
+    type: object
+    additionalProperties: false
+    required: [schema_version, failed_requests]
+    properties:
+      schema_version:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      failed_requests:
+        type: array
+        maxItems: 20
+        items:
+          $ref: "../openapi.yaml#/components/schemas/BrowserFailedRequest"

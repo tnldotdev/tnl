@@ -1,0 +1,183 @@
+paths:
+  /v1/private-services/{private_service_id}/client-certificates:
+    post:
+      operationId: issueServiceClientCertificate
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/IssueServiceClientCertificateRequest" }
+      responses:
+        "201":
+          description: Exact service/identity/device client certificate; the client key never leaves the client
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-ingress-assignments/{connector_session_id}:
+    delete:
+      operationId: releaseVisitorIngressAssignment
+      security: [{ bearerAuth: [] }]
+      description: Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+      parameters:
+        - {
+            name: connector_session_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" },
+          }
+      responses:
+        "204": { description: Exact assignment released }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
+    get:
+      operationId: getVisitorIngressTransportTrust
+      security: [{ bearerAuth: [] }]
+      description: Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
+      parameters:
+        - name: connector_session_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionID" }
+      responses:
+        "200":
+          description: Exact-hostname, lease-bound ingress transport trust
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IngressTransportTrust" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-devices:
+    post:
+      operationId: enrollVisitorDevice
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public_key]
+              properties:
+                public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "201":
+          description: Enrolled identity-bound Ed25519 device
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorDevice" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-devices/{device_id}:
+    delete:
+      operationId: revokeVisitorDevice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+      responses:
+        "204": { description: Device and its ingress sessions revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor/private-services:
+    get:
+      operationId: listAvailablePrivateServices
+      description: Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceCursor" }]
+      responses:
+        "200":
+          {
+            description: Authorized visitor inventory,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServicePage" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/ingress-assignment:
+    post:
+      operationId: createVisitorIngressAssignment
+      description: Reserve exactly one unbound ingress assignment for the current person, device, and private service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, idempotency_key]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+                exclude_ingress_id: { type: string, maxLength: 128 }
+                idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      responses:
+        "201":
+          description: One infrastructure session setup; no run key or stream ticket
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionSetup" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/ingress-assignments:
+    post:
+      operationId: createVisitorIngressAssignments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, idempotency_key]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+                idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      description: Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      responses:
+        "201":
+          description: Infrastructure session setup; no service run key or stream ticket
+          content:
+            application/json:
+              schema:
+                type: array
+                minItems: 2
+                maxItems: 2
+                items: { $ref: "../openapi.yaml#/components/schemas/PrivateConnectorSessionSetup" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/select-run:
+    post:
+      operationId: selectPrivateServiceRun
+      description: For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+      responses:
+        "201":
+          {
+            description: One-use connector ticket,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceSelection" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

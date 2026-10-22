@@ -10,11 +10,11 @@
     "types": ["node", "vitest"]
   },
   "include": [
-    "internal/projectconfig/loader.ts",
+    "internal/client/project/loader.ts",
     "packages/**/*.test.ts",
-    "packages/ts/test-helper/**/*.ts",
-    "packages/ts/fixtures/**/*.ts",
-    "packages/ts/fixtures/**/*.tsx",
+    "packages/ts/test/helpers/**/*.ts",
+    "packages/ts/test/fixtures/**/*.ts",
+    "packages/ts/test/fixtures/**/*.tsx",
     "scripts/**/*.ts",
     "vitest*.ts"
   ],

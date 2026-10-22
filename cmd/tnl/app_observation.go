@@ -9,13 +9,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/local"
+	privateprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 type waitCommand struct {
@@ -71,7 +72,7 @@ func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, sna
 	defer cancel()
 	path, err := privateprotocol.DescriptorPath(state.Root(), snapshot.Project)
 	if err == nil {
-		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(probe, endpoint) {
+		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && local.Available(probe, endpoint) {
 			return
 		}
 	}

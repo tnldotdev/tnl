@@ -22,7 +22,7 @@ func runPublisherInstall(ctx context.Context, root string) error {
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
 		return child.Run()
 	}
-	if err := command("build", "--file", filepath.Join(root, "deploy/compose-publisher/test.Dockerfile"), "--tag", id, root); err != nil {
+	if err := command("build", "--file", filepath.Join(root, "tests/integration/fixtures/publisher-install/test.Dockerfile"), "--tag", id, root); err != nil {
 		return err
 	}
 	defer exec.Command("docker", "image", "rm", id).Run()

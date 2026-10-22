@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 

@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var detachedHelperRoot = flag.String("tnl-detached-child-root", "", "private state root for detached process test")
@@ -42,10 +43,7 @@ func TestDetachedChildProcess(t *testing.T) {
 	}
 	if protocol, ok := strings.CutPrefix(*detachedHelperMode, "connection-"); ok {
 		detachedPublicationStarting(ctx)
-		profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: controlv1.PrivateServiceProtocol(protocol), ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "approved.example.test", Port: 25443, Public: true}}, "127.0.0.1:15432")
-		if err != nil {
-			t.Fatal(err)
-		}
+		profile := connector.Profile{Schema: 1, ServiceID: "psvc_0123456789ABCDEFGHIJKL", Protocol: config.ProtocolName(protocol), Hostname: "approved.example.test", ManagedPort: 25443, Host: "127.0.0.1", Port: 15432, Public: true, ConnectorRequired: true, Authentication: "connector"}
 		detachedConnectorPrepared(ctx, profile)
 		time.Sleep(100 * time.Millisecond)
 		detachedPublicationReady(ctx)
@@ -81,7 +79,7 @@ func TestDetachedConnectorReturnsPreparedAddressForEveryProtocol(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _, _ = detachedRequest(state, id, "stop") }()
-			var profile nativeConnectionProfile
+			var profile connector.Profile
 			if json.Unmarshal(output.Bytes(), &profile) != nil || string(profile.Protocol) != protocol || profile.Host != "127.0.0.1" || profile.Port != 15432 || profile.Hostname != "approved.example.test" || !profile.Public || !profile.ConnectorRequired || profile.DetachedID != id {
 				t.Fatal("detached command omitted prepared local instructions", output.String())
 			}

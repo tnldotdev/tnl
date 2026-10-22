@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
 )
 
 // Publisher is a locally held signing identity and one selected grant. prepare

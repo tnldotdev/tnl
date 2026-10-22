@@ -13,11 +13,11 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/streamcopy"
-	"github.com/tnldotdev/tnl/internal/targettransport"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 var ErrManagedTLS = errors.New("managed service TLS or visitor authorization failed")
@@ -214,20 +214,8 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if s.TargetTLS != nil {
 			scheme = "https"
 		}
-		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, func(ctx context.Context) (net.Conn, error) {
-			setup, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			conn, err := observability.DialTarget(setup, "tcp", s.Target)
-			if err != nil {
-				return nil, err
-			}
-			backend, err := transport.Secure(setup, conn)
-			if err != nil {
-				_ = conn.Close()
-				return nil, err
-			}
-			return backend, nil
-		}, func(next http.Handler) http.Handler {
+		target := ManagedHTTPTarget{Address: s.Target, Transport: transport}
+		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.dial, func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.

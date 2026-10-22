@@ -1,8 +1,8 @@
-import { parseRuntimePayload } from "./internal/runtime.js";
-import { serviceMetadata } from "./internal/service_metadata.js";
+import { parseRuntimePayload } from "./internal/project/runtime.js";
+import { serviceMetadata } from "./internal/project/service_metadata.js";
 import type { TnlRuntime } from "./index.js";
 import { TnlError } from "./errors.js";
-import { awaitableConnection } from "./internal/awaitable_connection.js";
+import { awaitableConnection } from "./internal/connector/awaitable_connection.js";
 export type * from "./project.js";
 export type { TnlRuntime, TnlProjectConfig } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";

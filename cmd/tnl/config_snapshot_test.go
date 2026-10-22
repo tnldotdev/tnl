@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
 )
 
 func TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink(t *testing.T) {

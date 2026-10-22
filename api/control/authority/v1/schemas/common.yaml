@@ -1,0 +1,190 @@
+securitySchemes:
+  workloadAuth:
+    type: http
+    scheme: bearer
+    description: Visitor-only workload credential; never a human control session.
+  webServiceAuth:
+    type: http
+    scheme: bearer
+    description: Scoped website credential; identity facts are bound to the server-configured OIDC issuer.
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: OAuth access token
+parameters:
+  PrivateServiceID:
+    name: private_service_id
+    in: path
+    required: true
+    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+  ServiceActorToken:
+    name: X-Tnl-Actor-Token
+    in: header
+    required: true
+    description: Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
+    schema: { type: string }
+  CompanyActorToken:
+    name: X-Tnl-Actor-Token
+    in: header
+    required: true
+    description: Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+    schema: { type: string }
+  IdempotencyKey:
+    name: Idempotency-Key
+    in: header
+    required: true
+    schema:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^\S(?:.*\S)?$'
+  TeamID:
+    name: team_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/TeamID"
+  MembershipID:
+    name: membership_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/MembershipID"
+  InvitationID:
+    name: invitation_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/InvitationID"
+  DomainID:
+    name: domain_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/DomainID"
+responses:
+  Problem:
+    description: Request failed
+    content:
+      application/problem+json:
+        schema:
+          $ref: "../openapi.yaml#/components/schemas/Problem"
+  BearerProblem:
+    description: Authentication failed
+    headers:
+      WWW-Authenticate:
+        required: true
+        schema:
+          type: string
+    content:
+      application/problem+json:
+        schema:
+          $ref: "../openapi.yaml#/components/schemas/Problem"
+schemas:
+  EmailDeliveryRequest:
+    description: Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
+    type: object
+    additionalProperties: false
+    required: [delivery_id, type, to, data]
+    properties:
+      delivery_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      type:
+        type: string
+        enum: [team_invitation]
+      to:
+        type: string
+        format: email
+      data:
+        $ref: "../openapi.yaml#/components/schemas/TeamInvitationEmail"
+  ResourceID:
+    type: string
+    minLength: 1
+    maxLength: 256
+    pattern: '^\S(?:.*\S)?$'
+  PublicURLID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  CanonicalLabel:
+    type: string
+    minLength: 1
+    maxLength: 63
+    pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+  PublicURLScope:
+    type: string
+    enum: [member, shared]
+  CertificateChallengeMethod:
+    type: string
+    enum: [dns-01]
+  CertificatePlan:
+    type: object
+    additionalProperties: false
+    required: [cache_key, scope, identifiers, challenge_method]
+    properties:
+      cache_key:
+        type: string
+        minLength: 1
+        maxLength: 256
+      scope:
+        type: string
+        minLength: 1
+        maxLength: 256
+      identifiers:
+        type: array
+        minItems: 1
+        maxItems: 2
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 1
+          maxLength: 253
+          pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+      challenge_method:
+        $ref: "../openapi.yaml#/components/schemas/CertificateChallengeMethod"
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [type, title, status, code, detail, request_id]
+    properties:
+      type:
+        type: string
+        format: uri
+      title:
+        type: string
+        minLength: 1
+      status:
+        type: integer
+        minimum: 400
+        maximum: 599
+      code:
+        type: string
+        enum:
+          [
+            invalid_request,
+            unauthenticated,
+            forbidden,
+            manager_required,
+            source_sign_in_required,
+            verified_email_required,
+            not_found,
+            conflict,
+            project_managed,
+            rate_limited,
+            unavailable,
+            internal,
+            name_unavailable,
+            policy_revision_stale,
+            dns_setup_pending,
+            custom_domains_disabled,
+          ]
+      request_id:
+        type: string
+        minLength: 1
+      detail:
+        type: string
+        minLength: 1
+      retry_at:
+        type: string
+        format: date-time
+      details:
+        type: object
+        additionalProperties: true

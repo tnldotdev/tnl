@@ -18,10 +18,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -43,7 +44,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team, control := session.identity.PersonalTeamId, session.authenticated.Control
+	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/cli/portable.git"}} {
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
@@ -298,15 +299,14 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, err := selectConnectService(t.Context(), control, project, "api", team)
+			selected, err := connector.Select(t.Context(), control, project.Project, "api", team)
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, err := serviceConnectionProfile(selected, "127.0.0.1:25443")
-			if err != nil || native.Hostname == oldHostname || native.ServiceID != service.Id {
-				t.Fatal("source-bound native profile kept old hostname or changed identity", err)
+			if selected.ManagedTls == nil || selected.ManagedTls.Hostname == oldHostname || selected.Id != service.Id {
+				t.Fatal("source-bound service kept old hostname or changed identity")
 			}
-			newClient := workflowNativeHTTPClient(t, f, native.Hostname)
+			newClient := workflowNativeHTTPClient(t, f, selected.ManagedTls.Hostname)
 			workflowWait(t, 25*time.Second, func() bool {
 				response, err := newClient.Get("https://" + address + "/renamed-dns")
 				if err != nil {
@@ -321,7 +321,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				t.Fatal("old hostname still authenticated the new namespace")
 			}
 			updated, err := control.GetPrivateService(t.Context(), service.Id)
-			if err != nil || updated.ManagedTls.Hostname != native.Hostname || updated.ManagedTls.Port != service.ManagedTls.Port {
+			if err != nil || updated.ManagedTls.Hostname != selected.ManagedTls.Hostname || updated.ManagedTls.Port != service.ManagedTls.Port {
 				t.Fatal("namespace change lost port or service", err)
 			}
 		}

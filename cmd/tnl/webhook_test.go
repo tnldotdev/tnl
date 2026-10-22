@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/integrationurls"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
 )
 
 func TestWebhookCommandRequiresProjectConfiguration(t *testing.T) {

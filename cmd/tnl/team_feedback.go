@@ -35,15 +35,15 @@ func runTeamFeedbackPolicy(ctx context.Context, f remoteFlags, authors string, m
 		return err
 	}
 	defer s.Close()
-	current, err := s.current(ctx)
+	current, err := s.Current(ctx)
 	if err != nil {
 		return err
 	}
 	policy := authorityv1.TeamFeedbackPolicy{}
 	if authors == "" {
-		policy, err = s.authenticated.Authority.GetTeamFeedbackPolicy(ctx, current.team.Id)
+		policy, err = s.Authenticated().Authority.GetTeamFeedbackPolicy(ctx, current.Team().Id)
 	} else {
-		policy, err = s.authenticated.Authority.SetTeamFeedbackPolicy(ctx, current.team.Id, authorityv1.TeamFeedbackPolicy{Authors: authorityv1.TeamFeedbackPolicyAuthors(authors)})
+		policy, err = s.Authenticated().Authority.SetTeamFeedbackPolicy(ctx, current.Team().Id, authorityv1.TeamFeedbackPolicy{Authors: authorityv1.TeamFeedbackPolicyAuthors(authors)})
 	}
 	if err != nil {
 		return err
@@ -51,5 +51,5 @@ func runTeamFeedbackPolicy(ctx context.Context, f remoteFlags, authors string, m
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(policy)
 	}
-	return writeHumanFrame(output, "tnl team feedback", "current", "", clioutput.Fields(clioutput.Field{Label: "team", Value: current.team.DisplayName}, clioutput.Field{Label: "authors", Value: string(policy.Authors)}))
+	return writeHumanFrame(output, "tnl team feedback", "current", "", clioutput.Fields(clioutput.Field{Label: "team", Value: current.Team().DisplayName}, clioutput.Field{Label: "authors", Value: string(policy.Authors)}))
 }

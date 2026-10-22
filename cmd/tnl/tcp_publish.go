@@ -4,11 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -33,28 +30,6 @@ func privatePublishProtocol(value string) (controlv1.PrivateServiceProtocol, err
 		return "", publisherCLIError("private protocol must be http, tcp, mysql, or postgres")
 	}
 	return protocol, nil
-}
-
-func normalizePrivatePublishTarget(target string, protocol controlv1.PrivateServiceProtocol) (string, error) {
-	if protocol == "http" {
-		return config.NormalizeHTTPServiceTarget(config.Service{}, target)
-	}
-	canonical, err := tcptarget.Normalize(target)
-	if err != nil {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
-	}
-	return canonical, nil
-}
-
-func normalizePublishTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
-	if protocol == controlv1.Http {
-		return targetsyntax.NormalizeTarget(target)
-	}
-	canonical, err := tcptarget.Normalize(target)
-	if err != nil {
-		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
-	}
-	return canonical, nil
 }
 
 func savedPublicAddress(route controlv1.PublicURL) (string, error) {

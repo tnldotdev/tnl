@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 )
 
 func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {

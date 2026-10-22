@@ -3,15 +3,14 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/httpstream"
-	"github.com/tnldotdev/tnl/internal/kubernetes"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/publisher/target/kubernetes"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -42,20 +41,7 @@ func (s ManagedStream) forwardKubernetes(ctx context.Context, client *tls.Conn, 
 	done := make(chan struct{})
 	go func() { defer close(done); s.guardVisitor(live, client, nil, initial) }()
 	defer func() { cancel(); <-done }()
-	return httpstream.Serve(live, client, &url.URL{Scheme: "https", Host: target.Address}, func(ctx context.Context) (net.Conn, error) {
-		setup, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		conn, err := observability.DialTarget(setup, "tcp", target.Address)
-		if err != nil {
-			return nil, err
-		}
-		secured, err := target.Transport.Secure(setup, conn)
-		if err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
-		return secured, nil
-	}, func(next http.Handler) http.Handler {
+	return httpstream.Serve(live, client, &url.URL{Scheme: "https", Host: target.Address}, target.dial, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Host != s.Authority && s.Authority != "" || r.URL.IsAbs() || r.URL.Host != "" || strings.HasPrefix(r.URL.Path, "/__tnl/") || r.Method == http.MethodConnect {
 				managedHTTPDenied(w, http.StatusMisdirectedRequest)

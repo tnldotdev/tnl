@@ -2,7 +2,7 @@
 
 Write for a developer trying to do something or understand a specific boundary.
 Lead with the result, show a command or example when useful, then link to more
-detail. The [README](README.md) is the model for public introductions.
+detail. The [readme](readme.md) is the model for public introductions.
 
 Use everyday words unless a technical term makes an important distinction;
 explain the term when the reader needs it. Name the component doing the work and
@@ -314,14 +314,46 @@ for runtime invariants, trust boundaries, and package/API ownership. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
-- The seven HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, `api/public-url-usage/v1/openapi.yaml`, `api/publisher/v1/openapi.yaml`, and `api/local-publisher/v1/openapi.yaml`. They generate committed models, clients, and server interfaces under `pkg/api/*`. The local publisher contract is private to native app/CLI registration, not a server API; the publisher contract also generates browser validators under `internal/publisherapi`. Reference control schemas where the wire shapes are identical. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
+- The seven HTTP OpenAPI sources are `api/control/public/v1/openapi.yaml`, `api/control/authority/v1/openapi.yaml`, `api/control/private/ingress/v1/openapi.yaml`, `api/control/private/relay/v1/openapi.yaml`, `api/integrations/public-url-usage/v1/openapi.yaml`, `api/publisher/browser/v1/openapi.yaml`, and `api/publisher/local/v1/openapi.yaml`. Their `paths/` and `schemas/` fragments belong to the same serving boundary. They generate committed models, clients, and server interfaces in the seven existing `pkg/api/*` packages. Those public import paths are an explicit compatibility exception: they remain canonical implementations, not old-path facades. The local publisher contract is private native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. `api/shared/v1/components.yaml`, if needed, may contain only byte-identical referenced schemas and generates no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
-- PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
+- PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` orders Go API generation, browser validators, then the remaining Go directives; `task format` formats the resulting tree.
 - `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
+
+## place implementation with its owner
+
+| Tree                                                                | Responsibility                                                                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/{tnl,tnld,tnlbench}`                                           | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
+| `internal/publisher`                                                | Publication runtime; children own app state, local process/API, invocation operations, identity, groups, targets, and browser assets                                |
+| `internal/connector`                                                | Visitor-side selection, native owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                      |
+| `internal/control`                                                  | Serving APIs, PostgreSQL state, authorization, certificates, DNS, OIDC, delivery, and maintenance                                                                   |
+| `internal/{ingress,relay,daemon}`                                   | Visitor acceptance, publisher streams, and server process composition, respectively                                                                                 |
+| `internal/client`                                                   | Client auth/state/project selection and installed service jobs shared by publisher and connector                                                                    |
+| `internal/config`                                                   | Static project configuration types, validation, and schema; `client/project` evaluates selected configuration, `daemon/config` resolves operational server settings |
+| `internal/{transport,policy,security,naming,failure,observability}` | Focused mechanics and validated shared values; no command or daemon startup                                                                                         |
+| `packages/{ts,py}`, `connect`                                       | SDK bindings and the independently built GitHub Action                                                                                                              |
+| `tasks`, `scripts`, `development`, `deploy`, `tests/integration`    | Task implementations, owned tooling, contributor stack, deployment templates, and black-box suites/fixtures                                                         |
+
+Commands compose operations, operations compose owned runtimes/state, and those
+owners depend on focused shared leaves and public contracts. Directory nesting
+does not make a parent a shared helper: a child must not import a parent
+orchestrator for convenience. Put a validated value or consumer-owned interface
+at the smallest boundary, or compose it above both users. For example,
+`publisher/local` composes `app`, `localapi`, and `invocation`; `localapi` does not
+call back into the process owner. Connector `stream` does not import connector
+root operations. Control state never imports HTTP handlers; ingress and relay
+never import control state.
+
+Classify by lifecycle and authority, not executable: `tnl publish` is publisher
+work, `tnl connect` is connector work, `tnl apply` sends a control mutation, and
+`tnld` composes server roles. A single native process may compose both publisher
+and connector without merging their capabilities. Keep `pkg/tnl.Publisher` as
+the direct public alias of `publisher/identity.Native`; do not introduce internal
+old-path forwarding packages.
 
 # development workflow
 
-When adding or changing errors, follow [failure boundaries](docs/maintainers/errors.md).
+When adding or changing errors, follow [failure boundaries](docs/maintainers/development/errors.md).
 
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
@@ -334,7 +366,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - PostgreSQL-backed targets must create, use, and remove digest-pinned disposable PostgreSQL themselves.
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
-- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
+- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/client/project/loader.ts`. See the source/generator/output table in [contributing](contributing.md#edit-generated-sources); disposable SDK `dist` output is separate from committed generated source.
 - Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned native socket protocol shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
 
 # tests and benchmarks
@@ -345,6 +377,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
 - Local and deployed benchmarks share publisher, visitor, and measurement implementations.
 - Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
+- Colocate Go unit and white-box integration tests with their implementation, including daemon composition proofs. Put built-CLI black-box suites in `tests/integration/<boundary>` and shared subprocess/Compose assets in `tests/integration/fixtures`. Keep package-local `testdata` with its owner and shared helpers in test-only `internal/testutil` children. SDK suites and fixtures live under `packages/ts/test`; Python remains under `packages/py`.
 
 # operational safety and releases
 

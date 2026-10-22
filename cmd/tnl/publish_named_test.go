@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -11,14 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -108,11 +105,14 @@ func TestNamedPublishRejectsUnsupportedPolicyBeforeOwnerState(t *testing.T) {
 }
 
 func TestNamedLeasePinsServerTeamConfigAndTargetAtOwnerBoundary(t *testing.T) {
-	a, endpoint := testAppRuntime(t)
 	configuredServer, configuredTeam := "https://configured.example.test", "configured"
 	selectedServer, selectedTeam := "https://selected.example.test", "selected"
 	address := config.Target("127.0.0.1:4100")
-	project := a.project
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := projectConfiguration{Project: projectconfig.Project{Root: root}}
 	project.Selection = projectconfig.Selection{Path: filepath.Join(project.Root, "development.json")}
 	project.Config = config.TNL{Server: &configuredServer, Team: &configuredTeam, Services: config.Services{
 		"api": {Target: &config.ServiceTarget{Type: "address", Address: &address}},
@@ -136,26 +136,7 @@ func TestNamedLeasePinsServerTeamConfigAndTargetAtOwnerBoundary(t *testing.T) {
 	if *transferred.Config.Server != selectedServer || *transferred.Config.Team != selectedTeam || transferred.Selection.Path != project.Selection.Path {
 		t.Fatalf("lost resolved invocation: %+v", transferred)
 	}
-	a.project.Project = transferred
-	request := privateprotocol.Lease{Service: "api", Owner: strings.Repeat("a", 32), Pid: os.Getpid(), ConfigurationDigest: digest}
-	var registration privateprotocol.Registration
-	if err := privateprotocol.Call(t.Context(), endpoint, "POST", "/v1/leases", request, &registration); err != nil || registration.Target != "http://127.0.0.1:4100" {
-		t.Fatalf("resolved lease = %+v, %v", registration, err)
-	}
-	defer a.manager.Unregister(registration.RegistrationID, request.Owner)
-	for _, change := range []func(*projectconfig.Project){
-		func(p *projectconfig.Project) { p.Config.Server = &configuredServer },
-		func(p *projectconfig.Project) { p.Config.Team = &configuredTeam },
-		func(p *projectconfig.Project) { p.Selection.Path = filepath.Join(p.Root, "tnl.json") },
-	} {
-		other := transferred
-		change(&other)
-		_, request.ConfigurationDigest, err = other.Snapshot()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := a.acquire(context.Background(), request); !errors.Is(err, clientruntime.ErrOwnerConflict) {
-			t.Fatalf("different invocation acquired current owner: %v", err)
-		}
+	if digest == "" {
+		t.Fatal("resolved invocation omitted its configuration digest")
 	}
 }

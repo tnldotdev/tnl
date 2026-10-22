@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/clientauth"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -115,7 +116,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	}
 	saved, group := "orders-saved", "production"
 	project := projectConfiguration{Project: projectconfig.Project{Root: root, Selection: projectconfig.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: projectconfig.Worktree{Root: root, IsGit: true}, Config: config.TNL{Publishers: map[string]config.Publisher{group: {}}, Services: config.Services{
-		"orders": {Name: &saved}, "remote": {Publisher: &group, Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: testTarget("http://app.internal:3000")}}, "web": {Tunnel: &config.Tunnel{}},
+		"orders": {Name: &saved}, "remote": {Publisher: &group, Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Tunnel: &config.Tunnel{}},
 	}}}}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
@@ -157,7 +158,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					w.WriteHeader(500)
 				}
 			})
-			s := &teamSession{authenticated: &clientauth.Client{Control: control}, selectedTeam: shareTestTeam, identity: authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}}
+			s := clientteam.NewSession(nil, nil, &clientauth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
 			service, err := selectServiceShare(t.Context(), s, project, selector)
 			valid := selector == "orders" || selector == "remote" || selector == shareTestService
 			if valid {
@@ -240,7 +241,7 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 					w.WriteHeader(500)
 				}
 			})
-			s := &teamSession{authenticated: &clientauth.Client{Control: control}, selectedTeam: shareTestTeam, identity: authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}}
+			s := clientteam.NewSession(nil, nil, &clientauth.Client{Control: control}, authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: shareTestTeam}}}, clientteam.Options{SelectedTeam: shareTestTeam})
 			_, err := selectServiceShare(t.Context(), s, project, "orders")
 			if reason, ok := failure.ReasonOf(err); !ok || reason != test.reason {
 				t.Fatalf("unsafe source selection = %v; want %s", err, test.reason)

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
+	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	router "github.com/tnldotdev/tnl/internal/ingress/clienthello"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
 type auditSinkFunc func(serviceaudit.Observation) bool

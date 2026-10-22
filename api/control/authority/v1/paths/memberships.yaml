@@ -1,0 +1,55 @@
+paths:
+  /v1/teams/{team_id}/memberships:
+    get:
+      operationId: listTeamMemberships
+      summary: List team memberships
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Membership page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/MembershipPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}/memberships/{membership_id}:
+    patch:
+      operationId: setMembershipRole
+      summary: Change one membership's team role
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/MembershipID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/SetMembershipRoleRequest"
+      responses:
+        "200":
+          description: Updated membership
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Membership"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    delete:
+      operationId: removeMembership
+      summary: Remove one membership
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/MembershipID"
+      responses:
+        "204":
+          description: Membership removed
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

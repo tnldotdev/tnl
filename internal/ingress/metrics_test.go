@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
 type pendingTLSBackend struct{ connection net.Conn }

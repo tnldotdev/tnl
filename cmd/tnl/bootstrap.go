@@ -9,20 +9,20 @@ import (
 	"slices"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/awsbootstrap"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/grouppublisher"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisherdeployment"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
+	awsbootstrap "github.com/tnldotdev/tnl/internal/publisher/deployment/aws"
+	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type bootstrapCommand struct {
 	scopedTeamFlags `embed:""`
 	Publisher       string           `arg:"" name:"publisher" help:"Configured publisher group to prepare, such as production."`
-	DeploymentFile  string           `name:"deployment-file" default:"deploy/publishers/aws.json" help:"Customer deployment file, relative to the project root."`
+	DeploymentFile  string           `name:"deployment-file" default:"deploy/publisher/fargate/aws.json" help:"Customer deployment file, relative to the project root."`
 	Deployment      string           `name:"deployment" help:"Stable deployment name from the customer file; required when the group has multiple deployments."`
 	Profile         string           `name:"profile" help:"AWS shared configuration profile; otherwise use the standard credentials chain."`
 	Region          string           `name:"region" help:"AWS region; must match the selected customer deployment."`
@@ -97,15 +97,15 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	applied, err := session.authenticated.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
 	if err != nil {
 		return err
 	}
-	if applied.ProjectKey != source.Key || applied.TeamId != current.team.Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 || applied.Groups == nil {
+	if applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 || applied.Groups == nil {
 		return scopeError()
 	}
 	var group *controlv1.AppliedPublisherGroup
@@ -120,7 +120,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if group == nil {
 		return scopeError()
 	}
-	binding := awsbootstrap.Binding{ControlOrigin: session.authenticated.ServerEndpoint, TeamID: current.team.Id, ProjectKey: source.Key, GroupID: group.Id, SourceFingerprint: source.Fingerprint, AccountID: deployment.AccountID, Region: deployment.Region, DeploymentName: deployment.Name}
+	binding := awsbootstrap.Binding{ControlOrigin: session.Authenticated().ServerEndpoint, TeamID: current.Team().Id, ProjectKey: source.Key, GroupID: group.Id, SourceFingerprint: source.Fingerprint, AccountID: deployment.AccountID, Region: deployment.Region, DeploymentName: deployment.Name}
 	deploymentID := "aws-" + binding.ID()[:40]
 	parameters := publisherdeployment.Parameters{
 		publisherdeployment.ControlURLParameter:       binding.ControlOrigin,
@@ -158,7 +158,7 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	if err != nil {
 		return err
 	}
-	preparer := awsbootstrap.Preparer{Store: session.store, Secrets: secrets, Control: session.authenticated.Control, Client: client, Receipts: receipts}
+	preparer := awsbootstrap.Preparer{Store: session.Store(), Secrets: secrets, Control: session.Authenticated().Control, Client: client, Receipts: receipts}
 	result := bootstrapResult{State: "prepared", Deployment: deployment.Name, DeploymentID: deploymentID, ProjectKey: source.Key, GroupID: group.Id, AppliedRevision: applied.Revision, TemplatePath: filepath.Join(flags.GeneratedDir, publisher.TemplatePath), TemplateSHA256: publisher.TemplateSHA256, Replicas: []awsbootstrap.Reference{}, ObservedMembers: []controlv1.PublisherGroupMemberStatus{}, Instructions: []string{
 		"merge these identity parameter bindings with the selected customer deployment's parameters",
 		"supply PublisherImage by digest, VpcId and Subnets before deploying the generated template with your infrastructure tool",

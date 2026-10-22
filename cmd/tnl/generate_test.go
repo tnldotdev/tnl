@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherdeployment"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 )
 
 func generationGit(t *testing.T, directory string, args ...string) []byte {

@@ -14,10 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -47,7 +48,7 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team := session.identity.PersonalTeamId
+	team := session.Identity().PersonalTeamId
 	root := t.TempDir()
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
@@ -73,15 +74,15 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := projectConfiguration{Project: projectconfig.Project{Selection: projectconfig.Selection{Path: configuration, Explicit: true}, Config: *document.TNL, Root: root, Worktree: projectconfig.Worktree{Root: root, IsGit: true, Label: projectconfig.WorktreeLabel{FullLabel: "portable-worktree"}}}}
-	current, err := session.current(t.Context())
+	current, err := session.Current(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	realized, err := realizeLocalService(t.Context(), session.authenticated.Control, project, current, "api", "")
+	realized, err := invocation.RealizeLocalService(t.Context(), session.Authenticated().Control, invocation.LocalService{Project: project.Project, Team: invocation.FromTeamContext(current), Name: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := session.authenticated.Control.GetPrivateService(t.Context(), realized.ServiceId)
+	saved, err := session.Authenticated().Control.GetPrivateService(t.Context(), realized.ServiceId)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 0, false)
+	assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherID, 0, false)
 	publisherState := f.state(t, "file-only-publisher")
 	ctx, stop := context.WithCancel(t.Context())
 	ready, joined := f.command(t, ctx, stop, []string{"--config", configuration, "publish", "api", "--foreground", "--publisher-file", credential, "--state-dir", publisherState})
@@ -100,7 +101,7 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("named scoped publisher did not become ready")
 	}
-	runtime := assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 1, true)
+	runtime := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherID, 1, true)
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
@@ -137,7 +138,7 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("foreground publisher did not join")
 	}
-	stopped := assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 1, false)
+	stopped := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherID, 1, false)
 	if stopped.ProcessRunId != runtime.ProcessRunId {
 		t.Fatal("foreground stop replaced runtime ownership")
 	}

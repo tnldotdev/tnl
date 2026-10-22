@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
+	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/connectionruntime"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -113,7 +113,7 @@ func TestIntegrationInstalledDatabaseDrivers(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = reader.Close()
-			fixture, err := filepath.Abs("../../packages/ts/fixtures/connections/installed-drizzle.ts")
+			fixture, err := filepath.Abs("../../packages/ts/test/fixtures/connections/installed-drizzle.ts")
 			if err != nil {
 				t.Fatal(err)
 			}

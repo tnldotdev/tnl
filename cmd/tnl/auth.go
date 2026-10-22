@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"golang.org/x/term"
 )

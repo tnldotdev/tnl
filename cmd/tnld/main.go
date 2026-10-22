@@ -14,10 +14,10 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	tnldruntime "github.com/tnldotdev/tnl/internal/daemon"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
-	"github.com/tnldotdev/tnl/internal/tnldruntime"
 )
 
 func main() {

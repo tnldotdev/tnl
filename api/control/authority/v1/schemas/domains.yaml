@@ -1,0 +1,89 @@
+schemas:
+  DomainID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  CanonicalHostname:
+    type: string
+    minLength: 1
+    maxLength: 253
+    pattern: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+  DomainKind:
+    type: string
+    enum: [managed, custom]
+  DomainState:
+    type: string
+    enum: [pending, ready, releasing, failed]
+  DNSRecord:
+    type: object
+    additionalProperties: false
+    required: [name, type, value]
+    properties:
+      name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      type:
+        type: string
+        enum: [NS, TXT, CNAME, A, AAAA]
+      value:
+        type: string
+  Domain:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        id,
+        kind,
+        canonical_domain,
+        state,
+        authority_revision,
+        required_records,
+        created_at,
+        updated_at,
+      ]
+    properties:
+      id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      kind:
+        $ref: "../openapi.yaml#/components/schemas/DomainKind"
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      canonical_domain:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      state:
+        $ref: "../openapi.yaml#/components/schemas/DomainState"
+      authority_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      required_records:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/DNSRecord"
+      verified_at:
+        type: string
+        format: date-time
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+  DomainPage:
+    type: object
+    additionalProperties: false
+    required: [domains]
+    properties:
+      domains:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/Domain"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+  ClaimDomainRequest:
+    type: object
+    additionalProperties: false
+    required: [domain]
+    properties:
+      domain:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      make_default:
+        type: boolean
+        default: false

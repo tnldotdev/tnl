@@ -15,8 +15,8 @@ import (
 
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 func nativeMySQLPacket(sequence byte, payload []byte) []byte {

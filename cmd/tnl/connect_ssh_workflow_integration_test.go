@@ -18,8 +18,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -60,7 +61,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	}
 	address, clientKey, hostPublic, username := connectWorkflowSSHD(t, root)
 	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.identity.PersonalTeamId,
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId,
 		"publishers": map[string]any{"internal": map[string]any{}, "production": map[string]any{"public": true}},
 		"services": map[string]any{
 			"internal": map[string]any{"publisher": "internal", "protocol": "tcp", "target": map[string]any{"type": "address", "address": address}},
@@ -90,7 +91,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer inspect.Close(t.Context())
-	device, err := session.store.EnsureEnrolledVisitorDevice(t.Context(), session.identity.Identity.Id, session.authenticated.Control.EnrollVisitorDevice)
+	device, err := session.Store().EnsureEnrolledVisitorDevice(t.Context(), session.Identity().Identity.Id, session.Authenticated().Control.EnrollVisitorDevice)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +99,11 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var service controlv1.PrivateService
 			workflowWait(t, 30*time.Second, func() bool {
-				service, err = selectConnectService(t.Context(), session.authenticated.Control, project, name, session.identity.PersonalTeamId)
+				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
 				if err != nil {
 					return false
 				}
-				_, err = session.authenticated.Control.SelectPrivateServiceRun(t.Context(), service.Id, device.ID)
+				_, err = session.Authenticated().Control.SelectPrivateServiceRun(t.Context(), service.Id, device.ID)
 				return err == nil
 			})
 			endpoint := service.ManagedTls

@@ -8,12 +8,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -299,23 +301,23 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 		result.AppliedReason = "client state unavailable"
 		return
 	}
-	team, err := projectTeamForServer(server, project.Config.Server, project.Config.Team)
+	team, err := resolve.TeamForServer(server, project.Config.Server, project.Config.Team)
 	if err != nil {
 		result.AppliedReason = "project team selection unavailable"
 		return
 	}
-	session := &teamSession{store: profile, authenticated: auth, api: auth.Authority, identity: identity, projectTeam: team}
-	current, err := session.current(ctx)
+	session := clientteam.NewSession(nil, profile, auth, identity, clientteam.Options{ProjectTeam: team})
+	current, err := session.Current(ctx)
 	if err != nil {
 		result.AppliedReason = "select a project team"
 		return
 	}
-	applied, err := auth.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	applied, err := auth.Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
 	if err != nil {
 		result.AppliedReason = "not applied or unavailable; run tnl apply"
 		return
 	}
-	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.team.Id {
+	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id {
 		result.AppliedReason = "server returned another project source"
 		return
 	}

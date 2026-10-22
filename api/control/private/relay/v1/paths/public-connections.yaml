@@ -1,0 +1,64 @@
+paths:
+  /internal/v1/publisher-connections/{publisher_connection_id}/claim:
+    post:
+      operationId: claimPublisherConnection
+      summary: Claim a publisher connection with its credential
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublisherConnectionClaim"
+      responses:
+        "200":
+          description: Publisher connection claimed
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/publisher-connections/{publisher_connection_id}/ready:
+    post:
+      operationId: markPublisherConnectionReady
+      summary: Mark one connected publisher connection ready
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublisherConnectionTransition"
+      responses:
+        "200":
+          description: Publisher connection is ready
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/publisher-connections/{publisher_connection_id}/disconnect:
+    post:
+      operationId: disconnectPublisherConnection
+      summary: Close a matching publisher connection
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherConnectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublisherConnectionDisconnect"
+      responses:
+        "200":
+          description: Publisher connection closed
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ClaimedPublisherConnection"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

@@ -98,18 +98,18 @@ func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
 	return writeHumanFrame(output, "tnl team current", "selected", "",
 		clioutput.Fields(
-			clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
-			clioutput.Field{Label: "team", Value: current.team.DisplayName},
-			clioutput.Field{Label: "kind", Value: string(current.team.Kind)},
-			clioutput.Field{Label: "role", Value: string(current.membership.Role)},
-			clioutput.Field{Label: "member slug", Value: current.membership.MemberSlug},
-			clioutput.Field{Label: "team ID", Value: current.team.Id},
+			clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
+			clioutput.Field{Label: "team", Value: current.Team().DisplayName},
+			clioutput.Field{Label: "kind", Value: string(current.Team().Kind)},
+			clioutput.Field{Label: "role", Value: string(current.Membership().Role)},
+			clioutput.Field{Label: "member slug", Value: current.Membership().MemberSlug},
+			clioutput.Field{Label: "team ID", Value: current.Team().Id},
 		),
 	)
 }
@@ -120,31 +120,31 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 		return err
 	}
 	defer session.Close()
-	selected, _, err := session.store.SelectedTeam(ctx)
+	selected, _, err := session.Store().SelectedTeam(ctx)
 	if err != nil {
 		return err
 	}
 	projectID := ""
-	if session.projectTeam != "" {
-		if project, err := session.resolveMembership(ctx, session.projectTeam); err == nil {
+	if session.ProjectTeam() != "" {
+		if project, err := session.ResolveMembership(ctx, session.ProjectTeam()); err == nil {
 			projectID = project.TeamId
 		}
 	}
-	blocks := make([]clioutput.Block, 0, len(session.identity.Memberships)+1)
-	blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint}))
-	if session.projectTeam != "" && projectID == "" {
+	blocks := make([]clioutput.Block, 0, len(session.Identity().Memberships)+1)
+	blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint}))
+	if session.ProjectTeam() != "" && projectID == "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{
-			Label: "project team", Value: session.projectTeam + " (not in memberships)",
+			Label: "project team", Value: session.ProjectTeam() + " (not in memberships)",
 		}))
 	}
-	for _, membership := range session.identity.Memberships {
+	for _, membership := range session.Identity().Memberships {
 		title := membership.TeamDisplayName
-		if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
+		if membership.TeamId == selected || selected == "" && membership.TeamId == session.InitialTeam() {
 			title = "* " + title
 		}
 		if membership.TeamId == projectID {
 			title = "> " + title
-			if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
+			if membership.TeamId == selected || selected == "" && membership.TeamId == session.InitialTeam() {
 				title = "* > " + membership.TeamDisplayName
 			}
 		}
@@ -156,10 +156,10 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 		)))
 	}
 	footer := "* saved"
-	if session.projectTeam != "" {
+	if session.ProjectTeam() != "" {
 		footer = "* saved / > project"
 	}
-	return writeHumanFrame(output, "tnl team list", countState(len(session.identity.Memberships), "team", "teams"), footer, blocks...)
+	return writeHumanFrame(output, "tnl team list", countState(len(session.Identity().Memberships), "team", "teams"), footer, blocks...)
 }
 
 func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics io.Writer) error {
@@ -168,11 +168,11 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 		return err
 	}
 	defer session.Close()
-	membership, err := session.resolveMembership(ctx, command.Team)
+	membership, err := session.ResolveMembership(ctx, command.Team)
 	if err != nil {
 		return err
 	}
-	if err := session.store.SaveSelectedTeam(ctx, membership.TeamId); err != nil {
+	if err := session.Store().SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
 	return writeHumanFrame(output, "tnl team use", "selected", savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
@@ -206,11 +206,11 @@ func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagn
 		slug := authorityv1.CanonicalLabel(command.MemberSlug)
 		request.MemberSlug = &slug
 	}
-	team, err := session.api.CreateTeam(ctx, request, key)
+	team, err := session.Authenticated().Authority.CreateTeam(ctx, request, key)
 	if err != nil {
 		return err
 	}
-	if err := session.store.SaveSelectedTeam(ctx, team.Id); err != nil {
+	if err := session.Store().SaveSelectedTeam(ctx, team.Id); err != nil {
 		return err
 	}
 	fields := []clioutput.Field{{Label: "team", Value: team.DisplayName}, {Label: "team ID", Value: team.Id}}
@@ -219,7 +219,7 @@ func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagn
 	} else {
 		fields = append(fields,
 			clioutput.Field{Label: "member slug", Value: "derived from identity name"},
-			clioutput.Field{Label: "next", Value: "tnl team current --team=" + team.DisplayName + " --server=" + session.authenticated.ServerEndpoint},
+			clioutput.Field{Label: "next", Value: "tnl team current --team=" + team.DisplayName + " --server=" + session.Authenticated().ServerEndpoint},
 		)
 	}
 	return writeHumanFrame(output, "tnl team create", "created", savedTeamFooter(command.ProjectTeam, team.Id, team.DisplayName),
@@ -235,19 +235,19 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	membership, err := session.currentMembership(ctx)
+	membership, err := session.CurrentMembership(ctx)
 	if err != nil {
 		return err
 	}
-	page, err := session.api.ListTeamMemberships(ctx, membership.TeamId)
+	page, err := session.Authenticated().Authority.ListTeamMemberships(ctx, membership.TeamId)
 	if err != nil {
 		return err
 	}
 	blocks := make([]clioutput.Block, 0, len(page.Memberships))
 	for _, value := range page.Memberships {
 		namespace, _ := naming.PublicURLNamespace(naming.NamespaceFacts{
-			Domain: session.authenticated.Discovery.ManagedDomain, Managed: true,
-			Mode:     naming.ManagedURLMode(session.authenticated.Discovery.ManagedUrlMode),
+			Domain: session.Authenticated().Discovery.ManagedDomain, Managed: true,
+			Mode:     naming.ManagedURLMode(session.Authenticated().Discovery.ManagedUrlMode),
 			Personal: value.TeamKind == authorityv1.Personal,
 			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: value.ManagedLabel,
 		})
@@ -270,7 +270,7 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 	if err != nil {
 		return err
 	}
-	invitation, err := session.api.CreateTeamInvitation(ctx, current.team.Id, body, key)
+	invitation, err := session.Authenticated().Authority.CreateTeamInvitation(ctx, current.Team().Id, body, key)
 	if err != nil {
 		return err
 	}
@@ -299,11 +299,11 @@ func runTeamInviteList(ctx context.Context, command teamInviteListCommand, outpu
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	page, err := session.api.ListTeamInvitations(ctx, current.team.Id)
+	page, err := session.Authenticated().Authority.ListTeamInvitations(ctx, current.Team().Id)
 	if err != nil {
 		return err
 	}
@@ -325,11 +325,11 @@ func runTeamInviteRevoke(ctx context.Context, command teamInviteRevokeCommand, o
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	if err := session.api.RevokeTeamInvitation(ctx, current.team.Id, command.InvitationID); err != nil {
+	if err := session.Authenticated().Authority.RevokeTeamInvitation(ctx, current.Team().Id, command.InvitationID); err != nil {
 		return err
 	}
 	return writeHumanTransition(output, "tnl team invite revoke", "revoked", command.InvitationID, "", "invitation revoked", "")
@@ -341,11 +341,11 @@ func runTeamJoin(ctx context.Context, command teamJoinCommand, output, diagnosti
 		return err
 	}
 	defer session.Close()
-	membership, err := session.api.AcceptInvitation(ctx, command.Secret)
+	membership, err := session.Authenticated().Authority.AcceptInvitation(ctx, command.Secret)
 	if err != nil {
 		return err
 	}
-	if err := session.store.SaveSelectedTeam(ctx, membership.TeamId); err != nil {
+	if err := session.Store().SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
 	return writeHumanFrame(output, "tnl team join", "joined", savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
@@ -364,11 +364,11 @@ func runTeamMemberSetRole(ctx context.Context, command teamMemberSetRoleCommand,
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	membership, err := session.api.SetMembershipRole(ctx, current.team.Id, command.MembershipID, command.Role)
+	membership, err := session.Authenticated().Authority.SetMembershipRole(ctx, current.Team().Id, command.MembershipID, command.Role)
 	if err != nil {
 		return err
 	}
@@ -382,11 +382,11 @@ func runTeamMemberRemove(ctx context.Context, command teamMemberRemoveCommand, o
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	if err := session.api.RemoveMembership(ctx, current.team.Id, command.MembershipID); err != nil {
+	if err := session.Authenticated().Authority.RemoveMembership(ctx, current.Team().Id, command.MembershipID); err != nil {
 		return err
 	}
 	return writeHumanTransition(output, "tnl team member remove", "removed", command.MembershipID, "", "membership removed", "")

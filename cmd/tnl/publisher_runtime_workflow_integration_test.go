@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 

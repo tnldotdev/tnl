@@ -106,7 +106,7 @@ For a staging capacity campaign, use the [capacity testing plan](capacity-plan.m
 keep the other dimensions steady, measure the direct baseline and staging path,
 then raise only the selected dimension. Stop at the first failed or saturated
 step, test between the last pass and first failure, and repeat the best passing
-step. Use [process metrics](../maintainers/metrics.md) to distinguish admission
+step. Use [process metrics](../maintainers/development/metrics.md) to distinguish admission
 limits and resource saturation from generator or network limits. The local direct
 baseline does not include the public network. Plan each bounded step before
 execution and obtain approval for its exact server and workload; changing a

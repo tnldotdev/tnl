@@ -13,11 +13,13 @@ import (
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -136,21 +138,21 @@ func (project projectConfiguration) applyServiceShare(f *serviceShareSelection) 
 	if err != nil {
 		return err
 	}
-	f.ServerURL, _, err = resolveProjectServer(f.ServerURL, effective.Server, f.AccessToken)
+	f.ServerURL, _, err = resolve.Server(f.ServerURL, effective.Server, f.AccessToken)
 	if err == nil {
-		f.ProjectTeam, err = projectTeamForServer(f.ServerURL, effective.Server, effective.Team)
+		f.ProjectTeam, err = resolve.TeamForServer(f.ServerURL, effective.Server, effective.Team)
 	}
 	return err
 }
 
-func selectServiceShare(ctx context.Context, s *teamSession, project projectConfiguration, name string) (controlv1.PrivateService, error) {
+func selectServiceShare(ctx context.Context, s *clientteam.Session, project projectConfiguration, name string) (controlv1.PrivateService, error) {
 	key, err := serviceShareKey(project, name)
 	if err != nil {
 		return controlv1.PrivateService{}, err
 	}
 	team := ""
-	if key != "" || s.selectedTeam != "" || s.projectTeam != "" {
-		membership, err := s.currentMembership(ctx)
+	if key != "" || s.SelectedTeam() != "" || s.ProjectTeam() != "" {
+		membership, err := s.CurrentMembership(ctx)
 		if err != nil {
 			return controlv1.PrivateService{}, err
 		}
@@ -173,7 +175,7 @@ func selectServiceShare(ctx context.Context, s *teamSession, project projectConf
 		}
 		// management inventory carries authoritative source bindings without
 		// requiring a visitor grant for either local or applied services.
-		services, err := s.authenticated.Control.ListPrivateServices(ctx, team)
+		services, err := s.Authenticated().Control.ListPrivateServices(ctx, team)
 		if err != nil {
 			return controlv1.PrivateService{}, err
 		}
@@ -201,7 +203,7 @@ func selectServiceShare(ctx context.Context, s *teamSession, project projectConf
 		return controlv1.PrivateService{}, serviceShareResponse()
 	}
 	// the manager read and each mutation use the current person's control session.
-	service, err := s.authenticated.Control.GetPrivateService(ctx, id)
+	service, err := s.Authenticated().Control.GetPrivateService(ctx, id)
 	if err != nil {
 		return service, err
 	}
@@ -211,7 +213,7 @@ func selectServiceShare(ctx context.Context, s *teamSession, project projectConf
 	return service, nil
 }
 
-func openServiceShare(ctx context.Context, f serviceShareSelection, project projectConfiguration, command string, d io.Writer) (*teamSession, controlv1.PrivateService, error) {
+func openServiceShare(ctx context.Context, f serviceShareSelection, project projectConfiguration, command string, d io.Writer) (*clientteam.Session, controlv1.PrivateService, error) {
 	if _, err := serviceShareKey(project, f.Name); err != nil {
 		return nil, controlv1.PrivateService{}, err
 	}
@@ -250,7 +252,7 @@ func runServiceShareInviteCreate(ctx context.Context, f serviceShareInviteCreate
 		return err
 	}
 	defer s.Close()
-	return createServiceShareInvitation(ctx, s.authenticated.Control, service.Id, f, at, o)
+	return createServiceShareInvitation(ctx, s.Authenticated().Control, service.Id, f, at, o)
 }
 
 func createServiceShareInvitation(ctx context.Context, control *controlclient.Client, service string, f serviceShareInviteCreateCommand, at time.Time, o io.Writer) error {
@@ -300,7 +302,7 @@ func runServiceShareInviteAccept(ctx context.Context, f serviceShareInviteAccept
 		return err
 	}
 	defer s.Close()
-	return acceptServiceShareInvitation(ctx, s.authenticated.Control, f, o)
+	return acceptServiceShareInvitation(ctx, s.Authenticated().Control, f, o)
 }
 
 func acceptServiceShareInvitation(ctx context.Context, control *controlclient.Client, f serviceShareInviteAcceptCommand, o io.Writer) error {
@@ -332,7 +334,7 @@ func runServiceShareList(ctx context.Context, f serviceShareListCommand, project
 		return err
 	}
 	defer s.Close()
-	return listServiceShares(ctx, s.authenticated.Control, service.Id, f.Output, o)
+	return listServiceShares(ctx, s.Authenticated().Control, service.Id, f.Output, o)
 }
 
 func listServiceShares(ctx context.Context, control *controlclient.Client, service string, mode statusOutputMode, o io.Writer) error {
@@ -435,7 +437,7 @@ func runServiceShareRevoke(ctx context.Context, f serviceShareRevokeCommand, pro
 		return err
 	}
 	defer s.Close()
-	return revokeServiceShare(ctx, s.authenticated.Control, service.Id, f, o)
+	return revokeServiceShare(ctx, s.Authenticated().Control, service.Id, f, o)
 }
 
 func revokeServiceShare(ctx context.Context, control *controlclient.Client, service string, f serviceShareRevokeCommand, o io.Writer) error {
@@ -495,7 +497,7 @@ func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateComm
 		return err
 	}
 	defer s.Close()
-	return createServiceShareHTTP(ctx, s.authenticated.Control, service, f.Output, kind, at, o)
+	return createServiceShareHTTP(ctx, s.Authenticated().Control, service, f.Output, kind, at, o)
 }
 
 func createServiceShareHTTP(ctx context.Context, control *controlclient.Client, service controlv1.PrivateService, mode statusOutputMode, kind controlv1.CreateManagedHTTPGrantRequestKind, at time.Time, o io.Writer) error {

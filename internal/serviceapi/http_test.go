@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/problemtype"
+	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
 )
 
 func TestDecodeJSONPolicy(t *testing.T) {

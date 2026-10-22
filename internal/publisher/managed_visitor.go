@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"reflect"
 
-	"github.com/tnldotdev/tnl/internal/targettransport"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
 // ManagedVisitorAuthentication is selected from trusted admission metadata,

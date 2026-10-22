@@ -7,7 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/router"
+	router "github.com/tnldotdev/tnl/internal/ingress/clienthello"
 )
 
 func TestPublicURLConnectionClassUsesProcessCapacity(t *testing.T) {

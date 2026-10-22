@@ -21,14 +21,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -67,11 +71,20 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	team, err := session.authenticated.Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "studio"}, key)
+	team, err := session.Authenticated().Authority.CreateTeam(t.Context(), authorityv1.CreateTeamRequest{DisplayName: "studio"}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := preparePublisherServices(t.Context(), session.database, f.url, "", "opencode", "", "studio", false, session.authenticated)
+	currentIdentity, err := session.Authenticated().Authority.IdentityContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := clientteam.NewSession(nil, session.Store(), session.Authenticated(), currentIdentity, clientteam.Options{ProjectTeam: "studio"})
+	selectedTeam, err := selection.CurrentWithDomains(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostname, _, _, err := resolve.PublishHostname("", "opencode", "", selectedTeam)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +98,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fmt.Fprintln(hosts, "127.0.0.1 "+services.hostname)
+	_, err = fmt.Fprintln(hosts, "127.0.0.1 "+hostname)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +182,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Status.PublicURL != "https://"+services.hostname {
+	if job.Status.PublicURL != "https://"+hostname {
 		t.Fatal("installation printed a different public URL")
 	}
 	firstRun, publisherID, urlID := job.Status.PublishRunNumber, job.PublisherID, job.PublicURLID
@@ -195,11 +208,11 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// interrupt after the desired job/key commit, before supervisor installation.
-	err = registerPublication(t.Context(), publisherjob.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, publicationInstallation{Job: job, Credential: credential}, io.Discard,
+	err = publisherprovision.Register(t.Context(), publisherjob.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, publisherprovision.Installation{Job: job, Credential: credential},
 		publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
 			t.Fatal("interrupted installer reached systemd")
 			return nil
-		}))
+		}), func([]publisherjob.Job, string) error { return nil })
 	if err == nil {
 		t.Fatal("interrupted installation unexpectedly succeeded")
 	}
@@ -256,7 +269,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "docker", "cp", binDir+"/.", machine+":"+binDir)
 	installFixtureCommand(t, "docker", "cp", "/usr/local/share/ca-certificates/tnl-install-fixture.crt", machine+":/usr/local/share/ca-certificates/tnl-install-fixture.crt")
 	installFixtureCommand(t, "docker", "exec", machine, "update-ca-certificates")
-	payload, err := json.Marshal(publicationInstallation{Job: job, Credential: credential})
+	payload, err := json.Marshal(publisherprovision.Installation{Job: job, Credential: credential})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +280,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	}
 	// control's current run number is observed across a complete container boot,
 	// not inferred from local desired state or an old readiness observation.
-	beforeBoot, err := session.authenticated.Control.GetPublicURL(t.Context(), urlID)
+	beforeBoot, err := session.Authenticated().Control.GetPublicURL(t.Context(), urlID)
 	if err == nil {
 		t.Fatal("logged-out human session still has control access")
 	}
@@ -293,7 +306,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	// Docker rewrites the shared /etc/hosts file on container boot. restore this
 	// fixture's stand-in for public DNS before checking the restarted publisher.
 	dns := exec.CommandContext(t.Context(), "docker", "exec", "-i", machine, "tee", "-a", "/etc/hosts")
-	dns.Stdin = strings.NewReader("127.0.0.1 " + services.hostname + "\n")
+	dns.Stdin = strings.NewReader("127.0.0.1 " + hostname + "\n")
 	if output, err := dns.CombinedOutput(); err != nil {
 		t.Fatalf("restore fixture DNS: %v\n%s", err, output)
 	}
@@ -349,7 +362,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer current.Close()
-	route, err := current.authenticated.Control.GetPublicURL(t.Context(), urlID)
+	route, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
 	if err != nil || route.AccessMode != controlv1.Restricted || route.Target != "" {
 		t.Fatal("setup relaxed access or stored the private target", err)
 	}
@@ -357,7 +370,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	// saved URL grant, and never receives the operator's session.
 	enrollment := func() string {
 		t.Helper()
-		e, err := current.authenticated.Control.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: team.Id, PublicUrlId: &urlID, Name: "opencode", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
+		e, err := current.Authenticated().Control.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: team.Id, PublicUrlId: &urlID, Name: "opencode", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -383,7 +396,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		if err := os.WriteFile(environmentFile, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		command := exec.CommandContext(t.Context(), "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../deploy/compose-publisher/compose.yaml", "--file", override}, extra...)...)
+		command := exec.CommandContext(t.Context(), "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../deploy/publisher/compose/compose.yaml", "--file", override}, extra...)...)
 		output, err := command.CombinedOutput()
 		if err != nil && !allowFailure {
 			t.Fatalf("Compose fixture: %v\n%s", err, output)
@@ -402,7 +415,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		workflowWait(t, 30*time.Second, func() bool { return strings.Contains(compose(false, "logs", "--no-color", "publisher"), "ready") })
 	}
 	ready()
-	before, err := current.authenticated.Control.GetPublicURL(t.Context(), urlID)
+	before, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,14 +423,14 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	secret = ""
 	compose(false, "up", "--detach", "--force-recreate")
 	ready()
-	after, err := current.authenticated.Control.GetPublicURL(t.Context(), urlID)
+	after, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
 	if err != nil || after.NextPublishRunNumber <= before.NextPublishRunNumber {
 		t.Fatal("retained Compose identity did not start a new run", err)
 	}
 	// an anonymous application GET remains denied while proof-bound readiness
 	// succeeds, and the state volume contains no control session.
 	visitor := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := visitor.Get("https://" + services.hostname + "/")
+	response, err := visitor.Get("https://" + hostname + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,13 +454,13 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	// a consumed key must not resurrect the lost private key.
 	// the first enrollment ID is retained separately from container state.
 	// capture it from the operator's exact URL identities for explicit revocation.
-	identities, err := current.authenticated.Control.ListPublisherIdentities(t.Context(), team.Id, "")
+	identities, err := current.Authenticated().Control.ListPublisherIdentities(t.Context(), team.Id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, identity := range identities.Identities {
 		if identity.Id != publisherID {
-			if err := current.authenticated.Control.RevokePublisherIdentity(t.Context(), team.Id, identity.Id); err != nil {
+			if err := current.Authenticated().Control.RevokePublisherIdentity(t.Context(), team.Id, identity.Id); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -455,7 +468,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	secret = enrollment()
 	compose(false, "up", "--detach")
 	ready()
-	recovered, err := current.authenticated.Control.GetPublicURL(t.Context(), urlID)
+	recovered, err := current.Authenticated().Control.GetPublicURL(t.Context(), urlID)
 	if err != nil || recovered.Id != route.Id || recovered.CanonicalHostname != route.CanonicalHostname || recovered.AccessMode != controlv1.Restricted || recovered.NextPublishRunNumber <= after.NextPublishRunNumber {
 		t.Fatal("fresh enrollment failed to recover the saved publication", err)
 	}
@@ -567,7 +580,7 @@ func TestIntegrationPublisherInstallIdentity(t *testing.T) {
 	if _, found, err := profile.ControlSession(t.Context()); err != nil || found {
 		t.Fatal("Compose received a person session", err)
 	}
-	selected, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", retainedPublicationScope(*publisherInstallTarget))
+	selected, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", invocation.RetainedScope(*publisherInstallTarget))
 	if err != nil || !found {
 		t.Fatal("Compose did not retain its exact identity", err)
 	}

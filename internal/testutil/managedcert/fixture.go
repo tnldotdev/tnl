@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 func Install(t *testing.T, d *controlstate.Database, prep controlstate.PrivateRunPreparation, run controlstate.PrivateRunState, now time.Time) {

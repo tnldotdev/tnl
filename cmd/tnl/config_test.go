@@ -10,13 +10,12 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -336,43 +335,6 @@ func TestPrivateTCPProjectPublishDoesNotSelectAPublicURL(t *testing.T) {
 	}
 }
 
-func TestConfiguredProjectHostnameFixture(t *testing.T) {
-	worktree := namedTestWorktree(t.TempDir(), "tnl")
-	current := teamContext{
-		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"},
-		membership: authorityv1.Membership{
-			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
-			ManagedLabel: "ecstatic-penguin", MemberSlug: "chase",
-		},
-		domains: []authorityv1.Domain{{
-			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
-		}},
-	}
-	service, err := configuredProjectService(
-		"api", worktree, config.TNL{}, current,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := projectconfig.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
-	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want ||
-		service.URL != "https://"+want {
-		t.Fatalf("service metadata = %#v", service)
-	}
-	claimed := "studio.example.test"
-	current.domains = append(current.domains, authorityv1.Domain{
-		Id: "domain_2", Kind: authorityv1.Custom, CanonicalDomain: claimed, State: authorityv1.DomainStateReady,
-	})
-	service, err = configuredProjectService("api", worktree, config.TNL{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want = projectconfig.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
-	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
-		t.Fatalf("custom-domain metadata = %#v", service)
-	}
-}
-
 func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T) {
 	rootDomain, serviceDomain, name := "root.example.test", "service.example.test", "preview"
 	configuredOpen, cliOpen := true, false
@@ -522,32 +484,6 @@ func TestServicesInheritProjectServerAndTeam(t *testing.T) {
 	effective, err := project.EffectiveService("api")
 	if err != nil || effective.Server == nil || *effective.Server != rootServer || effective.Team == nil || *effective.Team != rootTeam {
 		t.Fatalf("api project context = %#v, %v", effective, err)
-	}
-}
-
-func TestProjectServerSelection(t *testing.T) {
-	projectServer := "https://project.example"
-	for _, selected := range []string{"", "https://invocation.example"} {
-		for _, project := range []*string{nil, &projectServer} {
-			for _, token := range []string{"", "explicit-token"} {
-				server, fromProject, err := resolveProjectServer(selected, project, token)
-				wantProject := selected == "" && project != nil
-				wantError := wantProject && token != ""
-				if (err != nil) != wantError {
-					t.Fatalf("selected=%q, project=%v, token=%q: %v", selected, project, token, err)
-				}
-				if wantError {
-					continue
-				}
-				want := selected
-				if wantProject {
-					want = projectServer
-				}
-				if server != want || fromProject != wantProject {
-					t.Fatalf("selection = %q, %v; want %q, %v", server, fromProject, want, wantProject)
-				}
-			}
-		}
 	}
 }
 

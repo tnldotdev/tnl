@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	routebackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {

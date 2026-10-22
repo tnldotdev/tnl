@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 func TestRunVersion(t *testing.T) {

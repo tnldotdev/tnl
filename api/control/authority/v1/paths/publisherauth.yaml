@@ -1,0 +1,45 @@
+paths:
+  /v1/publisher-enrollments/redeem:
+    post:
+      operationId: redeemPublisherEnrollment
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RedeemPublisherEnrollmentRequest" }
+      responses:
+        "200":
+          description: Registered client key and initial grant
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherEnrollmentResult" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-token:
+    post:
+      operationId: exchangePublisherAssertion
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherTokenRequest" }
+      responses:
+        "200":
+          description: Short-lived token scoped to one current grant
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherTokenResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-keys/rotate:
+    post:
+      operationId: rotatePublisherKey
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RotatePublisherKeyRequest" }
+      responses:
+        "204": { description: Current key retired and replacement registered }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

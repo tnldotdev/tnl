@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherprovenance"
+	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 )
 
 func TestPublisherDeploymentInvalidMetadataFailsBeforeIdentityState(t *testing.T) {

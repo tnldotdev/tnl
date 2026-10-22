@@ -14,7 +14,7 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
+	oidcauth "github.com/tnldotdev/tnl/internal/control/oidc"
 )
 
 type Issuer struct {

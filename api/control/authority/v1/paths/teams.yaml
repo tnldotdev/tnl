@@ -1,0 +1,83 @@
+paths:
+  /v1/teams/{team_id}/feedback-policy:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getTeamFeedbackPolicy
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Live feedback author policy
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/TeamFeedbackPolicy" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    put:
+      operationId: setTeamFeedbackPolicy
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/TeamFeedbackPolicy" }
+      responses:
+        "200":
+          description: Policy applies to every subsequent feedback write
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/TeamFeedbackPolicy" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/teams:
+    get:
+      operationId: listTeams
+      summary: List teams for the authenticated identity
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Team page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/TeamPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/BearerProblem"
+    post:
+      operationId: createTeam
+      summary: Create an organization team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Team"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}:
+    get:
+      operationId: getTeam
+      summary: Read one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Team
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Team"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

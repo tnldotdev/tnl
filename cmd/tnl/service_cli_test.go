@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
 )
 
 func TestSystemServiceCommandWiring(t *testing.T) {

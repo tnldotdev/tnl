@@ -15,15 +15,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
+	publisherjob "github.com/tnldotdev/tnl/internal/client/service"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -258,23 +260,23 @@ func TestConfiguredInstallUsesOnlySelectedStableService(t *testing.T) {
 	if flags.Service != "orders" || flags.ServiceName != "orders" || flags.ServerURL != "https://control.example" || flags.Target != "http://127.0.0.1:5432" || flags.Protocol != "http" || flags.projectRoot != project.Root {
 		t.Fatalf("wrong configured service: %+v", flags)
 	}
-	scope, err := resolveConfiguredInstallScope(t.Context(), flags, nil)
-	if err != nil || scope.hostname != "orders.example" || scope.teamID != "" {
+	scope, err := invocation.ResolveConfiguredInstallScope(t.Context(), backgroundOptions(flags), nil)
+	if err != nil || scope.Hostname != "orders.example" || scope.TeamID != "" {
 		t.Fatalf("explicit configured public URL did not select an exact hostname: %+v %v", scope, err)
 	}
 	urlID := "url_selected"
 	identity := authorityv1.PublisherEnrollmentResult{TeamId: "team_selected", PublicUrlId: &urlID}
 	for _, hostname := range []string{"orders.other-team.example", "orders.other-domain.example", "orders.example.other-checkout"} {
-		if scope.matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: hostname, TeamId: identity.TeamId}, identity) {
+		if scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: hostname, TeamId: identity.TeamId}, identity) {
 			t.Fatalf("same prefix on a different URL was selected: %s", hostname)
 		}
 	}
-	if !scope.matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
+	if !scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
 		t.Fatal("explicit public URL did not match its exact saved grant")
 	}
 	staleID := "url_previous"
 	identity.PublicUrlId = &staleID
-	if scope.matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
+	if scope.Matches(controlv1.PublicURL{Id: urlID, CanonicalHostname: "orders.example", TeamId: identity.TeamId}, identity) {
 		t.Fatal("mismatched grant selected the configured public URL")
 	}
 	renamed := publishCommand{Target: "orders", backgroundPublishFlags: backgroundPublishFlags{ServiceName: "different"}}
@@ -316,7 +318,7 @@ func TestConfiguredInstallPersistsReadinessWithExactGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, private, err := privateSigningIdentity(t.Context(), staged, job.PublisherID)
+	identity, private, err := invocation.SigningIdentity(t.Context(), staged, job.PublisherID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +356,7 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 		t.Fatal(err)
 	}
 	c.publicURL.CanonicalHostname = "orders.example"
-	scope, err := resolveConfiguredInstallScope(t.Context(), flags, nil)
+	scope, err := invocation.ResolveConfiguredInstallScope(t.Context(), backgroundOptions(flags), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +368,7 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 		if err := profile.ImportPublisherIdentity(t.Context(), clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: document, SigningKey: private}); err != nil {
 			t.Fatal(err)
 		}
-		if err := profile.SelectPublisherIdentity(t.Context(), "project", projectPublisherScope(flags.ServerURL, *identity.PublicUrlId), identity.ClientId); err != nil {
+		if err := profile.SelectPublisherIdentity(t.Context(), "project", invocation.ProjectPublisherScope(flags.ServerURL, *identity.PublicUrlId), identity.ClientId); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -391,16 +393,16 @@ func TestConfiguredInstallSelectsSavedExactGrantWithoutEnrollment(t *testing.T) 
 	}
 	a.public = private.Public().(ed25519.PublicKey)
 	store(a.identity, private)
-	native, selected, key, route, err := selectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL, c.publicURL.Id}, scope, c, a)
+	native, selected, key, route, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL, c.publicURL.Id}, scope, c, a)
 	if err != nil || native == nil || selected.ClientId != a.identity.ClientId || route.Id != c.publicURL.Id || !key.Public().(ed25519.PublicKey).Equal(a.public) || a.redemptions != 0 {
 		t.Fatalf("selected wrong scoped grant or redeemed enrollment: %+v %v", selected, err)
 	}
-	if _, _, _, _, err := selectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL}, scope, c, a); err == nil {
+	if _, _, _, _, err := invocation.SelectConfiguredPublisherCandidates(t.Context(), flags.ServerURL, profile, []string{unrelatedURL}, scope, c, a); err == nil {
 		t.Fatal("missing matching grant fell back to a different service")
 	} else if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.InstalledPublisherSelectionMissing {
 		t.Fatalf("missing selection has no authored next step: %v", err)
 	}
-	if !scope.matches(route, selected) || project.Root != flags.projectRoot {
+	if !scope.Matches(route, selected) || project.Root != flags.projectRoot {
 		t.Fatal("saved URL does not match project")
 	}
 	jobs, err := r.List(t.Context())
@@ -416,25 +418,25 @@ func TestConfiguredWorktreeHostnameBindsTeamDomainAndGrant(t *testing.T) {
 	project := projectConfiguration{Project: projectconfig.Project{Root: root, Worktree: worktree, Config: config.TNL{
 		Services: config.Services{"orders": {Protocol: &protocol}},
 	}}}
-	current := teamContext{
-		team: authorityv1.Team{Id: "team_selected", DefaultDomainId: "domain_selected"},
-		membership: authorityv1.Membership{
+	current := clientteam.NewContext(
+		authorityv1.Team{Id: "team_selected", DefaultDomainId: "domain_selected"},
+		authorityv1.Membership{
 			TeamId: "team_selected", Role: authorityv1.TeamRoleMember, ManagedLabel: "ecstatic-penguin", MemberSlug: "chase",
 		},
-		domains: []authorityv1.Domain{{Id: "domain_selected", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}},
-	}
-	scope, err := configuredInstallScopeForTeam(project, "orders", current)
+		[]authorityv1.Domain{{Id: "domain_selected", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}}, "",
+	)
+	scope, err := invocation.ConfiguredInstallScopeForTeam(project.Project, "orders", invocation.FromTeamContext(current))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := projectconfig.ServiceWorktreeLabel("orders", worktree) + ".ecstatic-penguin.tnl.dev"
-	if scope.hostname != want || scope.teamID != current.team.Id || scope.domainID != current.domains[0].Id {
+	if scope.Hostname != want || scope.TeamID != current.Team().Id || scope.DomainID != current.Domains()[0].Id {
 		t.Fatalf("wrong advertised worktree URL: %+v, want %s", scope, want)
 	}
 	urlID := "url_selected"
-	identity := authorityv1.PublisherEnrollmentResult{TeamId: current.team.Id, PublicUrlId: &urlID}
-	item := controlv1.PublicURL{Id: urlID, CanonicalHostname: want, TeamId: current.team.Id, DomainId: current.domains[0].Id}
-	if !scope.matches(item, identity) {
+	identity := authorityv1.PublisherEnrollmentResult{TeamId: current.Team().Id, PublicUrlId: &urlID}
+	item := controlv1.PublicURL{Id: urlID, CanonicalHostname: want, TeamId: current.Team().Id, DomainId: current.Domains()[0].Id}
+	if !scope.Matches(item, identity) {
 		t.Fatal("saved URL with matching team, domain and grant was rejected")
 	}
 	for name, mutate := range map[string]func(*controlv1.PublicURL, *authorityv1.PublisherEnrollmentResult){
@@ -452,15 +454,15 @@ func TestConfiguredWorktreeHostnameBindsTeamDomainAndGrant(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			otherURL, otherGrant := item, identity
 			mutate(&otherURL, &otherGrant)
-			if scope.matches(otherURL, otherGrant) {
+			if scope.Matches(otherURL, otherGrant) {
 				t.Fatal("saved URL outside selected service scope was accepted")
 			}
 		})
 	}
 	other := project
 	other.Worktree = namedTestWorktree(filepath.Join(root, "other-checkout"), "shop")
-	otherScope, err := configuredInstallScopeForTeam(other, "orders", current)
-	if err != nil || otherScope.hostname == want || otherScope.matches(item, identity) {
+	otherScope, err := invocation.ConfiguredInstallScopeForTeam(other.Project, "orders", invocation.FromTeamContext(current))
+	if err != nil || otherScope.Hostname == want || otherScope.Matches(item, identity) {
 		t.Fatalf("another checkout selected this worktree's URL: %+v %v", otherScope, err)
 	}
 }

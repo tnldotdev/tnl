@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/connectionruntime"
+	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
 func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {

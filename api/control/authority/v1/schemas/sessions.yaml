@@ -1,0 +1,36 @@
+schemas:
+  RefreshControlSessionRequest:
+    type: object
+    additionalProperties: false
+    required: [refresh_token]
+    properties:
+      refresh_token:
+        type: string
+        minLength: 1
+        maxLength: 4096
+  ControlSessionResponse:
+    type: object
+    additionalProperties: false
+    required:
+      [session_id, access_token, access_expires_at, refresh_token, refresh_expires_at, identity]
+    properties:
+      company_authentication_expires_at:
+        type: string
+        format: date-time
+        description: Fixed company authentication deadline, bounded by original authentication age and control refresh expiry; refreshing never advances it. Expired or revoked company context rejects refresh and requires a new company login intent.
+      session_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      access_token:
+        type: string
+        minLength: 1
+      access_expires_at:
+        type: string
+        format: date-time
+      refresh_token:
+        type: string
+        minLength: 1
+      refresh_expires_at:
+        type: string
+        format: date-time
+      identity:
+        $ref: "../openapi.yaml#/components/schemas/IdentityContext"

@@ -1,0 +1,215 @@
+paths:
+  /v1/feedback:
+    get:
+      operationId: listFeedbackThreads
+      summary: List feedback threads manageable in one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Feedback thread page and event cursor
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackThreadPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/feedback/events:
+    get:
+      operationId: listFeedbackEvents
+      summary: Resume ordered feedback events for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackAfterCursor"
+      responses:
+        "200":
+          description: Feedback event page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackEventPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/feedback/{feedback_id}:
+    get:
+      operationId: getFeedbackThread
+      summary: Read one immutable report and current feedback state
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+      responses:
+        "200":
+          description: Feedback thread
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackThread"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/feedback/{feedback_id}/events:
+    get:
+      operationId: listFeedbackThreadEvents
+      summary: Read ordered follow-up events for one feedback thread
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackAfterCursor"
+      responses:
+        "200":
+          description: Feedback event page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackEventPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    post:
+      operationId: appendFeedbackEvent
+      summary: Reply, record a checkout update, resolve, or reopen feedback
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AppendFeedbackEventRequest"
+      responses:
+        "201":
+          description: Recorded feedback event
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback:
+    post:
+      operationId: createFeedbackReport
+      summary: Store a reviewer's first report for a preview page
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateFeedbackReportRequest"
+      responses:
+        "201":
+          description: Immutable report and open feedback thread
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackThread"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback/query:
+    post:
+      operationId: listPreviewPageFeedback
+      summary: List feedback on one page for a reviewer
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PreviewPageFeedbackRequest"
+      responses:
+        "200":
+          description: Page feedback threads
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackThreadPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events:
+    post:
+      operationId: appendReviewerFeedbackEvent
+      summary: Reply, resolve, or reopen feedback through preview access
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AppendReviewerFeedbackEventRequest"
+      responses:
+        "201":
+          description: Recorded reviewer event
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query:
+    post:
+      operationId: getReviewerFeedbackThread
+      summary: Read a feedback thread through a current publisher connection
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ReviewerFeedbackReadRequest"
+      responses:
+        "200":
+          description: Feedback thread
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackThread"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query:
+    post:
+      operationId: listReviewerFeedbackEvents
+      summary: Read thread events through a current publisher connection
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ReviewerFeedbackReadRequest"
+      responses:
+        "200":
+          description: Feedback event page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/FeedbackEventPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

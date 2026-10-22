@@ -5,4 +5,4 @@ generate:
   models: true
   std-http-server: true
 import-mapping:
-  ../../control/v1/openapi.yaml: github.com/tnldotdev/tnl/pkg/api/controlv1
+  controlv1.yaml: github.com/tnldotdev/tnl/pkg/api/controlv1

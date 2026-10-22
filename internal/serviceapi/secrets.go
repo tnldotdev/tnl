@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 const minimumServiceSecretBytes = 32

@@ -7,9 +7,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/client/project/githubmetadata"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/githubmetadata"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 

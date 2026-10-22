@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 var ErrInvalidControlURL = errors.New("naming: control URL must be an HTTPS origin")

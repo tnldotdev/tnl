@@ -41,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          version="$(node scripts/release-version.ts "$TAG")"
+          version="$(node scripts/release/release-version.ts "$TAG")"
           tag_sha="$(git rev-parse "refs/tags/$TAG^{tag}")"
           verification="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq '[.verification.verified, .object.sha] | @tsv')"
           test "$verification" = "$(printf 'true\t%s' "$GITHUB_SHA")"
@@ -138,8 +138,8 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           pnpm build
-          node scripts/pack-tnl.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
-          node scripts/verify-tnl-install.ts "$RUNNER_TEMP/tnl-npm-packages"
+          node scripts/package/pack-tnl.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
+          node scripts/package/verify-tnl-install.ts "$RUNNER_TEMP/tnl-npm-packages"
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -153,8 +153,8 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          node scripts/pack-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels" "$VERSION"
-          node scripts/verify-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels"
+          node scripts/package/pack-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels" "$VERSION"
+          node scripts/package/verify-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels"
 
       - name: Upload Python wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -281,7 +281,7 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: ${{ github.event.repository.visibility == 'public' }}
           VERSION: ${{ needs.validate.outputs.version }}
-        run: node scripts/publish-tnl-packages.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
+        run: node scripts/release/publish-tnl-packages.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
 
   python:
     name: Publish Python ASGI wheels
@@ -374,4 +374,4 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: node scripts/update-homebrew.ts "$TAG" artifacts/checksums.txt Formula/tnl.rb
+        run: node scripts/release/update-homebrew.ts "$TAG" artifacts/checksums.txt Formula/tnl.rb

@@ -28,7 +28,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team, control := session.identity.PersonalTeamId, session.authenticated.Control
+	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "detached replica") }))
 	defer target.Close()
 	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Publishers: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})

@@ -1,4 +1,4 @@
-import { loadConnection } from "./internal/connection_bridge.js";
+import { loadConnection } from "./internal/connector/connection_bridge.js";
 
 /** install once in server setup; the callback reads the current request. */
 export type WorkloadOptions = Readonly<

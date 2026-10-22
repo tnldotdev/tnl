@@ -8,12 +8,12 @@ import (
 	"os"
 	"slices"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherprovision"
+	grouppublisher "github.com/tnldotdev/tnl/internal/publisher/group"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	publisherprovision "github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -48,16 +48,16 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	server := session.authenticated.ServerEndpoint
+	server := session.Authenticated().ServerEndpoint
 	client, err := grouppublisher.NewClient(server, nil)
 	if err != nil {
 		return err
 	}
-	applied, err := session.authenticated.Control.GetProjectConfiguration(ctx, current.team.Id, options.ProjectKey)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, options.ProjectKey)
 	if err != nil {
 		return err
 	}
@@ -73,8 +73,8 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if groupID == "" {
 		return publisherCLIError("publisher group is not in this applied project's selector history")
 	}
-	value, err := publisherprovision.Ensure(ctx, session.store, session.authenticated.Control, client, publisherprovision.Scope{
-		Server: server, Team: current.team.Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
+	value, err := publisherprovision.Ensure(ctx, session.Store(), session.Authenticated().Control, client, publisherprovision.Scope{
+		Server: server, Team: current.Team().Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
 	})
 	if err != nil {
 		return err

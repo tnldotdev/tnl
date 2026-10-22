@@ -1,0 +1,24 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/transport-certificate:
+    post:
+      operationId: getIngressTransportCertificate
+      description: Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ingress_run_id, ingress_lease_revision]
+              properties:
+                ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+                ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Current lease-bound certificate and private key; refresh after lease renewal
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IngressTransportCertificate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

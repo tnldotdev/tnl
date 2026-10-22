@@ -14,7 +14,7 @@ import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	tnldconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"go.yaml.in/yaml/v3"
 )
 

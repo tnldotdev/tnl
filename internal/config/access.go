@@ -6,7 +6,7 @@ import (
 
 	"encoding/json/v2"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"go.yaml.in/yaml/v3"
 )
 

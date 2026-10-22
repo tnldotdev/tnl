@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/kubeconfig"
+	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	kubev1 "k8s.io/client-go/tools/clientcmd/api/v1"

@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 

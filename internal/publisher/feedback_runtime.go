@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/browserfonts"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/feedbacktoolbar"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/sourcestate"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	feedbacktoolbar "github.com/tnldotdev/tnl/internal/publisher/toolbar"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
 )

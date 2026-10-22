@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 

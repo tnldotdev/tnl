@@ -1,0 +1,127 @@
+paths:
+  /v1/public-urls:
+    get:
+      operationId: listPublicURLs
+      summary: List public URLs for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+        - $ref: "../openapi.yaml#/components/parameters/CanonicalHostnameQuery"
+      responses:
+        "200":
+          description: PublicURL page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURLPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    post:
+      operationId: createPublicURL
+      summary: Create one team public URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreatePublicURLRequest"
+      responses:
+        "201":
+          description: PublicURL created
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURL"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}:
+    get:
+      operationId: getPublicURL
+      summary: Read one public URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
+      responses:
+        "200":
+          description: PublicURL
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURL"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    patch:
+      operationId: updatePublicURL
+      summary: Update a public URL's target and IP policy
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/UpdatePublicURLRequest"
+      responses:
+        "200":
+          description: Updated public URL
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURL"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    delete:
+      operationId: deletePublicURL
+      summary: Delete one public URL and close its publish run
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
+      responses:
+        "204":
+          description: PublicURL deleted
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher/public-urls:
+    post:
+      operationId: allocatePublisherPublicURL
+      summary: Create a temporary public URL for one ad-hoc publication
+      security:
+        - publisherAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AllocateEphemeralPublicURLRequest"
+      responses:
+        "201":
+          description: Public URL assigned to this invocation
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURL"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher/public-urls/{public_url_id}:
+    delete:
+      operationId: deletePublisherPublicURL
+      summary: Remove the exact URL allocated by this identity and grant
+      security:
+        - publisherAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublicURLID"
+      responses:
+        "204":
+          description: The ad-hoc URL is removed
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

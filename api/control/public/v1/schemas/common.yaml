@@ -1,0 +1,368 @@
+securitySchemes:
+  workloadAuth:
+    type: http
+    scheme: bearer
+    description: Visitor-only workload credential. Never accepted as a control session or publisher credential.
+  bearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl access token
+  publishRunAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl publish-run token
+  privateRunAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl private-service run token
+  publisherAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl grant-scoped publisher access token
+parameters:
+  PrivateServiceID:
+    name: private_service_id
+    in: path
+    required: true
+    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+  PrivateServiceCursor:
+    name: cursor
+    in: query
+    required: false
+    schema: { $ref: "../openapi.yaml#/components/schemas/PrivateServiceID" }
+  PublisherIdentityID:
+    name: publisher_identity_id
+    in: path
+    required: true
+    schema: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+  IdempotencyKey:
+    name: Idempotency-Key
+    in: header
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/IdempotencyKey"
+  Cursor:
+    name: cursor
+    in: query
+    required: false
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  TeamIDQuery:
+    name: team_id
+    in: query
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/TeamID"
+  CanonicalHostnameQuery:
+    name: canonical_hostname
+    in: query
+    required: false
+    description: Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+  PublicURLID:
+    name: public_url_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/PublicURLID"
+  PreviewID:
+    name: preview_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/PreviewID"
+  ShareID:
+    name: share_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/ShareID"
+  FeedbackID:
+    name: feedback_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/FeedbackID"
+  FeedbackAfterCursor:
+    name: after_cursor
+    in: query
+    required: false
+    schema:
+      type: integer
+      format: int64
+      minimum: 0
+  PublishRunID:
+    name: publish_run_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/PublishRunID"
+  IssuanceID:
+    name: issuance_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/IssuanceID"
+  RelayID:
+    name: relay_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/RelayID"
+  MaintenanceControlName:
+    name: control_name
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/MaintenanceControlName"
+  DNSAuthorityReference:
+    name: dns_authority_reference
+    in: path
+    required: true
+    schema:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: "^[A-Za-z0-9_-]+$"
+responses:
+  Problem:
+    description: Request failed
+    content:
+      application/problem+json:
+        schema:
+          $ref: "../openapi.yaml#/components/schemas/Problem"
+schemas:
+  KubernetesAuth:
+    type: object
+    additionalProperties: false
+    required: [provider, cluster, region]
+    description: Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+    properties:
+      provider: { type: string, enum: [eks], x-enum-varnames: [KubernetesEKS] }
+      cluster: { type: string, minLength: 1, maxLength: 100 }
+      region: { type: string, minLength: 1, maxLength: 64 }
+  VisitorSubject:
+    type: object
+    additionalProperties: false
+    required: [kind]
+    properties:
+      kind: { type: string, enum: [human_device, workload_session] }
+      identity_id: { type: string }
+      device_id: { type: string }
+      workload_session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+    description: Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+  ManagedServiceTLS:
+    type: object
+    additionalProperties: false
+    required: [hostname, port, public]
+    description: Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      port: { type: integer, minimum: 1024, maximum: 65535 }
+      public: { type: boolean }
+  WebhookProvider:
+    type: string
+    enum:
+      [
+        amazon-sns,
+        auth0,
+        clerk,
+        custom,
+        discord,
+        github,
+        gitlab,
+        incident-io,
+        lemon-squeezy,
+        linear,
+        loops,
+        paddle,
+        postmark,
+        resend,
+        sendgrid,
+        shopify,
+        slack,
+        stripe,
+        supabase,
+        telegram,
+        twilio,
+        vercel,
+        workos,
+      ]
+  ResourceID:
+    type: string
+    minLength: 1
+    maxLength: 256
+    pattern: '^\S(?:.*\S)?$'
+  IdentityID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  TeamID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  MembershipID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  DomainID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  IssuanceID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  RelayServiceID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  IdempotencyKey:
+    type: string
+    minLength: 1
+    maxLength: 128
+    pattern: '^\S(?:.*\S)?$'
+  CanonicalHostname:
+    type: string
+    minLength: 1
+    maxLength: 253
+    pattern: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+  VisitorAccessMode:
+    type: string
+    enum: [restricted, anonymous]
+  CertificateChallengeMethod:
+    type: string
+    enum: [dns-01]
+  TrafficSelection:
+    type: object
+    additionalProperties: false
+    description: Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+    properties:
+      connections:
+        type: integer
+        minimum: 1
+        maximum: 1048576
+      rate:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      rate_per:
+        type: string
+        minLength: 1
+        maxLength: 32
+        description: Go duration between 1ms and 24h, such as 1s or 500ms.
+      burst:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      upload_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+        description: Encrypted upload bytes per second.
+      download_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+        description: Encrypted download bytes per second.
+      total_connections:
+        type: integer
+        format: int64
+        minimum: 0
+      total_upload_bytes:
+        type: integer
+        format: int64
+        minimum: 0
+      total_download_bytes:
+        type: integer
+        format: int64
+        minimum: 0
+  ConnectionAssignment:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        connection_slot,
+        publisher_connection_id,
+        connection_assignment_revision,
+        relay_service_id,
+        relay_address,
+        tls_server_name,
+        publisher_connection_credential,
+        publisher_connection_credential_expires_at,
+        state,
+      ]
+    properties:
+      connection_slot:
+        type: integer
+        minimum: 0
+        maximum: 1
+      publisher_connection_id:
+        $ref: "../openapi.yaml#/components/schemas/PublisherConnectionID"
+      connection_assignment_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/RelayServiceID"
+      relay_address:
+        type: string
+        minLength: 1
+        maxLength: 256
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      publisher_connection_credential:
+        type: string
+        minLength: 1
+        maxLength: 4096
+      publisher_connection_credential_expires_at:
+        type: string
+        format: date-time
+      state:
+        $ref: "../openapi.yaml#/components/schemas/PublisherConnectionState"
+  ProblemCode:
+    type: string
+    enum:
+      [
+        invalid_request,
+        traffic_selection_invalid,
+        unauthenticated,
+        forbidden,
+        guest_demo_only,
+        guest_ip_changed,
+        guest_issuance_limited,
+        guest_trial_exhausted,
+        not_found,
+        conflict,
+        project_managed,
+        rate_limited,
+        unavailable,
+        internal,
+        name_unavailable,
+        publish_run_open,
+        policy_revision_stale,
+        dns_setup_pending,
+        placement_unavailable,
+        member_hostname_depth_exceeded,
+        issuance_retry,
+      ]
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [type, title, status, code, detail, request_id]
+    properties:
+      type:
+        type: string
+        format: uri
+      title:
+        type: string
+        minLength: 1
+      status:
+        type: integer
+        minimum: 400
+        maximum: 599
+      code:
+        $ref: "../openapi.yaml#/components/schemas/ProblemCode"
+      request_id:
+        type: string
+        minLength: 1
+      detail:
+        type: string
+        minLength: 1
+      retry_at:
+        type: string
+        format: date-time
+      details:
+        type: object
+        additionalProperties: true

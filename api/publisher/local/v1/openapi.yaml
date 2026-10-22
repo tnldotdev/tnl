@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: tnl local publisher API
+  version: 1.0.0
+  description: Private capability-authenticated HTTP API. Host placement binds a numeric loopback address. Every request rejects Origin and requires the exact endpoint authority. Capabilities and readiness proofs never enter project metadata or the journal.
+security:
+  - capability: []
+paths:
+  /v1/health:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1health"
+  /v1/capabilities:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1capabilities"
+  /v1/prepare:
+    $ref: "./paths/registration.yaml#/paths/~1v1~1prepare"
+  /v1/register:
+    $ref: "./paths/registration.yaml#/paths/~1v1~1register"
+  /v1/renew:
+    $ref: "./paths/registration.yaml#/paths/~1v1~1renew"
+  /v1/unregister:
+    $ref: "./paths/registration.yaml#/paths/~1v1~1unregister"
+  /v1/status:
+    $ref: "./paths/observations.yaml#/paths/~1v1~1status"
+  /v1/events:
+    $ref: "./paths/observations.yaml#/paths/~1v1~1events"
+  /v1/check:
+    $ref: "./paths/observations.yaml#/paths/~1v1~1check"
+  /v1/leases:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1leases"
+  /v1/ad-hoc/register:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1ad-hoc~1register"
+components:
+  responses:
+    Problem:
+      $ref: "./schemas/common.yaml#/responses/Problem"
+  securitySchemes:
+    capability:
+      $ref: "./schemas/common.yaml#/securitySchemes/capability"
+  requestBodies:
+    Registration:
+      $ref: "./schemas/common.yaml#/requestBodies/Registration"
+  schemas:
+    Problem:
+      $ref: "./schemas/common.yaml#/schemas/Problem"
+    Snapshot:
+      $ref: "./schemas/observations.yaml#/schemas/Snapshot"
+    Service:
+      $ref: "./schemas/observations.yaml#/schemas/Service"
+    Readiness:
+      $ref: "./schemas/observations.yaml#/schemas/Readiness"
+    Observation:
+      $ref: "./schemas/observations.yaml#/schemas/Observation"
+    Publication:
+      $ref: "./schemas/observations.yaml#/schemas/Publication"
+    Event:
+      $ref: "./schemas/observations.yaml#/schemas/Event"
+    Endpoint:
+      $ref: "./schemas/discovery.yaml#/schemas/Endpoint"
+    CapabilityRequest:
+      $ref: "./schemas/discovery.yaml#/schemas/CapabilityRequest"
+    Prepare:
+      $ref: "./schemas/registration.yaml#/schemas/Prepare"
+    Assignment:
+      $ref: "./schemas/registration.yaml#/schemas/Assignment"
+    Registration:
+      $ref: "./schemas/invocations.yaml#/schemas/Registration"
+    Lease:
+      $ref: "./schemas/invocations.yaml#/schemas/Lease"
+    Invocation:
+      $ref: "./schemas/invocations.yaml#/schemas/Invocation"
+    Check:
+      $ref: "./schemas/observations.yaml#/schemas/Check"

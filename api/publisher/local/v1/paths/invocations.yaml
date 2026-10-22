@@ -1,0 +1,33 @@
+paths:
+  /v1/leases:
+    post:
+      operationId: acquireLease
+      description: Owner only. Acquire one configured non-app service for a CLI invocation. Uses the same publication workers as app registrations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Lease" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: lease registration
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
+  /v1/ad-hoc/register:
+    post:
+      operationId: registerInvocation
+      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Invocation" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: invocation registration
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }

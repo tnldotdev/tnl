@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/integrationurls"
+	integrationurls "github.com/tnldotdev/tnl/internal/publisher/integrations"
 )
 
 func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project projectConfiguration, use, force bool, stdout io.Writer) error {

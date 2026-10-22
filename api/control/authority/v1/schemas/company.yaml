@@ -1,0 +1,204 @@
+schemas:
+  IdentityConnectionSetup:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        identity_connection_id,
+        team_id,
+        issuer,
+        source_id,
+        admission,
+        state,
+        revision,
+        setup_token,
+        expires_at,
+      ]
+    properties:
+      identity_connection_id: { type: string }
+      team_id: { type: string }
+      issuer: { type: string }
+      source_id: { type: string }
+      admission: { type: string }
+      state: { type: string }
+      revision: { type: integer, format: int64 }
+      setup_token: { type: string }
+      expires_at: { type: string, format: date-time }
+  IdentityConnection:
+    type: object
+    additionalProperties: false
+    required: [identity_connection_id, team_id, issuer, source_id, admission, state, revision]
+    properties:
+      identity_connection_id: { type: string }
+      team_id: { type: string }
+      issuer: { type: string }
+      source_id: { type: string }
+      admission:
+        {
+          type: string,
+          enum: [approval, managed],
+          x-enum-varnames: [ConnectionViewApproval, ConnectionViewManaged],
+        }
+      state:
+        {
+          type: string,
+          enum: [pending, active, retired],
+          x-enum-varnames: [ConnectionViewPending, ConnectionViewActive, ConnectionViewRetired],
+        }
+      revision: { type: integer, format: int64 }
+  CreateIdentityConnectionRequest:
+    type: object
+    additionalProperties: false
+    required: [admission, source_id]
+    properties:
+      source_id:
+        {
+          type: string,
+          minLength: 1,
+          maxLength: 256,
+          description: Opaque immutable source fingerprint; provider configuration stays at the issuer,
+        }
+      admission:
+        {
+          type: string,
+          enum: [approval, managed],
+          x-enum-varnames: [CreateConnectionApproval, CreateConnectionManaged],
+        }
+      replace_id: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+  IdentityConnectionSecret:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        identity_connection_id,
+        team_id,
+        issuer,
+        source_id,
+        admission,
+        state,
+        revision,
+        provisioning_token,
+      ]
+    properties:
+      identity_connection_id: { type: string }
+      team_id: { type: string }
+      issuer: { type: string }
+      source_id: { type: string }
+      admission:
+        {
+          type: string,
+          enum: [approval, managed],
+          x-enum-varnames: [ConnectionAdmissionApproval, ConnectionAdmissionManaged],
+        }
+      state: { type: string, enum: [active], x-enum-varnames: [ConnectionActive] }
+      revision: { type: integer, format: int64 }
+      provisioning_token:
+        {
+          type: string,
+          description: One-time scoped provisioning credential; control stores only its digest,
+        }
+  CompanyConnections:
+    type: object
+    additionalProperties: false
+    properties:
+      active: { $ref: "../openapi.yaml#/components/schemas/IdentityConnection" }
+      setup: { $ref: "../openapi.yaml#/components/schemas/IdentityConnection" }
+  CompanyAdmissionPage:
+    type: object
+    additionalProperties: false
+    required: [requests]
+    properties:
+      requests:
+        type: array
+        maxItems: 100
+        items: { $ref: "../openapi.yaml#/components/schemas/CompanyAdmissionRequest" }
+      next_cursor: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
+  CompanyAdmissionRequest:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        request_id,
+        team_id,
+        identity_connection_id,
+        connection_revision,
+        identity_id,
+        subject,
+        member_slug,
+        state,
+        created_at,
+      ]
+    properties:
+      request_id: { type: string }
+      team_id: { type: string }
+      identity_connection_id: { type: string }
+      connection_revision: { type: integer, format: int64 }
+      identity_id: { type: string }
+      subject: { type: string }
+      member_slug: { type: string }
+      state: { type: string }
+      created_at: { type: string, format: date-time }
+  CompanyIntentCredential:
+    type: object
+    additionalProperties: false
+    required: [binding_token]
+    properties:
+      binding_token: { type: string }
+  CompanyLoginIntent:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        intent_id,
+        team_id,
+        identity_connection_id,
+        connection_revision,
+        source_id,
+        issuer,
+        client_id,
+        redirect_uri,
+        nonce,
+        expires_at,
+      ]
+    properties:
+      intent_id: { type: string }
+      team_id: { type: string }
+      identity_connection_id: { type: string }
+      connection_revision: { type: integer, format: int64 }
+      source_id: { type: string }
+      issuer: { type: string }
+      client_id: { type: string }
+      redirect_uri: { type: string }
+      nonce: { type: string }
+      binding_token: { type: string }
+      expires_at: { type: string, format: date-time }
+  CompanyEligibilityRequest:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        team_id,
+        identity_connection_id,
+        connection_revision,
+        account_subject,
+        subject,
+        revision,
+        eligible,
+        valid_until,
+        member_slug,
+      ]
+    properties:
+      team_id: { type: string }
+      identity_connection_id: { type: string }
+      connection_revision: { type: integer, format: int64, minimum: 1 }
+      account_subject:
+        {
+          type: string,
+          description: Website OIDC sub under the configured issuer; never a directory subject or email,
+        }
+      subject: { type: string, maxLength: 256 }
+      revision: { type: integer, format: int64, minimum: 1 }
+      eligible: { type: boolean }
+      valid_until: { type: string, format: date-time }
+      member_slug: { type: string }

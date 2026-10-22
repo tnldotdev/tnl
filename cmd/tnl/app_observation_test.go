@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	projectconfig "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestWaitDoesNotTreatOldSnapshotAsFreshOwnerCheck(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	problemtype "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/problemtype"
 )
 
 const MaximumRequestBytes = 64 << 10

@@ -25,7 +25,7 @@ func runURLAvailable(ctx context.Context, f urlAvailableCommand, o, d io.Writer)
 	items := []controlv1.AvailablePublicURL{}
 	cursor := ""
 	for {
-		page, err := s.authenticated.Control.ListAvailablePublicURLs(ctx, "", cursor)
+		page, err := s.Authenticated().Control.ListAvailablePublicURLs(ctx, "", cursor)
 		if err != nil {
 			return err
 		}

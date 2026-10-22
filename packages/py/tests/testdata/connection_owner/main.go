@@ -24,8 +24,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgproto3"
 
-	"github.com/tnldotdev/tnl/internal/connectionruntime"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	projectmeta "github.com/tnldotdev/tnl/internal/client/project/meta"
+	connectionruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 )
 
 type backend struct {

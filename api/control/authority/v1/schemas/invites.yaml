@@ -1,0 +1,121 @@
+schemas:
+  TeamInvitationEmail:
+    type: object
+    additionalProperties: false
+    required: [team_display_name, secret, expires_at]
+    properties:
+      team_display_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      secret:
+        type: string
+        minLength: 32
+        maxLength: 4096
+      expires_at:
+        type: string
+        format: date-time
+  ServiceInvitationRequest:
+    type: object
+    additionalProperties: false
+    required: [identity, secret]
+    properties:
+      identity:
+        $ref: "../openapi.yaml#/components/schemas/ServiceIdentity"
+      secret:
+        type: string
+        minLength: 32
+        maxLength: 4096
+  InvitationPreview:
+    type: object
+    additionalProperties: false
+    required: [team_display_name, initial_role, expires_at]
+    properties:
+      team_display_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      initial_role:
+        $ref: "../openapi.yaml#/components/schemas/TeamRole"
+      expires_at:
+        type: string
+        format: date-time
+  InvitationID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  InvitationState:
+    type: string
+    enum: [pending, accepted, revoked, expired]
+  Invitation:
+    type: object
+    additionalProperties: false
+    required: [id, team_id, member_slug, initial_role, state, created_at, expires_at]
+    properties:
+      personal_account_exception:
+        { type: boolean, description: Explicit owner-approved personal-account sign-in exception }
+      id:
+        $ref: "../openapi.yaml#/components/schemas/InvitationID"
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      member_slug:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      initial_role:
+        $ref: "../openapi.yaml#/components/schemas/TeamRole"
+      normalized_email_restriction:
+        type: string
+        format: email
+      state:
+        $ref: "../openapi.yaml#/components/schemas/InvitationState"
+      created_at:
+        type: string
+        format: date-time
+      expires_at:
+        type: string
+        format: date-time
+  InvitationPage:
+    type: object
+    additionalProperties: false
+    required: [invitations]
+    properties:
+      invitations:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/Invitation"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/InvitationID"
+  InvitationSecret:
+    type: object
+    additionalProperties: false
+    required: [invitation, secret]
+    properties:
+      invitation:
+        $ref: "../openapi.yaml#/components/schemas/Invitation"
+      secret:
+        type: string
+        minLength: 32
+        maxLength: 4096
+  CreateInvitationRequest:
+    type: object
+    additionalProperties: false
+    required: [member_slug, initial_role, expires_at]
+    properties:
+      personal_account_exception:
+        {
+          type: boolean,
+          default: false,
+          description: Only a current team owner may explicitly allow personal-account sign-in,
+        }
+      member_slug:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      initial_role:
+        $ref: "../openapi.yaml#/components/schemas/TeamRole"
+      expires_at:
+        type: string
+        format: date-time
+      email_restriction:
+        type: string
+        format: email
+  AcceptInvitationRequest:
+    type: object
+    additionalProperties: false
+    required: [secret]
+    properties:
+      secret:
+        type: string
+        minLength: 32
+        maxLength: 4096

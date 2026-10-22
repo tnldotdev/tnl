@@ -1,0 +1,9 @@
+schemas:
+  IngressTransportCertificate:
+    type: object
+    additionalProperties: false
+    required: [trust, private_key_pem]
+    properties:
+      trust:
+        { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/IngressTransportTrust" }
+      private_key_pem: { type: string, minLength: 1, maxLength: 16384 }

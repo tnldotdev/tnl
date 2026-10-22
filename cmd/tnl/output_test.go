@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/demo"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	authorityclient "github.com/tnldotdev/tnl/internal/client/authority"
+	controlclient "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/publisher/demo"
 )
 
 func TestPublishOutputNDJSONLifecycle(t *testing.T) {

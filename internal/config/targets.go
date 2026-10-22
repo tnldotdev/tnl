@@ -12,7 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 )
 
 var composeProject = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)

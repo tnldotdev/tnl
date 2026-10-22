@@ -1,0 +1,44 @@
+paths:
+  /v1/prepare:
+    post:
+      operationId: prepare
+      description: App capability only; service must equal the capability service. Idempotent for the live owner and PID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Prepare" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: saved HTTP address and browser-safe metadata
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Assignment" }
+  /v1/register:
+    post:
+      operationId: register
+      description: App capability only. Acknowledge or replace its bound HTTP listener before asynchronous provisioning.
+      requestBody:
+        $ref: "../openapi.yaml#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: listener acknowledged }
+  /v1/renew:
+    post:
+      operationId: renew
+      description: Renew the exact registration and bound target. Target is required after register; an old target cannot keep a replacement listener alive.
+      requestBody:
+        $ref: "../openapi.yaml#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: lease renewed for 20 seconds }
+  /v1/unregister:
+    post:
+      operationId: unregister
+      description: Stop and join the exact registration and bound target. Target is required after register.
+      requestBody:
+        $ref: "../openapi.yaml#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: publication stopped and joined }
