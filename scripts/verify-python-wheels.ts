@@ -50,6 +50,17 @@ for (const wheel of manifest.wheels) {
     assert(entries.includes(`${distribution}.dist-info/licenses/${name}`));
   }
   assert(entries.includes("tnl/__init__.py") && entries.includes("tnl/bin/tnl"));
+  assert(entries.includes("tnl/py.typed"), "Python wheel is missing its PEP 561 marker");
+  const records = (await unzip(file, record)).toString("utf8");
+  const marker = await unzip(file, "tnl/py.typed");
+  assert(
+    records
+      .split("\n")
+      .includes(
+        `tnl/py.typed,sha256=${createHash("sha256").update(marker).digest("base64url")},${marker.length}`,
+      ),
+    "Python wheel must record its PEP 561 marker",
+  );
   assert(
     !entries.some(
       (name) => name.includes("__pycache__") || name.endsWith(".pyc") || name === "tnld",
@@ -88,6 +99,7 @@ try {
       `import importlib.metadata, os, pathlib, subprocess, sys, tnl
 version, release, commit = sys.argv[1:]
 assert importlib.metadata.version("tnldotdev-tnl") == version
+assert (pathlib.Path(tnl.__file__).parent / "py.typed").is_file()
 binary = pathlib.Path(tnl.__file__).parent / "bin" / "tnl"
 assert os.access(binary, os.X_OK)
 assert subprocess.check_output([str(binary), "version"], text=True).strip() == f"tnl {release} ({commit})"`,

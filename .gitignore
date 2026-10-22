@@ -19,5 +19,6 @@ __pycache__/
 /tnlbench
 /bench-results/
 /.local/
+/.tnl/local/
 /deploy/backups/
 /deploy/certs/

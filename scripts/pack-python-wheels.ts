@@ -1,17 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  access,
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +9,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 import * as z from "zod";
 import { pythonVersion } from "./python-version.ts";
+import { copyPythonPackage } from "./python-package.ts";
 import { parseJSON } from "./validation.ts";
 
 const execFileAsync = promisify(execFile);
@@ -122,18 +113,7 @@ try {
     const licenses = path.join(distInfo, "licenses");
     await mkdir(path.join(moduleDir, "bin"), { recursive: true });
     await mkdir(licenses, { recursive: true });
-    const files: string[] = [];
-    for (const filename of (await readdir(path.join(root, "packages/py/src/tnl")))
-      .filter((name) => name.endsWith(".py"))
-      .sort()) {
-      const destination = `tnl/${filename}`;
-      await copyFile(
-        path.join(root, "packages/py/src/tnl", filename),
-        path.join(stage, destination),
-      );
-      files.push(destination);
-    }
-    assert(files.includes("tnl/__init__.py"), "Python wheel has no importable package");
+    const files = await copyPythonPackage(path.join(root, "packages/py/src/tnl"), moduleDir);
     await copyFile(binaryPath, path.join(moduleDir, "bin", "tnl"));
     await chmod(path.join(moduleDir, "bin", "tnl"), 0o755);
     files.push("tnl/bin/tnl");

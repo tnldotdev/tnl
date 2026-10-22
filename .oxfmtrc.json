@@ -1,3 +1,10 @@
 {
-  "ignorePatterns": ["internal/feedbacktoolbar/toolbar.js"]
+  "ignorePatterns": [
+    "connect/dist/**",
+    "api/observability/v1/vocabulary.json",
+    "internal/feedbacktoolbar/toolbar.js",
+    "deploy/publishers/fargate.yaml",
+    "deploy/publishers/fargate.parameters.example.json",
+    "deploy/publishers/fargate.manifest.example.json"
+  ]
 }

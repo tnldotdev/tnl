@@ -427,10 +427,25 @@ jobs:
           cache-from: type=gha,scope=tnl-container-check
 
       - name: Smoke-test image
+        shell: bash
         run: |
-          test "$(docker run --rm tnl:ci version)" = "tnld ci (ci)"
-          test "$(docker run --rm --entrypoint tnl tnl:ci --no-telemetry version)" = "tnl ci (ci)"
-          docker run --rm --entrypoint tnl tnl:ci status --state-dir /state --all > /dev/null
+          test "$(docker run --rm --network none tnl:ci version)" = "tnl ci (ci)"
+          test "$(docker run --rm --network none --entrypoint /usr/local/bin/tnld tnl:ci version)" = "tnld ci (ci)"
+          test "$(docker image inspect tnl:ci --format '{{ .Config.User }}')" = "65532:65532"
+          docker run --rm --network none tnl:ci --no-telemetry status --all --scope local --output json |
+            jq -e '.schema_version == 1 and .scope == "local" and .projects == []' > /dev/null
+
+          status=0
+          output="$(docker run --rm --network none --entrypoint /usr/local/bin/tnld tnl:ci migrate 2>&1)" || status=$?
+          test "$status" = 1
+          test "$output" = "tnld: migrate TNLD_DATABASE_DIRECT_URL: direct database URL is required for migration; set a direct PostgreSQL URL with migration permissions, then rerun tnld migrate"
+          for role in standalone control; do
+            status=0
+            output="$(docker run --rm --network none --entrypoint /usr/local/bin/tnld --env TNLD_ROLE="$role" tnl:ci 2>&1)" || status=$?
+            test "$status" = 1
+            test "$output" = "tnld: validate pooled database URL TNLD_DATABASE_URL: database URL must be a pooled PostgreSQL URL; set the pooled runtime URL and reserve TNLD_DATABASE_DIRECT_URL for tnld migrate"
+          done
+
           test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = BSD-3-Clause
           container="$(docker create tnl:ci)"
           trap 'docker rm "$container" >/dev/null' EXIT
@@ -452,11 +467,27 @@ jobs:
           cache-to: type=gha,mode=max,scope=tnl-container-check
 
       - name: Validate Compose deployment
+        shell: bash
         env:
           TNL_ENV_FILE: .env.example
         run: |
-          docker compose --env-file deploy/.env.example --file deploy/compose.yaml config --quiet
-          docker compose --env-file deploy/.env.example --file deploy/compose.split.yaml config --quiet
+          for file in deploy/compose.yaml deploy/compose.split.yaml; do
+            docker compose --env-file deploy/.env.example --file "$file" config --format json |
+              jq -e '
+                .services as $services |
+                [$services | to_entries[] | select(.key != "control-proxy") | .value] as $daemons |
+                $services.migrate.command == ["migrate"] and
+                ($daemons | length > 0 and all(.entrypoint == ["/usr/local/bin/tnld"])) and
+                ($services["control-proxy"] |
+                  .image == "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d" and
+                  .entrypoint == null and
+                  any(.volumes[];
+                    .type == "bind" and (.source | endswith("/deploy/Caddyfile")) and
+                    .target == "/etc/caddy/Caddyfile" and .read_only == true))
+              ' > /dev/null
+          done
+          docker compose --file deploy/local/compose.yaml config --format json |
+            jq -e '.services.migrate.command == ["migrate"] and ([.services.migrate, .services.tnld] | all(.entrypoint == ["/usr/local/bin/tnld"]))' > /dev/null
 
   github-actions:
     name: GitHub Actions

@@ -50,7 +50,7 @@ func runRoutingHistoryCleanup(ctx context.Context, store routingHistoryStore, me
 			}
 		}
 		if err != nil && ctx.Err() == nil {
-			logOperationalError("clean up routing history", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "clean up routing history", failure.ServerWorkerFailed, err)
 		}
 		timer := time.NewTimer(delay)
 		select {

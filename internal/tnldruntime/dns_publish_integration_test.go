@@ -19,6 +19,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -38,16 +39,12 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	if !found {
 		t.Fatalf("route hostname %q is outside the expected namespace", fixture.identity.hostname)
 	}
-	fixture.identity.certificatePlan = controlv1.CertificatePlan{
-		CacheKey: namespace, Scope: namespace,
-		Identifiers: []string{"*." + namespace}, ChallengeMethod: controlv1.Dns01,
-	}
 	cleanupStarted, releaseCleanup := make(chan struct{}), make(chan struct{})
 	var blockCleanup, releaseCleanupOnce sync.Once
 	release := func() { releaseCleanupOnce.Do(func() { close(releaseCleanup) }) }
 	defer release()
 	dnsFixture.setBeforeChange(func(ctx context.Context, change integrationDNSChange) error {
-		if change.Action != "DELETE" || change.Record.Name != dns.Fqdn("_acme-challenge."+namespace) {
+		if change.Action != "DELETE" || change.Record.Name != dns.Fqdn("_acme-challenge."+fixture.identity.hostname) {
 			return nil
 		}
 		blockCleanup.Do(func() {
@@ -68,7 +65,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	finalizing := make(chan controlv1.CertificateIssuance, 1)
 	config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 	config.Control = &certificateObservingControlClient{
-		PublicURLControlClient: config.Control,
+		bootstrap: config.Control.(*integrationScopedRunControl),
 		observe: func(issuance controlv1.CertificateIssuance) {
 			if issuance.State == controlv1.CertificateIssuanceStateFinalizing {
 				select {
@@ -107,7 +104,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	if exact || owner {
 		t.Fatalf("managed member public URL created exact DNS records: A=%t, owner=%t", exact, owner)
 	}
-	assertIntegrationDNSChanges(t, dnsFixture, namespace, true)
+	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, true)
 
 	for _, relay := range []splitRelayFixture{fixture.relayA, fixture.relayB} {
 		if relay.config.RelayTLSCertificateFile != "" || relay.config.RelayTLSPrivateKeyFile != "" {
@@ -140,8 +137,9 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 }
 
 type certificateObservingControlClient struct {
-	publisher.PublicURLControlClient
-	observe func(controlv1.CertificateIssuance)
+	*nativeauth.Native
+	bootstrap *integrationScopedRunControl
+	observe   func(controlv1.CertificateIssuance)
 }
 
 func (c *certificateObservingControlClient) CreateCertificateIssuance(
@@ -152,7 +150,7 @@ func (c *certificateObservingControlClient) CreateCertificateIssuance(
 	csr []byte,
 	idempotencyKey string,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.CreateCertificateIssuance(
+	issuance, err := c.Native.CreateCertificateIssuance(
 		ctx, publishRunID, publishRunNumber, token, csr, idempotencyKey,
 	)
 	c.observeResponse(issuance, err)
@@ -164,17 +162,7 @@ func (c *certificateObservingControlClient) GetCertificateIssuance(
 	issuanceID string,
 	token credentials.PublishRunToken,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.GetCertificateIssuance(ctx, issuanceID, token)
-	c.observeResponse(issuance, err)
-	return issuance, err
-}
-
-func (c *certificateObservingControlClient) MarkCertificateChallengeReady(
-	ctx context.Context,
-	issuanceID string,
-	token credentials.PublishRunToken,
-) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.MarkCertificateChallengeReady(ctx, issuanceID, token)
+	issuance, err := c.Native.GetCertificateIssuance(ctx, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
 }

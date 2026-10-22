@@ -159,7 +159,7 @@ try {
 
     if (process.platform === target.operatingSystem && process.arch === target.architecture) {
       const { stdout } = await execFileAsync(path.join(stage, "bin", "tnl"), ["version"]);
-      assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
+      assert.equal(stdout, `tnl ${metadata.version} (${metadata.commit})\n`);
     }
   }
 

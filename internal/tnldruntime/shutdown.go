@@ -13,25 +13,44 @@ import (
 )
 
 func (d *daemon) shutdown(timeout time.Duration) error {
+	d.draining.Store(true)
 	started := time.Now()
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), timeout)
+	owner := d.ctx
+	if owner == nil {
+		owner = context.Background()
+	}
+	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(owner), timeout)
 	defer cancelDrain()
 	var result error
 	deadline := time.Now().Add(timeout)
+	for _, runtime := range d.ingresses {
+		if runtime.private != nil {
+			runtime.private.StopAccepting()
+		}
+	}
 	// drain ingress visitors before closing usage and recovery reporters so a
 	// successful final report includes usage-tracked public URL visitor activity.
 	for _, runtime := range d.ingresses {
+		if runtime.privateQUIC != nil {
+			result = errors.Join(result, runtime.privateQUIC.StopAccepting())
+		}
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
 			result = errors.Join(result, shutdownStep("ingress_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))
 		}
 		if runtime.server != nil {
 			result = errors.Join(result, shutdownStep("ingress_visitors", func() error { return runtime.server.Drain(drainCtx) }))
 		}
+		if runtime.private != nil {
+			result = errors.Join(result, shutdownStep("private_ingress_streams", func() error { return runtime.private.Drain(drainCtx) }))
+		}
 		if runtime.usage != nil {
 			result = errors.Join(result, shutdownStep("ingress_usage", func() error { return runtime.usage.Close(drainCtx) }))
 		}
 		if runtime.recovery != nil {
 			result = errors.Join(result, runtime.recovery.Close(drainCtx))
+		}
+		if runtime.audit != nil {
+			result = errors.Join(result, shutdownStep("ingress_service_audit", func() error { return runtime.audit.Close(drainCtx) }))
 		}
 	}
 	// relay publisher connections stay available until ingress has stopped
@@ -59,17 +78,29 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 				result = errors.Join(result, fmt.Errorf("drain relay publisher connections: %w", err))
 			}
 		}
+		if runtime.privateRegistry != nil {
+			result = errors.Join(result, shutdownStep("private_relay_connections", func() error { return runtime.privateRegistry.Drain(drainCtx) }))
+		}
 	}
 	// only cancel component contexts after the bounded drain has finished.
 	if d.cancel != nil {
 		d.cancel()
 	}
 	for _, runtime := range d.ingresses {
+		if runtime.private != nil {
+			result = errors.Join(result, runtime.private.Close())
+		}
+		if runtime.privateQUIC != nil {
+			result = errors.Join(result, runtime.privateQUIC.Close())
+		}
 		if runtime.forwarder != nil {
 			result = errors.Join(result, runtime.forwarder.Close())
 		}
 	}
 	for _, runtime := range d.relays {
+		if runtime.privateRegistry != nil {
+			result = errors.Join(result, runtime.privateRegistry.Close())
+		}
 		if runtime.registry != nil {
 			if err := runtime.registry.Close(); err != nil {
 				result = errors.Join(result, fmt.Errorf("close relay publisher connections: %w", err))
@@ -81,7 +112,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			}
 		}
 	}
-	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 6*time.Second)
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(owner), 6*time.Second)
 	defer cancelCleanup()
 	serverErrors := make(chan error, 3)
 	servers := 0

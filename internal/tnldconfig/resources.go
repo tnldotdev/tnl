@@ -40,9 +40,6 @@ func (c *Config) resolveCapacities(resources resourceBudget) {
 	if c.ClientHelloConnectionLimit == -1 {
 		c.ClientHelloConnectionLimit = int(bound(512, ingressShare*0.08, 32*1024))
 	}
-	if c.ChallengeConnectionLimit == -1 {
-		c.ChallengeConnectionLimit = int(bound(512, ingressShare*0.08, 64*1024))
-	}
 	if c.VisitorConnectionLimit == -1 {
 		c.VisitorConnectionLimit = bound(8192, ingressShare*0.75, 96*1024)
 	}

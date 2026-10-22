@@ -15,7 +15,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/tnldruntime"
@@ -92,14 +91,6 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 				errors.New("TNLD_DATABASE_DIRECT_URL is required"))
 		}
 		return controlstate.Migrate(ctx, directURL)
-	case "login-token":
-		reason = failure.ServerOutputUnavailable
-		token, err := credentials.NewLoginToken()
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(stdout, token)
-		return err
 	case "serve":
 		reason = failure.ServerStartupFailed
 		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, tnldconfig.Config(flags.Serve.Values), parsed)
@@ -147,11 +138,10 @@ type tnldConfigCommand struct {
 }
 
 type tnldCLI struct {
-	LoginToken struct{}          `cmd:"" name:"login-token" help:"Generate a login token."`
-	Migrate    struct{}          `cmd:"" help:"Apply control-state database migrations."`
-	Serve      tnldServeCommand  `cmd:"" default:"withargs" help:"Run the configured tnld process."`
-	Config     tnldConfigCommand `cmd:"" help:"Inspect process configuration."`
-	Version    struct{}          `cmd:"" help:"Print release version information."`
+	Migrate struct{}          `cmd:"" help:"Apply control-state database migrations."`
+	Serve   tnldServeCommand  `cmd:"" default:"withargs" help:"Run the configured tnld process."`
+	Config  tnldConfigCommand `cmd:"" help:"Inspect process configuration."`
+	Version struct{}          `cmd:"" help:"Print release version information."`
 }
 
 func resolveServeCommand(path string, base tnldconfig.Config, parsed *kong.Context) (tnldconfig.Config, error) {
@@ -183,8 +173,10 @@ func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[stri
 	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
 	directory := filepath.Dir(path)
 	for name, target := range map[string]*string{
-		"control_tls_certificate_file": &base.ControlTLSCertificateFile,
-		"control_tls_private_key_file": &base.ControlTLSPrivateKeyFile,
+		"private_control_tls_certificate_file": &base.ControlTLSCertificateFile,
+		"private_control_tls_private_key_file": &base.ControlTLSPrivateKeyFile,
+		"relay_tls_certificate_file":           &base.RelayTLSCertificateFile,
+		"relay_tls_private_key_file":           &base.RelayTLSPrivateKeyFile,
 	} {
 		if applied[name] && *target != "" && !filepath.IsAbs(*target) {
 			*target = filepath.Join(directory, *target)

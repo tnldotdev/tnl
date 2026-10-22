@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"golang.org/x/net/websocket"
 )
 
@@ -135,7 +136,8 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 			quic, tcp := fixture.connectors()
 			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			config.AllowedIPPrefixes = []string{"192.0.2.10/32"} // visitor connects from 127.0.0.1.
+			config.AccessMode = controlv1.Restricted
+			config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
 			handle := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 			ready := fixture.waitReady(t, handle)
 			http2Client, http2Transport := newIntegrationHTTPSClient(t, fixture.pebble.roots, fixture.publicAddress, true, fixture.owner)
@@ -162,9 +164,9 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 				if readErr != nil || closeErr != nil {
 					t.Fatalf("read denial: %v, %v", readErr, closeErr)
 				}
-				if response.ProtoMajor != test.proto || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_IP_POLICY_DENIED" ||
-					!strings.Contains(string(body), "https://tnl.dev/e/ip-policy-denied") && test.accept == "text/plain" ||
-					!strings.Contains(string(body), "ask the public URL owner") && test.accept == "text/html" {
+				if response.ProtoMajor != test.proto || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_VISITOR_ACCESS_DENIED" ||
+					!strings.Contains(string(body), "https://tnl.dev/e/visitor-access-denied") && test.accept == "text/plain" ||
+					!strings.Contains(string(body), "ask its owner for a link") && test.accept == "text/html" {
 					t.Fatalf("denied response = %s, %d, %v, %q", response.Proto, response.StatusCode, response.Header, body)
 				}
 			}
@@ -194,8 +196,8 @@ func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, mini
 			t.Fatal(err)
 		}
 		for _, summary := range summaries {
-			if strings.HasSuffix(summary.Name, "_operation_duration_seconds") && summary.Labels["outcome"] == "success" {
-				counts[summary.Labels["operation"]] += summary.Count
+			if strings.HasSuffix(summary.Name, "_operation_duration_seconds") && summary.Labels["tnl_outcome"] == "success" {
+				counts[summary.Labels["tnl_operation"]] += summary.Count
 			}
 		}
 	}
@@ -447,7 +449,7 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 		`, firstReady.PublicURLID, firstReady.PublishRunNumber).Scan(&closed)
 		return err == nil && closed, err
 	})
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	response, _, unavailableErr := fixture.visitor.requestURL(http.MethodGet, firstReady.PublicURL+"/unavailable", nil)
 	if unavailableErr == nil && response.StatusCode == http.StatusOK {
 		t.Fatal("route remained available after the publisher stopped")

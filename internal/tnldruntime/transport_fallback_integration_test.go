@@ -119,7 +119,7 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 		}
 	}
 	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	fixture.visitor.transport.CloseIdleConnections()
 	after, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after", nil)
 	if err != nil || after.StatusCode != http.StatusOK || string(body) != "after recovery" {

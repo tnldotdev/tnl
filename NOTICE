@@ -3,7 +3,40 @@ Copyright 2026 Chase Adams
 
 This product includes software developed for the tnl project.
 
+Comment-preserving tsconfig edits use HuJSON (BSD-3-Clause), developed by
+Tailscale Inc. and contributors.
+
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
+
+Operational metrics, tracing, and logs use OpenTelemetry Go, its OTLP/HTTP and
+Prometheus exporters, and the OpenTelemetry Prometheus bridge (Apache-2.0),
+developed by the OpenTelemetry Authors. Prometheus metric name translation uses
+otlptranslator (Apache-2.0), developed by the Prometheus Authors.
+
+DNS automation, publisher identity bootstrap (Secrets Manager and STS), and
+publisher target discovery (EKS, RDS and STS) use the AWS SDK for Go v2 and Smithy
+for Go (Apache-2.0), developed by Amazon Web Services and contributors.
+
+Publisher target TLS includes public Amazon RDS root certificates published by
+Amazon Web Services at https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem.
+The pinned source digest and regional certificate digests are distributed in
+internal/rdsroots/bundles.json in the source tree and embedded in the binary.
 
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.
+
+Kubernetes client configuration and exec credentials use the official client-go
+and apimachinery API types (Apache-2.0), developed by the Kubernetes Authors.
+
+The Node connection helper uses Undici (MIT), developed by the Undici team and
+contributors, for scoped native HTTPS dispatch without changing application headers.
+Node SDK and framework lifecycle tracing uses the OpenTelemetry JavaScript API
+(Apache-2.0), developed by the OpenTelemetry Authors, with the application's provider.
+
+The Node workload SDK uses the official Vercel OIDC helper (Apache-2.0),
+developed by Vercel, and Zod (MIT), developed by Colin McDonnell and contributors.
+Its generated dependency license texts are included in dist/third-party-licenses.txt.
+
+The GitHub connection action uses the official Actions toolkit (MIT), developed
+by GitHub, and Zod (MIT), developed by Colin McDonnell and contributors. The
+committed action bundles include their dependency license texts in connect/dist.

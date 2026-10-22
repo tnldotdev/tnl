@@ -9,7 +9,7 @@ import (
 
 func TestBinaryIntegrationControlSessionRefreshAndLogout(t *testing.T) {
 	fixture := startIntegrationBinaryStandalone(t)
-	const controlOrigin = "https://control.127.0.0.1.nip.io"
+	const controlOrigin = "https://control.127.0.0.1.nip.io:8445"
 
 	state, err := clientstate.Open(integrationOperationContext(t), fixture.stateDirectory)
 	if err != nil {

@@ -30,18 +30,28 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalone
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicAddress, relayUDPAddress := unusedTCPAddress(t), unusedUDPAddress(t)
-	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), startIntegrationDNS(t))
+	dns := newPrivateFixtureDNS(t)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
 	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
+	ca := newIntegrationTestCA(t)
+	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicControl := unusedTCPAddress(t)
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	owner := newRuntimeTopology(t)
+	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
+		dns:            dns,
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
 	waitForProcessReady(t, process)
-	controlHTTP, _ := newIntegrationHTTPSClient(t, pebble.roots, publicAddress, false, owner)
+	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
 	return &standalonePublishFixture{owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
 		relayUDPAddress: relayUDPAddress, pebble: pebble, process: process, identity: identity,
@@ -54,15 +64,18 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 	// standalone uses one public listener and creates its internal listeners on
 	// :0 itself. these required but unused split-role addresses need no probes.
 	return tnldconfig.Config{
-		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
-		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ServicePortRanges: integrationServicePorts(t),
+		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
+		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
+		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		PublicURLCertificateWorkers: 4,
-		LoginToken:                  testLoginToken, StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		OIDCIssuer:                  testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
-		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
@@ -89,7 +102,7 @@ func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPu
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, f.inspect, 1)
+	waitForIngressRoutingCurrent(t, f.inspect, 2)
 	return ready
 }
 

@@ -78,29 +78,22 @@ func traceRuntimeCertificateState(t *testing.T, database *sql.DB, start time.Tim
 				'installed_at', s.certificate_installed_at, 'session_state', s.state,
 				'authorizations', (SELECT jsonb_agg(jsonb_build_object('state', a.state,
 					'updated_at', a.updated_at, 'presented_at', a.presented_at) ORDER BY a.id)
-					FROM control.acme_authorizations a WHERE a.order_id = o.id),
-				'global_barrier_blocked', EXISTS (SELECT 1 FROM control.acme_authorizations a
-					WHERE a.order_id = o.id AND a.state = 'presented') AND
-					coalesce((SELECT min(i.routing_table_revision) FROM control.ingress_leases i
-						WHERE NOT i.draining AND i.lease_expires_at > now()), -1) < clock.current_revision
+					FROM control.acme_authorizations a WHERE a.order_id = o.id)
 			)::text, clock.current_revision,
 			coalesce((SELECT min(i.routing_table_revision) FROM control.ingress_leases i
-				WHERE NOT i.draining AND i.lease_expires_at > now()), -1),
-			coalesce((SELECT max(e.routing_table_revision) FROM control.ingress_routing_table_events e
-				WHERE e.public_url_id = o.public_url_id AND e.publish_run_number = o.publish_run_number
-				AND e.event_kind IN ('challenge_upsert', 'challenge_tombstone')), 0)
+				WHERE NOT i.draining AND i.lease_expires_at > now()), -1)
 			FROM control.acme_orders o JOIN control.public_urls r ON r.id = o.public_url_id
 			JOIN control.publish_runs s ON s.id = o.publish_run_id
 			CROSS JOIN control.ingress_routing_table_clock clock ORDER BY o.id`)
 			if err == nil {
 				for rows.Next() {
 					var id, state string
-					var head, applied, challenge int64
-					if err = rows.Scan(&id, &state, &head, &applied, &challenge); err != nil {
+					var head, applied int64
+					if err = rows.Scan(&id, &state, &head, &applied); err != nil {
 						break
 					}
 					if previous[id] != state {
-						t.Logf("provision_state elapsed=%s issuance=%s head=%d applied=%d challenge=%d state=%s", time.Since(start), id, head, applied, challenge, state)
+						t.Logf("provision_state elapsed=%s issuance=%s head=%d applied=%d state=%s", time.Since(start), id, head, applied, state)
 						previous[id] = state
 					}
 				}

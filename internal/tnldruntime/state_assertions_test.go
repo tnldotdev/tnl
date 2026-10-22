@@ -243,7 +243,7 @@ func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, p
 		t.Fatalf("public URL usage finalization = %d, %v; want %d", finalized, err, bucketCount)
 	}
 	var allFinalized, allComplete bool
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT coalesce(bool_and(finalized), false), coalesce(bool_and(complete), false)
+	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT coalesce(bool_and(finalized), false), coalesce(bool_and(coverage_complete), false)
 		FROM control.public_url_usage_buckets WHERE public_url_id = $1 AND publish_run_number = $2`, publicURLID, publishRunNumber).Scan(&allFinalized, &allComplete); err != nil {
 		t.Fatal(err)
 	}
