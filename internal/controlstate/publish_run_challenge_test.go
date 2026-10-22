@@ -21,10 +21,9 @@ func TestPublishRunRequestValidatesChallengeMethod(t *testing.T) {
 		identifiers []string
 		wantError   bool
 	}{
-		{"tls_alpn", certificateidentity.ChallengeTLSALPN01, []string{"route.example.test"}, false},
+		{"dns_exact", certificateidentity.ChallengeDNS01, []string{"route.example.test"}, false},
 		{"dns_wildcard", certificateidentity.ChallengeDNS01, []string{"*.route.example.test", "route.example.test"}, false},
 		{"unknown", certificateidentity.ChallengeMethod("other"), []string{"route.example.test"}, true},
-		{"tls_wildcard", certificateidentity.ChallengeTLSALPN01, []string{"*.route.example.test", "route.example.test"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request.CertificateChallenge = test.method

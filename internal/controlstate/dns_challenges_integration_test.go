@@ -34,7 +34,7 @@ func TestIntegrationDNSDedicatedWaitExcludedFromPoolActivity(t *testing.T) {
 	var callbacks atomic.Int32
 	const recordName = "_acme-challenge.activity.example.test"
 	workers.Go(func() {
-		firstDone <- database.WithDNSChallengeLock(ctx, recordName, func() error {
+		firstDone <- database.WithDNSRecordLock(ctx, recordName, func() error {
 			callbacks.Add(1)
 			close(entered)
 			select {
@@ -55,7 +55,7 @@ func TestIntegrationDNSDedicatedWaitExcludedFromPoolActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	workers.Go(func() {
-		secondDone <- database.WithDNSChallengeLock(ctx, recordName, func() error {
+		secondDone <- database.WithDNSRecordLock(ctx, recordName, func() error {
 			callbacks.Add(1)
 			return database.Health(ctx)
 		})

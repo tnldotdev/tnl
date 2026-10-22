@@ -97,7 +97,6 @@ type controlAuthenticationStoreStub struct {
 func (s controlAuthenticationStoreStub) AuthenticateAccessToken(
 	context.Context,
 	credentials.AccessToken,
-	int64,
 	time.Time,
 ) (controlstate.ControlPrincipal, error) {
 	return s.principal, s.authenticationErr

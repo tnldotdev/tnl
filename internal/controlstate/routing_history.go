@@ -13,7 +13,8 @@ import (
 // cursor. snapshot and entry-revision anchors survive subsequent pruning.
 // the cutoff is chosen by control, never supplied by an ingress request.
 func (d *Database) AdvanceIngressRoutingRetention(ctx context.Context, cutoff time.Time) (revision uint64, retErr error) {
-	defer d.observeOperation("AdvanceIngressRoutingRetention", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "AdvanceIngressRoutingRetention")
+	defer func() { finish(retErr) }()
 	if err := d.requireOpen(); err != nil {
 		return 0, err
 	}
@@ -50,7 +51,8 @@ type RoutingHistoryPruneResult struct {
 // sweep, and restart at zero after More is false. A canceled/failed batch must
 // retry its previous cursor. Busy means another control owns the current batch.
 func (d *Database) PruneIngressRoutingHistory(ctx context.Context, afterRevision uint64) (result RoutingHistoryPruneResult, retErr error) {
-	defer d.observeOperation("PruneIngressRoutingHistory", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "PruneIngressRoutingHistory")
+	defer func() { finish(retErr) }()
 	if err := d.requireOpen(); err != nil {
 		return result, err
 	}

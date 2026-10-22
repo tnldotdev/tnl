@@ -6,13 +6,17 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, error) {
+func (w *Worker) processAuthority(ctx context.Context, now time.Time) (_ bool, retErr error) {
+	ctx, finish := observability.WorkerAttempt(ctx, "dns.authority.attempt")
+	var attemptErr error
+	defer func() { finishDNSAttempt(ctx, finish, errors.Join(retErr, attemptErr)) }()
 	started := time.Now()
 	work, found, err := w.store.ClaimDNSAuthorityWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "authority", "claim", started, found, err)
+		observeDNS(ctx, w.config.Observer, "authority", "claim", started, found, err)
 	}
 	if err != nil {
 		return false, err
@@ -23,6 +27,7 @@ func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, err
 	initial := work.State
 	advanceStarted := time.Now()
 	advanceErr := w.advanceAuthority(ctx, &work, now)
+	attemptErr = advanceErr
 	if advanceErr != nil {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
@@ -32,13 +37,13 @@ func (w *Worker) processAuthority(ctx context.Context, now time.Time) (bool, err
 	started = time.Now()
 	saved, err := w.store.SaveDNSAuthorityWork(ctx, work, w.now())
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "authority", "save", started, true, err)
+		observeDNS(ctx, w.config.Observer, "authority", "save", started, true, err)
 	}
 	if err != nil {
 		return true, err
 	}
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
+		observeDNS(ctx, w.config.Observer, "authority", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
 	}
 	if w.config.Observer != nil && initial != saved.State {
 		w.config.Observer.ObserveDNSTransition("authority", string(saved.State))
@@ -53,7 +58,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 		if work.ProviderZoneID == "" {
 			started := time.Now()
 			zone, err := w.provider.EnsureCustomZone(ctx, *work)
-			observeDNS(w.config.Observer, "authority", "provider", started, true, err)
+			observeDNS(ctx, w.config.Observer, "authority", "provider", started, true, err)
 			if err != nil {
 				return err
 			}
@@ -68,7 +73,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 		}
 		started := time.Now()
 		verified, err := w.verifier.Verify(ctx, work.CanonicalDomain, work.Nameservers)
-		observeDNS(w.config.Observer, "authority", "verify", started, verified, err)
+		observeDNS(ctx, w.config.Observer, "authority", "verify", started, verified, err)
 		if err != nil {
 			return err
 		}
@@ -90,7 +95,7 @@ func (w *Worker) advanceAuthority(ctx context.Context, work *controlstate.DNSAut
 		}
 		started := time.Now()
 		err = w.provider.ReleaseCustomZone(ctx, *work)
-		observeDNS(w.config.Observer, "authority", "provider", started, true, err)
+		observeDNS(ctx, w.config.Observer, "authority", "provider", started, true, err)
 		if err != nil {
 			return err
 		}

@@ -37,28 +37,23 @@ func TestIntegrationRoutingSnapshotSelectsLatestBeforeFiltering(t *testing.T) {
 			through: 2,
 		},
 		{
-			name:    "route and challenge share hostname independently",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressChallengeUpsert, 1, time.Hour}},
-			through: 2, want: []int{1, 2},
-		},
-		{
-			name:    "challenge tombstone preserves route",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressChallengeUpsert, 1, time.Hour}, {IngressChallengeTombstone, 1, time.Hour}},
+			name:    "pool sibling tombstone preserves route",
+			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLTombstone, 2, time.Hour}},
 			through: 3, want: []int{1},
 		},
 		{
-			name:    "route tombstone preserves challenge",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressChallengeUpsert, 1, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour}},
+			name:    "route tombstone preserves pool sibling",
+			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour}},
 			through: 3, want: []int{2},
 		},
 		{
-			name:    "new publish run number supersedes old version",
+			name:    "new publish run number preserves healthy pool sibling",
 			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}},
-			through: 2, want: []int{2},
+			through: 2, want: []int{1, 2},
 		},
 		{
-			name:    "future version and challenge excluded",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressChallengeUpsert, 2, time.Hour}},
+			name:    "future version excluded",
+			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}},
 			through: 1, want: []int{1},
 		},
 		{

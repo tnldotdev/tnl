@@ -644,10 +644,3 @@ func waitCadence(ctx context.Context, at time.Time) error {
 		return ctx.Err()
 	}
 }
-
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
-}

@@ -12,7 +12,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS m
   ON m.team_id = t.id
  AND m.identity_id = sqlc.arg(identity_id)
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 WHERE t.deleted_at IS NULL
 ORDER BY t.created_at, t.id;
 
@@ -39,7 +39,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS m
   ON m.team_id = t.id
  AND m.identity_id = sqlc.arg(identity_id)
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL;
 
@@ -69,7 +69,7 @@ WHERE d.released_at IS NULL
       FROM control.team_memberships AS m
       WHERE m.team_id = sqlc.arg(team_id)
         AND m.identity_id = sqlc.arg(identity_id)
-        AND m.removed_at IS NULL
+        AND control.active_membership(m.id,CURRENT_TIMESTAMP)
   )
 ORDER BY CASE d.kind WHEN 'managed' THEN 0 ELSE 1 END, d.canonical_domain, d.id;
 
@@ -138,7 +138,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS actor
   ON actor.team_id = t.id
  AND actor.identity_id = sqlc.arg(identity_id)
- AND actor.removed_at IS NULL
+ AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
 WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL;
 
@@ -158,7 +158,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS actor
   ON actor.team_id = t.id
  AND actor.identity_id = sqlc.arg(identity_id)
- AND actor.removed_at IS NULL
+ AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
 WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL
 FOR UPDATE OF t, actor;
@@ -193,6 +193,8 @@ FOR SHARE OF teams;
 
 -- name: ListTeamMembershipContexts :many
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
@@ -215,12 +217,14 @@ WHERE m.team_id = sqlc.arg(team_id)
       FROM control.team_memberships AS actor
       WHERE actor.team_id = m.team_id
         AND actor.identity_id = sqlc.arg(identity_id)
-        AND actor.removed_at IS NULL
+        AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
   )
 ORDER BY m.created_at, m.id;
 
 -- name: GetTeamMembershipContext :one
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
@@ -418,6 +422,7 @@ SELECT EXISTS (
 
 -- name: CreateTeamInvitation :one
 INSERT INTO control.team_invitations (
+    personal_account_exception,
     id,
     team_id,
     slug_reservation_id,
@@ -431,6 +436,7 @@ INSERT INTO control.team_invitations (
     created_at,
     expires_at
 ) VALUES (
+    sqlc.arg(personal_account_exception),
     sqlc.arg(id),
     sqlc.arg(team_id),
     sqlc.arg(slug_reservation_id),

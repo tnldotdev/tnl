@@ -206,9 +206,6 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 		{http.MethodDelete, "", func(response http.ResponseWriter, request *http.Request) {
 			h.DeletePublicURL(response, request, "public_url_1")
 		}},
-		{http.MethodPost, "", func(response http.ResponseWriter, request *http.Request) {
-			h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-		}},
 	}
 	for _, test := range calls {
 		request := httptest.NewRequest(test.method, "/v1/public-urls/public_url_1", strings.NewReader(test.body))
@@ -265,9 +262,13 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		},
 	}}
 	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
+	store.route.PolicyRevision = 9
+	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", KeyID: "key_1", GrantID: "grant_1", CreatorID: "identity_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_url", PublicURLID: "public_url_1"}}
+	store.publisherPlan = authorizer.decision.CertificatePlan
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "session-idempotency")
+	request.Header.Set("Publisher-Run-Proof", "exact-signed-proof")
 	response := httptest.NewRecorder()
 	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
 	if response.Code != http.StatusCreated {
@@ -282,12 +283,10 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		setup.PublicUrl.NextPublishRunNumber != 8 || store.authorizationReads != 2 {
 		t.Fatalf("route = %#v, authorization reads = %d", setup.PublicUrl, store.authorizationReads)
 	}
-	if len(authorizer.requests) != 1 || authorizer.requests[0].AccessToken != "access-token" ||
-		authorizer.requests[0].Operation != authorization.OperationPublishRunCreate || authorizer.requests[0].PublicURLID != "public_url_1" ||
-		authorizer.requests[0].PublishRunNumber != 7 || authorizer.requests[0].PublicURLMutationRevision != 4 ||
+	if len(authorizer.requests) != 0 || len(authorizer.readTokens) != 0 || store.publisherToken != "access-token" ||
 		store.sessionLookup != [2]string{"public_url_1", "session-idempotency"} || store.sessionRequest.IdempotencyKey != "session-idempotency" ||
 		store.sessionRequest.ExpectedMutationRevision != 4 || store.sessionRequest.ActingIdentityID != "identity_1" ||
-		store.sessionRequest.PolicyRevision != 9 || !reflect.DeepEqual(store.sessionRequest.RetrySecret, authorizer.decision.RetrySecret[:]) ||
+		store.sessionRequest.PolicyRevision != 9 || store.sessionRequest.PublisherRunProof != "exact-signed-proof" || store.sessionRequest.PublisherGrantID != "grant_1" || store.sessionRequest.PublisherIdentityID != "publisher_1" || len(store.sessionRequest.RetrySecret) != 0 ||
 		store.sessionRequest.RequestDigest == ([32]byte{}) {
 		t.Fatalf("session authorization = %#v, store = %#v", authorizer, store)
 	}
@@ -295,6 +294,8 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 
 func TestCreatePublishRunRejectsUnconfiguredDNSPlan(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1"}}
+	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_url", PublicURLID: "public_url_1"}}
+	store.publisherPlan = &authorization.CertificatePlan{ChallengeMethod: "dns-01"}
 	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
@@ -323,6 +324,26 @@ type publicURLMutationStoreStub struct {
 	sessionLookup              [2]string
 	sessionRequest             controlstate.PublishRunRequest
 	updates, sessions, deletes int
+	publisher                  *controlstate.PublisherIdentity
+	publisherPlan              *authorization.CertificatePlan
+	publisherToken             string
+}
+
+func (s *publicURLMutationStoreStub) AuthenticatePublisherAccess(_ context.Context, token, _ string, _ time.Time) (controlstate.PublisherIdentity, error) {
+	s.publisherToken = token
+	if s.publisher == nil {
+		return controlstate.PublisherIdentity{}, controlstate.ErrPublisherIdentity
+	}
+	return *s.publisher, nil
+}
+func (s *publicURLMutationStoreStub) PublisherMayStartRun(_ context.Context, p controlstate.PublisherIdentity, id string) (bool, error) {
+	return p.Scope.PublicURLID == id && p.Scope.TeamID == s.route.TeamID, nil
+}
+func (s *publicURLMutationStoreStub) PublisherRunPlan(context.Context, controlstate.PublisherIdentity, controlstate.PublicURL, bool) (authorization.CertificatePlan, error) {
+	if s.publisherPlan == nil {
+		return authorization.CertificatePlan{}, controlstate.ErrPublisherIdentity
+	}
+	return *s.publisherPlan, nil
 }
 
 func (s *publicURLMutationStoreStub) GetPublicURLForFeedbackAuthorization(ctx context.Context, id string) (controlstate.PublicURL, error) {
@@ -413,9 +434,6 @@ func publicURLMutationCalls() []publicURLMutationCall {
 	return []publicURLMutationCall{
 		{"update", func(h *handler, w http.ResponseWriter, r *http.Request) { h.UpdatePublicURL(w, r, "public_url_1") }},
 		{"delete", func(h *handler, w http.ResponseWriter, r *http.Request) { h.DeletePublicURL(w, r, "public_url_1") }},
-		{"session", func(h *handler, w http.ResponseWriter, r *http.Request) {
-			h.CreatePublishRun(w, r, "public_url_1", controlv1.CreatePublishRunParams{})
-		}},
 	}
 }
 
@@ -467,6 +485,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 		TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", ActingIdentityID: "identity_1", IdempotencyKey: "create-key",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
 		ServiceProtocol:   controlstate.PublicURLServiceHTTP,
+		AccessMode:        controlstate.VisitorAccessRestricted,
 		AllowedIPPrefixes: []string{"192.0.2.0/24", "2001:db8::/64"}, DNSState: controlstate.PublicURLDNSPending,
 		DNSAuthorityReference: "dns_authority_1", PolicyRevision: 9, Ephemeral: true,
 	}
@@ -483,7 +502,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
+func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 	store := &publicURLCreationStore{result: controlstate.PublicURL{
 		ID: "public_url_created", CanonicalHostname: "demo.example", Purpose: controlstate.PublicURLPurposeApp,
 	}}
@@ -497,8 +516,12 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 		want                  int
 	}{
 		{"saved app", "app", "", http.StatusCreated},
+		{"saved alias", "alias", "", http.StatusCreated},
 		{"ephemeral app", "app", `,"ephemeral":true`, http.StatusBadRequest},
+		{"ephemeral alias", "alias", `,"ephemeral":true`, http.StatusBadRequest},
 		{"saved demo", "demo", "", http.StatusBadRequest},
+		{"saved oauth", "oauth", "", http.StatusBadRequest},
+		{"saved webhooks", "webhooks", "", http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"","purpose":"` + test.purpose + `"` + test.suffix + `}`
@@ -512,31 +535,19 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 			}
 		})
 	}
-	if len(store.requests) != 1 || store.requests[0].Target != "" || len(authorizer.requests) != 1 {
+	if len(store.requests) != 2 || store.requests[0].Target != "" || store.requests[1].Purpose != controlstate.PublicURLPurposeAlias || len(authorizer.requests) != 2 {
 		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
 	}
 }
 
-func TestCreateDatabasePublicURLReturnsAssignedAddress(t *testing.T) {
-	port := uint16(15432)
-	store := &publicURLCreationStore{result: controlstate.PublicURL{
-		ID: "url_created", CanonicalHostname: "orders.example", Purpose: controlstate.PublicURLPurposeApp,
-		ServiceProtocol: controlstate.PublicURLServicePostgres, PublicPort: &port,
-	}}
-	authorizer := &recordingAuthorizer{decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "orders.example", PublicURLScope: "member", PolicyRevision: 9,
-	}}
-	h := &handler{store: store, authorizer: authorizer}
+func TestCreateDatabasePublicURLRequiresPrivateService(t *testing.T) {
+	store := &publicURLCreationStore{}
+	h := &handler{store: store}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"orders.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"postgres"}`))
-	request.Header.Set("Authorization", "Bearer exact-access-token")
-	request.Header.Set("Idempotency-Key", "create-db")
 	response := httptest.NewRecorder()
 	h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
-	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"service_protocol":"postgres"`) ||
-		!strings.Contains(response.Body.String(), `"public_port":15432`) || len(store.requests) != 1 ||
-		store.requests[0].ServiceProtocol != controlstate.PublicURLServicePostgres || store.requests[0].Target != "" {
-		t.Fatalf("database URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
+	if response.Code != http.StatusBadRequest || len(store.requests) != 0 {
+		t.Fatalf("database public URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
 	}
 }
 
@@ -549,22 +560,46 @@ func TestCreatePublicURLRejectsUnknownServiceProtocol(t *testing.T) {
 	}
 }
 
-func TestTargetlessSavedAppPublicURLCanUpdateOnlyItsVisitorPolicy(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
-		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
-		Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 4,
-	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
-		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
-	}}
-	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"","allowed_ip_prefixes":[]}`))
-	request.Header.Set("Authorization", "Bearer exact-access-token")
-	response := httptest.NewRecorder()
-	(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
-	if response.Code != http.StatusOK || store.updates != 1 || store.update.Target != "" {
-		t.Fatalf("targetless policy update = %d: %s, store = %#v", response.Code, response.Body.String(), store)
+func TestTargetlessSavedPublicURLPolicyUpdateValidatesPurposeAndLifecycle(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		purpose   controlstate.PublicURLPurpose
+		target    string
+		ephemeral bool
+		want      int
+	}{
+		{"saved app", controlstate.PublicURLPurposeApp, "", false, http.StatusOK},
+		{"saved alias", controlstate.PublicURLPurposeAlias, "", false, http.StatusOK},
+		{"ephemeral app", controlstate.PublicURLPurposeApp, "", true, http.StatusBadRequest},
+		{"ephemeral alias", controlstate.PublicURLPurposeAlias, "", true, http.StatusBadRequest},
+		{"oauth", controlstate.PublicURLPurposeOAuth, "", false, http.StatusBadRequest},
+		{"webhooks", controlstate.PublicURLPurposeWebhooks, "", false, http.StatusBadRequest},
+		{"demo", controlstate.PublicURLPurposeDemo, "", false, http.StatusBadRequest},
+		{"targeted alias", controlstate.PublicURLPurposeAlias, "http://127.0.0.1:3000", false, http.StatusBadRequest},
+		{"unknown purpose", "unknown", "", false, http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+				ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+				CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
+				Purpose: test.purpose, Target: test.target, Ephemeral: test.ephemeral, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 4,
+			}}
+			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
+				IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
+				DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
+			}}
+			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"","allowed_ip_prefixes":[]}`))
+			request.Header.Set("Authorization", "Bearer exact-access-token")
+			response := httptest.NewRecorder()
+			(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
+			wantUpdates := 0
+			if test.want == http.StatusOK {
+				wantUpdates = 1
+			}
+			if response.Code != test.want || store.updates != wantUpdates || store.update.Target != "" {
+				t.Fatalf("targetless policy update = %d: %s, store = %#v", response.Code, response.Body.String(), store)
+			}
+		})
 	}
 }
 

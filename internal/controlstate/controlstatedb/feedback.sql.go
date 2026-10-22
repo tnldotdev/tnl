@@ -32,8 +32,8 @@ func (q *Queries) AddPublishRunPreviewURL(ctx context.Context, arg AddPublishRun
 const createFeedbackThread = `-- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
     id, preview_id, team_id, public_url_id, publish_run_id,
-    publish_run_number, service, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
-    anchor, evidence, source_at_report, created_at, state_updated_at,
+    publish_run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
+    pin, evidence, report_source_state, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
     $1, $2, $3, $4,
@@ -47,7 +47,7 @@ INSERT INTO control.feedback_threads (
 )
 ON CONFLICT (publish_run_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified
+RETURNING id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest
 `
 
 type CreateFeedbackThreadParams struct {
@@ -105,23 +105,23 @@ func (q *Queries) CreateFeedbackThread(ctx context.Context, arg CreateFeedbackTh
 		&i.PublicURLID,
 		&i.PublishRunID,
 		&i.PublishRunNumber,
-		&i.Service,
+		&i.ServiceName,
 		&i.PagePath,
 		&i.PageTitle,
 		&i.MessageCount,
 		&i.LatestEventCursor,
 		&i.ReportText,
 		&i.AuthorDisplayName,
-		&i.Anchor,
+		&i.AuthorIdentityID,
+		&i.AuthorVerified,
+		&i.Pin,
 		&i.Evidence,
-		&i.SourceAtReport,
+		&i.ReportSourceState,
 		&i.State,
 		&i.CreatedAt,
 		&i.StateUpdatedAt,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
 	)
 	return i, err
 }
@@ -272,7 +272,7 @@ func (q *Queries) GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbac
 }
 
 const getFeedbackPublicURL = `-- name: GetFeedbackPublicURL :one
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose, ingress_pool_id, service_protocol, public_port FROM control.public_urls WHERE id = $1
+SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, publisher_pool, public_url_scope, policy_revision, access_mode, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at FROM control.public_urls WHERE id = $1
 `
 
 func (q *Queries) GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error) {
@@ -282,14 +282,26 @@ func (q *Queries) GetFeedbackPublicURL(ctx context.Context, id string) (ControlP
 		&i.ID,
 		&i.TeamID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.MembershipID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 		&i.CanonicalHostname,
 		&i.Target,
+		&i.Namespace,
+		&i.Purpose,
+		&i.ServiceProtocol,
+		&i.PublisherPool,
 		&i.PublicURLScope,
 		&i.PolicyRevision,
+		&i.AccessMode,
 		&i.IpPolicy,
+		&i.AllowedIpPolicyCiphertext,
+		&i.AllowedIpPolicyStorageKeyID,
+		&i.AllowedIpHashes,
+		&i.AllowedIpHashKeyID,
 		&i.LifecycleState,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
@@ -310,23 +322,12 @@ func (q *Queries) GetFeedbackPublicURL(ctx context.Context, id string) (ControlP
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
-		&i.AllowedIpPolicyCiphertext,
-		&i.AllowedIpPolicyStorageKeyID,
-		&i.AllowedIpHashes,
-		&i.AllowedIpHashKeyID,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.Namespace,
-		&i.Purpose,
-		&i.IngressPoolID,
-		&i.ServiceProtocol,
-		&i.PublicPort,
 	)
 	return i, err
 }
 
 const getFeedbackThread = `-- name: GetFeedbackThread :one
-SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified FROM control.feedback_threads WHERE id = $1
+SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads WHERE id = $1
 `
 
 func (q *Queries) GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error) {
@@ -340,23 +341,23 @@ func (q *Queries) GetFeedbackThread(ctx context.Context, id string) (ControlFeed
 		&i.PublicURLID,
 		&i.PublishRunID,
 		&i.PublishRunNumber,
-		&i.Service,
+		&i.ServiceName,
 		&i.PagePath,
 		&i.PageTitle,
 		&i.MessageCount,
 		&i.LatestEventCursor,
 		&i.ReportText,
 		&i.AuthorDisplayName,
-		&i.Anchor,
+		&i.AuthorIdentityID,
+		&i.AuthorVerified,
+		&i.Pin,
 		&i.Evidence,
-		&i.SourceAtReport,
+		&i.ReportSourceState,
 		&i.State,
 		&i.CreatedAt,
 		&i.StateUpdatedAt,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
 	)
 	return i, err
 }
@@ -533,7 +534,7 @@ func (q *Queries) ListFeedbackEventsForThread(ctx context.Context, arg ListFeedb
 }
 
 const listFeedbackThreadsForPage = `-- name: ListFeedbackThreadsForPage :many
-SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified FROM control.feedback_threads
+SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads
 WHERE preview_id = $1
   AND public_url_id = $2
    AND ($3::text = '' OR page_path = $3)
@@ -573,23 +574,23 @@ func (q *Queries) ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedba
 			&i.PublicURLID,
 			&i.PublishRunID,
 			&i.PublishRunNumber,
-			&i.Service,
+			&i.ServiceName,
 			&i.PagePath,
 			&i.PageTitle,
 			&i.MessageCount,
 			&i.LatestEventCursor,
 			&i.ReportText,
 			&i.AuthorDisplayName,
-			&i.Anchor,
+			&i.AuthorIdentityID,
+			&i.AuthorVerified,
+			&i.Pin,
 			&i.Evidence,
-			&i.SourceAtReport,
+			&i.ReportSourceState,
 			&i.State,
 			&i.CreatedAt,
 			&i.StateUpdatedAt,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
-			&i.AuthorIdentityID,
-			&i.AuthorVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -602,7 +603,7 @@ func (q *Queries) ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedba
 }
 
 const listFeedbackThreadsForTeam = `-- name: ListFeedbackThreadsForTeam :many
-SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified FROM control.feedback_threads
+SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads
 WHERE team_id = $1
   AND id > $2
 ORDER BY id LIMIT 101
@@ -630,23 +631,23 @@ func (q *Queries) ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedba
 			&i.PublicURLID,
 			&i.PublishRunID,
 			&i.PublishRunNumber,
-			&i.Service,
+			&i.ServiceName,
 			&i.PagePath,
 			&i.PageTitle,
 			&i.MessageCount,
 			&i.LatestEventCursor,
 			&i.ReportText,
 			&i.AuthorDisplayName,
-			&i.Anchor,
+			&i.AuthorIdentityID,
+			&i.AuthorVerified,
+			&i.Pin,
 			&i.Evidence,
-			&i.SourceAtReport,
+			&i.ReportSourceState,
 			&i.State,
 			&i.CreatedAt,
 			&i.StateUpdatedAt,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
-			&i.AuthorIdentityID,
-			&i.AuthorVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -659,7 +660,7 @@ func (q *Queries) ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedba
 }
 
 const lockFeedbackThread = `-- name: LockFeedbackThread :one
-SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified FROM control.feedback_threads WHERE id = $1 FOR UPDATE
+SELECT id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error) {
@@ -673,23 +674,23 @@ func (q *Queries) LockFeedbackThread(ctx context.Context, id string) (ControlFee
 		&i.PublicURLID,
 		&i.PublishRunID,
 		&i.PublishRunNumber,
-		&i.Service,
+		&i.ServiceName,
 		&i.PagePath,
 		&i.PageTitle,
 		&i.MessageCount,
 		&i.LatestEventCursor,
 		&i.ReportText,
 		&i.AuthorDisplayName,
-		&i.Anchor,
+		&i.AuthorIdentityID,
+		&i.AuthorVerified,
+		&i.Pin,
 		&i.Evidence,
-		&i.SourceAtReport,
+		&i.ReportSourceState,
 		&i.State,
 		&i.CreatedAt,
 		&i.StateUpdatedAt,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
 	)
 	return i, err
 }
@@ -727,7 +728,7 @@ func (q *Queries) ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 }
 
 const reviewerShareCookieValid = `-- name: ReviewerShareCookieValid :one
-SELECT share.id FROM control.shares AS share
+SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
 JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = $1
@@ -737,6 +738,7 @@ WHERE share.id = $1
   AND cookie.expires_at > $4
   AND share.expires_at > $4
   AND share.revoked_at IS NULL
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $4))
 `
 
 type ReviewerShareCookieValidParams struct {
@@ -746,16 +748,16 @@ type ReviewerShareCookieValidParams struct {
 	Now         pgtype.Timestamptz
 }
 
-func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error) {
+func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, reviewerShareCookieValid,
 		arg.ShareID,
 		arg.PublicURLID,
 		arg.TokenDigest,
 		arg.Now,
 	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateFeedbackThreadState = `-- name: UpdateFeedbackThreadState :one
@@ -763,7 +765,7 @@ UPDATE control.feedback_threads
 SET state = $1, state_updated_at = $2
 WHERE id = $3
   AND state = $4
-RETURNING id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, anchor, evidence, source_at_report, state, created_at, state_updated_at, idempotency_key, request_digest, author_identity_id, author_verified
+RETURNING id, schema_version, preview_id, team_id, public_url_id, publish_run_id, publish_run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest
 `
 
 type UpdateFeedbackThreadStateParams struct {
@@ -789,23 +791,23 @@ func (q *Queries) UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedb
 		&i.PublicURLID,
 		&i.PublishRunID,
 		&i.PublishRunNumber,
-		&i.Service,
+		&i.ServiceName,
 		&i.PagePath,
 		&i.PageTitle,
 		&i.MessageCount,
 		&i.LatestEventCursor,
 		&i.ReportText,
 		&i.AuthorDisplayName,
-		&i.Anchor,
+		&i.AuthorIdentityID,
+		&i.AuthorVerified,
+		&i.Pin,
 		&i.Evidence,
-		&i.SourceAtReport,
+		&i.ReportSourceState,
 		&i.State,
 		&i.CreatedAt,
 		&i.StateUpdatedAt,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
 	)
 	return i, err
 }

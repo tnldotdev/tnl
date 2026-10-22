@@ -92,8 +92,8 @@ func TestWorkerDeliversAcceptedItemsAndRetriesRejections(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	for _, want := range []string{`tnl_control_public_url_usage_items_total{result="accepted"} 1`, `tnl_control_public_url_usage_items_total{result="retried"} 1`,
-		`tnl_control_public_url_usage_receiver_duration_seconds_count{outcome="success"} 1`} {
+	for _, want := range []string{`tnl_control_public_url_usage_items_total{tnl_event="accepted"} 1`, `tnl_control_public_url_usage_items_total{tnl_event="retried"} 1`,
+		`tnl_control_public_url_usage_receiver_duration_seconds_count{tnl_outcome="success"} 1`} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Errorf("missing metric %q", want)
 		}

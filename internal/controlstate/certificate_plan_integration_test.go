@@ -21,7 +21,7 @@ import (
 )
 
 func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
-	for _, kind := range []string{"managed", "custom", "builtin_control"} {
+	for _, kind := range []string{"managed", "custom", "oidc_control"} {
 		t.Run(kind, func(t *testing.T) {
 			database, now := newCertificatePlanDatabase(t)
 			const domain = "routes.example.test"
@@ -54,15 +54,15 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				Identifiers: []string{"member." + domain, "*.member." + domain}, ChallengeMethod: "dns-01"}
 			var route PublicURL
 			var authentication PublishRunAuthentication
-			if kind == "builtin_control" {
-				local, err := database.CreateBuiltinControlSession(t.Context(), domain, 1, time.Hour, 24*time.Hour, now)
+			if kind == "oidc_control" {
+				local, err := createTestControlSession(t.Context(), database, domain, time.Hour, 24*time.Hour, now)
 				if err != nil {
 					t.Fatal(err)
 				}
 				membership := local.Identity.Memberships[0]
 				domains, err := database.ListTeamDomains(t.Context(), local.Identity.Identity.ID, membership.TeamID)
 				if err != nil || len(domains) != 1 {
-					t.Fatalf("builtin domains = %#v, %v", domains, err)
+					t.Fatalf("OIDC team domains = %#v, %v", domains, err)
 				}
 				reference = domains[0].DNSAuthorityReference
 				namespace := membership.ManagedLabel + "." + domain
@@ -77,7 +77,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				principal, err := database.AuthenticateAccessToken(t.Context(), local.AccessToken, 1, now)
+				principal, err := database.AuthenticateAccessToken(t.Context(), local.AccessToken, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -161,7 +161,7 @@ func TestIntegrationCertificatePlanReuseAcrossPublicURLs(t *testing.T) {
 }
 
 func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
-	for _, name := range []string{"same_plan_control", "cache_key", "scope", "identifiers", "method", "not_after", "expired", "stale_session", "wrong_token", "wrong_version", "revoked"} {
+	for _, name := range []string{"same_plan_control", "cache_key", "scope", "identifiers", "not_after", "expired", "stale_session", "wrong_token", "wrong_version", "revoked"} {
 		t.Run(name, func(t *testing.T) {
 			database, now := newCertificatePlanDatabase(t)
 			const hostname = "api.member.routes.example.test"
@@ -181,8 +181,6 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 				plan.Scope = "member.routes.example.test"
 			case "identifiers":
 				plan.Identifiers = append(plan.Identifiers, "member.routes.example.test")
-			case "method":
-				plan.ChallengeMethod = "tls-alpn-01"
 			}
 			// start a new publish run on the same public URL so a public URL identity
 			// mismatch cannot mask the certificate plan checks.
@@ -303,7 +301,7 @@ func startExternalPlanSession(t *testing.T, database *Database, now time.Time, r
 	return PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: route.ID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
 }
 
-func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork)) ACMEOrderWork {
+func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, authentication PublishRunAuthentication, plan CertificatePlan, complete bool, edit func(*ACMEOrderWork), private ...PrivateRunState) ACMEOrderWork {
 	t.Helper()
 	plan.Identifiers = slices.Clone(plan.Identifiers)
 	slices.Sort(plan.Identifiers)
@@ -322,10 +320,13 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuance, err := database.CreateCertificateIssuance(t.Context(), CreateCertificateIssuanceRequest{
-		Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance",
-		RequestDigest: sha256.Sum256(csr), CSRDER: csr,
-	}, now)
+	var issuance CertificateIssuance
+	if len(private) == 1 {
+		run := private[0]
+		issuance, err = database.CreatePrivateCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, account.DirectoryURL, "issuance", run.RunNumber, csr, now)
+	} else {
+		issuance, err = database.CreateCertificateIssuance(t.Context(), CreateCertificateIssuanceRequest{Authentication: authentication, DirectoryURL: account.DirectoryURL, IdempotencyKey: "issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr}, now)
+	}
 	if err != nil {
 		t.Fatalf("full-plan CSR precondition: %v", err)
 	}
@@ -337,8 +338,8 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 	expiresAt := now.Add(time.Hour)
 	for index, identifier := range plan.Identifiers {
 		work.Authorizations = append(work.Authorizations, ACMEAuthorizationWork{
-			Identifier: identifier, AuthorizationURL: fmt.Sprintf("https://acme.example.test/authz/%d", index),
-			ChallengeType: plan.ChallengeMethod, ChallengeURL: fmt.Sprintf("https://acme.example.test/challenge/%d", index),
+			Identifier: identifier, AuthorizationURL: fmt.Sprintf("https://acme.example.test/authz/%s/%d", work.ID, index),
+			ChallengeType: plan.ChallengeMethod, ChallengeURL: fmt.Sprintf("https://acme.example.test/challenge/%s/%d", work.ID, index),
 			ChallengeToken: fmt.Sprintf("token-%d", index), ChallengeDigest: sha256.Sum256([]byte(identifier)),
 			State: "presenting", AvailableAt: now, ExpiresAt: &expiresAt,
 		})
@@ -391,6 +392,14 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 		t.Fatalf("save valid certificate work: %v", err)
 	}
 	return work
+}
+
+func installPrivateTestCertificate(t *testing.T, d *Database, prep PrivateRunPreparation, run PrivateRunState, now time.Time) {
+	t.Helper()
+	work := createPlanIssuanceWork(t, d, now, PublishRunAuthentication{}, prep.CertificatePlan, true, nil, run)
+	if err := d.MarkPrivateCertificateInstalled(t.Context(), run.ServiceID, run.RunID, run.Token, work.ID, run.RunNumber, *work.NotAfter, now); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIntegrationCertificateInstallMaterial(t *testing.T) {

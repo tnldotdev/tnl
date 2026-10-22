@@ -24,12 +24,6 @@ func TestAuthenticationRequestsUseAuthorityContract(t *testing.T) {
 		name, path, body string
 		call             func(*Client) (authorityv1.ControlSessionResponse, error)
 	}{
-		{"login token", "/v1/auth/token", `{"login_token":"login-input"}`, func(c *Client) (authorityv1.ControlSessionResponse, error) {
-			return c.Exchange(t.Context(), "login-input")
-		}},
-		{"OIDC", "/v1/auth/oidc", `{"id_token":"oidc-input"}`, func(c *Client) (authorityv1.ControlSessionResponse, error) {
-			return c.ExchangeOIDC(t.Context(), "oidc-input")
-		}},
 		{"refresh", "/v1/auth/refresh", `{"refresh_token":"refresh-input"}`, func(c *Client) (authorityv1.ControlSessionResponse, error) {
 			return c.Refresh(t.Context(), "refresh-input")
 		}},
@@ -136,7 +130,7 @@ func TestCredentialExchangeDoesNotFollowRedirects(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				if request.URL.Path != "/v1/auth/token" || string(payload) != `{"login_token":"login-secret"}` {
+				if request.URL.Path != "/v1/auth/device/poll" || string(payload) != `{"polling_credential":"poll-secret"}` {
 					t.Errorf("unexpected credential exchange: %s %s", request.Method, request.URL)
 				}
 				response.Header().Set("Location", destination.URL+"/record")
@@ -149,7 +143,7 @@ func TestCredentialExchangeDoesNotFollowRedirects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.Exchange(t.Context(), "login-secret"); err == nil {
+			if _, err := client.PollDeviceLogin(t.Context(), "poll-secret"); err == nil {
 				t.Fatal("redirect response was accepted")
 			}
 			if destinationCalls != 0 {

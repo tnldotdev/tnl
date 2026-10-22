@@ -8,6 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -15,6 +16,12 @@ import (
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrProjectManaged):
+		writeProblem(response, http.StatusConflict, controlv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")
+	case errors.Is(err, controlstate.ErrTrafficSelection):
+		writeProblem(response, http.StatusBadRequest, controlv1.TrafficSelectionInvalid, "traffic selection is invalid or exceeds operator ceilings; lower the selected limits and retry")
+	case errors.Is(err, controlstate.ErrVisitorSignIn):
+		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "feedback requires sign-in; sign in and retry")
 	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
 	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):
@@ -48,9 +55,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "certificate issuance not found")
 	case errors.Is(err, controlstate.ErrCertificateIssuanceIdempotency):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate issuance state conflict")
-	case errors.Is(err, controlstate.ErrCertificateChallengeNotReady):
-		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate challenge state conflict")
-	case errors.Is(err, controlstate.ErrPublicURLCredential), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, controlstate.ErrPublicURLPublishCredential):
+	case errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, controlstate.ErrPublisherIdentity):
 		writeBearerProblem(response)
 	case errors.Is(err, controlstate.ErrPublicURLCreationGated), errors.Is(err, controlstate.ErrPublishRunCreationGated),
 		errors.Is(err, controlstate.ErrCertificateIssuanceGated):
@@ -59,7 +64,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 
@@ -87,7 +92,7 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 
 func writeUnavailableProblem(response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, title)
-	operatorlog.Report(operation, reason, requestID, err)
+	operatorlog.ReportContext(observability.ResponseContext(response), operation, reason, requestID, err)
 }
 
 func newRequestID() string { return problemtype.NewRequestID() }

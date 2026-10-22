@@ -241,6 +241,7 @@ func (d *Database) ListTeamMemberships(ctx context.Context, identityID, teamID s
 		result[index] = membershipFromRow(
 			row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
 			row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+			row.IdentityConnectionID, row.ManualSuspendedAt, row.PersonalAccountException, row.CompanySignInRequired, row.Active,
 		)
 	}
 	return result, nil
@@ -327,6 +328,7 @@ func (d *Database) SetMembershipRole(
 	return membershipFromRow(
 		row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
 		row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+		row.IdentityConnectionID, row.ManualSuspendedAt, row.PersonalAccountException, row.CompanySignInRequired, row.Active,
 	), nil
 }
 
@@ -398,6 +400,9 @@ func (d *Database) RemoveMembership(
 	if err := closeMembershipPublishRuns(ctx, queries, &pendingEvents, teamID, membershipID, true, now, "membership_removed"); err != nil {
 		return err
 	}
+	if err := closeInactiveCompanySubjects(ctx, tx, queries, teamID, now); err != nil {
+		return err
+	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return err
 	}
@@ -445,6 +450,7 @@ func (d *Database) getMembership(ctx context.Context, teamID, membershipID strin
 	return membershipFromRow(
 		row.ID, row.TeamID, row.IdentityID, row.TeamDisplayName, row.TeamKind, row.Role,
 		row.MemberSlug, row.ManagedLabel, row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
+		row.IdentityConnectionID, row.ManualSuspendedAt, row.PersonalAccountException, row.CompanySignInRequired, row.Active,
 	), nil
 }
 
@@ -467,6 +473,9 @@ func lockTeamActor(
 	if err != nil {
 		return controlstatedb.LockTeamActorContextRow{}, fmt.Errorf("controlstate: lock team actor: %w", err)
 	}
+	if err := requireTeamSession(ctx, queries, teamID, identityID, time.Now()); err != nil {
+		return controlstatedb.LockTeamActorContextRow{}, err
+	}
 	return row, nil
 }
 
@@ -486,13 +495,26 @@ func closeMembershipPublishRuns(
 		return fmt.Errorf("controlstate: update membership public_urls: lock public_urls: %w", err)
 	}
 	for _, route := range routes {
-		session, err := queries.GetOpenPublishRun(ctx, route.ID)
-		if err == nil && (route.MembershipID.String == membershipID || session.MembershipID.String == membershipID) {
-			if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason); err != nil {
-				return err
+		sessions, err := queries.ListOpenPublishRuns(ctx, route.ID)
+		if err != nil {
+			return err
+		}
+		for _, session := range sessions {
+			if route.MembershipID.String == membershipID || session.MembershipID.String == membershipID {
+				// a shared team-owned publisher has no mutable human subject.
+				if session.PublisherIdentityID.Valid {
+					p, err := queries.LockPublisherIdentity(ctx, session.PublisherIdentityID.String)
+					if err != nil {
+						return err
+					}
+					if p.Ownership == "team" && route.PublicURLScope == "shared" {
+						continue
+					}
+				}
+				if err := closePublishRun(ctx, queries, pendingEvents, route, session, PublishRunClosed, now, reason); err != nil {
+					return err
+				}
 			}
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("controlstate: update membership public_urls: read publish run: %w", err)
 		}
 		if suspendMemberPublicURLs && route.MembershipID.Valid && route.MembershipID.String == membershipID {
 			if updated, err := queries.SuspendAuthorityPublicURL(ctx, controlstatedb.SuspendAuthorityPublicURLParams{
@@ -509,8 +531,10 @@ func membershipFromRow(
 	id, teamID, identityID, teamDisplayName, teamKind, role, memberSlug, managedLabel string,
 	policyRevision int64,
 	createdAt, updatedAt pgtype.Timestamptz,
+	connection pgtype.Text, suspended pgtype.Timestamptz, exception, required, active bool,
 ) Membership {
 	return Membership{
+		IdentityConnectionID: connection.String, ManualSuspendedAt: suspended.Time, PersonalAccountException: exception, CompanySignInRequired: required, Active: active,
 		ID: id, TeamID: teamID, IdentityID: identityID, TeamDisplayName: teamDisplayName,
 		TeamKind: TeamKind(teamKind), Role: TeamRole(role), MemberSlug: memberSlug, ManagedLabel: managedLabel,
 		PolicyRevision: policyRevision, CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,

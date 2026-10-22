@@ -114,7 +114,7 @@ type adminStoreStub struct {
 	setRequestID   string
 }
 
-func (s *adminStoreStub) AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error) {
+func (s *adminStoreStub) AuthenticateAccessToken(context.Context, credentials.AccessToken, time.Time) (controlstate.ControlPrincipal, error) {
 	return s.principal, nil
 }
 

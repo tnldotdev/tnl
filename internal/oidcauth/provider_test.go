@@ -12,10 +12,11 @@ import (
 )
 
 type testProvider struct {
-	issuer string
-	client *http.Client
-	signer *oidctest.Signer
-	mux    *http.ServeMux
+	issuer      string
+	client      *http.Client
+	signer      *oidctest.Signer
+	mux         *http.ServeMux
+	authMethods []string
 }
 
 func newTestProvider(t *testing.T, issuerPath string) *testProvider {
@@ -24,9 +25,9 @@ func newTestProvider(t *testing.T, issuerPath string) *testProvider {
 	p.mux.HandleFunc(issuerPath+"/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		origin := "https://" + r.Host
 		writeProviderJSON(t, w, map[string]any{
-			"issuer": origin + issuerPath, "jwks_uri": origin + "/jwks",
+			"issuer": p.issuer, "jwks_uri": origin + "/jwks",
 			"authorization_endpoint": origin + "/authorize", "token_endpoint": origin + "/token",
-			"device_authorization_endpoint": origin + "/device",
+			"token_endpoint_auth_methods_supported": p.authMethods,
 		})
 	})
 	jwk := p.signer.JWK("key-1")

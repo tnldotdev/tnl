@@ -45,9 +45,9 @@ func TestWebhookProviderSourcesAreCachedAndMeasuredWithoutURLs(t *testing.T) {
 	metric := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(metric, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	for _, expected := range []string{
-		`tnl_control_webhook_provider_source_requests_total{outcome="served",provider="resend"} 1`,
-		`tnl_control_webhook_provider_source_requests_total{outcome="not_modified",provider="resend"} 1`,
-		`tnl_control_webhook_provider_source_requests_total{outcome="unknown",provider="unknown"} 1`,
+		`tnl_control_webhook_provider_source_requests_total{tnl_outcome="success",tnl_provider="resend",tnl_reason="served"} 1`,
+		`tnl_control_webhook_provider_source_requests_total{tnl_outcome="success",tnl_provider="resend",tnl_reason="not_modified"} 1`,
+		`tnl_control_webhook_provider_source_requests_total{tnl_outcome="error",tnl_provider="unknown",tnl_reason="other"} 1`,
 	} {
 		if !strings.Contains(metric.Body.String(), expected) {
 			t.Errorf("missing bounded metric %q", expected)

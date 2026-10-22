@@ -8,7 +8,8 @@ import (
 
 func controlSessionResponse(session controlstate.ControlSession) authorityv1.ControlSessionResponse {
 	return authorityv1.ControlSessionResponse{
-		SessionId: session.SessionID, AccessToken: session.AccessToken.String(),
+		CompanyAuthenticationExpiresAt: session.CompanyAuthenticationExpiresAt,
+		SessionId:                      session.SessionID, AccessToken: session.AccessToken.String(),
 		AccessExpiresAt: session.AccessExpiresAt, RefreshToken: session.RefreshToken.String(),
 		RefreshExpiresAt: session.RefreshExpiresAt, Identity: identityContextResponse(session.Identity),
 	}
@@ -29,23 +30,32 @@ func identityContextResponse(context controlstate.IdentityContext) authorityv1.I
 		memberships[index] = membershipResponse(membership)
 	}
 	return authorityv1.IdentityContext{
-		Identity: identity, PersonalTeamId: context.PersonalTeamID, Memberships: memberships,
+		Identity: identity, PersonalTeamId: context.PersonalTeamID, DefaultTeamId: new(context.DefaultTeamID), Memberships: memberships,
 	}
 }
 
 func membershipResponse(membership controlstate.Membership) authorityv1.Membership {
-	return authorityv1.Membership{
+	result := authorityv1.Membership{
+		Active: &membership.Active, PersonalAccountException: &membership.PersonalAccountException, CompanySignInRequired: &membership.CompanySignInRequired,
 		Id: membership.ID, TeamId: membership.TeamID, IdentityId: membership.IdentityID,
 		TeamDisplayName: membership.TeamDisplayName, TeamKind: authorityv1.TeamKind(membership.TeamKind),
 		Role: authorityv1.TeamRole(membership.Role), MemberSlug: membership.MemberSlug,
 		ManagedLabel: membership.ManagedLabel, PolicyRevision: membership.PolicyRevision,
 		CreatedAt: membership.CreatedAt, UpdatedAt: membership.UpdatedAt,
 	}
+	if membership.IdentityConnectionID != "" {
+		result.IdentityConnectionId = &membership.IdentityConnectionID
+	}
+	if !membership.ManualSuspendedAt.IsZero() {
+		result.ManualSuspendedAt = &membership.ManualSuspendedAt
+	}
+	return result
 }
 
 func invitationResponse(invitation controlstate.Invitation) authorityv1.Invitation {
 	result := authorityv1.Invitation{
-		Id: invitation.ID, TeamId: invitation.TeamID, MemberSlug: invitation.MemberSlug,
+		PersonalAccountException: &invitation.PersonalAccountException,
+		Id:                       invitation.ID, TeamId: invitation.TeamID, MemberSlug: invitation.MemberSlug,
 		InitialRole: authorityv1.TeamRole(invitation.InitialRole), State: authorityv1.InvitationState(invitation.State),
 		CreatedAt: invitation.CreatedAt, ExpiresAt: invitation.ExpiresAt,
 	}

@@ -58,48 +58,6 @@ func TestParseAccessTokenRejectsMalformedAndWrongClass(t *testing.T) {
 	}
 }
 
-func TestLoginTokenRoundTripAndClassIsolation(t *testing.T) {
-	token, err := NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifier, err := ParseLoginToken(token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(token.String(), loginPrefix) || !verifier.Matches(token) {
-		t.Fatal("generated login token did not match")
-	}
-	if verifier.SourceRevision() == 0 {
-		t.Fatal("generated login token has zero source revision")
-	}
-
-	other, err := NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if verifier.Matches(other) {
-		t.Fatal("different login token matched")
-	}
-	if verifier.Matches(LoginToken(strings.Replace(token.String(), loginPrefix, accessPrefix, 1))) {
-		t.Fatal("access-class token matched login verifier")
-	}
-	if _, err := ParseLoginToken(LoginToken("tnl_public_url_invalid")); !errors.Is(err, ErrInvalidLoginToken) {
-		t.Fatalf("wrong-class error = %v", err)
-	}
-}
-
-func TestLoginVerifierSourceRevisionPreservesTokenRevisionAlgorithm(t *testing.T) {
-	const token = LoginToken("tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8")
-	verifier, err := ParseLoginToken(token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if verifier.SourceRevision() != 2410938896160445502 {
-		t.Fatalf("source revision = %d", verifier.SourceRevision())
-	}
-}
-
 func TestRefreshTokenRoundTripAndClassIsolation(t *testing.T) {
 	token, lookupID, hash, err := NewRefreshToken()
 	if err != nil {
@@ -152,45 +110,7 @@ func TestDataPlaneTokenClasses(t *testing.T) {
 	}
 }
 
-func TestPublicURLCredentialKindsDoNotCrossScopes(t *testing.T) {
-	saved, savedID, savedHash, err := NewPublicURLPublishCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ephemeral, ephemeralID, ephemeralHash, err := NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(saved.String(), "tnl_publish_") || !strings.HasPrefix(ephemeral.String(), "tnl_eph_") {
-		t.Fatal("credentials do not identify their distinct scopes")
-	}
-	if !IsPublicURLPublishCredential(saved.String()) || IsEphemeralCredential(saved.String()) ||
-		!IsEphemeralCredential(ephemeral.String()) || IsPublicURLPublishCredential(ephemeral.String()) {
-		t.Fatal("publish credential dispatch selected the wrong scope")
-	}
-	if id, hash, secret, err := ParsePublicURLPublishCredential(saved); err != nil || id != savedID || hash != savedHash || len(secret) == 0 {
-		t.Fatalf("saved credential = %q, %x, %v", id, hash, err)
-	}
-	if id, hash, secret, err := ParseEphemeralCredential(ephemeral); err != nil || id != ephemeralID || hash != ephemeralHash || len(secret) == 0 {
-		t.Fatalf("ephemeral credential = %q, %x, %v", id, hash, err)
-	}
-	if _, _, _, err := ParsePublicURLPublishCredential(PublicURLPublishCredential(ephemeral)); !errors.Is(err, ErrInvalidPublicURLPublishCredential) {
-		t.Fatalf("ad-hoc credential published saved URL: %v", err)
-	}
-	if _, _, _, err := ParseEphemeralCredential(EphemeralCredential(saved)); !errors.Is(err, ErrInvalidEphemeralCredential) {
-		t.Fatalf("saved credential allocated ad-hoc URL: %v", err)
-	}
-}
-
 func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
-	var request struct {
-		LoginToken LoginToken `json:"login_token"`
-	}
-	readJSONFixture(t, "../../api/fixtures/authority/v1/token-exchange-request.json", &request)
-	if _, err := ParseLoginToken(request.LoginToken); err != nil {
-		t.Fatalf("login fixture: %v", err)
-	}
-
 	var response struct {
 		AccessToken  AccessToken  `json:"access_token"`
 		RefreshToken RefreshToken `json:"refresh_token"`

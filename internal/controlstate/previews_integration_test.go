@@ -7,7 +7,7 @@ import (
 
 func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "previews")
-	routeRequest := builtinRouteRequest(t, database, now)
+	routeRequest := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, routeRequest, now)
 	group, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "project-worktree", now)
 	if err != nil || group.ID == "" || len(group.PublicURLIDs) != 0 {
@@ -46,7 +46,7 @@ func TestIntegrationPreviewGroupsOnlyAuthorizedPublicURLs(t *testing.T) {
 
 func TestIntegrationTeamAccessStaysInOnePreviewAndCanBeRevoked(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team-preview-access")
-	routeRequest := builtinRouteRequest(t, database, now)
+	routeRequest := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, routeRequest, now)
 	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "team-access", now)
 	if err != nil {

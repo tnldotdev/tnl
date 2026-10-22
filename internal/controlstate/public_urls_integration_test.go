@@ -17,7 +17,7 @@ import (
 
 func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "public_url_creation")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
@@ -70,45 +70,25 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	}
 }
 
-func TestIntegrationSimpleManagedDirectNameReservation(t *testing.T) {
+func TestIntegrationAdministratorCannotClaimManagedRootNames(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "simple_managed_direct")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.ManagedURLMode = naming.ManagedURLModeSimple
 	request.MembershipID, request.PublicURLScope = "", PublicURLScopeShared
 	request.CanonicalHostname = "app.tunnels.example.test"
+	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLAccess) {
+		t.Fatalf("administrator claimed root: %v", err)
+	}
+	request.CanonicalHostname = "app.operator.tunnels.example.test"
 	first, err := database.CreatePublicURL(t.Context(), request, now)
-	if err != nil || first.PublicURLScope != PublicURLScopeShared || first.MembershipID != "" {
-		t.Fatalf("simple direct public URL = %#v, %v", first, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var namespace string
-	if err := database.pool.QueryRow(t.Context(), `SELECT namespace FROM control.public_urls WHERE id = $1`, first.ID).Scan(&namespace); err != nil || namespace != "tunnels.example.test" {
-		t.Fatalf("direct URL namespace = %q, %v", namespace, err)
+	if first.Namespace != "operator.tunnels.example.test" {
+		t.Fatalf("shared team namespace: %q", first.Namespace)
 	}
-	if replay, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second)); err != nil || replay.ID != first.ID {
-		t.Fatalf("direct public URL retry = %#v, %v", replay, err)
-	}
-	nested := request
-	nested.IdempotencyKey = "nested-direct"
-	nested.RequestDigest = sha256.Sum256([]byte(nested.IdempotencyKey))
-	nested.CanonicalHostname = "api.preview.tunnels.example.test"
-	if _, err := database.CreatePublicURL(t.Context(), nested, now); err != nil {
-		t.Fatalf("nested direct alias: %v", err)
-	}
-	previewTeam := authorityTeamRequest(request.ActingIdentityID)
-	previewTeam.DisplayName, previewTeam.IdempotencyKey = "preview", "preview-name"
-	if _, err := database.CreateTeam(t.Context(), previewTeam, now); !errors.Is(err, ErrTeamNameUnavailable) {
-		t.Fatalf("nested direct URL root was assigned to a team: %v", err)
-	}
-	teamRequest := authorityTeamRequest(request.ActingIdentityID)
-	teamRequest.DisplayName = "app"
-	if _, err := database.CreateTeam(t.Context(), teamRequest, now); !errors.Is(err, ErrTeamNameUnavailable) {
-		t.Fatalf("direct URL name was assigned to a team: %v", err)
-	}
-	request.IdempotencyKey = "reserved-label"
-	request.RequestDigest = sha256.Sum256([]byte(request.IdempotencyKey))
-	request.CanonicalHostname = "local-administrator.tunnels.example.test"
-	if _, err := database.CreatePublicURL(t.Context(), request, now); !errors.Is(err, ErrPublicURLConflict) {
-		t.Fatalf("personal team name was claimed as a direct URL: %v", err)
+	if repeated, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Second)); err != nil || repeated.ID != first.ID {
+		t.Fatalf("team URL retry: %v", err)
 	}
 }
 
@@ -147,7 +127,7 @@ func TestIntegrationSimpleManagedOrganizationNamespace(t *testing.T) {
 
 func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "large_public_url_ip_policy")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.AllowedIPPrefixes = make([]string, 512)
 	for index := range request.AllowedIPPrefixes {
 		request.AllowedIPPrefixes[index] = fmt.Sprintf("198.18.%d.%d/32", index/256, index%256)
@@ -185,7 +165,7 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 	for _, sameRequest := range []bool{true, false} {
 		t.Run(fmt.Sprintf("same_request_%t", sameRequest), func(t *testing.T) {
 			database, now := newControlStateIntegrationDatabase(t, "public_url_contention")
-			request := builtinRouteRequest(t, database, now)
+			request := oidcRouteRequest(t, database, now)
 			request.Ephemeral = !sameRequest
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -245,7 +225,7 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 
 func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "public_url_mutation")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, request, now)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET policy_revision = 2, updated_at = $2 WHERE id = $1`, route.TeamID, now); err != nil {
 		t.Fatal(err)
@@ -267,7 +247,7 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 		ID: "session_stale_update", PublicURLID: route.ID, TeamID: route.TeamID,
 		MembershipID: route.MembershipID, ActingIdentityID: request.ActingIdentityID, PolicyRevision: 2,
 		CertificateCacheKey: "stale-update", CertificateScope: "route", CertificateIdentifiers: []string{route.CanonicalHostname},
-		ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Second),
+		ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Second),
 	})
 	update.Target, update.AllowedIPPrefixes = "http://127.0.0.1:5000", []string{}
 	updated, err = database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(2*time.Second))
@@ -282,7 +262,7 @@ func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
 
 func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "ephemeral_expiry")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.Ephemeral = true
 	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil || !route.Ephemeral || route.ExpiresAt == nil || !route.ExpiresAt.Equal(now.Add(ephemeralPublicURLGracePeriod)) {
@@ -301,7 +281,7 @@ func TestIntegrationEphemeralRouteExpiry(t *testing.T) {
 
 func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "dns_route_work")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.DNSState = PublicURLDNSPending
 	route, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil || route.DNSState != PublicURLDNSPending || route.DNSAuthorityReference != "" {
@@ -353,9 +333,9 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	}
 }
 
-func builtinRouteRequest(t *testing.T, database *Database, now time.Time) CreatePublicURLRequest {
+func oidcRouteRequest(t *testing.T, database *Database, now time.Time) CreatePublicURLRequest {
 	t.Helper()
-	session := newBuiltinSession(t, database, now)
+	session := newOIDCSession(t, database, now)
 	membership := session.Identity.Memberships[0]
 	domains, err := database.ListTeamDomains(t.Context(), session.Identity.Identity.ID, membership.TeamID)
 	if err != nil || len(domains) != 1 {

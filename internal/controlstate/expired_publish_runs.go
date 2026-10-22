@@ -9,11 +9,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
-// ExpireSavedPublishRuns closes at most one batch of expired runs, including
-// runs on saved public URLs that no publisher will touch again. each closure
-// also releases its relay reservations and publishes routing tombstones.
+// ExpireSavedPublishRuns closes expired HTTP and private runs, including runs
+// no publisher will touch again. each closure releases its shared relay
+// reservations and publishes a run-scoped routing tombstone.
 func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (count int, retErr error) {
 	if err := d.requireOpen(); err != nil {
+		return 0, err
+	}
+	if err := d.expireCompanyEligibility(ctx, now); err != nil {
 		return 0, err
 	}
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
@@ -32,13 +35,11 @@ func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (c
 	for _, route := range routes {
 		// the candidate may have been renewed after the query's snapshot.
 		// recheck the publish run under its public URL lock before closing it.
-		_, closed, err := expireStaleOpenPublishRun(ctx, queries, &pendingEvents, route, now)
+		_, closed, err := expireStaleOpenPublishRuns(ctx, queries, &pendingEvents, route, now)
 		if err != nil {
 			return 0, err
 		}
-		if closed {
-			count++
-		}
+		count += closed
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return 0, err
@@ -46,5 +47,9 @@ func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (c
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("controlstate: expire saved publish runs: commit: %w", err)
 	}
-	return count, nil
+	private, err := d.ExpirePrivateServiceRuns(ctx, now)
+	if err != nil {
+		return count, err
+	}
+	return count + private, nil
 }

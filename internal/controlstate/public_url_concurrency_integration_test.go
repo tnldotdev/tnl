@@ -36,7 +36,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'publish_run_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'publish_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
@@ -50,7 +50,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 			RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: first.MutationRevision,
 			CertificateCacheKey: first.CanonicalHostname, CertificateScope: first.CanonicalHostname,
-			CertificateIdentifiers: []string{first.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
+			CertificateIdentifiers: []string{first.CanonicalHostname}, CertificateChallenge: "dns-01",
 		}, now, time.Minute, time.Minute)
 		sessionDone <- err
 	})
@@ -154,7 +154,7 @@ func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
 
 func TestIntegrationTeamCreationIdentityLockAvoidsDomainForeignKeyCycle(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creator_domain_fk")
-	session := newBuiltinSession(t, database, now)
+	session := newOIDCSession(t, database, now)
 	identity := session.Identity.Identity.ID
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -191,7 +191,7 @@ func TestIntegrationTeamCreationIdentityLockAvoidsDomainForeignKeyCycle(t *testi
 
 func TestIntegrationTeamCreatorLockPreservesIdentityProtection(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "team_creator_lock")
-	session := newBuiltinSession(t, database, now)
+	session := newOIDCSession(t, database, now)
 	identity := session.Identity.Identity.ID
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

@@ -10,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 const publishRunConnectionCount = 2
@@ -29,7 +29,6 @@ const maximumExpiredPublishRunBatch = 100
 var (
 	ErrPublicURLNotFound         = errors.New("controlstate: public URL not found")
 	ErrPublicURLNotEnabled       = errors.New("controlstate: public URL is not enabled")
-	ErrPublicURLCredential       = errors.New("controlstate: public URL credential is invalid")
 	ErrPublicURLAuthority        = errors.New("controlstate: route authority is stale")
 	ErrPublishRunConflict        = errors.New("controlstate: public URL already has a live session")
 	ErrPublishRunIdempotency     = errors.New("controlstate: publish-run idempotency conflict")
@@ -55,7 +54,14 @@ type PublishRunRequest struct {
 	CertificateIdentifiers   []string
 	CertificateChallenge     certificateidentity.ChallengeMethod
 	ExpectedMutationRevision uint64
-	PublishCredentialID      string
+	PublisherIdentityID      string
+	PublisherGrantID         string
+	PublisherKeyID           string
+	PublisherRunProof        string
+	PublisherSourceIP        string
+	TrafficSelection         *trafficlimits.Selection
+	TrafficDefaults          trafficlimits.Limits
+	TrafficCeiling           trafficlimits.Limits
 }
 
 // ConnectionAssignment is one of the two independently assigned publisher
@@ -71,20 +77,22 @@ type ConnectionAssignment struct {
 
 // PublishRunSetup is the retry-stable result of publish-run creation.
 type PublishRunSetup struct {
-	PublishRunID         string
-	PublicURLID          string
-	TeamID               string
-	MembershipID         string
-	PublishRunNumber     uint64
-	PolicyRevision       uint64
-	PublishRunToken      credentials.PublishRunToken
-	State                PublishRunState
-	CreatedAt            time.Time
-	ExpiresAt            time.Time
-	ReadyAt              *time.Time
-	ClosedAt             *time.Time
-	PolicyDenials        uint64
-	PublisherConnections [publishRunConnectionCount]ConnectionAssignment
+	PublishRunID          string
+	PublicURLID           string
+	TeamID                string
+	MembershipID          string
+	PublishRunNumber      uint64
+	PolicyRevision        uint64
+	PublishRunToken       credentials.PublishRunToken
+	State                 PublishRunState
+	CreatedAt             time.Time
+	ExpiresAt             time.Time
+	ReadyAt               *time.Time
+	ClosedAt              *time.Time
+	PolicyDenials         uint64
+	VisitorPolicyRevision int64
+	Traffic               trafficlimits.Limits
+	PublisherConnections  [publishRunConnectionCount]ConnectionAssignment
 }
 
 // CreatePublishRun creates one publish run with two connection assignments on
@@ -97,7 +105,8 @@ func (d *Database) CreatePublishRun(
 	publisherLeaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
-	defer d.observeOperation("CreatePublishRun", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "CreatePublishRun")
+	defer func() { finish(retErr) }()
 	defer func() {
 		if !errors.Is(retErr, ErrInsufficientRelayServices) {
 			return
@@ -110,6 +119,11 @@ func (d *Database) CreatePublishRun(
 	}()
 	if err := validatePublishRunRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return PublishRunSetup{}, err
+	}
+	if request.TrafficSelection != nil {
+		if err := request.TrafficSelection.Validate(); err != nil {
+			return result, fmt.Errorf("%w: %v", ErrTrafficSelection, err)
+		}
 	}
 	if err := d.requireOpen(); err != nil {
 		return PublishRunSetup{}, err
@@ -168,42 +182,28 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
-	issuedRole := ""
-	if request.PublishCredentialID != "" {
-		credential, credentialErr := queries.GetPublicURLPublishCredentialByID(ctx, request.PublishCredentialID)
-		if credentialErr != nil || credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now) ||
-			credential.IssuedByIdentityID != request.ActingIdentityID || credential.MembershipID != request.MembershipID ||
-			credential.PolicyRevision != int64(request.PolicyRevision) {
-			return PublishRunSetup{}, ErrPublicURLCredential
+	request.TrafficSelection, err = d.appliedProjectTraffic(ctx, tx, request.PublicURLID, request.TrafficSelection)
+	if err != nil {
+		return result, err
+	}
+	request.RequestDigest, err = publishRunTrafficDigest(request.RequestDigest, request.TrafficSelection)
+	if err != nil {
+		return result, err
+	}
+	if request.PublisherIdentityID != "" {
+		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
+		if err != nil {
+			return PublishRunSetup{}, err
 		}
-		switch PublishCredentialKind(credential.Kind) {
-		case PublishCredentialSavedURL:
-			if !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target {
-				return PublishRunSetup{}, ErrPublicURLCredential
-			}
-		case PublishCredentialEphemeral:
-			allocation, err := queries.GetEphemeralPublicURLAllocation(ctx, route.ID)
-			if err != nil || allocation.CredentialID != credential.ID || !route.Ephemeral || route.Namespace != credential.Namespace.String ||
-				route.TeamID != credential.TeamID.String || route.DomainID != credential.DomainID.String ||
-				credential.CertificateCacheKey != request.CertificateCacheKey || credential.CertificateScope != request.CertificateScope ||
-				!slices.Equal(credential.CertificateIdentifiers, request.CertificateIdentifiers) ||
-				credential.CertificateChallengeMethod != string(request.CertificateChallenge) {
-				return PublishRunSetup{}, ErrPublicURLCredential
-			}
-			if _, err := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
-				DomainID: route.DomainID, TeamID: nullableText(route.TeamID),
-			}); err != nil {
-				return PublishRunSetup{}, ErrPublicURLCredential
-			}
-			issuedRole = credential.IssuedRole.String
-		default:
-			return PublishRunSetup{}, ErrPublicURLCredential
-		}
+		request.RetrySecret = secret[:]
+	}
+	if route.PublisherPool && request.PublisherIdentityID == "" {
+		return result, ErrPublisherIdentity
 	}
 	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
 		return PublishRunSetup{}, ErrPublicURLNotEnabled
 	}
-	if request.GuestID == "" {
+	if request.GuestID == "" && request.PublisherIdentityID == "" {
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 		})
@@ -213,7 +213,7 @@ func (d *Database) createPublishRun(
 		if err != nil {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: read membership: %w", err)
 		}
-		if membership.PolicyRevision != positive(request.PolicyRevision) || issuedRole != "" && membership.Role != issuedRole ||
+		if membership.PolicyRevision != positive(request.PolicyRevision) ||
 			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID || request.MembershipID != membership.ID) ||
 			route.PublicURLScope == "shared" && (membership.Role != "admin" && membership.Role != "owner" || request.MembershipID != membership.ID) {
 			return PublishRunSetup{}, ErrPublicURLAuthority
@@ -228,6 +228,18 @@ func (d *Database) createPublishRun(
 		PublicURLID: request.PublicURLID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
+		if request.PublisherIdentityID != "" {
+			bound, err := queries.GetPublisherRun(ctx, existing.ID)
+			if err != nil || bound.PublisherIdentityID != request.PublisherIdentityID || bound.PublisherGrantID != request.PublisherGrantID {
+				return PublishRunSetup{}, ErrPublishRunIdempotency
+			}
+		} else {
+			if _, err := queries.GetPublisherRun(ctx, existing.ID); err == nil {
+				return PublishRunSetup{}, ErrPublishRunIdempotency
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return PublishRunSetup{}, err
+			}
+		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
 			publishRunRequestDigestContext(existing.ID), existing.RequestDigestCiphertext)
 		if digestErr != nil {
@@ -265,7 +277,17 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, ErrPublishRunCreationGated
 	}
 	if hasOpenSession {
-		return PublishRunSetup{}, ErrPublishRunConflict
+		if !route.PublisherPool || request.PublisherIdentityID == "" {
+			return PublishRunSetup{}, ErrPublishRunConflict
+		}
+		var samePublisher bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs r LEFT JOIN control.publish_run_publisher_grants p ON p.publish_run_id=r.id
+		    WHERE r.public_url_id=$1 AND r.closed_at IS NULL AND (p.publisher_identity_id=$2 OR p.publisher_identity_id IS NULL))`, route.ID, request.PublisherIdentityID).Scan(&samePublisher); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if samePublisher {
+			return PublishRunSetup{}, ErrPublishRunConflict
+		}
 	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
@@ -287,7 +309,7 @@ func (d *Database) createPublishRun(
 		request.RetrySecret, request.PublicURLID+"\x00"+request.IdempotencyKey,
 	)
 	if err != nil {
-		return PublishRunSetup{}, ErrPublicURLCredential
+		return PublishRunSetup{}, ErrPublishRunCredential
 	}
 	membershipID := pgtype.Text{}
 	if request.MembershipID != "" {
@@ -297,9 +319,14 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: protect publish run digest: %w", err)
 	}
+	traffic, err := resolvePublishRunTraffic(request)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
+		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
 		IdempotencyKey:          request.IdempotencyKey,
 		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
@@ -307,6 +334,7 @@ func (d *Database) createPublishRun(
 		CertificateScope: request.CertificateScope, CertificateIdentifiers: request.CertificateIdentifiers,
 		CertificateChallengeMethod: string(request.CertificateChallenge), CreatedAt: timestamptz(now),
 		LastHeartbeatAt: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(publisherLeaseDuration)),
+		TrafficLimits: traffic,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if route.NextPublishRunNumber == math.MaxInt64 || route.MutationRevision == math.MaxInt64 {
@@ -316,14 +344,6 @@ func (d *Database) createPublishRun(
 	}
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
-	}
-	if request.PublishCredentialID != "" {
-		attached, err := queries.AttachPublishRunCredential(ctx, controlstatedb.AttachPublishRunCredentialParams{
-			PublishRunID: publishRunID, PublicURLID: route.ID, CredentialID: request.PublishCredentialID,
-		})
-		if err != nil || attached != 1 {
-			return PublishRunSetup{}, fmt.Errorf("controlstate: attach publish credential: %w", err)
-		}
 	}
 	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
 		reserved, err := queries.BeginGuestPublishRun(ctx, controlstatedb.BeginGuestPublishRunParams{
@@ -492,7 +512,7 @@ func loadPublishRunSetup(
 	token, tokenID, tokenHash, err := credentials.DerivePublishRunToken(retrySecret, retryContext)
 	if err != nil || tokenID.String() != session.PublishRunTokenID ||
 		!credentials.SecretHashMatches(session.PublishRunTokenDigest, tokenHash) {
-		return PublishRunSetup{}, ErrPublicURLCredential
+		return PublishRunSetup{}, ErrPublishRunCredential
 	}
 	return loadPublishRunSetupWithToken(ctx, queries, token, session)
 }
@@ -526,6 +546,11 @@ func publishRunSetup(
 		CreatedAt: session.CreatedAt.Time, ExpiresAt: session.PublisherExpiresAt.Time,
 		PolicyDenials: uint64(session.PolicyDenials),
 	}
+	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	setup.Traffic = traffic
 	if session.ReadyAt.Valid {
 		value := session.ReadyAt.Time
 		setup.ReadyAt = &value
@@ -595,8 +620,8 @@ func validatePublishRunRequest(
 	if request.GuestID != "" && !validStateText(request.GuestID) {
 		return errors.New("controlstate: publish-run guest ID is invalid")
 	}
-	if len(request.RetrySecret) < 32 {
-		return ErrPublicURLCredential
+	if request.PublisherIdentityID == "" && len(request.RetrySecret) < 32 {
+		return ErrPublishRunCredential
 	}
 	if _, ok := positiveInt64(request.PolicyRevision); !ok {
 		return errors.New("controlstate: publish-run policy revision must be positive")
@@ -607,11 +632,6 @@ func validatePublishRunRequest(
 	}
 	if !request.CertificateChallenge.Valid() {
 		return errors.New("controlstate: publish-run certificate challenge is invalid")
-	}
-	if request.CertificateChallenge == certificateidentity.ChallengeTLSALPN01 && slices.ContainsFunc(identifiers, func(identifier string) bool {
-		return strings.HasPrefix(identifier, "*.")
-	}) {
-		return errors.New("controlstate: TLS-ALPN-01 does not support wildcard identifiers")
 	}
 	if request.ExpectedMutationRevision == 0 || request.ExpectedMutationRevision > math.MaxInt64 {
 		return errors.New("controlstate: publish-run mutation revision must be positive")

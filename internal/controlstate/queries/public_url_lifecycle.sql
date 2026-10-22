@@ -21,6 +21,7 @@ WHERE id = sqlc.arg(publish_run_id)
   AND public_url_id = sqlc.arg(public_url_id)
   AND publish_run_number = sqlc.arg(publish_run_number)
   AND closed_at IS NULL
+  AND certificate_cache_key IS NOT NULL
 RETURNING *;
 
 -- name: MarkPublishRunReady :one
@@ -64,7 +65,8 @@ SELECT connections.publish_run_id,
     connections.connected_relay_lease_revision,
     relays.internal_relay_address,
     services.tls_server_name,
-    relays.lease_expires_at
+    relays.lease_expires_at,
+    GREATEST(0,relays.stream_capacity-relays.reported_streams)::bigint AS available_streams
 FROM control.publish_run_connection_slots AS connections
 JOIN control.relay_leases AS relays
   ON relays.relay_service_id = connections.relay_service_id
@@ -154,7 +156,7 @@ FOR UPDATE;
 UPDATE control.public_url_recovery_episodes
 SET state = 'observed',
     observed_at = sqlc.arg(observed_at),
-    observed_seconds = sqlc.arg(observed_seconds)
+    recovery_seconds = sqlc.arg(observed_seconds)
 WHERE id = sqlc.arg(recovery_episode_id)
   AND public_url_id = sqlc.arg(public_url_id)
   AND publish_run_number = sqlc.arg(publish_run_number)

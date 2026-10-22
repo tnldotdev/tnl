@@ -7,10 +7,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 var (
@@ -20,10 +24,13 @@ var (
 
 // IngressRegistration describes one ingress process run.
 type IngressRegistration struct {
-	IngressID          string
-	IngressRunID       string
-	ProtocolVersion    uint64
-	ConnectionCapacity uint64
+	IngressID                                              string
+	IngressRunID                                           string
+	ProtocolVersion                                        uint64
+	ConnectionCapacity                                     uint64
+	IngressPoolID                                          string
+	ServicePorts                                           []int32
+	PrivateConnectorAddress, PrivateConnectorTLSServerName string
 }
 
 // IngressLeaseIdentity identifies one exact ingress process lease.
@@ -85,6 +92,8 @@ func (d *Database) RegisterIngress(
 	row, err := queries.RegisterIngress(ctx, controlstatedb.RegisterIngressParams{
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
+		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
+		PrivateConnectorAddress: registration.PrivateConnectorAddress, PrivateConnectorTlsServerName: registration.PrivateConnectorTLSServerName,
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 	})
@@ -114,7 +123,8 @@ func (d *Database) RenewIngress(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (result IngressLease, retErr error) {
-	defer d.observeOperation("RenewIngress", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "RenewIngress")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(renewal.IngressLeaseIdentity); err != nil {
 		return IngressLease{}, err
 	}
@@ -271,6 +281,26 @@ func ensureIngressUsageRun(
 }
 
 func validateIngressRegistration(registration IngressRegistration, leaseDuration time.Duration) error {
+	if len(registration.ServicePorts) > 256 || len(registration.ServicePorts) > 0 && !validStateText(registration.IngressPoolID) {
+		return errors.New("ingress service port inventory is invalid")
+	}
+	for index, port := range registration.ServicePorts {
+		if port < 1024 || port > 65535 || index > 0 && port <= registration.ServicePorts[index-1] {
+			return errors.New("ingress service ports must be sorted, distinct network ports")
+		}
+	}
+	if registration.PrivateConnectorAddress != "" || registration.PrivateConnectorTLSServerName != "" {
+		host, port, err := net.SplitHostPort(registration.PrivateConnectorAddress)
+		number, portErr := strconv.Atoi(port)
+		name, nameErr := naming.CanonicalizeHostname(registration.PrivateConnectorTLSServerName)
+		_, hostErr := naming.CanonicalizeHostname(host)
+		if ip, err := netip.ParseAddr(host); err == nil && ip.Zone() == "" {
+			hostErr = nil
+		}
+		if err != nil || portErr != nil || number < 1 || number > 65535 || hostErr != nil || nameErr != nil || name != registration.PrivateConnectorTLSServerName {
+			return errors.New("controlstate: private connector address and TLS server name are invalid")
+		}
+	}
 	if !validStateText(registration.IngressID) || !validStateText(registration.IngressRunID) {
 		return errors.New("controlstate: ingress registration is invalid")
 	}

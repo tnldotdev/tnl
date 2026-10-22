@@ -95,7 +95,7 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 }
 
 const getPreview = `-- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
+SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_publish_run_id
 FROM control.previews WHERE id = $1
 `
 
@@ -106,6 +106,7 @@ type GetPreviewRow struct {
 	CreatedByIdentityID string
 	CreatedAt           pgtype.Timestamptz
 	TeamAccessEnabled   bool
+	DemoPublishRunID    pgtype.Text
 }
 
 func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, error) {
@@ -118,6 +119,7 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
 		&i.TeamAccessEnabled,
+		&i.DemoPublishRunID,
 	)
 	return i, err
 }
@@ -148,7 +150,7 @@ func (q *Queries) ListPreviewPublicURLs(ctx context.Context, previewID string) (
 }
 
 const lockPreviewForTeamAccess = `-- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled
+SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_publish_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE
 `
 
@@ -157,6 +159,7 @@ type LockPreviewForTeamAccessRow struct {
 	TeamID              string
 	CreatedByIdentityID string
 	TeamAccessEnabled   bool
+	DemoPublishRunID    pgtype.Text
 }
 
 func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error) {
@@ -167,6 +170,7 @@ func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (Lock
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.TeamAccessEnabled,
+		&i.DemoPublishRunID,
 	)
 	return i, err
 }

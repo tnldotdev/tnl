@@ -134,7 +134,7 @@ func (d *Database) Diagnostics(parent context.Context) (result DatabaseDiagnosti
 			result.Truncated = true
 			break
 		}
-		if _, known := diagnosticQueryNames[session.Operation]; !known {
+		if !diagnosticQueryNames.Contains(session.Operation) {
 			session.Operation = "unknown"
 		}
 		if len(session.BlockingPIDs) > MaxDatabaseDiagnosticBlockers {

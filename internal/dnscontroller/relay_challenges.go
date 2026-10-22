@@ -12,7 +12,7 @@ import (
 type RelayChallengeStore interface {
 	ChallengeChangeStore
 	GetRelayDNSChallengeContext(context.Context, string) (controlstate.RelayDNSChallengeContext, error)
-	WithDNSChallengeLock(context.Context, string, func() error) error
+	WithDNSRecordLock(context.Context, string, func() error) error
 }
 
 type RelayChallengeManager struct {
@@ -43,21 +43,21 @@ func NewRelayChallengeManager(
 func (m *RelayChallengeManager) Present(ctx context.Context, orderID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresenting)
-	observeDNS(m.observer, "relay_challenge", "provider", started, true, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *RelayChallengeManager) Verify(ctx context.Context, orderID string) (bool, error) {
 	started := time.Now()
 	verified, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresented)
-	observeDNS(m.observer, "relay_challenge", "verify", started, verified, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "verify", started, verified, err)
 	return verified, err
 }
 
 func (m *RelayChallengeManager) Cleanup(ctx context.Context, orderID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificateCleaning)
-	observeDNS(m.observer, "relay_challenge", "cleanup", started, true, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "cleanup", started, true, err)
 	return err
 }
 
@@ -68,7 +68,7 @@ func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID string, s
 	}
 	recordName := "_acme-challenge." + initial.TLSServerName
 	verified := false
-	err = m.store.WithDNSChallengeLock(ctx, recordName, func() error {
+	err = m.store.WithDNSRecordLock(ctx, recordName, func() error {
 		challenge, record, expected, err := m.challengeRecord(ctx, orderID)
 		if err != nil {
 			return err

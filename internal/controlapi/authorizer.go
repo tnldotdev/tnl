@@ -17,17 +17,18 @@ import (
 
 type localAuthorizer struct {
 	store                             AuthorizationStore
-	sourceRevision                    int64
 	dnsAutomation                     bool
 	managedDomainMaxMemberChildLabels int
 	managedURLMode                    naming.ManagedURLMode
 }
 
 type publicURLReadPrincipal struct {
-	identityID    string
-	displayName   string
-	teamIDs       map[string]struct{}
-	administrator bool
+	controlPrincipal controlstate.ControlPrincipal
+	identityID       string
+	displayName      string
+	teamIDs          map[string]struct{}
+	administrator    bool
+	guest            *controlstate.GuestTrial
 }
 
 type publicURLAuthorizer interface {
@@ -37,7 +38,7 @@ type publicURLAuthorizer interface {
 
 func (a localAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToken string) (publicURLReadPrincipal, error) {
 	principal, err := a.store.AuthenticateAccessToken(
-		ctx, credentials.AccessToken(accessToken), a.sourceRevision, time.Now(),
+		ctx, credentials.AccessToken(accessToken), time.Now(),
 	)
 	if errors.Is(err, controlstate.ErrControlAuthentication) {
 		return publicURLReadPrincipal{}, authorization.ErrUnauthenticated
@@ -51,16 +52,22 @@ func (a localAuthorizer) AuthorizePublicURLReads(ctx context.Context, accessToke
 	}
 	teamIDs := make(map[string]struct{}, len(identity.Memberships))
 	for _, membership := range identity.Memberships {
+		if err := a.store.AuthorizeTeamSession(ctx, principal, membership.TeamID, time.Now()); err != nil {
+			if errors.Is(err, controlstate.ErrAuthorityAccess) {
+				continue
+			}
+			return publicURLReadPrincipal{}, errors.Join(authorization.ErrUnavailable, err)
+		}
 		teamIDs[membership.TeamID] = struct{}{}
 	}
 	return publicURLReadPrincipal{
-		identityID: principal.IdentityID, displayName: identity.Identity.DisplayName, teamIDs: teamIDs, administrator: principal.Administrator,
+		identityID: principal.IdentityID, displayName: identity.Identity.DisplayName, teamIDs: teamIDs, administrator: principal.Administrator, controlPrincipal: principal,
 	}, nil
 }
 
 func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {
 	principal, err := a.store.AuthenticateAccessToken(
-		ctx, credentials.AccessToken(request.AccessToken), a.sourceRevision, time.Now(),
+		ctx, credentials.AccessToken(request.AccessToken), time.Now(),
 	)
 	if errors.Is(err, controlstate.ErrControlAuthentication) {
 		return authorization.Decision{}, authorization.ErrUnauthenticated
@@ -82,6 +89,12 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	}
 	if acting.ID == "" {
 		return authorization.Decision{}, authorization.ErrForbidden
+	}
+	if err := a.store.AuthorizeTeamSession(ctx, principal, request.TeamID, time.Now()); err != nil {
+		if errors.Is(err, controlstate.ErrAuthorityAccess) {
+			return authorization.Decision{}, authorization.ErrForbidden
+		}
+		return authorization.Decision{}, errors.Join(authorization.ErrUnavailable, err)
 	}
 	if request.Operation == authorization.OperationCredentialRevoke {
 		if request.PublicURLMembershipID != acting.ID && acting.Role != controlstate.TeamRoleAdmin && acting.Role != controlstate.TeamRoleOwner {
@@ -142,11 +155,10 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 	namespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
 		Domain: domain.CanonicalDomain, Managed: domain.Kind == controlstate.DomainKindManaged,
 		Mode: a.managedURLMode, Personal: acting.TeamKind == controlstate.TeamKindPersonal,
-		Builtin:  principal.Administrator && acting.TeamKind == controlstate.TeamKindPersonal,
 		TeamName: acting.TeamDisplayName, MemberSlug: acting.MemberSlug, ManagedLabel: acting.ManagedLabel,
 	})
 	if request.PublicURLScope == authorization.PublicURLScopeShared {
-		namespace = domain.CanonicalDomain
+		namespace = naming.SharedPublicURLNamespace(domain.CanonicalDomain, domain.Kind == controlstate.DomainKindManaged, a.managedURLMode, acting.TeamDisplayName, acting.TeamManagedLabel)
 	}
 	decision.Namespace = namespace
 	if request.PublicURLScope == authorization.PublicURLScopeMember &&
@@ -245,6 +257,7 @@ func (h *handler) authorizeRouteReads(
 		requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
 		operatorlog.Report("authorize public URL reads", failure.ServerAPIInternal, requestID, err)
 	default:
+		*request = *request.WithContext(controlstate.WithControlPrincipal(request.Context(), principal.controlPrincipal))
 		return principal, true
 	}
 	return publicURLReadPrincipal{}, false

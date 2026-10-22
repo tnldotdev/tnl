@@ -59,7 +59,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	if err != nil {
 		return Preview{}, fmt.Errorf("controlstate: lock preview: %w", err)
 	}
-	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.IdentityID {
+	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.IdentityID || request.Enabled && preview.DemoPublishRunID.Valid {
 		return Preview{}, ErrPreviewAccess
 	}
 	if request.Enabled {
@@ -91,7 +91,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 			if err != nil {
 				return Preview{}, fmt.Errorf("controlstate: lock team public URL: %w", err)
 			}
-			if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
+			if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) || route.Purpose != "app" || route.ServiceProtocol != "http" ||
 				route.MutationRevision != int64(selected.ExpectedMutationRevision) || route.PolicyRevision > positive(request.PolicyRevision) {
 				return Preview{}, ErrPreviewStale
 			}
@@ -113,6 +113,21 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 		PreviewID: preview.ID, Enabled: request.Enabled,
 	}); err != nil {
 		return Preview{}, fmt.Errorf("controlstate: save preview team access: %w", err)
+	}
+	if preview.TeamAccessEnabled != request.Enabled {
+		ids, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
+		if err != nil {
+			return Preview{}, err
+		}
+		operation := "grant.revoke"
+		if request.Enabled {
+			operation = "grant.create"
+		}
+		for _, service := range ids {
+			if err = auditPublicMutation(ctx, tx, service, request.IdentityID, operation, preview.ID+"/"+now.UTC().Format(time.RFC3339Nano), now); err != nil {
+				return Preview{}, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Preview{}, fmt.Errorf("controlstate: commit preview team access: %w", err)

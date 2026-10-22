@@ -373,7 +373,7 @@ type challengeStoreStub struct {
 	saveChangeErr  error
 }
 
-func (s *challengeStoreStub) WithDNSChallengeLock(_ context.Context, _ string, run func() error) error {
+func (s *challengeStoreStub) WithDNSRecordLock(_ context.Context, _ string, run func() error) error {
 	if s.lockRequested != nil {
 		s.lockRequested()
 	}

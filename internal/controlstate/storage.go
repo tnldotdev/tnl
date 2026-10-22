@@ -21,19 +21,15 @@ func controlSessionRetrySecretContext(sessionID string) string {
 }
 
 func guestRetryMasterKeyContext() string {
-	return "control.runtime_secret.guest_retry_master_key_ciphertext\x00id"
+	return "control.guest_retry_keys.guest_retry_master_key_ciphertext\x00id"
 }
 
 func visitorNetworkHashMasterKeyContext() string {
-	return "control.public_url_usage_configuration.visitor_network_hash_master_key_ciphertext\x00id"
+	return "control.visitor_network_hash_keys.visitor_network_hash_master_key_ciphertext\x00id"
 }
 
 func acmeAccountKeyContext(accountID string) string {
 	return "control.acme_accounts.account_key_ciphertext\x00" + accountID
-}
-
-func controlTLSCacheContext(directoryURL, cacheKey string) string {
-	return "control.control_tls_cache.cache_ciphertext\x00" + directoryURL + "\x00" + cacheKey
 }
 
 func relayTransportPrivateKeyContext(relayServiceID string) string {

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/readiness"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 var (
@@ -212,8 +213,9 @@ type IngressRoutingTableProjection struct {
 	CanonicalHostname    string                                   `json:"canonical_hostname"`
 	IngressPoolID        string                                   `json:"ingress_pool_id,omitempty"`
 	ServiceProtocol      PublicURLServiceProtocol                 `json:"service_protocol,omitempty"`
-	PublicPort           *uint16                                  `json:"public_port,omitempty"`
+	Traffic              *trafficlimits.Limits                    `json:"traffic,omitempty"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
+	AccessMode           VisitorAccessMode                        `json:"access_mode"`
 	IPPolicy             IPPolicy                                 `json:"ip_policy"`
 	AllowedIPHashes      []ippolicy.Entry                         `json:"allowed_ip_hashes,omitempty"`
 	IPPolicyKeyID        string                                   `json:"ip_policy_key_id,omitempty"`
@@ -236,6 +238,7 @@ type IngressRoutingTablePublisherConnection struct {
 	InternalRelayAddress         string    `json:"internal_relay_address"`
 	TLSServerName                string    `json:"tls_server_name"`
 	LeaseExpiresAt               time.Time `json:"lease_expires_at"`
+	AvailableStreams             *int64    `json:"available_streams,omitempty"`
 }
 
 // MarkPublicURLCertificateInstalled records publisher acknowledgement of the
@@ -268,9 +271,9 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	}
 	alreadyInstalled := session.CertificateInstalledAt.Valid
 	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
-		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
-		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
-		ChallengeMethod: session.CertificateChallengeMethod,
+		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: session.CertificateIdentifiers,
+		ChallengeMethod: session.CertificateChallengeMethod.String,
 		NotAfter:        timestamptz(notAfter), InstalledAt: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -280,6 +283,24 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	}
 	if !validInstalledCertificate(order, route.CanonicalHostname, now) {
 		return PublishRunLifecycle{}, ErrPublicURLCertificate
+	}
+	issuedRun, err := queries.GetPublishRun(ctx, order.PublishRunID)
+	if err != nil {
+		return result, err
+	}
+	// a local cache may reuse a certificate across this publisher's runs. a
+	// different enrolled publisher owns an independent TLS key and CSR cache.
+	if issuedRun.PublisherIdentityID != session.PublisherIdentityID {
+		return result, ErrPublicURLCertificate
+	}
+	if session.CertificateIssuanceID.Valid && session.CertificateIssuanceID.String != issuanceID {
+		current, err := queries.GetACMEOrder(ctx, session.CertificateIssuanceID.String)
+		if err != nil {
+			return result, err
+		}
+		if order.CreatedRevision < current.CreatedRevision {
+			return result, ErrPublicURLCertificate
+		}
 	}
 	if _, err := queries.MarkACMEOrderInstalled(ctx, controlstatedb.MarkACMEOrderInstalledParams{
 		InstalledAt: timestamptz(now), IssuanceID: issuanceID,
@@ -320,7 +341,8 @@ func (d *Database) HeartbeatPublishRun(
 	leaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
-	defer d.observeOperation("HeartbeatPublishRun", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "HeartbeatPublishRun")
+	defer func() { finish(retErr) }()
 	if err := validatePublishRunAuthentication(authentication); err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -341,47 +363,12 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	credential, credentialErr := queries.GetPublishRunCredentialState(ctx, session.ID)
-	if credentialErr != nil && !errors.Is(credentialErr, pgx.ErrNoRows) {
-		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
+	live, err := d.publisherRunLive(ctx, queries, route, session.ID, now)
+	if err != nil {
+		return PublishRunSetup{}, err
 	}
-	credentialRevoked := credentialErr == nil && (credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now))
-	if credentialErr == nil && !credentialRevoked {
-		switch PublishCredentialKind(credential.Kind) {
-		case PublishCredentialSavedURL:
-			credentialRevoked = !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target
-		case PublishCredentialEphemeral:
-			credentialRevoked = !route.Ephemeral || credential.AllocationCredentialID != credential.ID ||
-				credential.TeamID.String != route.TeamID || credential.DomainID.String != route.DomainID ||
-				credential.Namespace.String != route.Namespace
-			if !credentialRevoked {
-				_, domainErr := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
-					DomainID: route.DomainID, TeamID: nullableText(route.TeamID),
-				})
-				if domainErr != nil && !errors.Is(domainErr, pgx.ErrNoRows) {
-					return PublishRunSetup{}, domainErr
-				}
-				credentialRevoked = errors.Is(domainErr, pgx.ErrNoRows)
-			}
-		default:
-			credentialRevoked = true
-		}
-	}
-	if credentialErr == nil && !credentialRevoked {
-		membership, memberErr := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-			TeamID: route.TeamID, IdentityID: credential.IssuedByIdentityID,
-		})
-		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
-			return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential membership: %w", memberErr)
-		}
-		credentialRevoked = errors.Is(memberErr, pgx.ErrNoRows) || membership.ID != credential.MembershipID ||
-			membership.PolicyRevision != credential.PolicyRevision ||
-			credential.Kind == string(PublishCredentialEphemeral) && membership.Role != credential.IssuedRole.String ||
-			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-			route.PublicURLScope == "shared" && membership.Role != "admin" && membership.Role != "owner"
-	}
-	if credentialRevoked {
-		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publish_credential_revoked"); err != nil {
+	if !live {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publisher_grant_revoked"); err != nil {
 			return PublishRunSetup{}, err
 		}
 		if err := pendingEvents.publish(ctx, queries); err != nil {
@@ -390,7 +377,7 @@ func (d *Database) HeartbeatPublishRun(
 		if err := tx.Commit(ctx); err != nil {
 			return PublishRunSetup{}, err
 		}
-		return PublishRunSetup{}, ErrPublicURLCredential
+		return PublishRunSetup{}, ErrPublisherIdentity
 	}
 	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),
@@ -462,16 +449,15 @@ func (d *Database) HeartbeatPublishRun(
 			return PublishRunSetup{}, err
 		}
 	}
-	if leaseExtended && len(connections) > 0 || removedReadyConnection {
-		if err := pendingEvents.addCurrentChallengeEvent(ctx, queries, route, session, connections, now); err != nil {
-			return PublishRunSetup{}, err
-		}
-	}
 	setup, err := loadPublishRunSetupWithToken(ctx, queries, authentication.PublishRunToken, session)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
 	setup.PolicyDenials = uint64(session.PolicyDenials)
+	setup.VisitorPolicyRevision, err = queries.GetVisitorPolicyRevision(ctx, session.TeamID)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -676,6 +662,13 @@ func lockAuthenticatedPublishRun(
 	if err != nil {
 		return controlstatedb.ControlPublicUrl{}, controlstatedb.ControlPublishRun{}, fmt.Errorf("controlstate: lock authenticated publish run: %w", err)
 	}
+	if session.CloseReason.String == "publisher_revoked" && session.PublicURLID == authentication.PublicURLID && matchesPositiveInt64(session.PublishRunNumber, authentication.PublishRunNumber) {
+		tokenID, digest, err := credentials.ParsePublishRunToken(authentication.PublishRunToken)
+		if err != nil || tokenID.String() != session.PublishRunTokenID || !credentials.SecretHashMatches(session.PublishRunTokenDigest, digest) {
+			return route, session, ErrPublishRunCredential
+		}
+		return route, session, ErrPublisherIdentity
+	}
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled || session.PublicURLID != authentication.PublicURLID ||
 		!matchesPositiveInt64(session.PublishRunNumber, authentication.PublishRunNumber) || session.ClosedAt.Valid ||
 		!session.PublisherExpiresAt.Valid || !session.PublisherExpiresAt.Time.After(now) {
@@ -706,24 +699,6 @@ func validReadyPublisherConnections(
 	return connections, nil
 }
 
-func activePublishRunChallengeExpiry(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	publishRunID string,
-	now time.Time,
-) (time.Time, bool, error) {
-	expiresAt, err := queries.GetActivePublishRunChallengeExpiry(ctx, controlstatedb.GetActivePublishRunChallengeExpiryParams{
-		PublishRunID: publishRunID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("controlstate: read active publish-run challenge: %w", err)
-	}
-	if !expiresAt.Valid {
-		return time.Time{}, false, nil
-	}
-	return expiresAt.Time, true, nil
-}
-
 func (pending *pendingIngressRoutingTableEvents) addPublisherConnectionChanges(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
@@ -740,26 +715,7 @@ func (pending *pendingIngressRoutingTableEvents) addPublisherConnectionChanges(
 			return err
 		}
 	}
-	return pending.addCurrentChallengeEvent(ctx, queries, route, session, connections, now)
-}
-
-func (pending *pendingIngressRoutingTableEvents) addCurrentChallengeEvent(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	route controlstatedb.ControlPublicUrl,
-	session controlstatedb.ControlPublishRun,
-	connections []controlstatedb.ListValidReadyPublisherConnectionsRow,
-	now time.Time,
-) error {
-	challengeExpiresAt, challengeActive, err := activePublishRunChallengeExpiry(ctx, queries, session.ID, now)
-	if err != nil || !challengeActive {
-		return err
-	}
-	_, err = pending.addChallengeEvent(
-		ctx, queries, route, session, connections,
-		challengeRoutingTableEventKind(len(connections) > 0), challengeExpiresAt, now,
-	)
-	return err
+	return nil
 }
 
 func publicURLRoutingTableEventKind(available bool) IngressRoutingTableEventKind {
@@ -767,13 +723,6 @@ func publicURLRoutingTableEventKind(available bool) IngressRoutingTableEventKind
 		return IngressPublicURLUpsert
 	}
 	return IngressPublicURLTombstone
-}
-
-func challengeRoutingTableEventKind(available bool) IngressRoutingTableEventKind {
-	if available {
-		return IngressChallengeUpsert
-	}
-	return IngressChallengeTombstone
 }
 
 func (pending *pendingIngressRoutingTableEvents) addRouteEvent(
@@ -786,22 +735,6 @@ func (pending *pendingIngressRoutingTableEvents) addRouteEvent(
 	now time.Time,
 ) (*publishedIngressRoutingTableEvent, error) {
 	return pending.addEvent(ctx, queries, route, session, connections, eventKind, session.PublisherExpiresAt.Time, now)
-}
-
-func (pending *pendingIngressRoutingTableEvents) addChallengeEvent(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	route controlstatedb.ControlPublicUrl,
-	session controlstatedb.ControlPublishRun,
-	connections []controlstatedb.ListValidReadyPublisherConnectionsRow,
-	eventKind IngressRoutingTableEventKind,
-	expiresAt time.Time,
-	now time.Time,
-) (*publishedIngressRoutingTableEvent, error) {
-	if session.PublisherExpiresAt.Time.Before(expiresAt) {
-		expiresAt = session.PublisherExpiresAt.Time
-	}
-	return pending.addEvent(ctx, queries, route, session, connections, eventKind, expiresAt, now)
 }
 
 type publishedIngressRoutingTableEvent struct {
@@ -837,27 +770,29 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	now time.Time,
 ) (*publishedIngressRoutingTableEvent, error) {
 	policy := IPPolicy(route.IpPolicy)
+	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
+	if err != nil {
+		return nil, err
+	}
 	projection := IngressRoutingTableProjection{
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
 		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
+		AccessMode:           VisitorAccessMode(route.AccessMode),
 		IPPolicy:             policy,
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
-	}
-	if route.PublicPort.Valid {
-		port := uint16(route.PublicPort.Int32)
-		projection.PublicPort = &port
+		Traffic:              &traffic,
 	}
 	var policyCiphertext []byte
 	policyStorageKeyID := ""
-	if eventKind == IngressPublicURLTombstone || eventKind == IngressChallengeTombstone {
+	if eventKind == IngressPublicURLTombstone {
 		projection.IPPolicy = IPPolicyAllowAll
 	} else if policy == IPPolicyAllowlist {
 		if len(route.AllowedIpHashes) == 0 || !route.AllowedIpHashKeyID.Valid {
 			return nil, errors.New("controlstate: routing policy is not protected")
 		}
-		if err := json.Unmarshal(route.AllowedIpHashes, &projection.AllowedIPHashes); err != nil || len(projection.AllowedIPHashes) == 0 {
+		if err := json.Unmarshal(route.AllowedIpHashes, &projection.AllowedIPHashes); err != nil {
 			return nil, errors.New("controlstate: stored hashed routing policy is invalid")
 		}
 		projection.IPPolicy = IPPolicyHashedAllowlist
@@ -891,7 +826,8 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 			RelayRunID:           connection.ConnectedRelayRunID.String,
 			RelayLeaseRevision:   uint64(connection.ConnectedRelayLeaseRevision.Int64),
 			InternalRelayAddress: connection.InternalRelayAddress, TLSServerName: connection.TlsServerName,
-			LeaseExpiresAt: connection.LeaseExpiresAt.Time,
+			LeaseExpiresAt:   connection.LeaseExpiresAt.Time,
+			AvailableStreams: &connection.AvailableStreams,
 		})
 	}
 	payload, err := json.Marshal(projection)
@@ -952,7 +888,7 @@ func (pending *pendingIngressRoutingTableEvents) publish(ctx context.Context, qu
 	for index := range pending.events {
 		event := &pending.events[index]
 		publicURLExpiresAt := pgtype.Timestamptz{}
-		if event.eventKind == IngressPublicURLUpsert || event.eventKind == IngressChallengeUpsert {
+		if event.eventKind == IngressPublicURLUpsert {
 			publicURLExpiresAt = timestamptz(event.projectionExpiresAt)
 		}
 		var routingTableRevision int64

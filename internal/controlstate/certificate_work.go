@@ -44,6 +44,9 @@ type ACMEOrderWork struct {
 	PublishRunID           string
 	PublicURLID            string
 	PublishRunNumber       uint64
+	PrivateRunID           string
+	PrivateServiceID       string
+	PrivateRunNumber       uint64
 	CertificateCacheKey    string
 	CertificateScope       string
 	CertificateIdentifiers []string
@@ -54,6 +57,7 @@ type ACMEOrderWork struct {
 	OrderRevision          uint64
 	OrderURL               string
 	FinalizeURL            string
+	FinalizationPossible   bool
 	CertificateURL         string
 	CertificatePEM         []byte
 	NotBefore              *time.Time
@@ -68,6 +72,15 @@ type ACMEOrderWork struct {
 	WorkEpoch              uint64
 	WorkExpiresAt          time.Time
 	Authorizations         []ACMEAuthorizationWork
+}
+
+// ServiceID keeps DNS challenge ownership typed without inventing a public URL
+// for a managed private-service issuance.
+func (w ACMEOrderWork) ServiceID() string {
+	if w.PrivateServiceID != "" {
+		return w.PrivateServiceID
+	}
+	return w.PublicURLID
 }
 
 func (d *Database) UpdateACMEAccountRegistration(
@@ -146,25 +159,6 @@ func (d *Database) ClaimACMEOrderWork(
 	return work, true, nil
 }
 
-func (d *Database) ACMEChallengeRoutingReady(ctx context.Context, issuanceID string, now time.Time) (bool, error) {
-	if !validStateText(issuanceID) {
-		return false, ErrCertificateIssuanceInvalid
-	}
-	if err := d.requireOpen(); err != nil {
-		return false, err
-	}
-	ready, err := controlstatedb.New(d.pool).CheckACMEChallengeRoutingReady(ctx, controlstatedb.CheckACMEChallengeRoutingReadyParams{
-		IssuanceID: issuanceID, CheckedAt: timestamptz(now),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("controlstate: check ACME challenge routing: %w", err)
-	}
-	return ready, nil
-}
-
 func (d *Database) SaveACMEOrderWork(
 	ctx context.Context,
 	work ACMEOrderWork,
@@ -194,7 +188,8 @@ func (d *Database) SaveACMEOrderWork(
 	queries := controlstatedb.New(tx)
 	order, err := queries.SaveACMEOrderWork(ctx, controlstatedb.SaveACMEOrderWorkParams{
 		State: string(work.State), OrderUrl: nullableText(work.OrderURL), FinalizeUrl: nullableText(work.FinalizeURL),
-		CertificateUrl: nullableText(work.CertificateURL), CertificatePem: slices.Clone(work.CertificatePEM),
+		FinalizationPossible: work.FinalizationPossible,
+		CertificateUrl:       nullableText(work.CertificateURL), CertificatePem: slices.Clone(work.CertificatePEM),
 		NotBefore: nullableTime(work.NotBefore), NotAfter: nullableTime(work.NotAfter), RenewAt: nullableTime(work.RenewAt),
 		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError),
 		CompletedAt: timestamptz(now), IssuanceID: work.ID, WorkOwner: text(work.WorkerID),
@@ -284,7 +279,7 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	if order.PublishRunNumber <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
+	if max(order.PublishRunNumber, order.PrivateRunNumber) <= 0 || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||
 		len(order.CsrDigest) != 32 {
@@ -293,10 +288,12 @@ func acmeOrderWork(
 	work := ACMEOrderWork{
 		ID: order.ID, Account: account, PublishRunID: order.PublishRunID,
 		PublicURLID: order.PublicURLID, PublishRunNumber: uint64(order.PublishRunNumber), CertificateCacheKey: order.CertificateCacheKey,
+		PrivateRunID: order.PrivateRunID, PrivateServiceID: order.PrivateServiceID, PrivateRunNumber: uint64(order.PrivateRunNumber),
 		CertificateScope: order.CertificateScope, CertificateIdentifiers: slices.Clone(order.CertificateIdentifiers),
 		ChallengeMethod: certificateidentity.ChallengeMethod(order.ChallengeMethod), CSRDER: slices.Clone(order.CsrDer), State: ACMEOrderState(order.State),
 		OrderRevision: uint64(order.OrderRevision), OrderURL: order.OrderUrl.String, FinalizeURL: order.FinalizeUrl.String,
-		CertificateURL: order.CertificateUrl.String, CertificatePEM: slices.Clone(order.CertificatePem),
+		FinalizationPossible: order.FinalizationPossible,
+		CertificateURL:       order.CertificateUrl.String, CertificatePEM: slices.Clone(order.CertificatePem),
 		Attempts: uint64(order.Attempts), AvailableAt: order.AvailableAt.Time, LastError: order.LastError.String,
 		CreatedAt: order.CreatedAt.Time, UpdatedAt: order.UpdatedAt.Time,
 		WorkerID: order.WorkOwner.String, WorkEpoch: uint64(order.WorkEpoch), WorkExpiresAt: order.WorkExpiresAt.Time,

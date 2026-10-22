@@ -3,11 +3,9 @@ package controlapi
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -17,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -28,6 +27,8 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
+	TrafficDefaults                   trafficlimits.Limits
+	TrafficCeiling                    trafficlimits.Limits
 	Role                              tnldconfig.Role
 	StartedAt                         time.Time
 	ManagedDomain                     string
@@ -35,11 +36,11 @@ type Config struct {
 	ManagedDomainMaxMemberChildLabels int
 	CustomDomainsEnabled              bool
 	ControlURL                        string
-	LoginToken                        string
 	OIDCIssuer                        string
 	OIDCClientID                      string
-	BrowserOIDCClientID               string
-	OIDCLoginFlow                     tnldconfig.OIDCLoginFlow
+	OIDCClientSecret                  string
+	AccessTokenLifetime               time.Duration
+	RefreshTokenLifetime              time.Duration
 	OIDCScopes                        []string
 	CertificateIssuance               bool
 	ACMEDirectoryURL                  string
@@ -51,6 +52,7 @@ type Config struct {
 	Metrics                           *observability.Metrics
 	Route53CredentialsReadiness       func(context.Context) error
 	ControlReadiness                  func() error
+	AcceptingNewWork                  func() bool
 	IngressReadiness                  func() error
 	RelayReadiness                    func() error
 }
@@ -73,26 +75,10 @@ type PublicURLStore interface {
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
 }
 
-type PublicURLPublishCredentialStore interface {
-	CreatePublicURLPublishCredential(context.Context, controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error)
-	CreateEphemeralCredential(context.Context, controlstate.CreateEphemeralCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.EphemeralCredential, error)
-	AuthenticateEphemeralCredential(context.Context, credentials.EphemeralCredential, time.Time) (controlstate.PublicURLPublishCredential, error)
-	ValidateEphemeralCredentialPublicURL(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL, time.Time) error
-	RevokeEphemeralCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
-	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
-	ListPublicURLPublishCredentials(context.Context, string) ([]controlstate.PublicURLPublishCredential, error)
-	ListTeamPublicURLPublishCredentials(context.Context, string, string) (controlstate.PublicURLPublishCredentialPage, error)
-	PublicURLPublishCredentialByID(context.Context, string) (controlstate.PublicURLPublishCredential, error)
-	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-}
-
 // CertificateStore owns publish run certificate issuance state.
 type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 }
 
 // AdminStore owns administrator operations.
@@ -122,10 +108,11 @@ type PreviewTeamAccessStore interface {
 }
 
 type BrowserAccessStore interface {
-	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, time.Time) (string, error)
+	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
-	RedeemBrowserHandoff(context.Context, string, string, time.Time) (string, string, string, bool, time.Time, error)
+	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
+	BrowserAuthorizationForRun(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (controlstate.VisitorPermission, error)
 	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error
 	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
@@ -134,6 +121,7 @@ type BrowserAccessStore interface {
 
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
+	CreateGuestShare(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
 	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)
@@ -161,26 +149,27 @@ type FeedbackStore interface {
 
 // AuthorizationStore provides the identity state needed for public URL authorization.
 type AuthorizationStore interface {
-	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
+	AuthenticateAccessToken(context.Context, credentials.AccessToken, time.Time) (controlstate.ControlPrincipal, error)
+	AuthorizeTeamSession(context.Context, controlstate.ControlPrincipal, string, time.Time) error
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
 }
 
 type handler struct {
-	config             Config
-	store              PublicURLStore
-	publishCredentials PublicURLPublishCredentialStore
-	certificates       CertificateStore
-	admin              AdminStore
-	previews           PreviewStore
-	previewTeamAccess  PreviewTeamAccessStore
-	browserAccess      BrowserAccessStore
-	browserVerifier    oidcauth.Verifier
-	browserAuthority   *authorityclient.Client
-	shares             ShareStore
-	shareAccess        ShareAccessStore
-	feedback           FeedbackStore
-	guests             interface {
+	visitorState      VisitorStore
+	config            Config
+	store             PublicURLStore
+	certificates      CertificateStore
+	admin             AdminStore
+	previews          PreviewStore
+	previewTeamAccess PreviewTeamAccessStore
+	browserAccess     BrowserAccessStore
+	browserOIDC       *oidcauth.Server
+	browserAuthority  *authorityclient.Client
+	shares            ShareStore
+	shareAccess       ShareAccessStore
+	feedback          FeedbackStore
+	guests            interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -202,9 +191,20 @@ func NewHandler(
 	authorizationStore AuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
+	if cfg.TrafficDefaults == (trafficlimits.Limits{}) {
+		cfg.TrafficDefaults = trafficlimits.Default()
+	}
+	if cfg.TrafficCeiling == (trafficlimits.Limits{}) {
+		cfg.TrafficCeiling = trafficlimits.Ceiling()
+	}
+	if err := tnldconfig.ValidateTraffic(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
+		return nil, err
+	}
+	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
+	cfg.TrafficCeiling.RatePer = cfg.TrafficCeiling.Period()
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
-	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
-		h.publishCredentials = credentials
+	if visitorState, ok := store.(VisitorStore); ok {
+		h.visitorState = visitorState
 	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
@@ -241,28 +241,23 @@ func NewHandler(
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
 	}
-	loginSourceRevision := int64(0)
-	if cfg.LoginToken != "" {
-		verifier, err := credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
-		if err != nil {
-			return nil, fmt.Errorf("controlapi: configure login token: %w", err)
-		}
-		loginSourceRevision = verifier.SourceRevision()
-	}
 	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
-			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
+			store: authorizationStore, dnsAutomation: cfg.DNSAutomation,
 			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels, managedURLMode: cfg.ManagedURLMode,
 		}
 	}
-	if cfg.BrowserOIDCClientID != "" {
+	if cfg.OIDCClientID != "" {
 		var err error
-		h.browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: cfg.HTTPClient,
+		h.browserOIDC, err = oidcauth.NewServer(oidcauth.ServerConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scopes: cfg.OIDCScopes, RedirectURL: cfg.ControlURL + browserCallbackPath, HTTPClient: cfg.HTTPClient,
 		})
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.ControlURL != "" {
+		var err error
 		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
 			return nil, err
@@ -361,18 +356,13 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		DnsAutomation:                     cfg.DNSAutomation,
 		GuestDemo:                         cfg.GuestDemoEnabled,
-		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
+		BrowserLoginAvailable:             new(cfg.OIDCClientID != ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
-	}
-	if cfg.LoginToken != "" {
-		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.LoginToken)
 	}
 	if cfg.OIDCIssuer != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.Oidc)
 		result.Authentication.Oidc = &controlv1.OIDCAuthenticationFacts{
-			Issuer: cfg.OIDCIssuer, ClientId: cfg.OIDCClientID,
-			LoginFlow: controlv1.OIDCAuthenticationFactsLoginFlow(cfg.OIDCLoginFlow),
-			Scopes:    slices.Clone(cfg.OIDCScopes),
+			Issuer: cfg.OIDCIssuer, LoginFlow: controlv1.DeviceCode,
 		}
 	}
 	return result

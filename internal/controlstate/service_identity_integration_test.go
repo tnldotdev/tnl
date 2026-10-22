@@ -21,7 +21,7 @@ func TestIntegrationWebsiteAndOIDCShareIdentityAndMemberships(t *testing.T) {
 	if err != nil || cli.Identity.Identity.ID != web.Identity.ID || cli.Identity.PersonalTeamID != web.PersonalTeamID {
 		t.Fatalf("CLI identity=%+v error=%v", cli.Identity, err)
 	}
-	owner, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+	owner, err := createTestControlSession(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}

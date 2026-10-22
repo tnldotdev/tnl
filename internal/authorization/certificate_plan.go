@@ -11,7 +11,7 @@ import (
 func PublicURLCertificatePlan(hostname, namespace string, apexAllowed, dnsAutomation bool) *CertificatePlan {
 	plan := &CertificatePlan{
 		CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname},
-		ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
+		ChallengeMethod: certificateidentity.ChallengeDNS01,
 	}
 	if dnsAutomation {
 		plan.ChallengeMethod = certificateidentity.ChallengeDNS01

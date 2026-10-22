@@ -1,6 +1,7 @@
 package controlapi
 
 import (
+	"crypto/sha256"
 	"errors"
 	"log"
 	"net/http"
@@ -79,6 +80,18 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
+	accessMode := controlstate.VisitorAccessRestricted
+	if body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
+		accessMode = controlstate.VisitorAccessAnonymous
+	}
+	if body.AccessMode != nil {
+		accessMode = controlstate.VisitorAccessMode(*body.AccessMode)
+	}
+	if !accessMode.Valid() ||
+		(body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access mode")
+		return
+	}
 	allowedIPPrefixes := []string(nil)
 	if body.AllowedIpPrefixes != nil {
 		var err error
@@ -107,6 +120,11 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	hashProtocol := ""
+	pool := body.PublisherPool != nil && *body.PublisherPool
+	if pool && (ephemeral || decision.GuestID != "" || !(decision.ActingRole == "owner" || decision.ActingRole == "admin" || decision.ActingMembershipID != "" && decision.ActingMembershipID == decision.PublicURLMembershipID)) {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "only a saved public URL's manager can enable its publisher pool")
+		return
+	}
 	if protocol != controlv1.Http {
 		hashProtocol = string(protocol)
 	}
@@ -114,11 +132,15 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		Operation: authorization.OperationPublicURLCreate, TeamID: decision.TeamID, MembershipID: decision.PublicURLMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
 		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol,
-		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: ephemeral,
+		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, AccessMode: string(accessMode), Ephemeral: ephemeral,
 	})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
+	}
+	if pool {
+		encoded := append([]byte("tnl/public-url-publisher-pool/v1\x00"), digest[:]...)
+		digest = authorization.Digest(sha256.Sum256(encoded))
 	}
 	dnsState := controlstate.PublicURLDNSUnmanaged
 	dnsAuthorityReference := ""
@@ -126,13 +148,20 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		dnsState = controlstate.PublicURLDNSPending
 		dnsAuthorityReference = decision.DNSAuthorityReference
 	}
+	storedIPPrefixes := allowedIPPrefixes
+	if decision.GuestID != "" {
+		// the issuing IP still constrains guest publication, but visitors use
+		// a separate URL-bound guest capability rather than that IP.
+		storedIPPrefixes = nil
+	}
 	route, err := h.store.CreatePublicURL(request.Context(), controlstate.CreatePublicURLRequest{
 		GuestID: decision.GuestID,
 		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
 		ServiceProtocol: storedProtocol,
-		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AllowedIPPrefixes: allowedIPPrefixes,
+		PublisherPool:   body.PublisherPool != nil && *body.PublisherPool,
+		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,
@@ -177,8 +206,11 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	httpProtocol := route.ServiceProtocol == "" || route.ServiceProtocol == controlstate.PublicURLServiceHTTP
-	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp ||
-		route.Ephemeral && httpProtocol) ||
+	storedProtocol := route.ServiceProtocol
+	if storedProtocol == "" {
+		storedProtocol = controlstate.PublicURLServiceHTTP
+	}
+	if *body.Target == "" && (route.Target != "" || !storedProtocol.ValidCreateTarget(route.Purpose, "", route.Ephemeral)) ||
 		*body.Target != "" && !httpProtocol {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
@@ -268,54 +300,35 @@ func (h *handler) CreatePublishRun(
 	publicURLID controlv1.PublicURLID,
 	_ controlv1.CreatePublishRunParams,
 ) {
+	if !h.acceptingNewWork(response) {
+		return
+	}
 	token, bearerOK := requestBearerToken(request)
 	if !bearerOK {
 		writeBearerProblem(response)
 		return
 	}
-	var credential controlstate.PublicURLPublishCredential
-	var retrySecret []byte
-	if credentials.IsPublicURLPublishCredential(token) {
-		var bound controlstate.PublicURL
-		var ok bool
-		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)
-		if !ok {
-			return
-		}
-		if bound.ID != string(publicURLID) {
-			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-			return
-		}
-	} else if credentials.IsEphemeralCredential(token) {
-		if h.publishCredentials == nil {
-			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "ad-hoc credentials are unavailable")
-			return
-		}
-		var err error
-		_, _, retrySecret, err = credentials.ParseEphemeralCredential(credentials.EphemeralCredential(token))
-		if err != nil {
-			writeBearerProblem(response)
-			return
-		}
-		credential, err = h.publishCredentials.AuthenticateEphemeralCredential(request.Context(), credentials.EphemeralCredential(token), time.Now())
-		if errors.Is(err, controlstate.ErrEphemeralCredential) {
-			writeBearerProblem(response)
-			return
-		}
-		if err != nil {
-			writeControlStateProblem(response, "authenticate ad-hoc publication", err)
-			return
-		}
+	store, ok := h.store.(PublisherRunStore)
+	if !ok {
+		writeProblem(response, 503, controlv1.Unavailable, "publisher authentication is unavailable")
+		return
 	}
-	var principal publicURLReadPrincipal
-	if credential.ID == "" {
-		var ok bool
-		principal, ok = h.authorizeRouteReads(response, request)
-		if !ok {
-			return
-		}
+	source := publisherRequestSource(request)
+	publisher, err := store.AuthenticatePublisherAccess(request.Context(), token, source, time.Now())
+	if err != nil {
+		publisherProblem(response, "authenticate publisher", err)
+		return
+	}
+	mayStart, err := store.PublisherMayStartRun(request.Context(), publisher, publicURLID)
+	if err != nil || !mayStart {
+		writeProblem(response, 404, controlv1.NotFound, "resource not found")
+		return
 	}
 	idempotencyKey := request.Header.Get("Idempotency-Key")
+	traffic, ok := publishRunTrafficSelection(response, request)
+	if !ok {
+		return
+	}
 	route, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
 	if err != nil {
 		writeControlStateProblem(response, "read public URL for publish run", err)
@@ -325,52 +338,19 @@ func (h *handler) CreatePublishRun(
 	for index, prefix := range route.AllowedIPPrefixes {
 		allowedIPPrefixes[index] = prefix.String()
 	}
-	var decision authorization.Decision
-	if credential.ID != "" {
-		var err error
-		if credential.Kind == controlstate.PublishCredentialEphemeral {
-			err = h.publishCredentials.ValidateEphemeralCredentialPublicURL(request.Context(), credential, route, time.Now())
-		} else {
-			err = h.publishCredentials.ValidatePublicURLPublishCredential(request.Context(), credential, route)
-		}
-		if err != nil {
-			writeBearerProblem(response)
-			return
-		}
-		decision = authorization.Decision{
-			IdentityID: credential.IdentityID, TeamID: route.TeamID, ActingMembershipID: credential.MembershipID,
-			PublicURLMembershipID: route.MembershipID, PolicyRevision: credential.PolicyRevision,
-			DomainID: route.DomainID, CanonicalHostname: route.CanonicalHostname,
-			PublicURLScope: authorization.PublicURLScope(route.PublicURLScope), CertificatePlan: &credential.CertificatePlan,
-		}
-		copy(decision.RetrySecret[:], retrySecret)
-	} else {
-		var ok bool
-		decision, ok = h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-			Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
-			PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-			CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-			Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral,
-			PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
-			PublicURLMutationRevision: route.MutationRevision,
-		})
-		if !ok {
-			return
-		}
-	}
-	if decision.CertificatePlan == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
+	plan, err := store.PublisherRunPlan(request.Context(), publisher, route, h.config.DNSAutomation)
+	if err != nil {
+		publisherProblem(response, "authorize publisher certificate", err)
 		return
 	}
-	plan := *decision.CertificatePlan
 	if plan.ChallengeMethod == certificateidentity.ChallengeDNS01 && !h.config.DNSAutomation {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "certificate plan requires DNS-01 automation, which is not configured")
 		return
 	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
-		Operation: authorization.OperationPublishRunCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
-		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
-		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber, PolicyRevision: decision.PolicyRevision,
+		Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID, MembershipID: route.MembershipID,
+		DomainID: route.DomainID, CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
+		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber, PolicyRevision: uint64(route.PolicyRevision),
 		Target: route.Target, Ephemeral: route.Ephemeral, CertificatePlan: &plan, AllowedIPPrefixes: allowedIPPrefixes,
 	})
 	if err != nil {
@@ -378,18 +358,19 @@ func (h *handler) CreatePublishRun(
 		return
 	}
 	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
-		PublicURLID: route.ID, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
-		ActingIdentityID: decision.IdentityID, GuestID: decision.GuestID,
-		RetrySecret:    decision.RetrySecret[:],
+		PublicURLID: route.ID, TeamID: route.TeamID, MembershipID: route.MembershipID,
+		ActingIdentityID: publisher.CreatorID, GuestID: publisher.GuestID,
 		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
-		PolicyRevision: decision.PolicyRevision, CertificateCacheKey: plan.CacheKey,
+		PolicyRevision: uint64(route.PolicyRevision), CertificateCacheKey: plan.CacheKey,
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
 		CertificateChallenge:     plan.ChallengeMethod,
 		ExpectedMutationRevision: route.MutationRevision,
-		PublishCredentialID:      credential.ID,
+		PublisherIdentityID:      publisher.ID, PublisherGrantID: publisher.GrantID, PublisherKeyID: publisher.KeyID,
+		PublisherRunProof: request.Header.Get("Publisher-Run-Proof"), PublisherSourceIP: source,
+		TrafficSelection: traffic, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
-		writeControlStateProblem(response, "create publish run", err)
+		publisherProblem(response, "create publish run", err)
 		return
 	}
 	route, err = h.store.GetPublicURLForAuthorization(request.Context(), route.ID)
@@ -421,9 +402,10 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.PublishRunHeartbeat{
-		PublishRun:           publishRunResponse(setup),
-		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
-		PolicyDenials:        int64(setup.PolicyDenials),
+		PublishRun:            publishRunResponse(setup),
+		PublisherConnections:  connectionAssignmentResponses(setup.PublisherConnections),
+		PolicyDenials:         int64(setup.PolicyDenials),
+		VisitorPolicyRevision: setup.VisitorPolicyRevision,
 	})
 }
 

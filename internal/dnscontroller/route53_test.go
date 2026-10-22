@@ -102,12 +102,12 @@ func TestRoute53ProviderRejectsChangedCustomZoneNameservers(t *testing.T) {
 
 func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 	client, provider := route53TestProvider(t, "tunnels.example.test")
-	record := PublicURLRecord{
+	record := AddressRecord{
 		ZoneID: "Z123", ZoneDomain: "tunnels.example.test",
-		PublicURLID: "public_url_0123456789abcdef0123456789abcdef", CanonicalHostname: "api.tunnels.example.test",
+		Owner: PublicURLOwner("public_url_0123456789abcdef0123456789abcdef"), CanonicalHostname: "api.tunnels.example.test",
 		IngressIPv4Addresses: []string{"192.0.2.10"}, IngressIPv6Addresses: []string{"2001:db8::10"},
 	}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 3 || client.changes[0].Action != types.ChangeActionCreate ||
@@ -118,20 +118,20 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 		*simpleRecordSet(record.CanonicalHostname, types.RRTypeA, record.IngressIPv4Addresses),
 		*simpleRecordSet(record.CanonicalHostname, types.RRTypeAaaa, record.IngressIPv6Addresses),
 	}
-	client.recordSets[dnsName(publicURLOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{{
-		Name: aws.String(dnsName(publicURLOwnerName(record.CanonicalHostname))), Type: types.RRTypeTxt, TTL: aws.Int64(60),
-		ResourceRecords: []types.ResourceRecord{{Value: aws.String(publicURLOwnerValue(record.PublicURLID))}},
+	client.recordSets[dnsName(addressOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{{
+		Name: aws.String(dnsName(addressOwnerName(record.CanonicalHostname))), Type: types.RRTypeTxt, TTL: aws.Int64(60),
+		ResourceRecords: []types.ResourceRecord{{Value: aws.String(record.Owner.marker())}},
 	}}
 	client.changes = nil
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) != 0 {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil || len(client.changes) != 0 {
 		t.Fatalf("unchanged public URL DNS submitted changes: %+v, %v", client.changes, err)
 	}
 	record.IngressIPv4Addresses = []string{"192.0.2.11"}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) == 0 {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil || len(client.changes) == 0 {
 		t.Fatalf("changed public URL DNS did not submit changes: %+v, %v", client.changes, err)
 	}
 	client.changes = nil
-	if _, err := provider.RemovePublicURL(t.Context(), record); err != nil {
+	if _, err := provider.RemoveAddress(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 3 {
@@ -146,12 +146,12 @@ func TestRoute53ProviderPublishesAndRemovesOnlyOwnedRouteRecords(t *testing.T) {
 
 func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T) {
 	client, provider := route53TestProvider(t, "tunnels.example.test")
-	record := PublicURLRecord{
-		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", PublicURLID: "public_url_one",
+	record := AddressRecord{
+		ZoneID: "Z123", ZoneDomain: "tunnels.example.test", Owner: PublicURLOwner("public_url_one"),
 		CanonicalHostname: "api.member.tunnels.example.test", Namespace: "member.tunnels.example.test", WildcardHostname: "*.member.tunnels.example.test",
 		IngressIPv4Addresses: []string{"192.0.2.10"},
 	}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.changes) != 2 || client.changes[0].Action != types.ChangeActionUpsert ||
@@ -167,33 +167,33 @@ func TestRoute53ProviderPublishesMemberWildcardWithoutPerHostOwner(t *testing.T)
 	listedWildcard.Name = aws.String(`\052.member.tunnels.example.test.`)
 	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{listedWildcard}
 	client.changes = nil
-	record.PublicURLID, record.CanonicalHostname = "public_url_two", "other.member.tunnels.example.test"
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil || len(client.changes) != 0 {
+	record.Owner, record.CanonicalHostname = PublicURLOwner("public_url_two"), "other.member.tunnels.example.test"
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil || len(client.changes) != 0 {
 		t.Fatalf("second member URL changed shared wildcard: %#v, %v", client.changes, err)
 	}
-	if _, err := provider.RemovePublicURL(t.Context(), record); err == nil || len(client.changes) != 0 {
+	if _, err := provider.RemoveAddress(t.Context(), record); err == nil || len(client.changes) != 0 {
 		t.Fatalf("removed shared wildcard with one public URL: %#v, %v", client.changes, err)
 	}
 	client.recordSets[dnsName(record.WildcardHostname)] = []types.ResourceRecordSet{
 		*simpleRecordSet(record.WildcardHostname, types.RRTypeCname, []string{"foreign.example.test."}),
 	}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err == nil || len(client.changes) != 0 {
+	if _, err := provider.PublishAddress(t.Context(), record); err == nil || len(client.changes) != 0 {
 		t.Fatalf("overwrote conflicting wildcard: %#v, %v", client.changes, err)
 	}
 }
 
 func TestRoute53ProviderChecksFullWildcardNamespace(t *testing.T) {
 	_, provider := route53TestProvider(t, "routes.example.test")
-	record := PublicURLRecord{
-		ZoneID: "Z123", ZoneDomain: "routes.example.test", PublicURLID: "public_url_one",
+	record := AddressRecord{
+		ZoneID: "Z123", ZoneDomain: "routes.example.test", Owner: PublicURLOwner("public_url_one"),
 		CanonicalHostname: "app.alex.studio.routes.example.test", Namespace: "alex.studio.routes.example.test",
 		WildcardHostname: "*.alex.studio.routes.example.test", IngressIPv4Addresses: []string{"192.0.2.10"},
 	}
-	if _, err := provider.PublishPublicURL(t.Context(), record); err != nil {
+	if _, err := provider.PublishAddress(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
 	record.Namespace = "bob.studio.routes.example.test"
-	if _, err := provider.PublishPublicURL(t.Context(), record); err == nil {
+	if _, err := provider.PublishAddress(t.Context(), record); err == nil {
 		t.Fatal("accepted a wildcard outside the authorized member namespace")
 	}
 }
@@ -483,9 +483,9 @@ func route53ApexRecords(domain string) map[string][]types.ResourceRecordSet {
 	return map[string][]types.ResourceRecordSet{dnsName(domain): {*ns, *soa}}
 }
 
-func route53TestPublicURL(client *route53Stub) PublicURLRecord {
-	record := PublicURLRecord{ZoneID: "Z123", ZoneDomain: "tunnels.example.test", PublicURLID: "public_url_1", CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}}
+func route53TestPublicURL(client *route53Stub) AddressRecord {
+	record := AddressRecord{ZoneID: "Z123", ZoneDomain: "tunnels.example.test", Owner: PublicURLOwner("public_url_1"), CanonicalHostname: "api.tunnels.example.test", IngressIPv4Addresses: []string{"192.0.2.10"}}
 	client.recordSets[dnsName(record.CanonicalHostname)] = []types.ResourceRecordSet{*simpleRecordSet(record.CanonicalHostname, types.RRTypeA, append([]string(nil), record.IngressIPv4Addresses...))}
-	client.recordSets[dnsName(publicURLOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{*simpleRecordSet(publicURLOwnerName(record.CanonicalHostname), types.RRTypeTxt, []string{publicURLOwnerValue(record.PublicURLID)})}
+	client.recordSets[dnsName(addressOwnerName(record.CanonicalHostname))] = []types.ResourceRecordSet{*simpleRecordSet(addressOwnerName(record.CanonicalHostname), types.RRTypeTxt, []string{record.Owner.marker()})}
 	return record
 }
