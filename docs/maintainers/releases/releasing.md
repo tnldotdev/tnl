@@ -77,9 +77,21 @@ receive the `next` dist-tag. Stable releases receive `latest`.
 
 ## bootstrap pypi once
 
-Configure a pending Trusted Publisher for the `tnldotdev-tnl` project on PyPI,
-bound to this repository's `.github/workflows/release.yml`. No PyPI API token
-is needed. The root release workflow builds four wheel-only distributions for
+Before the first Python release, create the `pypi` GitHub Actions environment
+and limit its deployments to release tags (`v*`). Configure a pending Trusted
+Publisher on PyPI with these matching values:
+
+| Field             | Value           |
+| ----------------- | --------------- |
+| Project name      | `tnldotdev-tnl` |
+| GitHub owner      | `tnldotdev`     |
+| Repository        | `tnl`           |
+| Workflow filename | `release.yml`   |
+| Environment name  | `pypi`          |
+
+The Python publishing job declares `environment: pypi`; PyPI must match that
+environment as well as the repository and workflow. No PyPI API token is needed.
+The root release workflow builds four wheel-only distributions for
 macOS and Linux on arm64 and x64 from the same verified GoReleaser binaries as
 the archives and npm packages. Each wheel includes the required license files.
 `task release:snapshot` followed by `task py:build` checks the four wheels and
