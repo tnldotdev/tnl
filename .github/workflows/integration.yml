@@ -148,6 +148,9 @@ jobs:
       - name: Verify CLI workflows
         run: task go:test:integration:cli
 
+      - name: Verify fixed-list publisher groups
+        run: task go:test:integration:publisher-groups
+
       - name: Verify repaired ownership and management boundaries
         run: task go:test:integration:app-workflows go:test:integration:private-claims go:test:integration:service-access go:test:integration:aws-bootstrap
 

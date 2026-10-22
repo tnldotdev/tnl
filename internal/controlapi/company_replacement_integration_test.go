@@ -69,7 +69,7 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	f.decode(f.ownerCall("POST", base, founder.sub, nil, authorityv1.CreateIdentityConnectionRequest{SourceId: "source-a", Admission: authorityv1.CreateConnectionManaged}), 201, &aSetup)
 	f.decode(f.provision(aSetup.IdentityConnection, aSetup.SetupToken, founder.sub, founder.dir, 1, true, founder.slug), 204, nil)
 	var a controlstate.IdentityConnectionSecret
-	f.decode(f.ownerCall("POST", base+"/"+aSetup.ID+"/activate", founder.sub, f.proof(aSetup.IdentityConnection, founder.dir), map[string]any{"expected_revision": aSetup.Revision, "setup_token": aSetup.SetupToken}), 200, &a)
+	f.decode(f.ownerCall("POST", base+"/"+aSetup.ID+"/activate", founder.sub, f.proof(aSetup.IdentityConnection, founder.dir), f.activationRequest(aSetup)), 200, &a)
 	founder.company = f.login(a.IdentityConnection, founder.sub, founder.dir)
 	owner := newPerson("consenting-owner", 2)
 	admin := newPerson("admin", 3)
@@ -146,7 +146,7 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 		t.Fatal("pending sync admitted a new member", stagedMemberships, err)
 	}
 	activation := base + "/" + bSetup.ID + "/activate"
-	activationBody := map[string]any{"expected_revision": bSetup.Revision, "setup_token": bSetup.SetupToken}
+	activationBody := f.activationRequest(bSetup)
 	ownerProof := append(f.proof(a.IdentityConnection, owner.dir), f.proof(bSetup.IdentityConnection, "b/"+owner.slug)...)
 	// neither a different current owner nor staged eligibility can replace the
 	// consenting identity or bypass a current-source eligibility suspension.

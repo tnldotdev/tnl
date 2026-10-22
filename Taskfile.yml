@@ -628,7 +628,7 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: Group CLI integration requires Linux for isolated credential protection
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationCLIFixedGroupsCrossTeamIsolation$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationFixedGroupsCrossTeamIsolation$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:publisher-state:
     desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership

@@ -24,7 +24,7 @@ import (
 // this invokes the real CLI once for both identities in one process, against
 // real control/authority, PostgreSQL, ingress, relays and the managed TLS path.
 // the shared workflow fixture supplies local certificate and DNS workers.
-func TestIntegrationCLIFixedGroupsCrossTeamIsolation(t *testing.T) {
+func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if !cliWorkflowInChild(t) {
 		return
 	}
