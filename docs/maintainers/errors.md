@@ -72,7 +72,7 @@ input, expired access, or malformed responses.
 | surface          | owner and output                                                                                |
 | ---------------- | ----------------------------------------------------------------------------------------------- |
 | `tnl`            | shared diagram renderer for human output; stable diagnostic codes and reasons in JSON or NDJSON |
-| `tnld`           | `operatorlog.Report` with authored copy, approved fields, and request correlation               |
+| `tnld`           | `operatorlog.ReportContext` with authored copy, approved fields, and request/trace correlation  |
 | HTTP APIs        | serving OpenAPI contract and its problem adapter                                                |
 | tunnel protocol  | `pkg/protocol/tunnelv1` error codes and authored close reasons                                  |
 | npm integrations | `TnlError` codes, definitions, and retry policy                                                 |

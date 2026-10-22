@@ -1,5 +1,7 @@
 # tnl
 
+> tnl is in prerelease. the first release is coming november 1.
+
 `tnl` gives your local app an end-to-end encrypted HTTPS URL. By default, every
 Git worktree gets its own unique URL, so you can easily preview multiple
 development tracks in parallel.
@@ -31,10 +33,11 @@ Try the built-in demo without installing a project dependency or signing in:
 npx --yes @tnldotdev/tnl publish --demo
 ```
 
-On tnl.dev, the public URL opens in your browser when ready. Click **ping** and
+On tnl.dev, the guest link opens in your browser when ready. Click **ping** and
 match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
-at a time. Only your current IP can visit. A guest credential lasts 72 hours
+at a time. The link admits this demo without signing in; tnl prints it once
+instead of admitting every visitor from your IP. A guest credential lasts 72 hours
 and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
 stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
@@ -63,9 +66,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    app: {
-      directory: ".",
-    },
+    app: { publicURL: {} },
   },
 });
 ```
@@ -76,11 +77,17 @@ Then run:
 npx tnl auth login
 pnpm dev
 npx tnl wait
+npx tnl status --scope=local
+npx tnl status --scope=server
 ```
 
 Sign in once with `tnl auth login`. The integration prepares public metadata before
 framework startup, then reports the listener's actual bound port to a local
-`tnl` process. By default, only your current IP can visit the public URL.
+`tnl` process. By default, a visitor needs a current sign-in, share link, or
+URL-scoped visitor token. To allow anonymous visitors to a service, set
+`publicURL: { access: "anonymous" }` for that service. An additional IP list in
+`publicURL: { access: { ip: ["192.0.2.0/24"] } }` limits where credentialed visitors may connect;
+an IP match does not replace their credential.
 
 `tnl wait` checks a fresh public response. `tnl status` shows every configured
 service, including apps that have not started, without sending a request to the
@@ -97,8 +104,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has several services, give each its own directory in
-`tnl.config.ts`:
+If your project has several services, name them in `tnl.config.ts` and
+select the service when preparing each app:
 
 ```ts
 // tnl.config.ts
@@ -106,17 +113,15 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    web: {
-      directory: "apps/web",
-    },
-    api: {
-      directory: "apps/api",
-    },
+    web: { publicURL: {} },
+    api: { publicURL: {} },
   },
 });
 ```
 
-Start each service with its normal development command:
+Pass `service: "web"` or `service: "api"` to your framework integration or
+`tnl.prepare()` in each app. Start each service with its normal development
+command:
 
 ```bash
 pnpm --dir apps/web dev
@@ -142,6 +147,10 @@ const apiURL = tnl.services?.api?.url;
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
 [framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
+An explicit `publicURL` block enables public HTTPS. Omit it to keep a service
+private, including HTTP services; use `tnl connect NAME` to reach a private
+service. `protocol` defaults to `http`; `tcp`, `mysql`, and `postgres` describe
+private targets. Set `access: { team: true }` on a service to allow the team.
 For a Node or Bun API, prepare its service before startup and register the bound
 listener. Port 0 lets the application choose an available port:
 
@@ -180,7 +189,7 @@ The same frontend is now running from two checkouts:
 | primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
 | `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
 
-`tnl` names each URL after the service and project, adding the directory name
+`tnl` names each URL after the service and project, adding the checkout name
 for a linked worktree. A short ID keeps names distinct, and switching branches
 leaves the URL unchanged.
 
@@ -191,7 +200,7 @@ listener it actually opens. Restarting the same worktree reuses its URL.
 See what is running across your local worktrees from any of them:
 
 ```bash
-npx tnl status --all
+npx tnl status --all --scope=local
 ```
 
 ## custom domain
@@ -213,16 +222,17 @@ https://web-example-k7n2p9.chase.dev.example.com
 
 ## self-host
 
-Set `TNLD_MANAGED_DOMAIN=routes.example.com` on your server. After signing in
-with the built-in administrator's login token, publish directly beneath it:
+Configure a standard OIDC issuer and server client on control, and set
+`TNLD_MANAGED_DOMAIN=routes.example.com`. Sign in through the browser approval flow:
 
 ```bash
-tnl auth login --server https://control.example.com --login-token
+tnl auth login --server https://control.example.com --open
+tnl status --scope=server --server https://control.example.com
 tnl publish 3000 --server https://control.example.com --name app
-# https://app.routes.example.com
+# https://app.alex.routes.example.com
 ```
 
-Without `--name`, `tnl` uses a stable project-and-worktree name. Other personal
+Without `--name`, `tnl` uses a stable project-and-worktree name. Personal
 teams use a readable label, such as `app.alex.routes.example.com`; members of
 the `studio` team use `app.alex.studio.routes.example.com`. A shared hosted
 server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
@@ -242,6 +252,14 @@ export default defineConfig({
 ```
 
 The same config works with hosted tnl.dev or your own server.
+
+Named publisher groups can run near services on your private network. Keep
+their service declarations in Git, then run `tnl apply` to save a revision in
+control. Enrolled publishers pull only their group's assignments and report
+their observed revision and health. Starting `pnpm dev` still registers only
+the local listener; it does not apply production changes. Cloud capacity and
+task replacement belong to your infrastructure. The
+[Fargate templates](deploy/publishers/readme.md) show that boundary.
 
 [Run your own server](https://tnl.dev/docs/self-hosting).
 

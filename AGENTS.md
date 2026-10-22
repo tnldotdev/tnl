@@ -12,7 +12,7 @@ qualify claims:
   seamless workflow to expose your application.”
 - Write “Ingress may try another connected relay before sending the first visitor
   byte,” not “Traffic is intelligently rerouted.”
-- Write “By default, only your current IP is allowed to visit the public URL,”
+- Write “By default, visitors need a current sign-in, share link, or token,”
   not “Your app is completely private.”
 
 Keep the voice lowercase, spare, concrete, practical, and understated. Avoid
@@ -119,7 +119,7 @@ mutation counters; public URL counters are publish run numbers.
 | **public URL certificate**       | The publicly trusted certificate the publisher uses to terminate visitor TLS for a public URL hostname.     |
 | **certificate plan**             | The hostnames, cache scope, and challenge method approved for a public URL certificate.                     |
 | **certificate issuance**         | One attempt to obtain and install a public URL certificate for a publish run's certificate plan.            |
-| **IP policy**                    | The rule controlling which visitor source addresses may use a public URL.                                   |
+| **IP policy**                    | An optional filter on visitor source addresses, in addition to a public URL's access setting.               |
 | **ingress routing table**        | Short-lived routing information control sends to ingress, including public URL policy and connected relays. |
 | **policy revision**              | The authority policy version recorded when a public URL operation is authorized.                            |
 | **public URL mutation revision** | An ever-increasing counter changed whenever editable public URL state changes.                              |
@@ -160,8 +160,10 @@ not _inbox_, for the collection of threads.
 | **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                      |
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
 | **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
-| **public URL publish credential**   | A revocable credential to publish one saved public URL.                                            |
-| **ephemeral credential**            | A revocable credential to create temporary public URLs in one authorized namespace.                |
+| **publisher identity**              | A native publisher's signed identity, independent of a person's control session.                   |
+| **publisher grant**                 | A revocable permission for one saved public URL or an authorized HTTP namespace.                   |
+| **publisher enrollment key**        | A one-use bootstrap secret for installing a publisher identity's signing key.                      |
+| **publisher credential file**       | A private, portable JSON file containing one publisher identity's key and exact grant.             |
 
 ## visitor connections
 
@@ -201,7 +203,6 @@ not _inbox_, for the collection of threads.
 | **website credential**          | The secret the website sends to control for identity and invitation requests.                                                |
 | **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                                         |
 | **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                 |
-| **login token**                 | The credential used to create administrator control sessions through the built-in authority.                                 |
 | **control session**             | A login session that can be revoked and has an access token and refresh token.                                               |
 | **access token**                | A short-lived credential that authorizes control API and authority API requests for a control session.                       |
 | **refresh token**               | A longer-lived credential used to rotate a control session's access and refresh tokens.                                      |
@@ -313,10 +314,10 @@ for runtime invariants, trust boundaries, and package/API ownership. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
-- The six HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, `api/public-url-usage/v1/openapi.yaml`, and `api/publisher/v1/openapi.yaml`. They generate committed models, clients, and server interfaces under `pkg/api/*`. The publisher contract also generates browser validators under `internal/publisherapi`; reference control schemas where the wire shapes are identical. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
+- The seven HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, `api/public-url-usage/v1/openapi.yaml`, `api/publisher/v1/openapi.yaml`, and `api/local-publisher/v1/openapi.yaml`. They generate committed models, clients, and server interfaces under `pkg/api/*`. The local publisher contract is private to native app/CLI registration, not a server API; the publisher contract also generates browser validators under `internal/publisherapi`. Reference control schemas where the wire shapes are identical. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
-- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require a minimum schema version. Keep migrations backward compatible with all control and standalone processes still serving traffic; add schema before switching its users and remove old schema only after those users have stopped.
+- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
 
 # development workflow
 
