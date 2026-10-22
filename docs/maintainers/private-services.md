@@ -166,6 +166,10 @@ targets can be retried. Neither preflight nor forwarding retries in plaintext,
 disables verification, or replays protocol bytes. MySQL is never probed as HTTPS.
 PostgreSQL instructions retain `channel_binding=disable` because visitor and target
 TLS end at different boundaries; ordinary SCRAM authentication remains intact.
+native PostgreSQL CancelRequests are refused even after TLS admission because
+their backend key is not bound to the original visitor subject and service. see
+[database cancellation](database-cancellation.md) for supported query bounds and
+the required ownership design.
 
 For native `kubectl` access to an EKS private endpoint, use `protocol: tcp`, omit
 `target.tls`, and

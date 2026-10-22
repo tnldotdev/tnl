@@ -34,6 +34,8 @@ const mysqlQuery = "SELECT CURRENT_USER() AS username, CONNECTION_ID() AS pid";
 let phase = "startup";
 let queries = 0;
 let negatives = 0;
+let lifetimes = 0;
+let nativeCancel = "not-tested";
 const sessions = new Set<number>();
 
 function version(name: string): string {
@@ -86,10 +88,14 @@ function report(driver: string, runtime: string, status = "qualified") {
       queries,
       sessions: sessions.size,
       negatives,
+      lifetimes,
+      nativeCancel,
     }) + "\n",
   );
   queries = 0;
   negatives = 0;
+  lifetimes = 0;
+  nativeCancel = "not-tested";
   sessions.clear();
 }
 
@@ -153,6 +159,82 @@ async function qualifyPostgres(runtime: typeof tnl, kind: string) {
   } finally {
     await pool.end();
   }
+
+  phase = "pg selected connection lifetimes";
+  await pgLifetimes(runtime);
+  phase = "pg native cancel limit and sql cancellation";
+  const sleeping = new pg.Client({ ...options, ...credentials });
+  const independent = new pg.Client({ ...options, ...credentials });
+  const bystander = new pg.Client({ ...options, ...credentials });
+  const cancelClient = new pg.Client({ ...options, ...credentials });
+  cancelClient.connection.on("error", () => {});
+  try {
+    await sleeping.connect();
+    await independent.connect();
+    await bystander.connect();
+    const bystanderPID = recordPG((await bystander.query(pgQuery)).rows);
+    const pid = recordPG((await sleeping.query(pgQuery)).rows);
+    await sleeping.query("CREATE TEMP SEQUENCE cancel_attempt; SET statement_timeout='1800ms'");
+    let complete!: (error: Error | null) => void;
+    const result = new Promise<Error | null>((resolve) => {
+      complete = resolve;
+    });
+    const query = sleeping.query(
+      new pg.Query("SELECT nextval('cancel_attempt'); SELECT pg_sleep(10)", (error) =>
+        complete(error ?? null),
+      ),
+    );
+    await waitSleep(independent, pid);
+    // pg's ordinary cancellation API opens a second socket and sends a plaintext
+    // CancelRequest even when the original session has verified TLS settings.
+    assert("cancel" in cancelClient && typeof cancelClient.cancel === "function");
+    cancelClient.cancel(sleeping, query);
+    await delay(100);
+    await waitSleep(independent, pid);
+    const error = await result;
+    assert.equal(errorCode(error), "57014");
+    assert(error instanceof Error && error.message.includes("statement timeout"));
+    const attempts = z
+      .array(z.object({ last_value: z.literal("1") }))
+      .parse((await sleeping.query("SELECT last_value FROM cancel_attempt")).rows);
+    assert.equal(attempts.length, 1);
+    assert.equal(recordPG((await sleeping.query(pgQuery)).rows), pid);
+    // authenticated SQL is a separate, provider-authorized cancellation option.
+    await sleeping.query("SET statement_timeout='5s'");
+    const canceled = sleeping
+      .query("SELECT nextval('cancel_attempt'); SELECT pg_sleep(10)")
+      .catch((error: unknown) => error);
+    await waitSleep(independent, pid);
+    const otherQuery = bystander.query("SELECT pg_sleep(0.5), 42 AS value");
+    await waitSleep(independent, bystanderPID);
+    const canceledAt = Date.now();
+    const decision = await independent.query("SELECT pg_cancel_backend($1) AS canceled", [pid]);
+    assert.equal(z.array(z.object({ canceled: z.literal(true) })).parse(decision.rows).length, 1);
+    const sqlError: unknown = await canceled;
+    assert.equal(errorCode(sqlError), "57014");
+    assert(sqlError instanceof Error && sqlError.message.includes("user request"));
+    assert(Date.now() - canceledAt < 2_000, "SQL cancellation must beat statement_timeout");
+    assert.equal(
+      z.array(z.object({ value: z.literal(42) })).parse((await otherQuery).rows).length,
+      1,
+    );
+    assert.equal(
+      z
+        .array(z.object({ last_value: z.literal("2") }))
+        .parse((await sleeping.query("SELECT last_value FROM cancel_attempt")).rows).length,
+      1,
+    );
+    assert.equal(recordPG((await sleeping.query(pgQuery)).rows), pid);
+    recordPG((await independent.query(pgQuery)).rows);
+    nativeCancel = "unsupported-plaintext-rejected; sql-cancel-and-statement-timeout-qualified";
+  } finally {
+    await sleeping.end();
+    await independent.end();
+    await bystander.end();
+    // cancel() opens only the raw cancellation socket; it never connects this
+    // Client's SQL lifecycle. end() would wait for an already-consumed end event.
+    cancelClient.connection.stream.destroy();
+  }
   report("pg", kind);
 
   phase = "postgres js accounts options";
@@ -206,7 +288,113 @@ async function qualifyPostgres(runtime: typeof tnl, kind: string) {
     ["SELF_SIGNED_CERT_IN_CHAIN"],
   );
   await rejects(() => queryJS({ password: "incorrect" }), ["28P01"]);
+  phase = "postgres js selected connection lifetimes";
+  await postgresLifetimes(runtime);
+  phase = "postgres js native cancel limit";
+  const cancelSQL = postgres({ ...options, ...credentials, max: 1, prepare: false });
+  const observer = new pg.Client({ ...options, ...credentials });
+  try {
+    await observer.connect();
+    const pid = recordPG(await cancelSQL.unsafe(pgQuery));
+    await cancelSQL.unsafe("CREATE TEMP SEQUENCE cancel_attempt");
+    await cancelSQL.unsafe("SET statement_timeout='1800ms'");
+    const query = cancelSQL
+      .unsafe("SELECT nextval('cancel_attempt'); SELECT pg_sleep(10)")
+      .simple();
+    const outcome = query.catch((error: unknown) => error);
+    await waitSleep(observer, pid);
+    query.cancel();
+    await delay(100);
+    await waitSleep(observer, pid);
+    const error: unknown = await outcome;
+    assert.equal(errorCode(error), "57014");
+    assert(error instanceof Error && error.message.includes("statement timeout"));
+    assert.equal(recordPG(await cancelSQL.unsafe(pgQuery)), pid);
+    assert.equal(
+      z
+        .array(z.object({ last_value: z.literal("1") }))
+        .parse(await cancelSQL.unsafe("SELECT last_value FROM cancel_attempt")).length,
+      1,
+    );
+    recordPG((await observer.query(pgQuery)).rows);
+    nativeCancel = "unsupported-unbound-tls-rejected; statement-timeout-qualified";
+  } finally {
+    await observer.end();
+    await cancelSQL.end({ timeout: 1 });
+  }
   report("postgres", kind);
+}
+
+async function waitSleep(observer: pg.Client, pid: number) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const result = await observer.query(
+      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='PgSleep') AS sleeping",
+      [pid],
+    );
+    if (z.array(z.object({ sleeping: z.boolean() })).parse(result.rows)[0]?.sleeping) return;
+    await delay(10);
+  }
+  assert.fail("native query never reached PgSleep");
+}
+
+async function pgLifetimes(runtime: typeof tnl) {
+  const expiring = new pg.Client({ ...(await runtime.connect("expiring")), ...credentials });
+  const renewing = new pg.Client({ ...(await runtime.connect("renewing")), ...credentials });
+  let expired = false;
+  expiring.on("error", () => {
+    expired = true;
+  });
+  try {
+    await expiring.connect();
+    await renewing.connect();
+    recordPG((await expiring.query(pgQuery)).rows);
+    const pid = recordPG((await renewing.query(pgQuery)).rows);
+    await delay(1_600);
+    assert(expired, "the original connector decision must expire an idle pg socket");
+    await assert.rejects(() => expiring.query(pgQuery));
+    assert.equal(recordPG((await renewing.query(pgQuery)).rows), pid);
+    lifetimes += 2;
+  } finally {
+    await expiring.end();
+    await renewing.end();
+  }
+}
+
+async function postgresLifetimes(runtime: typeof tnl) {
+  // reserve one physical connection so the driver's automatic reconnection cannot
+  // turn an expired session into an apparently successful lifetime assertion.
+  const client = postgres({
+    ...(await runtime.connect("renewing")),
+    ...credentials,
+    max: 1,
+    prepare: false,
+  });
+  try {
+    const connection = await client.reserve();
+    const pid = recordPG(await connection.unsafe(pgQuery));
+    await delay(1_600);
+    assert.equal(recordPG(await connection.unsafe(pgQuery)), pid);
+    connection.release();
+    lifetimes++;
+  } finally {
+    await client.end({ timeout: 1 });
+  }
+  const expiring = postgres({
+    ...(await runtime.connect("expiring")),
+    ...credentials,
+    max: 1,
+    prepare: false,
+  });
+  try {
+    recordPG(await expiring.unsafe(pgQuery));
+    await rejects(
+      () => Promise.resolve(expiring.unsafe("SELECT pg_sleep(10)")),
+      ["CONNECTION_CLOSED"],
+    );
+    lifetimes++;
+  } finally {
+    await expiring.end({ timeout: 1 });
+  }
 }
 
 async function qualifyMySQL(runtime: typeof tnl, kind: string) {
@@ -282,6 +470,31 @@ async function qualifyMySQL(runtime: typeof tnl, kind: string) {
     recordMySQL((await orm.execute(statement.raw(mysqlQuery)))[0]);
   } finally {
     await pool.end();
+  }
+  phase = "mysql2 selected connection lifetimes";
+  const expiring = await mysql2.createConnection({
+    ...(await runtime.connect("expiring")),
+    ...credentials,
+  });
+  const renewing = await mysql2.createConnection({
+    ...(await runtime.connect("renewing")),
+    ...credentials,
+  });
+  let expired = false;
+  expiring.on("error", () => {
+    expired = true;
+  });
+  try {
+    recordMySQL((await expiring.query(mysqlQuery))[0]);
+    const pid = recordMySQL((await renewing.query(mysqlQuery))[0]);
+    await delay(1_600);
+    assert(expired, "the original connector decision must expire an idle mysql2 socket");
+    await assert.rejects(() => expiring.query(mysqlQuery));
+    assert.equal(recordMySQL((await renewing.query(mysqlQuery))[0]), pid);
+    lifetimes += 2;
+  } finally {
+    expiring.destroy();
+    await renewing.end();
   }
   report("mysql2", kind);
 

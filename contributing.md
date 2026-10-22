@@ -65,7 +65,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Signed-human service access and CLI lookup | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
 | Publisher egress evidence                  | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
 | Private runtime topology                   | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
-| Real database clients                      | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                         |
+| Real database clients                      | `task go:test:integration:tcp-clients`                       | Docker CLI, uv and Python; disposable TLS providers, installed Node drivers and an isolated psycopg consumer         |
 | CLI and OpenSSH stdio                      | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
 | Existing OpenSSH target                    | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
 | Binary behavior                            | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
@@ -121,6 +121,12 @@ types, safe audit reporter causes, and metric collection during ingress
 construction. `task go:test:integration:runtime RUN='^TestIntegrationServiceAuditCleanupObservedOnce$'`
 checks the cleanup worker's exact count against an instrumented disposable
 PostgreSQL database.
+
+For native database TLS and authentication, run `task go:test:database-native -- -race`.
+`task go:test:integration:tcp-clients` owns disposable TLS PostgreSQL and MySQL,
+installs the Node SDK and Python wheel into isolated consumers, and checks real
+queries, selected connection lifetimes, and the
+[native cancellation boundary](docs/maintainers/database-cancellation.md).
 
 Use `RUN` to select an integration test, for example:
 

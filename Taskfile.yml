@@ -263,6 +263,11 @@ tasks:
     cmds:
       - go test {{.CLI_ARGS}} ./internal/httpstream ./internal/localproxy ./internal/publisher -count=1 -timeout=3m
 
+  go:test:database-native:
+    desc: Check managed native TLS negotiation, authentication, and setup cancellation
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='^TestManaged' -count=1 -timeout=3m
+
   go:test:integration:live-authorization:
     desc: Check browser and alias authorization in disposable PostgreSQL
     vars:
@@ -511,10 +516,10 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   go:test:integration:tcp-clients:
-    desc: Verify psql, mysql, and native drivers through both admissions with disposable TLS providers
+    desc: Verify database client TLS, cancellation boundaries, and selected lifetimes with disposable providers
     deps: [js:build]
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/postgres' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:tcp-lifecycle:

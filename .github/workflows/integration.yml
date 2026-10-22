@@ -126,6 +126,14 @@ jobs:
       - name: Install driver fixture dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set up Python driver fixture
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.9"
+
+      - name: Install pinned uv
+        run: python3 -m pip install uv==0.9.18
+
       - name: Install OpenSSH fixture
         run: |
           sudo apt-get update

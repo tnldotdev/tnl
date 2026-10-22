@@ -58,6 +58,11 @@ Postgres.js 3.4.9 uses non-PLUS SCRAM and accepts the returned `host`, `port`, a
 `database`, `max`, and `prepare` options. the accounts adapter's `max: 5` and
 `prepare: false` need no `connection.channel_binding` parameter.
 
+native PostgreSQL cancellation is unsupported; use provider `statement_timeout`
+or explicitly authorized SQL cancellation. see the
+[database cancellation boundary](database-cancellation.md) for tested client
+options, ownership proof, and the required follow-up design.
+
 HTTP returns `{url, fetch}`. its reusable Undici pool checks the managed
 origin and dials the loopback listener with the managed TLS server name. eight
 connections, a bounded pending-call budget, and four draining pool generations
