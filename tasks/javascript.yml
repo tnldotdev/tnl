@@ -105,7 +105,7 @@ tasks:
 
   test:browser:
     dir: "{{.ROOT_DIR}}"
-    desc: Test the embedded feedback toolbar in Chromium
+    desc: Test the embedded feedback toolbar in installed Google Chrome
     cmds:
       - pnpm exec vitest run --config vitest.browser.config.ts
 

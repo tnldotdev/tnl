@@ -82,8 +82,8 @@ jobs:
       - name: Check packages
         run: task js:check
 
-      - name: Install toolbar test browser
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Show toolbar test browser
+        run: google-chrome --version
 
       - name: Test embedded toolbar
         run: task js:test:browser

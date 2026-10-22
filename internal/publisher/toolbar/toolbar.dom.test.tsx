@@ -6,6 +6,7 @@ import type { FeedbackAPI } from "./api.ts";
 import { Toolbar } from "./toolbar.tsx";
 import type { FeedbackEvent, Summary, Thread } from "./model.ts";
 import { FeedbackError } from "./errors.ts";
+import { Pins } from "./pins.tsx";
 
 const id = "fb_0123456789abcdefghijkl";
 const report: Thread = {
@@ -241,6 +242,26 @@ test("page and status filters are sent to the hostname-scoped API", async () => 
       "resolved",
     ),
   );
+});
+
+test("a resolved pin stays marked while selected and disappears when deselected", async () => {
+  const app = appButton();
+  vi.spyOn(app, "getBoundingClientRect").mockReturnValue(new DOMRect(20, 30, 100, 50));
+  const threads: Summary[] = [
+    {
+      ...report,
+      state: "resolved",
+      anchor: { schema_version: 1, selectors: ["#save"], x: 0, y: 0 },
+    },
+  ];
+  const select = vi.fn();
+  const { rerender } = render(
+    <Pins document={document} threads={threads} select={select} selectedId={id} />,
+  );
+  const name = `Show pinned feedback: ${report.report.text}`;
+  expect((await screen.findByRole("button", { name })).textContent).toBe("[x]");
+  rerender(<Pins document={document} threads={threads} select={select} />);
+  await waitFor(() => expect(screen.queryByRole("button", { name })).toBeNull());
 });
 
 test("a missing anchor keeps its conversation readable without a reattachment action", async () => {
