@@ -251,6 +251,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		}
 		_ = exec.Command("docker", "rm", "--force", machine).Run()
 	})
+	waitInstallFixtureBoot(t, machine)
 	installFixtureCommand(t, "docker", "exec", machine, "mkdir", "-p", binDir)
 	installFixtureCommand(t, "docker", "cp", binDir+"/.", machine+":"+binDir)
 	installFixtureCommand(t, "docker", "cp", "/usr/local/share/ca-certificates/tnl-install-fixture.crt", machine+":/usr/local/share/ca-certificates/tnl-install-fixture.crt")
@@ -288,6 +289,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	installFixtureCommand(t, "docker", "restart", "--timeout", "60", machine)
+	waitInstallFixtureBoot(t, machine)
 	// Docker rewrites the shared /etc/hosts file on container boot. restore this
 	// fixture's stand-in for public DNS before checking the restarted publisher.
 	dns := exec.CommandContext(t.Context(), "docker", "exec", "-i", machine, "tee", "-a", "/etc/hosts")
@@ -458,6 +460,19 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal("fresh enrollment failed to recover the saved publication", err)
 	}
 	t.Log("real Ubuntu sudo setup/interrupted retry, operator logout, complete init reboot, retained Compose restart, missing-state/consumed-key failures, and fresh scoped enrollment preserved the restricted URL without human management access")
+}
+
+// systemd's boot-time temporary-file cleanup must finish before commands create
+// their own temporary files. a running container alone does not prove that.
+func waitInstallFixtureBoot(t *testing.T, machine string) {
+	t.Helper()
+	workflowWait(t, 30*time.Second, func() bool {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		output, _ := exec.CommandContext(ctx, "docker", "exec", machine, "systemctl", "is-system-running").Output()
+		state := strings.TrimSpace(string(output))
+		return state == "running" || state == "degraded"
+	})
 }
 
 func installConfiguredHealthTarget(t *testing.T, registry *publisherjob.Registry, old publisherjob.Job, binDir, binary, person string) publisherjob.Job {

@@ -8,6 +8,23 @@ from typing import cast
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """provider tests select their own context instead of inheriting the runner."""
+    for name in (
+        "TNL_CONNECTION_HANDLE",
+        "TNL_WORKLOAD",
+        "GITHUB_ACTIONS",
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "VERCEL",
+        "VERCEL_OIDC_TOKEN",
+        "VERCEL_OIDC_TOKEN_FILE",
+        "FLY_APP_NAME",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--tnl-binary", help="built native tnl for connection contract checks")
     parser.addoption("--tnl-connection-owner", help="built native connection owner test fixture")

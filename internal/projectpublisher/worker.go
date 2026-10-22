@@ -301,52 +301,59 @@ func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snap
 		checks.Add(1)
 		go func() {
 			defer checks.Done()
-			var entry *proofEntry
-			var captured TargetSnapshot
-			var capturedTarget bool
-			observation := clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
-			defer func() {
-				if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
-					observation.Ready = false
-					observation.Reason = "runtime.target_changed"
-				}
-				if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
-					w.Manager.Observe(observation)
-				}
-			}()
-			w.mu.Lock()
-			entry = w.proofs[service.RegistrationID]
-			w.mu.Unlock()
-			if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
-				return
-			}
-			if entry.target != nil {
-				var err error
-				captured, err = entry.target.Capture(ctx)
-				if err != nil {
-					return
-				}
-				capturedTarget = true
-			}
-			if entry.privateCheck != nil {
-				observation = entry.privateCheck(ctx, service)
-			} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
-				if entry.proof == nil {
-					return
-				}
-				entry.check.Lock()
-				defer entry.check.Unlock()
-				if ctx.Err() != nil {
-					return
-				}
-				secret, err := entry.proof.Renew()
-				if err != nil {
-					return
-				}
-				observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
-			}
+			w.checkService(ctx, service)
 		}()
 	}
 	checks.Wait()
 	return w.Manager.Snapshot(), nil
+}
+
+// checkService reports this probe's accepted result. a later target change may
+// invalidate the journal, but cannot restart a completed automatic check.
+func (w *Workers) checkService(ctx context.Context, service clientruntime.Service) (ready bool) {
+	var entry *proofEntry
+	var captured TargetSnapshot
+	var capturedTarget bool
+	observation := clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+	defer func() {
+		if entry != nil && entry.target != nil && capturedTarget && !entry.target.Current(ctx, captured) {
+			observation.Ready = false
+			observation.Reason = "runtime.target_changed"
+		}
+		if w.Manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
+			ready = w.Manager.Observe(observation) && observation.Ready
+		}
+	}()
+	w.mu.Lock()
+	entry = w.proofs[service.RegistrationID]
+	w.mu.Unlock()
+	if entry == nil || entry.run.Number != service.PublishRunNumber || entry.service.Target != service.Target {
+		return false
+	}
+	if entry.target != nil {
+		var err error
+		captured, err = entry.target.Capture(ctx)
+		if err != nil {
+			return false
+		}
+		capturedTarget = true
+	}
+	if entry.privateCheck != nil {
+		observation = entry.privateCheck(ctx, service)
+	} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
+		if entry.proof == nil {
+			return false
+		}
+		entry.check.Lock()
+		defer entry.check.Unlock()
+		if ctx.Err() != nil {
+			return false
+		}
+		secret, err := entry.proof.Renew()
+		if err != nil {
+			return false
+		}
+		observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
+	}
+	return false
 }

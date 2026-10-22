@@ -24,6 +24,9 @@ func (w *Workers) startReadiness(ctx context.Context, service clientruntime.Serv
 		defer close(done)
 		defer cancel()
 		for attempt := 0; ; attempt++ {
+			if ctx.Err() != nil {
+				return
+			}
 			if attempt > 0 {
 				timer := time.NewTimer(delay(attempt - 1))
 				select {
@@ -36,15 +39,14 @@ func (w *Workers) startReadiness(ctx context.Context, service clientruntime.Serv
 			if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, run) {
 				return
 			}
-			snapshot, err := w.Check(ctx, []string{service.Name})
-			if err != nil || ctx.Err() != nil {
-				return
-			}
-			for _, current := range snapshot.Services {
+			for _, current := range w.Manager.Snapshot().Services {
 				if current.Name != service.Name {
 					continue
 				}
 				if current.RegistrationID != service.RegistrationID || current.Target != service.Target || current.PublishRunNumber != run || !current.Registered || !current.Routable || current.Ready {
+					return
+				}
+				if w.checkService(ctx, current) {
 					return
 				}
 				break

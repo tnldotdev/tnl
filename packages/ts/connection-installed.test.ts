@@ -75,6 +75,43 @@ test("installed ESM and CommonJS connections use verified owned HTTP transport o
     const local = ipc.address();
     if (local === null || typeof local === "string") throw new Error("missing IPC listener");
     const handle = path.join(privateDirectory, "handle.json");
+    await run("npm", ["pack", "--ignore-scripts", "--pack-destination", directory], {
+      cwd: new URL("./", import.meta.url),
+    });
+    const tarball = (await readdir(directory)).find((file) => file.endsWith(".tgz"));
+    if (tarball === undefined) throw new Error("missing package tarball");
+    const { stdout: managerVersion } = await run("pnpm", ["--version"], {
+      cwd: new URL("../../", import.meta.url),
+    });
+    expect(managerVersion.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    await writeFile(
+      path.join(directory, "package.json"),
+      JSON.stringify({
+        private: true,
+        type: "module",
+        packageManager: `pnpm@${managerVersion.trim()}`,
+        dependencies: { "@tnldotdev/tnl": `file:${path.join(directory, tarball)}` },
+      }),
+    );
+    await writeFile(
+      path.join(directory, "pnpm-workspace.yaml"),
+      "packages: []\nautoInstallPeers: false\n",
+    );
+    // use an empty store so developer caches cannot hide missing install inputs.
+    await run(
+      "pnpm",
+      ["install", "--ignore-scripts", "--store-dir", path.join(directory, "store")],
+      { cwd: directory, timeout: 45_000 },
+    ).catch((cause: unknown) => {
+      const output =
+        cause !== null &&
+        typeof cause === "object" &&
+        "stdout" in cause &&
+        typeof cause.stdout === "string"
+          ? cause.stdout
+          : "";
+      throw new Error(`installed consumer setup failed\n${output}`, { cause });
+    });
     await writeFile(
       handle,
       JSON.stringify({
@@ -88,20 +125,6 @@ test("installed ESM and CommonJS connections use verified owned HTTP transport o
       }),
       { mode: 0o600 },
     );
-    await run("npm", ["pack", "--ignore-scripts", "--pack-destination", directory], {
-      cwd: new URL("./", import.meta.url),
-    });
-    const tarball = (await readdir(directory)).find((file) => file.endsWith(".tgz"));
-    if (tarball === undefined) throw new Error("missing package tarball");
-    await writeFile(
-      path.join(directory, "package.json"),
-      JSON.stringify({
-        private: true,
-        type: "module",
-        dependencies: { "@tnldotdev/tnl": `file:${path.join(directory, tarball)}` },
-      }),
-    );
-    await run("pnpm", ["install", "--ignore-scripts", "--offline"], { cwd: directory });
     const script = `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
