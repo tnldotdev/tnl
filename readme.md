@@ -1,5 +1,7 @@
 # tnl
 
+take a shortcut through the internet.
+
 > tnl is in prerelease. the first release is coming november 1.
 
 `tnl` gives your local app an end-to-end encrypted HTTPS URL. By default, every
