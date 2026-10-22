@@ -11,7 +11,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -24,7 +24,7 @@ func TestAppCapabilityCannotReplaceAnotherServiceOrSubmitReadiness(t *testing.T)
 		t.Fatal(err)
 	}
 	defer database.Close()
-	manager, err := clientruntime.New(t.Context(), root, database, []clientruntime.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ clientruntime.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(t.Context(), root, database, []publisherapp.Service{{Name: "web"}, {Name: "api"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -58,10 +58,10 @@ func TestAppCapabilityCannotReplaceAnotherServiceOrSubmitReadiness(t *testing.T)
 	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/check", publisherprotocol.Check{}, nil); !errors.Is(err, publisherprotocol.ErrForbidden) {
 		t.Fatalf("app checked readiness: %v", err)
 	}
-	if err := publisherprotocol.Call(t.Context(), capabilities.Owner(), "POST", "/v1/observe", clientruntime.Observation{Ready: true}, nil); err == nil {
+	if err := publisherprotocol.Call(t.Context(), capabilities.Owner(), "POST", "/v1/observe", publisherapp.Observation{Ready: true}, nil); err == nil {
 		t.Fatal("client authored readiness was accepted")
 	}
-	var snapshot clientruntime.Snapshot
+	var snapshot publisherapp.Snapshot
 	if err := publisherprotocol.Call(t.Context(), app, "GET", "/v1/status", nil, &snapshot); err != nil || len(snapshot.Services) != 1 || snapshot.Services[0].Name != "web" {
 		t.Fatalf("scoped snapshot=%+v err=%v", snapshot.Services, err)
 	}

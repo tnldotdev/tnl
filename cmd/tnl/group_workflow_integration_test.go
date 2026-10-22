@@ -45,7 +45,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/relay"
@@ -205,7 +205,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		return response.StatusCode == 200 && string(body) == "local application"
 	})
 	workflowWait(t, 5*time.Second, func() bool {
-		var snapshot clientruntime.Snapshot
+		var snapshot publisherapp.Snapshot
 		services := []string{"web"}
 		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &snapshot); err != nil {
 			return false
@@ -250,7 +250,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		return response.StatusCode == 200 && len(body) == 0 && webhookBody.Load() == "public webhook delivery"
 	})
 	operations.Store(0)
-	var localSnapshot clientruntime.Snapshot
+	var localSnapshot publisherapp.Snapshot
 	if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &localSnapshot); err != nil || len(localSnapshot.Services) != 2 {
 		t.Fatal("remote group services were registered with the local app owner")
 	}
@@ -293,7 +293,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}()
 	workflowWait(t, 20*time.Second, func() bool {
 		services := []string{internal}
-		var snapshot clientruntime.Snapshot
+		var snapshot publisherapp.Snapshot
 		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &snapshot); err != nil {
 			return false
 		}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 // VerifyPublicationReadiness proves that the current run carried a request to
@@ -37,7 +37,7 @@ func VerifyPublicationReadiness(ctx context.Context, cfg *publisher.Config, path
 				if err != nil {
 					return err
 				}
-				observation := clientruntime.ProbeWithProof(check, clientruntime.Service{PublicURL: event.PublicURL, RunNumber: run.Number, Readiness: clientruntime.Readiness{Path: path}}, nil, secret)
+				observation := publisherapp.ProbeWithProof(check, publisherapp.Service{PublicURL: event.PublicURL, RunNumber: run.Number, Readiness: publisherapp.Readiness{Path: path}}, nil, secret)
 				// consumption is local evidence that this exact run, rather than an
 				// older run or unrelated HTTP responder, accepted the proof.
 				if observation.Ready && proof.HeaderValue() == "" {

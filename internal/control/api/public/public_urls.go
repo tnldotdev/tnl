@@ -18,7 +18,7 @@ import (
 )
 
 func (h *handler) ListPublicURLs(response http.ResponseWriter, request *http.Request, _ controlv1.ListPublicURLsParams) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -196,7 +196,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid IP policy")
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -239,7 +239,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 }
 
 func (h *handler) GetPublicURL(response http.ResponseWriter, request *http.Request, publicURLID controlv1.PublicURLID) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -260,7 +260,7 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 		writeBearerProblem(response)
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}

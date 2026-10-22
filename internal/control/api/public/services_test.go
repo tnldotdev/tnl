@@ -17,7 +17,7 @@ import (
 
 type privateSelectionResponseStore struct {
 	PublicURLStore
-	privateVisitorStore
+	serviceVisitorStore
 	issued controlstate.ServiceSelection
 }
 

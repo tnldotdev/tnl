@@ -17,7 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -87,7 +87,7 @@ func run() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := clientruntime.New(ctx, root, database, []clientruntime.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ clientruntime.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})

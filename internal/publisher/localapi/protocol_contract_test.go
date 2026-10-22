@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	localpublisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
@@ -22,11 +22,11 @@ func TestStatusProtocolsMatchContract(t *testing.T) {
 	}
 	defer database.Close()
 	protocols := []string{"http", "tcp", "mysql", "postgres", "kubernetes"}
-	services := make([]clientruntime.Service, 0, len(protocols))
+	services := make([]publisherapp.Service, 0, len(protocols))
 	for _, protocol := range protocols {
-		services = append(services, clientruntime.Service{Name: protocol, ServiceProtocol: protocol})
+		services = append(services, publisherapp.Service{Name: protocol, ServiceProtocol: protocol})
 	}
-	manager, err := clientruntime.New(t.Context(), root, database, services, nil)
+	manager, err := publisherapp.New(t.Context(), root, database, services, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

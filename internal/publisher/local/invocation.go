@@ -19,7 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -61,7 +61,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		first, _ := json.Marshal(previous)
 		next, _ := json.Marshal(request)
 		if previous == nil || string(first) != string(next) {
-			return publisherprotocol.Registration{}, clientruntime.ErrOwnerConflict
+			return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
 		}
 		if err := a.manager.Renew(service.RegistrationID, request.Owner); err != nil {
 			return publisherprotocol.Registration{}, err
@@ -128,7 +128,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 			result = errors.Join(result, cleanup())
 		}
 	}()
-	if err := a.manager.AddService(clientruntime.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: clientruntime.Readiness{Path: "/"}}); err != nil {
+	if err := a.manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
 		return publisherprotocol.Registration{}, err
 	}
 	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://"+publicURL.CanonicalHostname)
@@ -149,9 +149,9 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
 	}
 	cfg.AccessMode = publicURL.AccessMode
-	configuration := clientruntime.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
+	configuration := publisherapp.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
 	if a.AttachPublication != nil {
-		if err := a.AttachPublication(ctx, clientruntime.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
+		if err := a.AttachPublication(ctx, publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 	}

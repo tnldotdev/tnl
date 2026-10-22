@@ -46,7 +46,7 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 		writeProblem(w, 503, controlv1.Unavailable, "publisher identities are unavailable")
 		return nil, controlstate.Membership{}, "", false
 	}
-	p, ok := h.authorizeRouteReads(w, r)
+	p, ok := h.authorizeReads(w, r)
 	if !ok {
 		return nil, controlstate.Membership{}, "", false
 	}

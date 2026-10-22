@@ -120,7 +120,7 @@ func (h *handler) CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	actor, ok := h.authorizeRouteReads(w, r)
+	actor, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -142,7 +142,7 @@ func (h *handler) RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	actor, ok := h.authorizeRouteReads(w, r)
+	actor, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -155,7 +155,7 @@ func (h *handler) RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 
 func (h *handler) ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID) {
 	w.Header().Set("Cache-Control", "no-store")
-	actor, ok := h.authorizeRouteReads(w, r)
+	actor, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -168,7 +168,7 @@ func (h *handler) ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, 
 	}
 	result, err := store.ListServiceHTTPGrants(r.Context(), service, actor.identityID, time.Now())
 	if err != nil {
-		privateVisitorError(w, "list service HTTP grants", err)
+		serviceVisitorError(w, "list service HTTP grants", err)
 		return
 	}
 	writeJSON(w, 200, result)

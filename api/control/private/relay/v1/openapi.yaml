@@ -12,11 +12,11 @@ security:
   - clusterAuth: []
 paths:
   /internal/v1/private-publisher-connections/{publisher_connection_id}/claim:
-    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1claim"
+    $ref: "./paths/service-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1claim"
   /internal/v1/private-publisher-connections/{publisher_connection_id}/ready:
-    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1ready"
+    $ref: "./paths/service-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1ready"
   /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect:
-    $ref: "./paths/private-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1disconnect"
+    $ref: "./paths/service-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1disconnect"
   /internal/v1/relays/register:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1relays~1register"
   /internal/v1/relays/{relay_id}/renew:
@@ -47,15 +47,15 @@ components:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
     ServiceID:
-      $ref: "./schemas/private-connections.yaml#/schemas/ServiceID"
+      $ref: "./schemas/service-connections.yaml#/schemas/ServiceID"
     ServiceRunID:
-      $ref: "./schemas/private-connections.yaml#/schemas/ServiceRunID"
+      $ref: "./schemas/service-connections.yaml#/schemas/ServiceRunID"
     ServicePublisherConnectionClaim:
-      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnectionClaim"
+      $ref: "./schemas/service-connections.yaml#/schemas/ServicePublisherConnectionClaim"
     ServicePublisherConnection:
-      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnection"
+      $ref: "./schemas/service-connections.yaml#/schemas/ServicePublisherConnection"
     ServicePublisherConnectionTransition:
-      $ref: "./schemas/private-connections.yaml#/schemas/ServicePublisherConnectionTransition"
+      $ref: "./schemas/service-connections.yaml#/schemas/ServicePublisherConnectionTransition"
     Identifier:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     RelayRegistration:

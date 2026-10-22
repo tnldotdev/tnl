@@ -15,7 +15,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -40,7 +40,7 @@ type statusCommand struct {
 type statusLocal struct {
 	Available bool                       `json:"available"`
 	CheckedAt time.Time                  `json:"checked_at"`
-	Snapshot  clientruntime.Snapshot     `json:"snapshot"`
+	Snapshot  publisherapp.Snapshot      `json:"snapshot"`
 	Tunnels   clientstate.TunnelSnapshot `json:"tunnels"`
 }
 
@@ -105,8 +105,8 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	appSnapshot := clientruntime.Snapshot{Services: []clientruntime.Service{}}
-	var projectSnapshots []clientruntime.Snapshot
+	appSnapshot := publisherapp.Snapshot{Services: []publisherapp.Service{}}
+	var projectSnapshots []publisherapp.Snapshot
 	if !flags.All {
 		project, resolveErr := flags.Configuration, error(nil)
 		if project.Root == "" {
@@ -118,14 +118,14 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				return err
 			}
 		} else {
-			appSnapshot, err = clientruntime.ReadSnapshotFrom(ctx, state, flags.Project)
+			appSnapshot, err = publisherapp.ReadSnapshotFrom(ctx, state, flags.Project)
 			if err != nil {
 				return err
 			}
 			checkAppSnapshotOwner(ctx, state, &appSnapshot)
 		}
 	} else {
-		projects, err := clientruntime.ListSnapshotsFrom(ctx, state)
+		projects, err := publisherapp.ListSnapshotsFrom(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				}
 			}
 			if !found {
-				local, readErr := clientruntime.ReadSnapshotFrom(ctx, state, tunnel.Project)
+				local, readErr := publisherapp.ReadSnapshotFrom(ctx, state, tunnel.Project)
 				if readErr != nil {
 					return readErr
 				}

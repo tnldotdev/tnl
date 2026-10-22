@@ -18,7 +18,7 @@ type managedCertificateStore interface {
 
 func writeManagedCertificateProblem(w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrServiceConflict) {
-		privateVisitorError(w, operation, err)
+		serviceVisitorError(w, operation, err)
 		return
 	}
 	writeControlStateProblem(w, operation, err)

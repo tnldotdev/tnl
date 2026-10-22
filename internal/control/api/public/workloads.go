@@ -53,7 +53,7 @@ func workloadVisitorProblem(w http.ResponseWriter, err error) {
 		writeProblem(w, 409, controlv1.Conflict, "workload request key belongs to another service")
 		return
 	}
-	privateVisitorError(w, "authorize workload visitor", err)
+	serviceVisitorError(w, "authorize workload visitor", err)
 }
 func (h *handler) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
 	store, token, ok := h.workloadVisitor(w, r)

@@ -16,7 +16,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview access request")
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}

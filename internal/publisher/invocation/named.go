@@ -9,7 +9,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -87,7 +87,7 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 					}
 				}
 			}
-			if lastOwner == "" || errors.Is(err, publisherprotocol.ErrUnauthorized) || errors.Is(err, publisherprotocol.ErrForbidden) || errors.Is(err, clientruntime.ErrOwnerConflict) {
+			if lastOwner == "" || errors.Is(err, publisherprotocol.ErrUnauthorized) || errors.Is(err, publisherprotocol.ErrForbidden) || errors.Is(err, publisherapp.ErrOwnerConflict) {
 				return err
 			}
 			// a restarted local publisher may be unavailable until its new
@@ -115,7 +115,7 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 			lastRun = 0
 			lastTunnel, lastServiceTarget = "", ""
 		}
-		var snapshot clientruntime.Snapshot
+		var snapshot publisherapp.Snapshot
 		status, finishStatus := observability.ClientOperation(ctx, "client.publish.status")
 		statusErr := publisherprotocol.Call(status, endpoint, "GET", "/v1/status", nil, &snapshot)
 		finishStatus(statusErr)

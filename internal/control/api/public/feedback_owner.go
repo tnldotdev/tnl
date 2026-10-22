@@ -53,7 +53,7 @@ func feedbackOwnerFailure(response http.ResponseWriter, err error) {
 }
 
 func (h *handler) getOwnerFeedback(response http.ResponseWriter, request *http.Request, id string) (controlstate.FeedbackThread, authorization.Decision, uint64, bool) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
 	}
@@ -89,7 +89,7 @@ func (h *handler) GetFeedbackThread(response http.ResponseWriter, request *http.
 }
 
 func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *http.Request, _ controlv1.ListFeedbackThreadsParams) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -194,7 +194,7 @@ func (h *handler) ListFeedbackThreadEvents(response http.ResponseWriter, request
 }
 
 func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http.Request, _ controlv1.ListFeedbackEventsParams) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}

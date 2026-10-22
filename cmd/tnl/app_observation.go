@@ -14,7 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -31,8 +31,8 @@ type watchCommand struct {
 	Output   string `name:"output" enum:"human,ndjson" default:"human"`
 }
 
-func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, state *clientstate.Database) (clientruntime.Snapshot, error) {
-	snapshot, err := clientruntime.ReadSnapshotFrom(ctx, state, project.Root)
+func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, state *clientstate.Database) (publisherapp.Snapshot, error) {
+	snapshot, err := publisherapp.ReadSnapshotFrom(ctx, state, project.Root)
 	if err != nil {
 		return snapshot, err
 	}
@@ -64,8 +64,8 @@ func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, stat
 
 // a private worker has no public tunnel heartbeat. verify the owner before
 // presenting durable readiness as current, including status --all and watch.
-func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, snapshot *clientruntime.Snapshot) {
-	if !slices.ContainsFunc(snapshot.Services, func(s clientruntime.Service) bool { return s.Registered }) {
+func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, snapshot *publisherapp.Snapshot) {
+	if !slices.ContainsFunc(snapshot.Services, func(s publisherapp.Service) bool { return s.Registered }) {
 		return
 	}
 	probe, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -85,7 +85,7 @@ func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, sna
 	}
 }
 
-func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
+func appServiceBlocks(snapshot publisherapp.Snapshot) []clioutput.Block {
 	blocks := make([]clioutput.Block, 0, len(snapshot.Services))
 	for _, service := range snapshot.Services {
 		state := "not registered"
@@ -177,7 +177,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
-	var latest clientruntime.Snapshot
+	var latest publisherapp.Snapshot
 	checkSource := "local publisher process unavailable"
 	for attempt := 0; ; attempt++ {
 		snapshot, err := readAppSnapshotFrom(context.WithoutCancel(ctx), project, state)
@@ -190,7 +190,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 			if len(flags.Service) != 0 {
 				request.Services = &flags.Service
 			}
-			var current clientruntime.Snapshot
+			var current publisherapp.Snapshot
 			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/check", request, &current); err == nil {
 				snapshot, checked = current, true
 				checkSource = "selected local publisher process (fresh public-path check)"
@@ -198,7 +198,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 				checkSource = "selected local publisher process unavailable"
 			}
 		}
-		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s clientruntime.Service) bool {
+		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s publisherapp.Service) bool {
 			if len(flags.Service) != 0 {
 				return !slices.Contains(flags.Service, s.Name)
 			}
@@ -222,7 +222,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		if ctx.Err() != nil {
 			break
 		}
-		timer := time.NewTimer(clientruntime.RetryDelay(attempt))
+		timer := time.NewTimer(publisherapp.RetryDelay(attempt))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -238,10 +238,10 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
 }
 
-func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state, checkedBy string) error {
+func writeAppWait(output io.Writer, mode string, snapshot publisherapp.Snapshot, state, checkedBy string) error {
 	if mode == "json" {
 		return json.NewEncoder(output).Encode(struct {
-			clientruntime.Snapshot
+			publisherapp.Snapshot
 			State     string `json:"state"`
 			CheckedBy string `json:"checked_by"`
 		}{snapshot, state, checkedBy})
@@ -267,8 +267,8 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 		cursor = snapshot.Cursor
 		if flags.Output == "ndjson" {
 			if err := json.NewEncoder(output).Encode(struct {
-				Type     string                 `json:"type"`
-				Snapshot clientruntime.Snapshot `json:"snapshot"`
+				Type     string                `json:"type"`
+				Snapshot publisherapp.Snapshot `json:"snapshot"`
 			}{"snapshot", snapshot}); err != nil {
 				return err
 			}
@@ -285,7 +285,7 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 			return nil
 		}
 		poll, finishPoll := observability.ClientOperation(ctx, "client.watch.poll")
-		events, err := clientruntime.EventsAfterFrom(poll, state, project.Root, cursor)
+		events, err := publisherapp.EventsAfterFrom(poll, state, project.Root, cursor)
 		finishPoll(err)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -307,13 +307,13 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 	}
 }
 
-func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event) error {
+func writeAppWatchEvent(output io.Writer, mode string, event publisherapp.Event) error {
 	if mode == "ndjson" {
 		return json.NewEncoder(output).Encode(event)
 	}
 	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "cursor", Value: event.Cursor})}
 	if event.Service != nil {
-		blocks = append(blocks, appServiceBlocks(clientruntime.Snapshot{Services: []clientruntime.Service{*event.Service}})...)
+		blocks = append(blocks, appServiceBlocks(publisherapp.Snapshot{Services: []publisherapp.Service{*event.Service}})...)
 	}
 	if event.Snapshot != nil {
 		blocks = append(blocks, appServiceBlocks(*event.Snapshot)...)

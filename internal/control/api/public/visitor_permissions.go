@@ -108,7 +108,7 @@ func (h *handler) visitorActor(w http.ResponseWriter, r *http.Request) (string, 
 		writeProblem(w, 503, controlv1.Unavailable, "visitor permissions are unavailable")
 		return "", false
 	}
-	actor, ok := h.authorizeRouteReads(w, r)
+	actor, ok := h.authorizeReads(w, r)
 	if !ok {
 		return "", false
 	}

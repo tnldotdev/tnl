@@ -9,7 +9,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -23,12 +23,12 @@ type projectConfiguration struct {
 type ProjectRuntime struct {
 	project           projectConfiguration
 	state             *clientstate.Database
-	manager           *clientruntime.Manager
+	manager           *publisherapp.Manager
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
 }
 
-func NewProjectRuntime(project clientproject.Project, state *clientstate.Database, manager *clientruntime.Manager, resolver target.TargetResolver) *ProjectRuntime {
+func NewProjectRuntime(project clientproject.Project, state *clientstate.Database, manager *publisherapp.Manager, resolver target.TargetResolver) *ProjectRuntime {
 	return &ProjectRuntime{project: projectConfiguration{Project: project, targetResolver: resolver}, state: state, manager: manager, TargetResolver: resolver}
 }
 

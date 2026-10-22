@@ -40,7 +40,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "shares are unavailable")
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -156,7 +156,7 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 }
 
 func (h *handler) ListShares(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID, _ controlv1.ListSharesParams) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -177,7 +177,7 @@ func (h *handler) ListShares(response http.ResponseWriter, request *http.Request
 }
 
 func (h *handler) ListTeamShares(response http.ResponseWriter, request *http.Request, _ controlv1.ListTeamSharesParams) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -230,7 +230,7 @@ func (h *handler) RevokeShare(response http.ResponseWriter, request *http.Reques
 }
 
 func (h *handler) readShare(response http.ResponseWriter, request *http.Request, id string) (controlstate.Share, bool) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return controlstate.Share{}, false
 	}

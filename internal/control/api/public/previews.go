@@ -22,7 +22,7 @@ func (h *handler) CreatePreview(response http.ResponseWriter, request *http.Requ
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid idempotency key")
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -43,7 +43,7 @@ func (h *handler) CreatePreview(response http.ResponseWriter, request *http.Requ
 }
 
 func (h *handler) GetPreview(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}
@@ -59,7 +59,7 @@ func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *htt
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview public URL")
 		return
 	}
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return
 	}

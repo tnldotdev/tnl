@@ -12,7 +12,7 @@ import (
 
 func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request, project, service string, params controlv1.GetLocalProjectServiceParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -29,7 +29,7 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil {
-		privateVisitorError(w, "get local project service", err)
+		serviceVisitorError(w, "get local project service", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -71,7 +71,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 
 func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, project string, params controlv1.GetProjectPublicMetadataParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *handler) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.ConnectorSessionID) {
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -103,7 +103,7 @@ func (h *handler) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http
 		return
 	}
 	if err := store.ReleaseVisitorIngressAssignment(r.Context(), principal.identityID, id, time.Now()); err != nil {
-		privateVisitorError(w, "release visitor ingress assignment", err)
+		serviceVisitorError(w, "release visitor ingress assignment", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

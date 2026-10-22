@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publishertarget "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -117,7 +117,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 			var result struct {
 				Projects []struct {
 					Local *struct {
-						Snapshot clientruntime.Snapshot `json:"snapshot"`
+						Snapshot publisherapp.Snapshot `json:"snapshot"`
 					} `json:"local"`
 				} `json:"projects"`
 			}

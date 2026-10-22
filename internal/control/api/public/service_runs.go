@@ -29,7 +29,7 @@ func serviceRunProblem(w http.ResponseWriter, operation string, err error) {
 		writeProblem(w, 503, controlv1.Unavailable, "two live relay services are required")
 		return
 	}
-	privateVisitorError(w, operation, err)
+	serviceVisitorError(w, operation, err)
 }
 
 func serviceRunConnections(rows []controlstate.ServiceRunAssignment) []controlv1.ConnectionAssignment {
@@ -56,7 +56,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		writeProblem(w, 400, controlv1.InvalidRequest, "declare the service protocol and TLS trust revision")
 		return
 	}
-	declaration := controlstate.ServiceMetadata{Protocol: string(body.Protocol), TLS: privateTLSInput(body.TargetTls), TrustRevision: body.TrustRevision}
+	declaration := controlstate.ServiceMetadata{Protocol: string(body.Protocol), TLS: targetTLSInput(body.TargetTls), TrustRevision: body.TrustRevision}
 	if declaration.Validate() != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return

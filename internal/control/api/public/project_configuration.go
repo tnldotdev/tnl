@@ -43,7 +43,7 @@ func projectConfigurationProblem(w http.ResponseWriter, operation string, err er
 }
 
 func (h *handler) projectManager(w http.ResponseWriter, r *http.Request, team string) (string, bool) {
-	p, ok := h.authorizeRouteReads(w, r)
+	p, ok := h.authorizeReads(w, r)
 	if !ok {
 		return "", false
 	}

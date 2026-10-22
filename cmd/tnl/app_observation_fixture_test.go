@@ -10,14 +10,14 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 // command observation tests use the real manager, journal and API without
 // reaching into the process constructor's private worker state.
-func observationFixture(t *testing.T, defaultProtection bool) (projectConfiguration, *clientstate.Database, *clientruntime.Manager, publisherprotocol.Endpoint) {
+func observationFixture(t *testing.T, defaultProtection bool) (projectConfiguration, *clientstate.Database, *publisherapp.Manager, publisherprotocol.Endpoint) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -33,7 +33,7 @@ func observationFixture(t *testing.T, defaultProtection bool) (projectConfigurat
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}}
-	manager, err := clientruntime.New(t.Context(), root, state, clientruntime.ConfiguredServices(project.Project), func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
+	manager, err := publisherapp.New(t.Context(), root, state, publisherapp.ConfiguredServices(project.Project), func(ctx context.Context, _ publisherapp.Service, observe func(uint64, bool) error) error {
 		if err := observe(1, true); err != nil {
 			return err
 		}
@@ -55,7 +55,7 @@ func observationFixture(t *testing.T, defaultProtection bool) (projectConfigurat
 	return project, state, manager, capabilities.Owner()
 }
 
-func waitObservationFixture(t *testing.T, manager *clientruntime.Manager, predicate func(clientruntime.Snapshot) bool) {
+func waitObservationFixture(t *testing.T, manager *publisherapp.Manager, predicate func(publisherapp.Snapshot) bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {

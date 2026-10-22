@@ -12,7 +12,7 @@ import (
 
 func (h *handler) GetProjectService(w http.ResponseWriter, r *http.Request, project string, service controlv1.ServiceName, params controlv1.GetProjectServiceParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -25,7 +25,7 @@ func (h *handler) GetProjectService(w http.ResponseWriter, r *http.Request, proj
 	}
 	record, err := store.GetProjectService(r.Context(), controlstate.GetProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, SourceFingerprint: params.SourceFingerprint, Service: service, IdentityID: principal.identityID, Now: time.Now()})
 	if err != nil {
-		privateVisitorError(w, "read applied service", err)
+		serviceVisitorError(w, "read applied service", err)
 		return
 	}
 	result := serviceaccess.Service(record)

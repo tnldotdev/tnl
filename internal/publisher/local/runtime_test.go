@@ -12,7 +12,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
@@ -37,8 +37,8 @@ func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	a := &appRuntime{state: state, project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}, prepared: map[string]appPreparation{}}
-	a.workers = &clientruntime.Workers{Database: state, Configure: a.workerConfiguration}
-	run := func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
+	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration}
+	run := func(ctx context.Context, _ publisherapp.Service, observe func(uint64, bool) error) error {
 		if err := observe(1, true); err != nil {
 			return err
 		}
@@ -48,7 +48,7 @@ func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...
 	if realWorkers {
 		run = a.workers.Run
 	}
-	a.manager, err = clientruntime.New(t.Context(), root, state, clientruntime.ConfiguredServices(a.project), run)
+	a.manager, err = publisherapp.New(t.Context(), root, state, publisherapp.ConfiguredServices(a.project), run)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestRuntimeStatusIsAuthenticatedScopedAndDoesNotProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.manager.RecordFailure("api", "runtime.preparation_failed")
-	var snapshot clientruntime.Snapshot
+	var snapshot publisherapp.Snapshot
 	if err := publisherprotocol.Call(t.Context(), app, http.MethodGet, "/v1/status", nil, &snapshot); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestHTTPRuntimeDoesNotCreatePublicURLsForServices(t *testing.T) {
 	protocol := "postgres"
 	address := config.Target("127.0.0.1:5432")
 	project := clientproject.Project{Config: config.TNL{Services: config.Services{"web": {}, "orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address}}}}}
-	services := clientruntime.ConfiguredServices(project)
+	services := publisherapp.ConfiguredServices(project)
 	if len(services) != 2 || services[0].Name != "orders" || services[0].ServiceProtocol != "postgres" || services[0].PublicURL != "" || services[1].PublicURL != "" {
 		t.Fatalf("services=%+v", services)
 	}

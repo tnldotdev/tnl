@@ -11,7 +11,7 @@ import (
 )
 
 func (h *handler) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http.Request, id controlv1.ConnectorSessionID) {
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
@@ -28,7 +28,7 @@ func (h *handler) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		privateVisitorError(w, "read ingress transport trust", err)
+		serviceVisitorError(w, "read ingress transport trust", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

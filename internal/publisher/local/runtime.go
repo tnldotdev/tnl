@@ -22,7 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -34,7 +34,7 @@ type Options struct {
 	StateDir          string
 	Snapshot          io.Reader
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
 }
 
 func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
@@ -200,7 +200,7 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration clientruntime.Configuration
+	configuration publisherapp.Configuration
 	project       clientproject.Project
 	framework     publisherprotocol.Framework
 	assignment    publisherprotocol.Assignment
@@ -208,8 +208,8 @@ type appPreparation struct {
 }
 
 type appRuntime struct {
-	manager        *clientruntime.Manager
-	workers        *clientruntime.Workers
+	manager        *publisherapp.Manager
+	workers        *publisherapp.Workers
 	capabilities   *publisherprotocol.Capabilities
 	project        clientproject.Project
 	state          *clientstate.Database
@@ -219,7 +219,7 @@ type appRuntime struct {
 	prepared       map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
-	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
 }
 
 type appPreparationGate struct {
@@ -292,8 +292,8 @@ func Serve(ctx context.Context, options Options) (result error) {
 	}
 	defer state.Close()
 	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
-	a.workers = &clientruntime.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
-	a.manager, err = clientruntime.New(observability.Independent(ctx), project.Root, state, clientruntime.ConfiguredServices(project), a.workers.Run)
+	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
+	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func (a *appRuntime) register(ctx context.Context, request publisherprotocol.Reg
 	preparation, found := a.prepared[request.RegistrationID]
 	a.mu.Unlock()
 	if !found {
-		return clientruntime.ErrRegistrationStale
+		return publisherapp.ErrRegistrationStale
 	}
 	// retain the app's reported origin for renewal, but never treat its
 	// hostname as a container address. the worker resolves the selected service.
@@ -409,7 +409,7 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 		return publisherprotocol.Registration{}, err
 	}
 	if request.ConfigurationDigest != digest {
-		return publisherprotocol.Registration{}, failure.Wrap("acquire configured service", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict)
+		return publisherprotocol.Registration{}, failure.Wrap("acquire configured service", failure.AppConfigurationConflict, publisherapp.ErrOwnerConflict)
 	}
 	release, err := a.beginPreparation(ctx, request.Service)
 	if err != nil {
@@ -446,12 +446,12 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 	return registration, nil
 }
 
-func (a *appRuntime) workerConfiguration(ctx context.Context, service clientruntime.Service) (clientruntime.Configuration, error) {
+func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
 	a.mu.Lock()
 	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if !found {
-		return clientruntime.Configuration{}, clientruntime.ErrRegistrationStale
+		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
 		return a.operations(preparation.project).ServiceConfiguration(ctx, service)

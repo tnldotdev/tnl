@@ -18,7 +18,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -57,7 +57,7 @@ func serveInvocations() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := clientruntime.New(ctx, root, database, nil, func(worker context.Context, service clientruntime.Service, publish func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, nil, func(worker context.Context, service publisherapp.Service, publish func(uint64, bool) error) error {
 		if err := os.WriteFile(filepath.Join(root, "worker-"+service.RegistrationID), nil, 0600); err != nil {
 			return err
 		}
@@ -94,13 +94,13 @@ func serveInvocations() error {
 		for _, service := range manager.Snapshot().Services {
 			if service.Name == request.InvocationId && service.RegistrationID != "" {
 				if !reflect.DeepEqual(requests[service.Name], request) {
-					return publisherprotocol.Registration{}, clientruntime.ErrOwnerConflict
+					return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
 				}
 				err := manager.RenewTarget(service.RegistrationID, request.Owner, request.Target)
 				return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, err
 			}
 		}
-		if err := manager.AddService(clientruntime.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http"}); err != nil {
+		if err := manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http"}); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 		id, err := manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://ephemeral.member.example.test")

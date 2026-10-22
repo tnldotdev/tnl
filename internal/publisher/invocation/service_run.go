@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -42,82 +42,82 @@ func (c *privateProjectControl) PrepareServiceRun(ctx context.Context, id, key, 
 	return preparation, err
 }
 
-func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service clientruntime.Service) (clientruntime.Configuration, error) {
+func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
 	project := a.project
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	resolver := resolve.NewMetadataResolver(a.state, project.Project, authenticateRuntime)
 	auth, selectedTeam, err := resolver.Context(ctx, effective)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	current := FromTeamContext(selectedTeam)
 	profile, err := a.state.Server(ctx, auth.ServerEndpoint)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	definition := project.Config.Services[service.Name]
 	binding := targetplan.RuntimeTargetBinding(project.Project, service.Name, service.Target, nil, a.TargetResolver)
 	target, err := binding.Capture(ctx)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	trust, err := project.CaptureServiceTrust(ctx, targettrust.NewCache(nil), service.Name, target.Address)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	plan := targetplan.TargetPlan{Protocol: config.ProtocolName(config.Protocol(definition)), Target: target.Address, Trust: trust}
 	if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	realized, err := RealizeLocalService(ctx, auth.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, TargetResolver: a.TargetResolver})
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	saved, err := auth.Control.GetService(ctx, realized.ServiceId)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	if saved.Id != realized.ServiceId || saved.TeamId != current.team.Id || !saved.Enabled {
-		return clientruntime.Configuration{}, publisheridentity.ErrScope
+		return publisherapp.Configuration{}, publisheridentity.ErrScope
 	}
 	if err := publisheridentity.MatchServiceDeclaration(saved, config.Protocol(definition), trust); err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	native, identity, err := publisheridentity.EnsureServiceOwner(ctx, profile, auth.Control, auth.Authority, saved)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	if config.TargetType(definition) != "app" {
 		plan.Project, plan.ProjectService = &project.Project, service.Name
 	}
 	transport, err := targetplan.PrivateTransport(plan)
 	if err != nil {
-		return clientruntime.Configuration{}, err
+		return publisherapp.Configuration{}, err
 	}
 	var pinMu sync.Mutex
 	var pending, pin targetplan.TargetSnapshot
 	var pinRun uint64
-	check := func(ctx context.Context, current clientruntime.Service) clientruntime.Observation {
+	check := func(ctx context.Context, current publisherapp.Service) publisherapp.Observation {
 		pinMu.Lock()
 		captured, run := pin, pinRun
 		pinMu.Unlock()
-		observation := clientruntime.Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber, Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
+		observation := publisherapp.Observation{Target: current.Target, RegistrationID: current.RegistrationID, RunNumber: current.RunNumber, Readiness: current.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
 		if run != current.RunNumber || captured.Address == "" || !binding.Current(ctx, captured) {
 			return observation
 		}
 		local := current
 		local.Target = captured.Address
-		observation = clientruntime.ProbeServiceTarget(ctx, local, transport)
+		observation = publisherapp.ProbeServiceTarget(ctx, local, transport)
 		observation.Target = current.Target
 		if !binding.Current(ctx, captured) {
 			observation.Ready, observation.Reason = false, "runtime.target_changed"
 		}
 		return observation
 	}
-	return clientruntime.Configuration{CheckPrivate: check, RunPrivate: func(ctx context.Context, observe func(uint64, bool) error) error {
+	return publisherapp.Configuration{CheckPrivate: check, RunPrivate: func(ctx context.Context, observe func(uint64, bool) error) error {
 		control := &privateProjectControl{RunControl: native}
 		control.prepared = func(run uint64) error {
 			pinMu.Lock()
@@ -131,7 +131,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service clien
 				return err
 			}
 			if target.Address != actual.Address || target.Identity != actual.Identity {
-				return clientruntime.ErrRegistrationStale
+				return publisherapp.ErrRegistrationStale
 			}
 			pinMu.Lock()
 			pending = actual
@@ -173,7 +173,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service clien
 			if reason, _, ok := failure.Describe(err); ok {
 				a.manager.RecordWarning(service.Name, service.RegistrationID, string(reason))
 			}
-			timer := time.NewTimer(clientruntime.RetryDelay(attempt))
+			timer := time.NewTimer(publisherapp.RetryDelay(attempt))
 			select {
 			case <-ctx.Done():
 				timer.Stop()

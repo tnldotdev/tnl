@@ -14,7 +14,7 @@ import (
 
 func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID) {
 	w.Header().Set("Cache-Control", "no-store")
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}

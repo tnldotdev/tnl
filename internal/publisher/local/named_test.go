@@ -10,7 +10,7 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
@@ -48,7 +48,7 @@ func TestNamedLeasePinsConfigurationDigestAtOwnerBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := a.acquire(context.Background(), request); !errors.Is(err, clientruntime.ErrOwnerConflict) {
+		if _, err := a.acquire(context.Background(), request); !errors.Is(err, publisherapp.ErrOwnerConflict) {
 			t.Fatalf("different invocation acquired current owner: %v", err)
 		}
 	}

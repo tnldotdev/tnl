@@ -17,7 +17,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
@@ -166,7 +166,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}()
 		var tunnel clientstate.TunnelInfo
 		waitForIntegrationCondition(t, 55*time.Second, func(ctx context.Context) (bool, error) {
-			app, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
+			app, err := publisherapp.ReadSnapshot(project, fixture.stateDirectory)
 			if err != nil {
 				return false, err
 			}

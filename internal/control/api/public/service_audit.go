@@ -29,7 +29,7 @@ func serviceAuditError(w http.ResponseWriter, err error) {
 }
 
 func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team string, p controlv1.ListServiceAuditParams) {
-	principal, ok := h.authorizeRouteReads(w, r)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}

@@ -163,7 +163,7 @@ func (h *handler) authorizeAdministrator(
 	response http.ResponseWriter,
 	request *http.Request,
 ) (publicURLReadPrincipal, bool) {
-	principal, ok := h.authorizeRouteReads(response, request)
+	principal, ok := h.authorizeReads(response, request)
 	if !ok {
 		return publicURLReadPrincipal{}, false
 	}

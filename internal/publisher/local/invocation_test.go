@@ -20,7 +20,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -73,7 +73,7 @@ type invocationTransport func(*http.Request) (*http.Response, error)
 
 func (f invocationTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func waitInvocation(t *testing.T, a *appRuntime, predicate func(clientruntime.Snapshot) bool) clientruntime.Snapshot {
+func waitInvocation(t *testing.T, a *appRuntime, predicate func(publisherapp.Snapshot) bool) publisherapp.Snapshot {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -134,7 +134,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
-	waitInvocation(t, a, func(s clientruntime.Snapshot) bool {
+	waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
 		for _, service := range s.Services {
 			if service.RegistrationID == registration.RegistrationID {
 				if service.Failure != "" {
@@ -152,7 +152,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	if cfg.Service != "" {
 		t.Fatalf("invocation key used as configured service name: %q", cfg.Service)
 	}
-	var snapshot clientruntime.Snapshot
+	var snapshot publisherapp.Snapshot
 	other, err := a.state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: f.URL, Project: a.project.Root, Target: "3001"})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestInvocationRealPublisherAppliesRequestRate(t *testing.T) {
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := waitInvocation(t, a, func(s clientruntime.Snapshot) bool {
+	snapshot := waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
 		for _, service := range s.Services {
 			if service.RegistrationID == registration.RegistrationID {
 				if service.Failure != "" {
@@ -282,7 +282,7 @@ func TestInvocationEarlyWorkerFailureCleansAllocation(t *testing.T) {
 		return
 	}
 	a, endpoint, body, f := invocationRuntime(t)
-	a.AttachPublication = func(_ context.Context, _ clientruntime.Service, cfg *publisher.Config) error {
+	a.AttachPublication = func(_ context.Context, _ publisherapp.Service, cfg *publisher.Config) error {
 		cfg.ControlURL = "http://invalid.example"
 		return nil
 	}
@@ -290,7 +290,7 @@ func TestInvocationEarlyWorkerFailureCleansAllocation(t *testing.T) {
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
 		t.Fatal(err)
 	}
-	waitInvocation(t, a, func(s clientruntime.Snapshot) bool {
+	waitInvocation(t, a, func(s publisherapp.Snapshot) bool {
 		for _, service := range s.Services {
 			if service.RegistrationID == registration.RegistrationID && service.Failure != "" {
 				return true
@@ -315,7 +315,7 @@ func TestInvocationCanceledRegistrationCleansAllocation(t *testing.T) {
 	a.workers.RunPublisher = readyInvocation
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	a.AttachPublication = func(context.Context, clientruntime.Service, *publisher.Config) error { cancel(); return nil }
+	a.AttachPublication = func(context.Context, publisherapp.Service, *publisher.Config) error { cancel(); return nil }
 	request := invocationRequest(t, ctx, endpoint, body)
 	a.handler().ServeHTTP(httptest.NewRecorder(), request)
 	if f.Allocations.Load() != 1 || f.Deletions.Load() != 1 {
@@ -334,7 +334,7 @@ func TestInvocationSetupFailureCleansAllocationAndReservation(t *testing.T) {
 	}
 	a, _, body, f := invocationRuntime(t)
 	setupErr := errors.New("publication setup failed")
-	a.AttachPublication = func(context.Context, clientruntime.Service, *publisher.Config) error { return setupErr }
+	a.AttachPublication = func(context.Context, publisherapp.Service, *publisher.Config) error { return setupErr }
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +370,7 @@ func TestAppWorkflowSlowPreparationDoesNotBlockAnotherInvocation(t *testing.T) {
 	unblock := func() { once.Do(func() { close(release) }) }
 	defer unblock()
 	firstID := body["invocation_id"].(string)
-	a.AttachPublication = func(_ context.Context, service clientruntime.Service, _ *publisher.Config) error {
+	a.AttachPublication = func(_ context.Context, service publisherapp.Service, _ *publisher.Config) error {
 		if service.Name == firstID {
 			close(entered)
 			<-release

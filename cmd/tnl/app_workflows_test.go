@@ -16,7 +16,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -37,7 +37,7 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	if err := manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
 		t.Fatal(err)
 	}
-	waitObservationFixture(t, manager, func(s clientruntime.Snapshot) bool { return s.Services[0].Routable })
+	waitObservationFixture(t, manager, func(s publisherapp.Snapshot) bool { return s.Services[0].Routable })
 	// the owner reports a fresh check; the CLI must count only local services.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request publisherprotocol.Check
@@ -63,7 +63,7 @@ func TestAppWorkflowCrashInvalidatesPrivateReadiness(t *testing.T) {
 	s := manager.Snapshot()
 	s.Services[0].Registered, s.Services[0].Routable, s.Services[0].Ready = true, true, true
 	s.Services[0].RegistrationID, s.Services[0].RunNumber = "old", 7
-	if err := clientruntime.CommitSnapshot(t.Context(), state, &s, "service.readiness", nil); err != nil {
+	if err := publisherapp.CommitSnapshot(t.Context(), state, &s, "service.readiness", nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := readAppSnapshotFrom(t.Context(), project, state)

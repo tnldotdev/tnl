@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 func TestPingDoesNotLoadProjectOrSendCredentials(t *testing.T) {
@@ -24,7 +24,7 @@ func TestPingDoesNotLoadProjectOrSendCredentials(t *testing.T) {
 	if err := run(t.Context(), []string{"--config", "missing.yml", "ping", server.URL, "--output", "json"}, &output, &diagnostics); err != nil {
 		t.Fatal(err)
 	}
-	var result clientruntime.PingResult
+	var result publisherapp.PingResult
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.State != "responding" || result.Status != http.StatusNoContent || requests != 1 {
 		t.Fatalf("ping result=%s, requests=%d, err=%v", output.String(), requests, err)
 	}

@@ -234,7 +234,7 @@ func (h *handler) authorizeExistingRouteMutation(
 	return h.authorizeMutation(response, request, operation)
 }
 
-func (h *handler) authorizeRouteReads(
+func (h *handler) authorizeReads(
 	response http.ResponseWriter,
 	request *http.Request,
 ) (publicURLReadPrincipal, bool) {

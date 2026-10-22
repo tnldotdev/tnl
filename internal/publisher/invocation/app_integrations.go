@@ -6,12 +6,12 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 // integration workers share the entry tunnel's lifetime and namespace; each
 // elected publisher obtains its own purpose-scoped native grant.
-func attachRuntimeIntegrations(ctx context.Context, state *clientstate.Database, project clientproject.Project, service clientruntime.Service, tunnel *clientstate.Tunnel, cfg *publisher.Config) (func(), error) {
+func attachRuntimeIntegrations(ctx context.Context, state *clientstate.Database, project clientproject.Project, service publisherapp.Service, tunnel *clientstate.Tunnel, cfg *publisher.Config) (func(), error) {
 	if !project.Config.OAuth && len(project.Config.Webhooks) == 0 && len(project.Config.Aliases) == 0 {
 		return nil, nil
 	}

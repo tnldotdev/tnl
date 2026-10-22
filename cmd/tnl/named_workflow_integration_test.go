@@ -19,7 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -212,7 +212,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			if err != nil {
 				return false
 			}
-			var snapshot clientruntime.Snapshot
+			var snapshot publisherapp.Snapshot
 			if err := publisherprotocol.Call(t.Context(), endpoint, "GET", "/v1/status", nil, &snapshot); err != nil {
 				return false
 			}
@@ -299,7 +299,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			}
 			t.Cleanup(stop)
 			workflowWait(t, 20*time.Second, func() bool {
-				var snapshot clientruntime.Snapshot
+				var snapshot publisherapp.Snapshot
 				names := []string{"sdk"}
 				if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &names}, &snapshot); err != nil {
 					return false

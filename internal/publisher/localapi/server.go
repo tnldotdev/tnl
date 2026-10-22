@@ -14,7 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	clientruntime "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -22,7 +22,7 @@ import (
 
 type Server struct {
 	Capabilities        *publisherprotocol.Capabilities
-	Manager             *clientruntime.Manager
+	Manager             *publisherapp.Manager
 	Database            *clientstate.Database
 	Project             string
 	Prepare             func(context.Context, publisherprotocol.Prepare) (publisherprotocol.Assignment, error)
@@ -30,7 +30,7 @@ type Server struct {
 	RegisterContext     func(context.Context, publisherprotocol.Registration) error
 	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
 	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
-	Check               func(context.Context, []string) (clientruntime.Snapshot, error)
+	Check               func(context.Context, []string) (publisherapp.Snapshot, error)
 	AppService          func(string) bool
 	ConfigurationDigest func() (string, error)
 }
@@ -49,7 +49,7 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			if digest != current {
-				Problem(w, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict))
+				Problem(w, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, publisherapp.ErrOwnerConflict))
 				return
 			}
 		}
@@ -164,7 +164,7 @@ func (s *Server) Handler() http.Handler {
 			service, found := s.Manager.ServiceForRegistration(request.RegistrationID)
 			grant := publisherprotocol.Grant(r)
 			if !found || grant.Scope == "app" && service.Name != *grant.Service || grant.Scope == "invocation" && service.Name != *grant.InvocationId {
-				Problem(w, clientruntime.ErrRegistrationStale)
+				Problem(w, publisherapp.ErrRegistrationStale)
 				return
 			}
 			var err error
@@ -203,10 +203,10 @@ func (s *Server) Handler() http.Handler {
 			} else if grant.InvocationId != nil {
 				name = *grant.InvocationId
 			}
-			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.Name != name })
+			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.Name != name })
 			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
 				if grant.Scope == "invocation" {
-					return !slices.ContainsFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.TunnelID == publication.ID })
+					return !slices.ContainsFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.TunnelID == publication.ID })
 				}
 				return publication.Service != name
 			})
@@ -221,10 +221,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		cursor := r.URL.Query().Get("after")
 		if cursor == "" || len(cursor) > 128 {
-			Problem(w, clientruntime.ErrCursorExpired)
+			Problem(w, publisherapp.ErrCursorExpired)
 			return
 		}
-		events, err := clientruntime.EventsAfterFrom(r.Context(), s.Database, s.Project, cursor)
+		events, err := publisherapp.EventsAfterFrom(r.Context(), s.Database, s.Project, cursor)
 		if err != nil {
 			Problem(w, err)
 			return
@@ -270,11 +270,11 @@ func Problem(w http.ResponseWriter, err error) {
 		status, code, message = 401, "runtime.unauthorized", "read the current private endpoint descriptor"
 	case errors.Is(err, publisherprotocol.ErrForbidden):
 		status, code, message = 403, "runtime.forbidden", "use a capability for this service and operation"
-	case errors.Is(err, clientruntime.ErrOwnerConflict):
+	case errors.Is(err, publisherapp.ErrOwnerConflict):
 		status, code, message = 409, "runtime.owner_conflict", "another live app owns this service; stop it before starting another"
-	case errors.Is(err, clientruntime.ErrRegistrationStale):
+	case errors.Is(err, publisherapp.ErrRegistrationStale):
 		status, code, message = 409, "runtime.registration_stale", "prepare and register the listener again"
-	case errors.Is(err, clientruntime.ErrCursorExpired):
+	case errors.Is(err, publisherapp.ErrCursorExpired):
 		status, code, message = 410, "runtime.cursor_expired", "read a new status snapshot before resuming events"
 	case errors.Is(err, clientcontrol.ErrUnauthenticated):
 		status, code, message = 401, "runtime.authentication_required", "run tnl auth login, then start the app again"
