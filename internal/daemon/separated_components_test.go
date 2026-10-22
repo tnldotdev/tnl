@@ -44,10 +44,22 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	case "pebble":
 		runSeparatedPebble(t, ctx)
 	case "app", "app-2", "app-3", "app-4":
+		if *runtimeLoadWorkload == "connect" {
+			runSeparatedConnectTarget(t, ctx, component)
+			return
+		}
 		runSeparatedApp(t, ctx, component)
 	case "publishers", "publishers-2", "publishers-3", "publishers-4":
+		if *runtimeLoadWorkload == "connect" {
+			runSeparatedConnectPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
+			return
+		}
 		runSeparatedPublishers(t, ctx, routes, rate, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
+		if *runtimeLoadWorkload == "connect" {
+			runSeparatedConnectVisitor(t, ctx, component, rate)
+			return
+		}
 		runSeparatedVisitor(t, ctx, component, rate)
 	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "relay-a-2", "relay-b-2":
 		if !separatedRead(t, ctx, "pebble.ready", nil) {

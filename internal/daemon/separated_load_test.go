@@ -25,6 +25,8 @@ type separatedSnapshot struct {
 }
 
 var (
+	runtimeLoadWorkload           = flag.String("tnl-runtime-load-workload", "public-url", "public-url or connect workload")
+	connectLoadPayloadBytes       = flag.Int("tnl-connect-load-payload-bytes", 256, "opaque connect request payload bytes (8-1048576)")
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
 	runtimeLoadReadyTimeout       = flag.Duration("tnl-runtime-load-ready-timeout", 30*time.Second, "publisher readiness timeout (30s-5m)")
@@ -100,6 +102,10 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, component := range separatedActiveComponents() {
 		separatedWait(t, component+".resources-ready", 30*time.Second, nil)
 	}
+	if *runtimeLoadWorkload == "connect" {
+		runSeparatedConnect(t, database, routes, rate, duration)
+		return
+	}
 	publishers := activateSeparatedPublishers(t, database, routes)
 	separatedWrite(t, "visitors.start", time.Now())
 	for i := 1; i <= 4; i++ {
@@ -168,6 +174,17 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
+	if *runtimeLoadWorkload != "public-url" && *runtimeLoadWorkload != "connect" {
+		t.Fatal("invalid runtime workload")
+	}
+	if *runtimeLoadWorkload == "connect" {
+		if !*runtimeLoadHATopology || !*runtimeLoadCapacityOnly || *runtimeLoadPublicURLs > 64 || *runtimeLoadWorkers > 64 || *runtimeLoadDuration > time.Minute || *runtimeLoadRPS > 256 || *connectLoadPayloadBytes < 8 || *connectLoadPayloadBytes > 1<<20 {
+			t.Fatal("connect load requires HA, capacity-only, 4-64 services, 4-64 workers, 4-256 requests/second, 10s-1m duration, and 8-1048576 payload bytes")
+		}
+		if !slices.Contains([]string{"relay-restart", "latency", "packet-loss"}, *runtimeLoadScenario) {
+			t.Fatal("connect load supports the baseline, latency, and packet-loss scenarios")
+		}
+	}
 	// validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
 	separatedConfig(t, "ingress-a")
@@ -234,10 +251,10 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	if *runtimeLoadScenario == "control-restart" && !*runtimeLoadHATopology {
 		t.Fatal("control restart requires the two-control topology")
 	}
-	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" {
+	if *runtimeLoadCapacityOnly && *runtimeLoadScenario != "relay-restart" && *runtimeLoadWorkload != "connect" {
 		t.Fatal("capacity-only workload requires the default scenario")
 	}
-	if !slices.Contains([]string{"forwarding", "publisher"}, *runtimeLoadNetworkPath) {
+	if !slices.Contains([]string{"forwarding", "publisher"}, *runtimeLoadNetworkPath) && !(*runtimeLoadWorkload == "connect" && *runtimeLoadNetworkPath == "connector") {
 		t.Fatal("invalid network path")
 	}
 	if *runtimeLoadScenario == "latency" && !slices.Contains([]time.Duration{20 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond}, *runtimeLoadRTT) {
