@@ -10,34 +10,6 @@ import (
 	"database/sql"
 )
 
-const deleteCertificateMaterial = `-- name: DeleteCertificateMaterial :exec
-DELETE FROM certificate_materials
-WHERE server_origin = ?1
-  AND team_id = ?2
-  AND cache_key = ?3
-  AND plan = ?4
-  AND phase = ?5
-`
-
-type DeleteCertificateMaterialParams struct {
-	ServerOrigin string
-	TeamID       string
-	CacheKey     string
-	Plan         string
-	Phase        string
-}
-
-func (q *Queries) DeleteCertificateMaterial(ctx context.Context, arg DeleteCertificateMaterialParams) error {
-	_, err := q.db.ExecContext(ctx, deleteCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-	)
-	return err
-}
-
 const deleteControlSession = `-- name: DeleteControlSession :exec
 DELETE FROM control_sessions
 WHERE server_origin = ?1
@@ -67,7 +39,7 @@ func (q *Queries) DeleteOldTunnels(ctx context.Context, arg DeleteOldTunnelsPara
 const finishTunnel = `-- name: FinishTunnel :execrows
 UPDATE local_tunnels
 SET state = ?1,
-    last_error = ?2,
+    failure_code = nullif(?2, ''),
     updated_at = ?3,
     heartbeat_at = ?3,
     lease_expires_at = ?3,
@@ -76,16 +48,16 @@ WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type FinishTunnelParams struct {
-	State     string
-	LastError string
-	Now       int64
-	ID        string
+	State       string
+	FailureCode interface{}
+	Now         int64
+	ID          string
 }
 
 func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, finishTunnel,
 		arg.State,
-		arg.LastError,
+		arg.FailureCode,
 		arg.Now,
 		arg.ID,
 	)
@@ -95,52 +67,8 @@ func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int
 	return result.RowsAffected()
 }
 
-const getCertificateMaterial = `-- name: GetCertificateMaterial :one
-SELECT id, server_origin, team_id, cache_key, "plan", phase, stored_key, csr_der, certificate_pem, renew_at, issuance_id, updated_at
-FROM certificate_materials
-WHERE server_origin = ?1
-  AND team_id = ?2
-  AND cache_key = ?3
-  AND plan = ?4
-  AND phase = ?5
-`
-
-type GetCertificateMaterialParams struct {
-	ServerOrigin string
-	TeamID       string
-	CacheKey     string
-	Plan         string
-	Phase        string
-}
-
-func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificateMaterialParams) (CertificateMaterial, error) {
-	row := q.db.QueryRowContext(ctx, getCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-	)
-	var i CertificateMaterial
-	err := row.Scan(
-		&i.ID,
-		&i.ServerOrigin,
-		&i.TeamID,
-		&i.CacheKey,
-		&i.Plan,
-		&i.Phase,
-		&i.StoredKey,
-		&i.CsrDer,
-		&i.CertificatePem,
-		&i.RenewAt,
-		&i.IssuanceID,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getControlSession = `-- name: GetControlSession :one
-SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at, refresh_pending
+SELECT id, server_origin, session_id, access_token_ciphertext, access_expires_at, refresh_token_ciphertext, refresh_expires_at, refresh_pending, updated_at
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -152,19 +80,19 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 		&i.ID,
 		&i.ServerOrigin,
 		&i.SessionID,
-		&i.StoredAccessToken,
+		&i.AccessTokenCiphertext,
 		&i.AccessExpiresAt,
-		&i.StoredRefreshToken,
+		&i.RefreshTokenCiphertext,
 		&i.RefreshExpiresAt,
-		&i.UpdatedAt,
 		&i.RefreshPending,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getInstallationID = `-- name: GetInstallationID :one
-SELECT installation_id
-FROM client_setting
+SELECT coalesce(installation_id, '') AS installation_id
+FROM installation_settings
 WHERE id = 1
 `
 
@@ -177,7 +105,7 @@ func (q *Queries) GetInstallationID(ctx context.Context) (string, error) {
 
 const getSelectedServer = `-- name: GetSelectedServer :one
 SELECT selected_server_origin
-FROM client_setting
+FROM installation_settings
 WHERE id = 1
 `
 
@@ -189,7 +117,7 @@ func (q *Queries) GetSelectedServer(ctx context.Context) (sql.NullString, error)
 }
 
 const getSelectedTeam = `-- name: GetSelectedTeam :one
-SELECT selected_team_id
+SELECT coalesce(selected_team_id, '') AS selected_team_id
 FROM server_profiles
 WHERE origin = ?1
 `
@@ -203,7 +131,7 @@ func (q *Queries) GetSelectedTeam(ctx context.Context, origin string) (string, e
 
 const getTelemetryEnabled = `-- name: GetTelemetryEnabled :one
 SELECT telemetry_enabled
-FROM client_setting
+FROM installation_settings
 WHERE id = 1
 `
 
@@ -215,8 +143,8 @@ func (q *Queries) GetTelemetryEnabled(ctx context.Context) (int64, error) {
 }
 
 const getWorktreeHashSalt = `-- name: GetWorktreeHashSalt :one
-SELECT worktree_hash_salt
-FROM client_setting
+SELECT coalesce(worktree_hash_salt, x'') AS worktree_hash_salt
+FROM installation_settings
 WHERE id = 1
 `
 
@@ -266,43 +194,46 @@ INSERT INTO local_tunnels (
     updated_at,
     heartbeat_at,
     lease_expires_at,
-    last_error,
-    integration_group
+    failure_code,
+    primary_project_root,
+    integration_namespace
 ) VALUES (
     ?1,
     ?2,
     ?3,
     ?4,
     ?5,
-    ?6,
+    nullif(?6, ''),
     ?7,
-    '',
-    ?8,
-    '',
-    '',
-    0,
+    NULL,
+    nullif(?8, ''),
+    NULL,
+    NULL,
+    NULL,
     'starting',
     ?9,
     ?9,
     ?9,
     ?10,
-    '',
-    ?11
+    NULL,
+    ?11,
+    ?12
 )
 `
 
 type InsertTunnelParams struct {
-	ID               string
-	Command          string
-	ProcessID        int64
-	ServerOrigin     string
-	ProjectRoot      string
-	Service          string
-	ServiceProtocol  string
-	Target           string
-	Now              int64
-	LeaseExpiresAt   int64
-	IntegrationGroup string
+	ID                   string
+	Command              string
+	ProcessID            int64
+	ServerOrigin         string
+	ProjectRoot          string
+	Service              interface{}
+	ServiceProtocol      string
+	Target               interface{}
+	Now                  int64
+	LeaseExpiresAt       int64
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
 }
 
 func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) error {
@@ -317,24 +248,14 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 		arg.Target,
 		arg.Now,
 		arg.LeaseExpiresAt,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 	)
 	return err
 }
 
-const latestTunnelEventCursor = `-- name: LatestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = ?1
-`
-
-func (q *Queries) LatestTunnelEventCursor(ctx context.Context, projectRoot string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, latestTunnelEventCursor, projectRoot)
-	var sequence int64
-	err := row.Scan(&sequence)
-	return sequence, err
-}
-
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group, public_port, service_protocol
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -356,6 +277,10 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ServerOrigin,
 			&i.ProjectRoot,
 			&i.Service,
+			&i.ServiceProtocol,
+			&i.PrimaryProjectRoot,
+			&i.IntegrationNamespace,
+			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
@@ -367,10 +292,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.HeartbeatAt,
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
-			&i.LastError,
-			&i.IntegrationGroup,
-			&i.PublicPort,
-			&i.ServiceProtocol,
+			&i.FailureCode,
 		); err != nil {
 			return nil, err
 		}
@@ -386,7 +308,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group, public_port, service_protocol
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -408,6 +330,10 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ServerOrigin,
 			&i.ProjectRoot,
 			&i.Service,
+			&i.ServiceProtocol,
+			&i.PrimaryProjectRoot,
+			&i.IntegrationNamespace,
+			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
@@ -419,10 +345,7 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.HeartbeatAt,
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
-			&i.LastError,
-			&i.IntegrationGroup,
-			&i.PublicPort,
-			&i.ServiceProtocol,
+			&i.FailureCode,
 		); err != nil {
 			return nil, err
 		}
@@ -435,64 +358,6 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 		return nil, err
 	}
 	return items, nil
-}
-
-const listTunnelEventsAfter = `-- name: ListTunnelEventsAfter :many
-SELECT project_root, sequence, tunnel_id, service, service_protocol, state, target, hostname, public_port, publish_run_number, created_at FROM local_tunnel_events
-WHERE project_root = ?1 AND sequence > ?2 AND sequence <= ?3
-ORDER BY sequence
-`
-
-type ListTunnelEventsAfterParams struct {
-	ProjectRoot string
-	After       int64
-	Latest      int64
-}
-
-func (q *Queries) ListTunnelEventsAfter(ctx context.Context, arg ListTunnelEventsAfterParams) ([]LocalTunnelEvent, error) {
-	rows, err := q.db.QueryContext(ctx, listTunnelEventsAfter, arg.ProjectRoot, arg.After, arg.Latest)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LocalTunnelEvent
-	for rows.Next() {
-		var i LocalTunnelEvent
-		if err := rows.Scan(
-			&i.ProjectRoot,
-			&i.Sequence,
-			&i.TunnelID,
-			&i.Service,
-			&i.ServiceProtocol,
-			&i.State,
-			&i.Target,
-			&i.Hostname,
-			&i.PublicPort,
-			&i.PublishRunNumber,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const oldestTunnelEventCursor = `-- name: OldestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_events WHERE project_root = ?1 ORDER BY sequence LIMIT 1
-`
-
-func (q *Queries) OldestTunnelEventCursor(ctx context.Context, projectRoot string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, oldestTunnelEventCursor, projectRoot)
-	var sequence int64
-	err := row.Scan(&sequence)
-	return sequence, err
 }
 
 const setControlSessionRefreshPending = `-- name: SetControlSessionRefreshPending :exec
@@ -511,18 +376,18 @@ func (q *Queries) SetControlSessionRefreshPending(ctx context.Context, arg SetCo
 }
 
 const setInstallationID = `-- name: SetInstallationID :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET installation_id = ?1
-WHERE id = 1 AND installation_id = ''
+WHERE id = 1 AND installation_id IS NULL
 `
 
-func (q *Queries) SetInstallationID(ctx context.Context, installationID string) error {
+func (q *Queries) SetInstallationID(ctx context.Context, installationID sql.NullString) error {
 	_, err := q.db.ExecContext(ctx, setInstallationID, installationID)
 	return err
 }
 
 const setSelectedServer = `-- name: SetSelectedServer :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET selected_server_origin = ?1
 WHERE id = 1
 `
@@ -540,7 +405,7 @@ WHERE origin = ?3
 `
 
 type SetSelectedTeamParams struct {
-	TeamID string
+	TeamID sql.NullString
 	Now    int64
 	Origin string
 }
@@ -551,7 +416,7 @@ func (q *Queries) SetSelectedTeam(ctx context.Context, arg SetSelectedTeamParams
 }
 
 const setTelemetryEnabled = `-- name: SetTelemetryEnabled :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET telemetry_enabled = ?1
 WHERE id = 1
 `
@@ -563,15 +428,15 @@ func (q *Queries) SetTelemetryEnabled(ctx context.Context, enabled int64) error 
 
 const setTunnelDevTarget = `-- name: SetTunnelDevTarget :execrows
 UPDATE local_tunnels
-SET target = ?1,
+SET target = nullif(?1, ''),
     framework = ?2,
     updated_at = ?3
 WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type SetTunnelDevTargetParams struct {
-	Target    string
-	Framework string
+	Target    interface{}
+	Framework sql.NullString
 	Now       int64
 	ID        string
 }
@@ -617,7 +482,7 @@ WHERE id = ?3 AND stopped_at IS NULL
 `
 
 type SetTunnelProvisioningParams struct {
-	PublishRunNumber int64
+	PublishRunNumber sql.NullInt64
 	Now              int64
 	ID               string
 }
@@ -640,8 +505,8 @@ WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type SetTunnelPublicURLParams struct {
-	PublicURLID string
-	Hostname    string
+	PublicURLID sql.NullString
+	Hostname    sql.NullString
 	Now         int64
 	ID          string
 }
@@ -662,17 +527,15 @@ func (q *Queries) SetTunnelPublicURL(ctx context.Context, arg SetTunnelPublicURL
 const setTunnelReady = `-- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = ?1,
-    public_port = ?2,
-    publish_run_number = ?3,
+    publish_run_number = ?2,
     state = 'ready',
-    updated_at = ?4
-WHERE id = ?5 AND stopped_at IS NULL
+    updated_at = ?3
+WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type SetTunnelReadyParams struct {
-	Hostname         string
-	PublicPort       int64
-	PublishRunNumber int64
+	Hostname         sql.NullString
+	PublishRunNumber sql.NullInt64
 	Now              int64
 	ID               string
 }
@@ -680,7 +543,6 @@ type SetTunnelReadyParams struct {
 func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setTunnelReady,
 		arg.Hostname,
-		arg.PublicPort,
 		arg.PublishRunNumber,
 		arg.Now,
 		arg.ID,
@@ -692,9 +554,9 @@ func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) 
 }
 
 const setWorktreeHashSalt = `-- name: SetWorktreeHashSalt :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET worktree_hash_salt = ?1
-WHERE id = 1 AND length(worktree_hash_salt) = 0
+WHERE id = 1 AND worktree_hash_salt IS NULL
 `
 
 func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []byte) error {
@@ -702,79 +564,13 @@ func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []by
 	return err
 }
 
-const upsertCertificateMaterial = `-- name: UpsertCertificateMaterial :exec
-INSERT INTO certificate_materials (
-    server_origin,
-    team_id,
-    cache_key,
-    plan,
-    phase,
-    stored_key,
-    csr_der,
-    certificate_pem,
-    renew_at,
-    issuance_id,
-    updated_at
-) VALUES (
-    ?1,
-    ?2,
-    ?3,
-    ?4,
-    ?5,
-    ?6,
-    ?7,
-    ?8,
-    ?9,
-    ?10,
-    ?11
-)
-ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
-    stored_key = excluded.stored_key,
-    csr_der = excluded.csr_der,
-    certificate_pem = excluded.certificate_pem,
-    renew_at = excluded.renew_at,
-    issuance_id = excluded.issuance_id,
-    updated_at = excluded.updated_at
-`
-
-type UpsertCertificateMaterialParams struct {
-	ServerOrigin   string
-	TeamID         string
-	CacheKey       string
-	Plan           string
-	Phase          string
-	StoredKey      []byte
-	CsrDer         []byte
-	CertificatePem []byte
-	RenewAt        sql.NullInt64
-	IssuanceID     string
-	UpdatedAt      int64
-}
-
-func (q *Queries) UpsertCertificateMaterial(ctx context.Context, arg UpsertCertificateMaterialParams) error {
-	_, err := q.db.ExecContext(ctx, upsertCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-		arg.StoredKey,
-		arg.CsrDer,
-		arg.CertificatePem,
-		arg.RenewAt,
-		arg.IssuanceID,
-		arg.UpdatedAt,
-	)
-	return err
-}
-
 const upsertControlSession = `-- name: UpsertControlSession :exec
 INSERT INTO control_sessions (
     server_origin,
     session_id,
-    stored_access_token,
+    access_token_ciphertext,
     access_expires_at,
-    stored_refresh_token,
+    refresh_token_ciphertext,
     refresh_expires_at,
     updated_at
 ) VALUES (
@@ -788,31 +584,31 @@ INSERT INTO control_sessions (
 )
 ON CONFLICT (server_origin) DO UPDATE SET
     session_id = excluded.session_id,
-    stored_access_token = excluded.stored_access_token,
+    access_token_ciphertext = excluded.access_token_ciphertext,
     access_expires_at = excluded.access_expires_at,
-    stored_refresh_token = excluded.stored_refresh_token,
+    refresh_token_ciphertext = excluded.refresh_token_ciphertext,
     refresh_expires_at = excluded.refresh_expires_at,
     refresh_pending = 0,
     updated_at = excluded.updated_at
 `
 
 type UpsertControlSessionParams struct {
-	ServerOrigin       string
-	SessionID          string
-	StoredAccessToken  []byte
-	AccessExpiresAt    int64
-	StoredRefreshToken []byte
-	RefreshExpiresAt   int64
-	UpdatedAt          int64
+	ServerOrigin           string
+	SessionID              string
+	AccessTokenCiphertext  []byte
+	AccessExpiresAt        int64
+	RefreshTokenCiphertext []byte
+	RefreshExpiresAt       int64
+	UpdatedAt              int64
 }
 
 func (q *Queries) UpsertControlSession(ctx context.Context, arg UpsertControlSessionParams) error {
 	_, err := q.db.ExecContext(ctx, upsertControlSession,
 		arg.ServerOrigin,
 		arg.SessionID,
-		arg.StoredAccessToken,
+		arg.AccessTokenCiphertext,
 		arg.AccessExpiresAt,
-		arg.StoredRefreshToken,
+		arg.RefreshTokenCiphertext,
 		arg.RefreshExpiresAt,
 		arg.UpdatedAt,
 	)

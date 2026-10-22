@@ -24,7 +24,7 @@ func TestAuthCommandParsing(t *testing.T) {
 		{[]string{"auth", "status", "--output=json"}, "auth status"},
 		{[]string{"auth", "status", "--check"}, "auth status"},
 		{[]string{"auth", "login", "--open"}, "auth login"},
-		{[]string{"auth", "login", "--login-token", "--output=json"}, "auth login"},
+		{[]string{"auth", "login", "--output=json"}, "auth login"},
 		{[]string{"auth", "login", "start", "--output=json"}, "auth login start"},
 		{[]string{"auth", "login", "wait", "auth_01234567890123456789012345678901", "--timeout=2s"}, "auth login wait <operation-id>"},
 		{[]string{"auth", "login", "inspect", "auth_01234567890123456789012345678901"}, "auth login inspect <operation-id>"},
@@ -46,7 +46,7 @@ func TestAuthCommandParsing(t *testing.T) {
 			}
 		})
 	}
-	for _, old := range []string{"login", "logout", "auth login --pkce", "auth login --token", "auth login --no-open"} {
+	for _, old := range []string{"login", "logout", "auth login --pkce", "auth login --token", "auth login --no-open", "auth login --login-token"} {
 		var flags cli
 		parser, err := kong.New(&flags)
 		if err != nil {
@@ -58,22 +58,13 @@ func TestAuthCommandParsing(t *testing.T) {
 	}
 }
 
-func TestAuthLoginTokenFromEnvironment(t *testing.T) {
-	token, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TNL_LOGIN_TOKEN", token.String())
+func TestAuthLoginWorksWithoutTerminalInput(t *testing.T) {
 	config, err := authLoginConfig(loginCommand{}, "https://control.example", nil, strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !config.ForceLoginToken || config.OpenURL != nil || config.LoginToken == nil {
-		t.Fatalf("login token or browser selection = %#v", config)
-	}
-	actual, err := config.LoginToken()
-	if err != nil || actual != token {
-		t.Fatalf("login token did not match the supplied value: %v", err)
+	if config.OpenURL != nil || config.ObserveLogin == nil {
+		t.Fatalf("browser selection = %#v", config)
 	}
 }
 
@@ -135,7 +126,7 @@ func TestAuthLogoutCancelsPendingOperationsOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateAuthOperation(t.Context(), clientstate.AuthOperation{ID: id, Phase: clientstate.AuthPending, Method: "device_code", Private: []byte("private challenge"), ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := store.CreateAuthOperation(t.Context(), clientstate.AuthOperation{ID: id, Phase: clientstate.AuthPending, Method: "device_code", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer

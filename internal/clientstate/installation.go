@@ -3,6 +3,7 @@ package clientstate
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -29,7 +30,7 @@ func (d *Database) InstallationID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("clientstate: generate installation ID: %w", err)
 	}
-	if err := d.queries.SetInstallationID(ctx, generated); err != nil {
+	if err := d.queries.SetInstallationID(ctx, sql.NullString{String: generated, Valid: true}); err != nil {
 		return "", fmt.Errorf("clientstate: save installation ID: %w", err)
 	}
 	id, err = d.queries.GetInstallationID(ctx)

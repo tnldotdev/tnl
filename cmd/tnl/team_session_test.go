@@ -78,3 +78,27 @@ func TestTeamSelectionDoesNotRequireDomains(t *testing.T) {
 		t.Fatalf("ambiguous team reason = %q, %v", reason, err)
 	}
 }
+
+func TestConfiguredInitialTeamSelection(t *testing.T) {
+	db, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := db.Server(t.Context(), "https://control.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := teamSession{store: store, api: &selectedTeamAPI{}, identity: authorityv1.IdentityContext{PersonalTeamId: "personal", DefaultTeamId: new("studio"), Memberships: []authorityv1.Membership{{TeamId: "personal"}, {TeamId: "studio"}}}}
+	current, err := session.current(t.Context())
+	if err != nil || current.team.Id != "studio" {
+		t.Fatalf("initial team: %#v %v", current, err)
+	}
+	if err := store.SaveSelectedTeam(t.Context(), "personal"); err != nil {
+		t.Fatal(err)
+	}
+	current, err = session.current(t.Context())
+	if err != nil || current.team.Id != "personal" {
+		t.Fatalf("saved selection lost precedence: %#v %v", current, err)
+	}
+}

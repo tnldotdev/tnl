@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,11 +16,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
-// bump this only when the local SQLite schema intentionally starts fresh.
-const databaseFormatVersion = 2
+// databaseFilename identifies the fresh client-state baseline independently of
+// the SQLite migration and local event schema versions.
+const databaseFilename = "v1.db"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -34,6 +33,7 @@ type Database struct {
 	queries           *clientstatedb.Queries
 	now               func() time.Time
 	heartbeatInterval time.Duration
+	secrets           secretProtector
 }
 
 // Root returns the canonical, validated directory used by this client state.
@@ -45,6 +45,7 @@ type Store struct {
 	controlEndpoint string
 	locksDir        string
 	secrets         secretProtector
+	identityDir     string
 }
 
 // SelectedTeam returns the stable team selection for this server origin.
@@ -62,7 +63,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 		return errors.New("clientstate: invalid selected team")
 	}
 	if err := s.database.queries.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{
-		TeamID: teamID, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
+		TeamID: sql.NullString{String: teamID, Valid: true}, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
 	}); err != nil {
 		return fmt.Errorf("clientstate: save selected team: %w", err)
 	}
@@ -71,7 +72,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 
 // DatabasePath returns the shared client database path within root.
 func DatabasePath(root string) string {
-	return filepath.Join(root, fmt.Sprintf("client-v%d.db", databaseFormatVersion))
+	return filepath.Join(root, databaseFilename)
 }
 
 func DefaultDir() (string, error) {
@@ -82,8 +83,25 @@ func DefaultDir() (string, error) {
 	return filepath.Join(root, "tnl"), nil
 }
 
-// Open creates and migrates the shared local client database.
+type ProtectionMode string
+
+const (
+	ProtectionFile     ProtectionMode = "file"
+	ProtectionKeychain ProtectionMode = "keychain"
+)
+
+type OpenOptions struct {
+	// protection defaults to Keychain on macOS and a private file elsewhere.
+	// reopening must use the same mode; the database verifies the wrapping key.
+	Protection ProtectionMode
+}
+
+// Open initializes fresh v1 state without reading any earlier database.
 func Open(ctx context.Context, root string) (result *Database, retErr error) {
+	return OpenWithOptions(ctx, root, OpenOptions{})
+}
+
+func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (result *Database, retErr error) {
 	defer func() {
 		if retErr != nil {
 			if _, typed := failure.Of(retErr); !typed {
@@ -105,24 +123,64 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 		return nil, err
 	}
 	defer migrationLock.Close()
+	exists := false
 	if info, statErr := os.Lstat(path); statErr == nil {
+		exists = true
 		if err := validatePrivateFile(info, false); err != nil {
 			return nil, fmt.Errorf("clientstate: database: %w", err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
 	}
-	migrations, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		return nil, fmt.Errorf("clientstate: load migrations: %w", err)
+	mode := options.Protection
+	if mode == "" {
+		mode = defaultProtection()
 	}
-	db, err := tnlsqlite.Open(ctx, path, migrations)
+	digest := sha256.Sum256([]byte(root))
+	account := hex.EncodeToString(digest[:])
+	var key []byte
+	switch mode {
+	case ProtectionFile:
+		key, err = fileWrappingKey(root, !exists)
+	case ProtectionKeychain:
+		key, err = platformWrappingKey(ctx, account, !exists)
+	default:
+		return nil, errors.New("clientstate: invalid protection mode")
+	}
+	if err != nil {
+		return nil, err
+	}
+	protector := &encryptedProtector{key: key, account: account}
+	var db *sql.DB
+	if exists {
+		db, err = openClientSQLite(ctx, path, false)
+	} else {
+		db, err = initializeClientSQLite(ctx, path, mode, protector)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: %w", err)
+	}
+	if exists {
+		var storedMode string
+		var check []byte
+		if err := db.QueryRowContext(ctx, "SELECT protection_mode, key_check_ciphertext FROM state_protection WHERE id = 1").Scan(&storedMode, &check); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("clientstate: read state protection: %w", err)
+		}
+		if storedMode != string(mode) {
+			db.Close()
+			return nil, errors.New("clientstate: state protection mode does not match")
+		}
+		value, err := protector.Open(ctx, "wrapping-key-check", check)
+		if err != nil || string(value) != "tnl client state v1" {
+			db.Close()
+			return nil, errors.New("clientstate: wrapping key does not match database")
+		}
 	}
 	return &Database{
 		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
 		heartbeatInterval: tunnelHeartbeatInterval,
+		secrets:           protector,
 	}, nil
 }
 
@@ -150,12 +208,10 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 	if err != nil {
 		return nil, err
 	}
-	profileDigest := sha256.Sum256([]byte(d.root + "\x00" + serverOrigin))
 	return &Store{
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
-		secrets: newSecretProtector(
-			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
-		),
+		secrets:     scopedProtector{protector: d.secrets, scope: serverOrigin},
+		identityDir: filepath.Join(d.root, "identities"),
 	}, nil
 }
 

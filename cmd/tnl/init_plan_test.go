@@ -20,10 +20,13 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.manager != "pnpm" || plan.framework != "next" || !slices.Equal(plan.packages, []string{"@tnldotdev/tnl"}) || len(plan.frameworkAfter) != 0 || !slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	for _, fragment := range []string{"app:", `directory: "."`, "defineConfig"} {
+	for _, fragment := range []string{"app:", `target: { type: "app" }`, "defineConfig"} {
 		if !strings.Contains(string(plan.configData), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.configData)
 		}
+	}
+	if strings.Contains(string(plan.configData), "directory:") {
+		t.Fatalf("planned a removed service directory: %s", plan.configData)
 	}
 	if _, err := os.Stat(filepath.Join(root, "tnl.config.ts")); !os.IsNotExist(err) {
 		t.Fatalf("planning wrote configuration: %v", err)
@@ -149,7 +152,7 @@ func genericInitFixture(t *testing.T, script, manager string) string {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"include":[".tnl/project.d.ts"]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"include":[".tnl/generated/project.d.ts"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

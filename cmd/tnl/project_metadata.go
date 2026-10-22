@@ -6,55 +6,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
-
-func runConfigGenerate(
-	ctx context.Context,
-	stateRoot string,
-	project projectConfiguration,
-	stdout, stderr io.Writer,
-) error {
-	if !project.Found() {
-		return failure.Wrap("generate project metadata", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
-	}
-	state, err := clientstate.Open(ctx, stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	resolver := newProjectMetadataResolver(state, project, os.Stdin, stderr, "tnl config generate")
-	metadata, err := resolver.Generate(ctx)
-	if err != nil {
-		return err
-	}
-	if err := projectmeta.Write(ctx, project.Root, metadata); err != nil {
-		return err
-	}
-	actions, err := projectTypeIncludeActions(project)
-	if err != nil {
-		return err
-	}
-	fields := []clioutput.Field{
-		clioutput.Field{Label: "metadata", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.JSONName)},
-		clioutput.Field{Label: "declarations", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.DeclarationsName)},
-	}
-	blocks := []clioutput.Block{clioutput.Fields(fields...)}
-	for _, action := range actions {
-		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
-	}
-	return writeHumanFrame(stdout, "tnl config generate", "generated", "", blocks...)
-}
 
 type projectMetadataResolver struct {
 	state       *clientstate.Database
@@ -97,6 +59,17 @@ func (r *projectMetadataResolver) LoadFallbackServer(ctx context.Context) error 
 }
 
 func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Metadata, error) {
+	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0
+	for _, service := range r.project.Config.Services {
+		hasPublic = hasPublic || config.IsPublicService(service) || config.PublisherName(service) != "local"
+	}
+	if !hasPublic {
+		metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
+		if r.project.Worktree.Label.FullLabel != "" {
+			metadata.Worktree = &projectmeta.Worktree{Label: r.project.Worktree.Label}
+		}
+		return metadata, metadata.Validate()
+	}
 	root, err := r.project.EffectiveService("")
 	if err != nil {
 		return projectmeta.Metadata{}, err
@@ -115,8 +88,7 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	metadata := projectmeta.Metadata{
 		Version: projectmeta.Version, Namespace: namespaceForMembership(current, domain),
-		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
-		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
+		Services: make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 	}
 	if r.project.Worktree.Label.FullLabel != "" {
 		metadata.Worktree = &projectmeta.Worktree{Label: r.project.Worktree.Label}
@@ -134,6 +106,9 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
+		if !config.IsPublicService(r.project.Config.Services[name]) && config.PublisherName(r.project.Config.Services[name]) == "local" {
+			continue
+		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
@@ -146,11 +121,47 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		serviceMetadata, err := configuredProjectService(name, r.project.Worktree, effective, serviceContext)
+		var serviceMetadata projectmeta.Service
+		if config.PublisherName(r.project.Config.Services[name]) != "local" {
+			serviceServer, serverErr := r.server(ctx, effective.Server)
+			if serverErr != nil {
+				return projectmeta.Metadata{}, serverErr
+			}
+			source, sourceErr := r.project.SourceIdentity(ctx)
+			if sourceErr != nil {
+				return projectmeta.Metadata{}, sourceErr
+			}
+			client, clientErr := r.client(ctx, serviceServer)
+			if clientErr != nil {
+				return projectmeta.Metadata{}, clientErr
+			}
+			// the source-bound visitor lookup provides the current endpoint and
+			// exposure. never infer managed exposure from protocol or local config.
+			assigned, lookupErr := client.Control.GetProjectPrivateService(ctx, source.Key, name, controlv1.GetProjectPrivateServiceParams{TeamId: serviceContext.team.Id, SourceFingerprint: source.Fingerprint})
+			if errors.Is(lookupErr, controlclient.ErrNotFound) {
+				// local startup does not apply remote services. include their
+				// endpoints only after control has a current visitor projection.
+				continue
+			}
+			if lookupErr != nil {
+				return projectmeta.Metadata{}, fmt.Errorf("read applied remote service %q: %w", name, lookupErr)
+			}
+			if assigned.TeamId != serviceContext.team.Id || assigned.Id == "" || string(assigned.Name) != config.ServiceName(name, r.project.Config.Services[name]) || assigned.ManagedTls == nil || !assigned.Enabled || string(assigned.Protocol) != config.Protocol(r.project.Config.Services[name]) {
+				return projectmeta.Metadata{}, fmt.Errorf("remote service %q has no matching current endpoint; run tnl apply", name)
+			}
+			endpoint := assigned.ManagedTls
+			domain, domainErr := readyDomainForHostname(serviceContext.domains, endpoint.Hostname)
+			if domainErr != nil {
+				return projectmeta.Metadata{}, domainErr
+			}
+			serviceMetadata, err = projectmeta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
+		} else {
+			serviceMetadata, err = configuredProjectService(name, r.project.Worktree, effective, serviceContext)
+		}
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		if paths := r.project.Config.Services[name].Paths; len(paths) > 0 {
+		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]projectmeta.Path, len(paths))
 			for prefix, mount := range paths {
 				serviceMetadata.Paths[prefix] = projectmeta.Path{
@@ -159,14 +170,6 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 			}
 		}
 		metadata.Services[name] = serviceMetadata
-		relative := r.project.RelativeServiceDirectories[name]
-		if relative == "" {
-			_, relative, err = r.project.ServiceDirectory(name)
-			if err != nil {
-				return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
-			}
-		}
-		metadata.ServiceDirectories[name] = relative
 	}
 	metadata.Webhooks, err = projectWebhookMetadata(ctx, r.state, r.project.Project, server, metadata)
 	if err != nil {
@@ -268,11 +271,8 @@ func configuredProjectService(
 	if err != nil {
 		return projectmeta.Service{}, err
 	}
-	return projectmeta.Service{
-		Namespace: namespaceForMembership(current, domain),
-		Hostname:  hostname,
-		URL:       "https://" + hostname,
-	}, nil
+	protocol := config.ServiceProtocol(effective.Publish)
+	return projectmeta.NewService(namespaceForMembership(current, domain), hostname, protocol, nil)
 }
 
 func (r *projectMetadataResolver) resolveContext(

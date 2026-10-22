@@ -33,11 +33,11 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	}{
 		{project, InspectionRecord{ReceivedAt: now, Method: "POST", Path: "/checkout", Status: 500,
 			Origin: "local_service"}},
-		{otherWorktree, InspectionRecord{ReceivedAt: now.Add(time.Second), Protocol: controlv1.Postgres,
+		{otherWorktree, InspectionRecord{ReceivedAt: now.Add(time.Second), Protocol: "postgres",
 			Origin: "tnl", Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}},
-		{project, InspectionRecord{ReceivedAt: now.Add(2 * time.Second), Protocol: controlv1.Mysql,
+		{project, InspectionRecord{ReceivedAt: now.Add(2 * time.Second), Protocol: "mysql",
 			Origin: "tnl", Operation: inspection.OperationQuery, Result: inspection.ResultOK, Rows: 2, ResultSets: 1}},
-		{project, InspectionRecord{ReceivedAt: now.Add(3 * time.Second), Protocol: controlv1.Redis,
+		{project, InspectionRecord{ReceivedAt: now.Add(3 * time.Second), Protocol: "redis",
 			Origin: "tnl", RedisCommand: "PING", Result: inspection.ResultOK}},
 	} {
 		if err := state.saveInspection(t.Context(), "tun_test", primary, entry.project, project, "orders", entry.record, testInspectionPolicy()); err != nil {
@@ -51,11 +51,11 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	}
 	filter.AllWorktrees = true
 	items, err = state.ListInspections(t.Context(), filter)
-	if err != nil || len(items) != 2 || items[0].Number != 2 || items[0].Protocol != controlv1.Postgres || items[1].Number != 1 {
+	if err != nil || len(items) != 2 || items[0].Number != 2 || items[0].Protocol != "postgres" || items[1].Number != 1 {
 		t.Fatalf("linked worktree failures = %+v, %v", items, err)
 	}
 	filter.Result = inspection.ResultOK
-	filter.Protocol = controlv1.Mysql
+	filter.Protocol = "mysql"
 	items, err = state.ListInspections(t.Context(), filter)
 	if err != nil || len(items) != 1 || items[0].Number != 3 || items[0].ResultSets != 1 || items[0].Rows != 2 {
 		t.Fatalf("MySQL outcomes = %+v, %v", items, err)
@@ -64,17 +64,17 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	if err != nil || show.SQLState != "42703" || show.Operation != inspection.OperationExecute {
 		t.Fatalf("local SQL summary = %+v, %v", show, err)
 	}
-	filter.Protocol = controlv1.Redis
+	filter.Protocol = "redis"
 	filter.Method = ""
 	items, err = state.ListInspections(t.Context(), filter)
 	if err != nil || len(items) != 1 || items[0].Number != 4 || items[0].RedisCommand != "PING" || items[0].Result != inspection.ResultOK {
 		t.Fatalf("Redis summary = %+v, %v", items, err)
 	}
-	invalid := InspectionRecord{Protocol: controlv1.Redis, ReceivedAt: now, Origin: "tnl", Result: inspection.ResultOK, RedisCommand: "AUTH password"}
+	invalid := InspectionRecord{Protocol: "redis", ReceivedAt: now, Origin: "tnl", Result: inspection.ResultOK, RedisCommand: "AUTH password"}
 	if err := state.saveInspection(t.Context(), "tun_test", primary, project, project, "orders", invalid, testInspectionPolicy()); err == nil {
 		t.Fatal("Redis inspection retained command arguments")
 	}
-	filter.Protocol = controlv1.Mysql
+	filter.Protocol = "mysql"
 	if _, err := state.GetInspection(t.Context(), filepath.Join(t.TempDir(), "different"), 2); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("another checkout found inspection: %v", err)
 	}
@@ -121,12 +121,12 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 		}
 	}
 	var size int64
-	if err := state.db.QueryRowContext(context.Background(), `SELECT coalesce(sum(stored_bytes), 0) FROM local_inspections
+	if err := state.db.QueryRowContext(context.Background(), `SELECT coalesce(sum(stored_bytes), 0) FROM inspections
 		WHERE project_root = ? AND service = 'orders'`, project).Scan(&size); err != nil || size > long.MaxBytes {
 		t.Fatalf("service inspection budget = %d, %v", size, err)
 	}
 	var accounted int64
-	if err := state.db.QueryRowContext(t.Context(), `SELECT used_bytes FROM local_inspection_usage
+	if err := state.db.QueryRowContext(t.Context(), `SELECT used_bytes FROM inspection_storage_usage
 		WHERE project_root = ? AND service = 'orders'`, project).Scan(&accounted); err != nil || accounted != size {
 		t.Fatalf("stored inspection byte accounting = %d, actual %d, %v", accounted, size, err)
 	}

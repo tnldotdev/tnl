@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,7 +51,7 @@ func decodeWebhook(name string, encoded []byte) (config.Webhook, error) {
 	}
 	services := config.Services{}
 	if definition.Service != "" {
-		services[definition.Service] = config.Service{}
+		services[definition.Service] = config.Service{Tunnel: &config.Tunnel{}}
 	}
 	if err := config.ValidateTNL(config.TNL{Services: services, Webhooks: map[string]config.Webhook{name: definition}}); err != nil {
 		return definition, err
@@ -99,9 +100,9 @@ func (d *Database) WebhookReceivers(ctx context.Context, server, group, name str
 			return nil, ErrWebhookPolicyConflict
 		}
 		receivers = append(receivers, TunnelInfo{
-			ID: row.ID, Server: row.ServerOrigin, IntegrationGroup: row.IntegrationGroup, Hostname: row.Hostname,
-			Target: row.Target, PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
-			PublicURL: "https://" + row.Hostname,
+			ID: row.ID, Server: row.ServerOrigin, IntegrationGroup: row.IntegrationGroup, Hostname: row.Hostname.String,
+			Target: row.Target.String, PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
+			PublicURL: "https://" + row.Hostname.String,
 		})
 	}
 	return receivers, nil
@@ -109,8 +110,11 @@ func (d *Database) WebhookReceivers(ctx context.Context, server, group, name str
 
 func (d *Database) WebhookReceiverCurrent(ctx context.Context, receiver TunnelInfo) (bool, error) {
 	count, err := d.queries.WebhookReceiverCurrent(ctx, clientstatedb.WebhookReceiverCurrentParams{
-		TunnelID: receiver.ID, ServerOrigin: receiver.Server, Target: receiver.Target, PublicURLID: receiver.PublicURLID,
-		PublishRunNumber: int64(receiver.PublishRunNumber), Now: d.now().UTC().UnixNano(),
+		TunnelID: receiver.ID, ServerOrigin: receiver.Server,
+		Target:           sql.NullString{String: receiver.Target, Valid: true},
+		PublicURLID:      sql.NullString{String: receiver.PublicURLID, Valid: true},
+		PublishRunNumber: sql.NullInt64{Int64: int64(receiver.PublishRunNumber), Valid: true},
+		Now:              d.now().UTC().UnixNano(),
 	})
 	if err != nil {
 		return false, err

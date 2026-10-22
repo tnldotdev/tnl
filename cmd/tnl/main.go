@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"golang.org/x/term"
 )
 
@@ -28,19 +30,28 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
+	Generate    generateCommand  `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
+	Check       struct{}         `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
+	Bootstrap   bootstrapCommand `cmd:"" help:"Prepare durable publisher identity secrets and parameter bindings for a customer deployment." group:"manage"`
+	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
+	Connect     connectCommand   `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
+	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
+	Service     serviceCommand   `cmd:"" help:"Manage installed publications." group:"operate"`
+	Detached    detachedCommand  `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
+	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
+	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
-	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
-	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
+	Share       shareCommand     `cmd:"" help:"Manage public URL shares and exact-service access." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
@@ -58,21 +69,24 @@ type tunnelFlags struct {
 	Domain             string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
 	Name               string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
 	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
-	AllowIP            []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowAllIPs        bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Anonymous          bool                  `name:"anonymous" help:"Do not require a tnl visitor credential; the local service still owns its own authentication."`
+	IP                 []string              `name:"ip" help:"Restrict visitor source addresses; repeat for each address, CIDR or 'current'."`
 	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
 	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
 	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
-	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
-	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
+	RateBurst          *int                  `name:"rate-burst" help:"Maximum burst of application work admitted by the rate limit."`
+	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections. Defaults to 64 for HTTP and 24 for TCP."`
+	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS target."`
 	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 
-	allowAllIPsFromCLI       bool
 	ephemeralFromCLI         bool
 	domainFromCLI            bool
 	inspectionModeFromCLI    bool
 	inspectionModeFromConfig bool
+	workLimits               *config.Limits
+	inspection               *config.Inspection
+	access                   *config.Access
 }
 
 type remoteFlags struct {
@@ -96,20 +110,6 @@ func (flags scopedTeamFlags) selection() remoteFlags {
 	selected := flags.remoteFlags
 	selected.SelectedTeam = flags.Team
 	return selected
-}
-
-type configCommand struct {
-	Path     struct{}              `cmd:"" help:"Show the selected project configuration path."`
-	Check    configCheckCommand    `cmd:"" help:"Validate the selected project configuration."`
-	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and TypeScript declarations."`
-}
-
-type configCheckCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-}
-
-type configGenerateCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 type webhookCommand struct {
@@ -150,7 +150,9 @@ func main() {
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
 	var telemetry *asyncTelemetryReporter
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
+	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
+	_ = os.Unsetenv(observability.LaunchTraceparent)
+	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
 		telemetry = newTelemetryReporter(root)
 		return telemetry
 	})
@@ -233,6 +235,9 @@ func writeCommandError(output io.Writer, err error) {
 	}
 	presented := presentFailure(err)
 	blocks := []clioutput.Block{clioutput.Text(presented.message)}
+	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
+	}
 	caseID := failure.KnownCase(err)
 	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
 		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
@@ -288,6 +293,7 @@ func classifyCommandError(err error) error {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
 	command := ""
+	machineIntent := false
 	defer func() {
 		result = classifyCommandError(result)
 		if result != nil {
@@ -301,7 +307,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			result = clioutput.WrapCommand(command, result)
 		}
 		var reported *reportedError
-		if result != nil && machineOutputRequested(args) && !errors.As(result, &reported) {
+		if result != nil && (machineIntent || machineOutputRequested(args)) && !errors.As(result, &reported) {
 			result = &machineCommandError{result}
 		}
 	}()
@@ -309,7 +315,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parser, err := kong.New(
 		&flags,
 		kong.Name("tnl"),
-		kong.Description("Publish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
+		kong.Description("Publish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, visitors need a current sign-in, link, or token."),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "start", Title: "Start here:"},
 			{Key: "manage", Title: "Manage:"},
@@ -329,14 +335,169 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
+	machineIntent = strings.HasPrefix(parsedCommand, "runtime connections ")
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "generate" {
+		return runGenerate(ctx, flags, stdout)
+	}
+	if parsedCommand == "check" {
+		project, err := loadProjectConfigurationWithSalt(ctx, flags, [32]byte{})
+		if err != nil {
+			return err
+		}
+		return runCheck(project, stdout)
+	}
+	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" {
+		var metrics *observability.Metrics
+		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, flags).String())
+		if err != nil {
+			return err
+		}
+		defer func() {
+			budget := observability.CLIShutdownTimeout
+			if persistentObservabilityOwner(parsedCommand, flags) {
+				budget = observability.ShutdownTimeout
+			}
+			shutdown, cancel := context.WithTimeout(context.Background(), budget)
+			defer cancel()
+			_ = metrics.Shutdown(shutdown)
+		}()
+	}
+	ctx, finishCommand := observability.ClientCommand(ctx, parsedCommand)
+	defer func() { finishCommand(result) }()
+	if flags.Publish.Install || flags.Publisher.Serve.Install || flags.Connect.Start.Install {
+		var finishInstall func(error)
+		ctx, finishInstall = observability.ClientOperation(ctx, "client.install")
+		defer func() { finishInstall(result) }()
+	}
+	if strings.HasPrefix(parsedCommand, "runtime connections ") {
+		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
+	}
+	if parsedCommand == "connect kube-credential" {
+		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
+	}
+	if parsedCommand == "publisher serve" {
+		serve := &flags.Publisher.Serve
+		if serve.fixedList() {
+			return runFixedPublisherGroups(ctx, *serve, stderr)
+		}
+		if err := validatePublisherServe(*serve); err != nil {
+			return err
+		}
+		if serve.Install {
+			options, err := (systemStateFlags{SystemStateDir: serve.SystemStateDir}).options()
+			if err != nil {
+				return err
+			}
+			if err := requireInstalledService(ctx, options, nil); err != nil {
+				return err
+			}
+		}
+		if serve.Detach {
+			if serve.EnrollmentKey == "-" {
+				return publisherCLIError("--detach cannot read an enrollment key from stdin; enroll this instance in the foreground first")
+			}
+			// the owning child consumes the injected secret before loading project
+			// configuration; clear the launching process's copy after handoff too.
+			defer os.Unsetenv("TNL_GROUP_IDENTITY")
+			return detachPublish(ctx, args, serve.StateDir, stdout, "tnl publisher serve")
+		}
+		if err := preparePublisherGroupIdentity(serve); err != nil {
+			return err
+		}
+		if serve.DetachedChild != "" {
+			root, err := clientStateRoot(serve.StateDir)
+			if err != nil {
+				return err
+			}
+			var cleanup func()
+			ctx, cleanup, err = serveDetached(ctx, root, serve.DetachedChild)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+	}
+	if parsedCommand == "connect start <name>" {
+		connect := &flags.Connect.Start
+		if err := validateConnectMode(*connect); err != nil {
+			return err
+		}
+		if connect.Install {
+			options, err := (systemStateFlags{SystemStateDir: connect.SystemStateDir}).options()
+			if err != nil {
+				return err
+			}
+			if err := requireInstalledService(ctx, options, nil); err != nil {
+				return err
+			}
+		}
+		if connect.Detach {
+			// resolve and validate the service mode before creating a child.
+			connect.detach = func() error { return detachPublish(ctx, args, connect.StateDir, stdout, "tnl connect") }
+		}
+		root, err := clientStateRoot(connect.StateDir)
+		if err != nil {
+			return err
+		}
+		if connect.DetachedChild != "" {
+			var cleanup func()
+			ctx, cleanup, err = serveDetached(ctx, root, connect.DetachedChild)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+		project, err := loadProjectConfiguration(ctx, flags, root)
+		if err != nil {
+			return err
+		}
+		if err := project.applyConnect(connect); err != nil {
+			return err
+		}
+	}
+	if parsedCommand == "publish <service-or-target>" {
+		if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
+			return publisherCLIError("select only one of --foreground, --detach, or --install")
+		}
+		if flags.Publish.Detach && flags.Publish.Install {
+			return publisherCLIError("--install and --detach cannot be combined")
+		}
+		if flags.Publish.Detach {
+			if flags.Publish.EnrollmentKey == "-" {
+				return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher or --publisher-file")
+			}
+			if flags.Publish.Output != "human" {
+				return publisherCLIError("--detach requires --output=human")
+			}
+			if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
+				return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+			}
+			return detachPublish(ctx, args, flags.Publish.StateDir, stdout)
+		}
+		if flags.Publish.DetachedChild != "" {
+			root, err := clientStateRoot(flags.Publish.StateDir)
+			if err != nil {
+				return err
+			}
+			var cleanup func()
+			ctx, cleanup, err = serveDetached(ctx, root, flags.Publish.DetachedChild)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+	}
 	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
 			return err
 		}
 	}
 	telemetryCommand, telemetryAction, collectTelemetry := selectedTelemetryCommand(parsed)
+	if flags.Publish.Install || flags.Publish.Detach {
+		collectTelemetry = false
+	}
 	var telemetry *telemetryInvocation
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
@@ -372,15 +533,44 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
-	case "runtime address":
-		return runRuntimeAddress(ctx, flags.Runtime.Address, stdout)
+	case "runtime endpoint":
+		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
+	case "runtime owner-endpoint":
+		return runRuntimeOwnerEndpoint(ctx, flags.Runtime.OwnerEndpoint, stdout)
 	case "runtime serve":
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
-	case "publish <service-or-target>", "config check", "config generate":
+	case "publish <service-or-target>":
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.Install {
+			selection, _, selectErr := selectProjectConfiguration(ctx, flags)
+			if selectErr != nil {
+				return selectErr
+			}
+			if selection.Path == "" {
+				break
+			}
+			projectStateRoot, err = commandStateRoot(parsed)
+			if err != nil {
+				return err
+			}
+			project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
+			if err != nil {
+				return err
+			}
+			if err := project.applyInstalledService(&flags.Publish); err != nil {
+				return err
+			}
+			break
+		}
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 			break
+		}
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.PublisherFile != "" {
+			flags.Publish.ServerURL, err = publisherFileServer(flags.Publish.ServerURL, flags.Publish.PublisherFile)
+			if err != nil {
+				return err
+			}
 		}
 		projectStateRoot, err = commandStateRoot(parsed)
 		if err != nil {
@@ -424,12 +614,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
-	case "config path":
-		return runConfigPath(ctx, flags, stdout)
-	case "config check":
-		return runConfigCheck(project, stdout)
-	case "config generate":
-		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
+	case "apply":
+		return runApply(ctx, flags.Apply, project, stdout, stderr)
+	case "bootstrap <publisher>":
+		return runBootstrap(ctx, flags.Bootstrap, project, stdout, stderr)
+	case "audit list":
+		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
@@ -450,11 +640,71 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
 	case "auth logout":
 		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
+	case "auth browser <url>":
+		return runAuthBrowser(ctx, flags.Auth.Browser, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+	case "connect available":
+		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
+	case "connect start <name>":
+		return runConnectStart(ctx, flags.Connect.Start, stdout, stderr)
+	case "connect list":
+		return runConnectJobs(ctx, flags.Connect.List, "", "list", stdout)
+	case "connect stop <name>":
+		return runConnectJobs(ctx, flags.Connect.Stop.connectListCommand, flags.Connect.Stop.Name, "stop", stdout)
+	case "connect remove <name>":
+		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
+	case "publisher enroll <public-url-id>", "publisher enroll":
+		if flags.Publisher.Enroll.Group != "" {
+			return runPublisherGroupEnrollment(ctx, flags.Publisher.Enroll, project, stdout, stderr)
+		}
+		if flags.Publisher.Enroll.ProjectKey != "" || flags.Publisher.Enroll.Members != 1 || flags.Publisher.Enroll.ExpiresIn != 10*time.Minute {
+			return publisherCLIError("--project-key, --members, and --expires-in require --group")
+		}
+		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
+	case "publisher current":
+		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
+	case "publisher setup":
+		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
+	case "publisher serve":
+		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
+	case "publisher rename <group> <name>":
+		return runPublisherGroupRename(ctx, flags.Publisher.Rename, project, stdout, stderr)
+	case "publisher namespace rename <group> <label>":
+		return runPublisherNamespaceRename(ctx, flags.Publisher.Namespace.Rename, project, stdout, stderr)
+	case "publisher provision":
+		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
+	case "publisher list":
+		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
+	case "publisher revoke <publisher-id>":
+		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
+	case "publisher grant add <publisher-id>":
+		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
+	case "service install":
+		return runServiceInstall(ctx, flags.Service.Install, stdout, nil)
+	case "service register":
+		return runPublicationRegister(ctx, flags.Service.Register, os.Stdin, stdout, nil)
+	case "service start <job>":
+		return runServiceStart(ctx, flags.Service.Start, stdout, nil)
+	case "service stop <job>":
+		return runServiceStop(ctx, flags.Service.Stop, stdout)
+	case "service remove <job>":
+		return runServiceRemove(ctx, flags.Service.Remove, stdout)
+	case "service list":
+		return runServiceList(ctx, flags.Service.List, stdout)
+	case "service status <job>":
+		return runServiceStatus(ctx, flags.Service.Status, stdout)
+	case "service serve":
+		return runServiceServe(ctx, flags.Service.Serve)
+	case "detached list":
+		return runDetachedList(flags.Detached.List, stdout)
+	case "detached stop <id>":
+		return runDetachedStop(flags.Detached.Stop, stdout)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -471,6 +721,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
+	case "ping <url>":
+		return runPing(ctx, flags.Ping, stdout)
 	case "inspect list", "inspect show <inspection-number>":
 		root, err := projectRoot(ctx, flags)
 		if err != nil {
@@ -510,6 +762,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTeamMemberSetRole(ctx, flags.Team.Member.SetRole, stdout, stderr)
 	case "team member remove <membership-id>":
 		return runTeamMemberRemove(ctx, flags.Team.Member.Remove, stdout, stderr)
+	case "team feedback get":
+		return runTeamFeedbackGet(ctx, flags.Team.Feedback.Get, stdout, stderr)
+	case "team feedback set <authors>":
+		return runTeamFeedbackSet(ctx, flags.Team.Feedback.Set, stdout, stderr)
 	case "domain claim <domain>":
 		return runDomainClaim(ctx, flags.Domain.Claim, stdout, stderr)
 	case "domain default <domain>":
@@ -522,26 +778,50 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
 	case "url list":
 		return runURLList(ctx, flags.URL.List, stdout, stderr)
+	case "url inventory":
+		return runURLInventory(ctx, flags.URL.Inventory, stdout, stderr)
+	case "url available":
+		return runURLAvailable(ctx, flags.URL.Available, stdout, stderr)
+	case "url access show <url>":
+		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
+	case "url access set <url> <mode>":
+		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
 	case "url update <public-url-id>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "url credential create <service-or-public-url-id>":
-		return runURLCredentialCreate(ctx, flags.URL.Credential.Create, project, stdout, stderr)
-	case "url credential list <public-url-id>":
-		return runURLCredentialList(ctx, flags.URL.Credential.List, stdout, stderr)
-	case "url credential revoke <credential-id>":
-		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
+	case "share token create <url>":
+		return runShareTokenCreate(ctx, flags.Share.Token.Create, project, stdout, stderr)
 	case "share list <url>":
 		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
-	case "share link revoke <share-id>":
-		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "share revoke <share-id>":
+		return runShareRevoke(ctx, flags.Share.Revoke, stdout, stderr)
 	case "share team create <url>":
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
-	case "share team revoke":
+	case "share team revoke", "share team revoke <url>":
 		return runShareTeamRevoke(ctx, flags.Share.Team.Revoke, project, stdout, stderr)
+	case "share invite create <url>":
+		return runShareInviteCreate(ctx, flags.Share.Invite.Create, stdout, stderr)
+	case "share invite accept <secret>":
+		return runShareInviteAccept(ctx, flags.Share.Invite.Accept, stdout, stderr)
+	case "share invite list <url>":
+		return runShareInviteList(ctx, flags.Share.Invite.List, stdout, stderr)
+	case "share invite revoke <url> <invitation-id>":
+		return runShareInviteRevoke(ctx, flags.Share.Invite.Revoke, stdout, stderr)
+	case "share service invite create <name>":
+		return runServiceShareInviteCreate(ctx, flags.Share.Service.Invite.Create, project, stdout, stderr)
+	case "share service invite accept <secret>":
+		return runServiceShareInviteAccept(ctx, flags.Share.Service.Invite.Accept, stdout, stderr)
+	case "share service list <name>":
+		return runServiceShareList(ctx, flags.Share.Service.List, project, stdout, stderr)
+	case "share service revoke <name> <access-id>":
+		return runServiceShareRevoke(ctx, flags.Share.Service.Revoke, project, stdout, stderr)
+	case "share service link create <name>":
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, "share", stdout, stderr)
+	case "share service token create <name>":
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, "token", stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":
@@ -573,6 +853,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 }
 
+type nativeProcessKey struct{}
+
+func persistentObservabilityOwner(command string, flags cli) bool {
+	return commandObservabilityRole(command, flags) == observability.RolePublisher || command == "runtime connections serve" || command == "connect start <name>" && !flags.Connect.Start.Detach && !flags.Connect.Start.Install
+}
+
+func commandObservabilityRole(command string, flags cli) observability.Role {
+	switch command {
+	case "publish <service-or-target>":
+		if !flags.Publish.Install && !flags.Publish.Detach {
+			return observability.RolePublisher
+		}
+	case "publisher serve":
+		if !flags.Publisher.Serve.Detach && !flags.Publisher.Serve.Install {
+			return observability.RolePublisher
+		}
+	case "runtime serve", "service serve":
+		return observability.RolePublisher
+	}
+	return observability.RoleClient
+}
+
 func commandFailureOperation(command string) string {
 	if command == "" {
 		return "parse command"
@@ -584,13 +886,15 @@ func commandFailureReason(command string) failure.Reason {
 	switch {
 	case command == "tnl init":
 		return failure.InitFailed
-	case strings.HasPrefix(command, "tnl config "):
+	case command == "tnl check", command == "tnl generate":
 		return failure.ProjectConfigInvalid
 	case strings.HasPrefix(command, "tnl telemetry "), command == "tnl status":
 		return failure.ClientStateUnavailable
 	case strings.HasPrefix(command, "tnl auth "):
 		return failure.Authentication
 	case strings.HasPrefix(command, "tnl publish"):
+		return failure.TunnelUnavailable
+	case strings.HasPrefix(command, "tnl connect"):
 		return failure.TunnelUnavailable
 	case strings.HasPrefix(command, "tnl team "):
 		return failure.TeamUnavailable
@@ -617,10 +921,10 @@ func canonicalParsedCommand(command string) string {
 		return "auth login"
 	case "publish":
 		return "publish <service-or-target>"
-	case "url credential create":
-		return "url credential create <service-or-public-url-id>"
-	case "url credential list":
-		return "url credential list <public-url-id>"
+	case "publisher enroll":
+		return "publisher enroll <public-url-id>"
+	case "url ip set <url>":
+		return "url ip set <url> <prefixes>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":
@@ -633,7 +937,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false
+	publicURL, name, domain, ephemeral, open := false, false, false, false, false
 	inspectionMode := false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
@@ -648,10 +952,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			domain = true
 		case "open":
 			open = true
-		case "allow-ip":
-			allowIP = true
-		case "allow-all-ips":
-			allowAllIPs = true
 		case "ephemeral":
 			ephemeral = true
 		case "inspection-mode":
@@ -659,7 +959,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
-		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
 		tunnel.inspectionModeFromCLI = inspectionMode
@@ -668,9 +967,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		}
 		if name && !publicURL {
 			tunnel.PublicURL = ""
-		}
-		if allowIP && !allowAllIPs {
-			tunnel.AllowAllIPs = false
 		}
 	}
 	switch canonicalParsedCommand(parsed.Command()) {

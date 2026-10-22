@@ -21,10 +21,13 @@ func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
+	if filepath.Base(DatabasePath(root)) != "v1.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
 	}
-	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {
+	if filepath.Base(WrappingKeyPath(root)) != "v1.wrapping-key" {
+		t.Fatalf("client wrapping key path = %q", WrappingKeyPath(root))
+	}
+	for _, table := range []string{"server_profiles", "installation_settings", "control_sessions", "local_tunnels"} {
 		var key string
 		if err := database.db.QueryRowContext(t.Context(), `SELECT name FROM pragma_table_info(?) WHERE pk = 1`, table).Scan(&key); err != nil || key != "id" {
 			t.Fatalf("%s primary key = %q, %v; want id", table, key, err)
@@ -46,16 +49,6 @@ func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 	} {
 		if _, err := database.db.ExecContext(t.Context(), query, tunnel.ID()); err == nil {
 			t.Fatalf("incomplete tunnel state accepted: %s", query)
-		}
-	}
-	for _, query := range []string{
-		`INSERT INTO certificate_materials (server_origin, team_id, cache_key, plan, phase, stored_key, csr_der, issuance_id, updated_at)
-		 VALUES ('https://server.example', 'team', 'key', '{}', 'current', x'01', x'02', '', 1)`,
-		`INSERT INTO certificate_materials (server_origin, team_id, cache_key, plan, phase, stored_key, csr_der, certificate_pem, issuance_id, updated_at)
-		 VALUES ('https://server.example', 'team', 'key', '{}', 'pending', x'01', x'02', x'03', '', 1)`,
-	} {
-		if _, err := database.db.ExecContext(t.Context(), query); err == nil {
-			t.Fatalf("incomplete certificate material accepted: %s", query)
 		}
 	}
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
@@ -149,8 +148,10 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 	}
 	defer database.Close()
 	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
-		Project: project, Service: "orders", ServiceProtocol: controlv1.Postgres,
+		// the recorder owns stored summaries independently of publication
+		// protocol; this fixture does not create a public database service.
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "http://127.0.0.1:5432",
+		Project: project, Service: "orders", ServiceProtocol: "http",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -163,15 +164,15 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 	policy := inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20}
 	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "orders", policy)
 	recorder.Observe(clientstate.InspectionRecord{
-		Protocol: controlv1.Postgres, ReceivedAt: time.Now().UTC(), Origin: "tnl",
+		Protocol: "postgres", ReceivedAt: time.Now().UTC(), Origin: "tnl",
 		Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703",
 	})
 	recorder.Observe(clientstate.InspectionRecord{
-		Protocol: controlv1.Mysql, ReceivedAt: time.Now().UTC().Add(time.Second), Origin: "tnl",
+		Protocol: "mysql", ReceivedAt: time.Now().UTC().Add(time.Second), Origin: "tnl",
 		Operation: inspection.OperationQuery, Result: inspection.ResultError, SQLState: "42S22", MySQLErrorCode: 1054,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
-		Protocol: controlv1.Redis, ReceivedAt: time.Now().UTC().Add(2 * time.Second), Origin: "tnl",
+		Protocol: "redis", ReceivedAt: time.Now().UTC().Add(2 * time.Second), Origin: "tnl",
 		RedisCommand: "PING", Result: inspection.ResultOK,
 	})
 	recorder.Close()
@@ -183,7 +184,7 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 		Inspections []inspectionRecord `json:"inspections"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
-		list.Inspections[0].Protocol != controlv1.Postgres || list.Inspections[0].Result != inspection.ResultError ||
+		list.Inspections[0].Protocol != "postgres" || list.Inspections[0].Result != inspection.ResultError ||
 		list.Inspections[0].Postgres == nil || list.Inspections[0].Postgres.SQLState != "42703" {
 		t.Fatalf("PostgreSQL inspection list = %s, %v", output.String(), err)
 	}

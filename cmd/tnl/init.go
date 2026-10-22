@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"golang.org/x/term"
 )
 
@@ -101,21 +102,28 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err != nil {
 		return err
 	}
+	plan.actions = append(plan.actions, projectGitignoreActions(ctx, plan.root)...)
+	if err := runGenerate(ctx, cli{ConfigPath: plan.configPath, Generate: generateCommand{OutputDir: ".tnl/generated"}}, io.Discard); err != nil {
+		return err
+	}
+	pythonUpdated, pythonActions, err := wirePythonProject(ctx, plan.root, flags.NoInstall)
+	if err != nil {
+		return err
+	}
+	plan.actions = append(plan.actions, pythonActions...)
+	var typeUpdates []string
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
-		typeActions, err := projectTypeIncludeActions(projectConfiguration{
-			Project: projectconfig.Project{
-				Root:                       plan.root,
-				ServiceDirectories:         map[string]string{"app": plan.root},
-				RelativeServiceDirectories: map[string]string{"app": "."},
-			},
+		types, err := wireProjectTypeIncludes(projectConfiguration{
+			Project: projectconfig.Project{Root: plan.root},
 		})
 		if err != nil {
 			return err
 		}
-		plan.actions = append(plan.actions, typeActions...)
+		plan.actions = append(plan.actions, types.actions...)
+		typeUpdates = types.updated
 	}
 	state := "already configured"
-	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
+	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated || pythonUpdated || len(typeUpdates) != 0 {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -139,7 +147,14 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
 	}
-	fields = append(fields, clioutput.Field{Label: "ignored", Value: ".tnl/"})
+	for _, path := range typeUpdates {
+		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
+	}
+	fields = append(fields, clioutput.Field{Label: "types", Value: filepath.Join(plan.root, projectmeta.GeneratedDirectoryName, projectmeta.DeclarationsName)})
+	if pythonUpdated || len(pythonActions) != 0 {
+		fields = append(fields, clioutput.Field{Label: "python", Value: filepath.Join(plan.root, projectmeta.GeneratedDirectoryName, projectmeta.PythonDirectoryName)})
+	}
+	fields = append(fields, clioutput.Field{Label: "ignore", Value: tnlLocalIgnoreRule})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {
 		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
@@ -200,8 +215,14 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 			plan.generatedService = bytes.Equal(data, initConfigSource("app"))
 		}
 	} else {
-		plan.configData = initConfigSource("app")
-		plan.generatedService = true
+		if packageFound {
+			plan.configData = initConfigSource("app")
+			plan.generatedService = true
+		} else {
+			plan.configPath = filepath.Join(root, "tnl.yml")
+			plan.configData = []byte("version: 1\ntnl:\n  services: {}\n")
+			plan.actions = append(plan.actions, "declare services in tnl.yml, then run tnl generate")
+		}
 	}
 	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
 	if plan.genericDev {
@@ -214,8 +235,6 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 				plan.packages = append(plan.packages, dependency)
 			}
 		}
-	} else {
-		plan.actions = append(plan.actions, "Create package.json, then install @tnldotdev/tnl as a development dependency.")
 	}
 	if plan.framework != "" {
 		if err := planFrameworkConfig(&plan, root); err != nil {
@@ -236,7 +255,8 @@ export default defineConfig({
   feedback: true,
   services: {
     %s: {
-      directory: ".",
+      publicURL: {},
+      target: { type: "app" },
     },
   },
 });

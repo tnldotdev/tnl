@@ -15,14 +15,15 @@ import (
 )
 
 type teamCommand struct {
-	Current teamCurrentCommand `cmd:"" help:"Show the selected team."`
-	List    teamListCommand    `cmd:"" help:"List current memberships."`
-	Use     teamUseCommand     `cmd:"" help:"Save a team for commands without a project team."`
-	Create  teamCreateCommand  `cmd:"" help:"Create an organization team."`
-	Members teamMembersCommand `cmd:"" help:"List team memberships."`
-	Invite  teamInviteCommand  `cmd:"" help:"Manage team invitations."`
-	Join    teamJoinCommand    `cmd:"" help:"Accept a team invitation."`
-	Member  teamMemberCommand  `cmd:"" help:"Manage one team membership."`
+	Feedback teamFeedbackCommand `cmd:"" help:"Manage who may write team feedback."`
+	Current  teamCurrentCommand  `cmd:"" help:"Show the selected team."`
+	List     teamListCommand     `cmd:"" help:"List current memberships."`
+	Use      teamUseCommand      `cmd:"" help:"Save a team for commands without a project team."`
+	Create   teamCreateCommand   `cmd:"" help:"Create an organization team."`
+	Members  teamMembersCommand  `cmd:"" help:"List team memberships."`
+	Invite   teamInviteCommand   `cmd:"" help:"Manage team invitations."`
+	Join     teamJoinCommand     `cmd:"" help:"Accept a team invitation."`
+	Member   teamMemberCommand   `cmd:"" help:"Manage one team membership."`
 }
 
 type teamCurrentCommand struct {
@@ -138,12 +139,12 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 	}
 	for _, membership := range session.identity.Memberships {
 		title := membership.TeamDisplayName
-		if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
+		if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
 			title = "* " + title
 		}
 		if membership.TeamId == projectID {
 			title = "> " + title
-			if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
+			if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
 				title = "* > " + membership.TeamDisplayName
 			}
 		}
@@ -248,7 +249,6 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 			Domain: session.authenticated.Discovery.ManagedDomain, Managed: true,
 			Mode:     naming.ManagedURLMode(session.authenticated.Discovery.ManagedUrlMode),
 			Personal: value.TeamKind == authorityv1.Personal,
-			Builtin:  session.identity.Identity.Administrator && value.TeamId == session.identity.PersonalTeamId,
 			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: value.ManagedLabel,
 		})
 		blocks = append(blocks, clioutput.Section(value.MemberSlug, clioutput.Fields(

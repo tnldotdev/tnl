@@ -5,11 +5,11 @@ ON CONFLICT (origin) DO UPDATE SET last_used_at = excluded.last_used_at;
 
 -- name: GetSelectedServer :one
 SELECT selected_server_origin
-FROM client_setting
+FROM installation_settings
 WHERE id = 1;
 
 -- name: GetSelectedTeam :one
-SELECT selected_team_id
+SELECT coalesce(selected_team_id, '') AS selected_team_id
 FROM server_profiles
 WHERE origin = sqlc.arg(origin);
 
@@ -20,39 +20,39 @@ SET selected_team_id = sqlc.arg(team_id),
 WHERE origin = sqlc.arg(origin);
 
 -- name: SetSelectedServer :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET selected_server_origin = sqlc.arg(origin)
 WHERE id = 1;
 
 -- name: GetInstallationID :one
-SELECT installation_id
-FROM client_setting
+SELECT coalesce(installation_id, '') AS installation_id
+FROM installation_settings
 WHERE id = 1;
 
 -- name: SetInstallationID :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET installation_id = sqlc.arg(installation_id)
-WHERE id = 1 AND installation_id = '';
+WHERE id = 1 AND installation_id IS NULL;
 
 -- name: GetTelemetryEnabled :one
 SELECT telemetry_enabled
-FROM client_setting
+FROM installation_settings
 WHERE id = 1;
 
 -- name: SetTelemetryEnabled :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET telemetry_enabled = sqlc.arg(enabled)
 WHERE id = 1;
 
 -- name: GetWorktreeHashSalt :one
-SELECT worktree_hash_salt
-FROM client_setting
+SELECT coalesce(worktree_hash_salt, x'') AS worktree_hash_salt
+FROM installation_settings
 WHERE id = 1;
 
 -- name: SetWorktreeHashSalt :exec
-UPDATE client_setting
+UPDATE installation_settings
 SET worktree_hash_salt = sqlc.arg(worktree_hash_salt)
-WHERE id = 1 AND length(worktree_hash_salt) = 0;
+WHERE id = 1 AND worktree_hash_salt IS NULL;
 
 -- name: GetControlSession :one
 SELECT *
@@ -63,25 +63,25 @@ WHERE server_origin = sqlc.arg(server_origin);
 INSERT INTO control_sessions (
     server_origin,
     session_id,
-    stored_access_token,
+    access_token_ciphertext,
     access_expires_at,
-    stored_refresh_token,
+    refresh_token_ciphertext,
     refresh_expires_at,
     updated_at
 ) VALUES (
     sqlc.arg(server_origin),
     sqlc.arg(session_id),
-    sqlc.arg(stored_access_token),
+    sqlc.arg(access_token_ciphertext),
     sqlc.arg(access_expires_at),
-    sqlc.arg(stored_refresh_token),
+    sqlc.arg(refresh_token_ciphertext),
     sqlc.arg(refresh_expires_at),
     sqlc.arg(updated_at)
 )
 ON CONFLICT (server_origin) DO UPDATE SET
     session_id = excluded.session_id,
-    stored_access_token = excluded.stored_access_token,
+    access_token_ciphertext = excluded.access_token_ciphertext,
     access_expires_at = excluded.access_expires_at,
-    stored_refresh_token = excluded.stored_refresh_token,
+    refresh_token_ciphertext = excluded.refresh_token_ciphertext,
     refresh_expires_at = excluded.refresh_expires_at,
     refresh_pending = 0,
     updated_at = excluded.updated_at;
@@ -93,57 +93,6 @@ WHERE server_origin = sqlc.arg(server_origin);
 -- name: SetControlSessionRefreshPending :exec
 UPDATE control_sessions SET refresh_pending = sqlc.arg(pending)
 WHERE server_origin = sqlc.arg(server_origin);
-
--- name: GetCertificateMaterial :one
-SELECT *
-FROM certificate_materials
-WHERE server_origin = sqlc.arg(server_origin)
-  AND team_id = sqlc.arg(team_id)
-  AND cache_key = sqlc.arg(cache_key)
-  AND plan = sqlc.arg(plan)
-  AND phase = sqlc.arg(phase);
-
--- name: UpsertCertificateMaterial :exec
-INSERT INTO certificate_materials (
-    server_origin,
-    team_id,
-    cache_key,
-    plan,
-    phase,
-    stored_key,
-    csr_der,
-    certificate_pem,
-    renew_at,
-    issuance_id,
-    updated_at
-) VALUES (
-    sqlc.arg(server_origin),
-    sqlc.arg(team_id),
-    sqlc.arg(cache_key),
-    sqlc.arg(plan),
-    sqlc.arg(phase),
-    sqlc.arg(stored_key),
-    sqlc.arg(csr_der),
-    sqlc.narg(certificate_pem),
-    sqlc.narg(renew_at),
-    sqlc.arg(issuance_id),
-    sqlc.arg(updated_at)
-)
-ON CONFLICT (server_origin, team_id, cache_key, plan, phase) DO UPDATE SET
-    stored_key = excluded.stored_key,
-    csr_der = excluded.csr_der,
-    certificate_pem = excluded.certificate_pem,
-    renew_at = excluded.renew_at,
-    issuance_id = excluded.issuance_id,
-    updated_at = excluded.updated_at;
-
--- name: DeleteCertificateMaterial :exec
-DELETE FROM certificate_materials
-WHERE server_origin = sqlc.arg(server_origin)
-  AND team_id = sqlc.arg(team_id)
-  AND cache_key = sqlc.arg(cache_key)
-  AND plan = sqlc.arg(plan)
-  AND phase = sqlc.arg(phase);
 
 -- name: InsertTunnel :exec
 INSERT INTO local_tunnels (
@@ -164,33 +113,35 @@ INSERT INTO local_tunnels (
     updated_at,
     heartbeat_at,
     lease_expires_at,
-    last_error,
-    integration_group
+    failure_code,
+    primary_project_root,
+    integration_namespace
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(command),
     sqlc.arg(process_id),
     sqlc.arg(server_origin),
     sqlc.arg(project_root),
-    sqlc.arg(service),
+    nullif(sqlc.arg(service), ''),
     sqlc.arg(service_protocol),
-    '',
-    sqlc.arg(target),
-    '',
-    '',
-    0,
+    NULL,
+    nullif(sqlc.arg(target), ''),
+    NULL,
+    NULL,
+    NULL,
     'starting',
     sqlc.arg(now),
     sqlc.arg(now),
     sqlc.arg(now),
     sqlc.arg(lease_expires_at),
-    '',
-    sqlc.arg(integration_group)
+    NULL,
+    sqlc.narg(primary_project_root),
+    sqlc.narg(integration_namespace)
 );
 
 -- name: SetTunnelDevTarget :execrows
 UPDATE local_tunnels
-SET target = sqlc.arg(target),
+SET target = nullif(sqlc.arg(target), ''),
     framework = sqlc.arg(framework),
     updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
@@ -213,7 +164,6 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = sqlc.arg(hostname),
-    public_port = sqlc.arg(public_port),
     publish_run_number = sqlc.arg(publish_run_number),
     state = 'ready',
     updated_at = sqlc.arg(now)
@@ -232,7 +182,7 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: FinishTunnel :execrows
 UPDATE local_tunnels
 SET state = sqlc.arg(state),
-    last_error = sqlc.arg(last_error),
+    failure_code = nullif(sqlc.arg(failure_code), ''),
     updated_at = sqlc.arg(now),
     heartbeat_at = sqlc.arg(now),
     lease_expires_at = sqlc.arg(now),
@@ -255,14 +205,3 @@ ORDER BY started_at, id;
 DELETE FROM local_tunnels
 WHERE stopped_at < sqlc.arg(terminal_before)
    OR (stopped_at IS NULL AND lease_expires_at < sqlc.arg(stale_before));
-
--- name: LatestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = sqlc.arg(project_root);
-
--- name: OldestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_events WHERE project_root = sqlc.arg(project_root) ORDER BY sequence LIMIT 1;
-
--- name: ListTunnelEventsAfter :many
-SELECT * FROM local_tunnel_events
-WHERE project_root = sqlc.arg(project_root) AND sequence > sqlc.arg(after) AND sequence <= sqlc.arg(latest)
-ORDER BY sequence;
