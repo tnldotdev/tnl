@@ -53,30 +53,27 @@ func Serve(ctx context.Context, cfg tnldconfig.Config) error {
 		return err
 	}
 	defer func() { _ = metrics.Shutdown(context.Background()) }()
-	return serveWithHTTPClients(
-		ctx, cfg, &http.Client{Timeout: 30 * time.Second}, &http.Client{Timeout: 30 * time.Second},
-	)
+	return serveRuntime(ctx, cfg, runtimeOptions{
+		acmeHTTPClient: &http.Client{Timeout: 30 * time.Second}, serviceHTTPClient: &http.Client{Timeout: 30 * time.Second},
+	})
 }
 
-func serveWithHTTPClients(
-	ctx context.Context,
-	cfg tnldconfig.Config,
-	acmeHTTPClient, serviceHTTPClient *http.Client,
-) (retErr error) {
-	return serveWithRelayClientTLS(ctx, cfg, acmeHTTPClient, serviceHTTPClient, nil)
+type runtimeListeners struct {
+	control          net.Listener
+	metrics          net.Listener
+	standalonePublic net.Listener
 }
 
-func serveWithRelayClientTLS(
-	ctx context.Context,
-	cfg tnldconfig.Config,
-	acmeHTTPClient, serviceHTTPClient *http.Client,
-	relayClientTLS *tls.Config,
-) (retErr error) {
-	return serveWithDNSBackend(ctx, cfg, acmeHTTPClient, serviceHTTPClient, relayClientTLS, nil)
+type runtimeOptions struct {
+	acmeHTTPClient    *http.Client
+	serviceHTTPClient *http.Client
+	relayClientTLS    *tls.Config
+	dns               dnsBackend
+	listeners         runtimeListeners
 }
 
-func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPClient, serviceHTTPClient *http.Client, relayClientTLS *tls.Config, dns dnsBackend) (retErr error) {
-	if acmeHTTPClient == nil || serviceHTTPClient == nil {
+func serveRuntime(ctx context.Context, cfg tnldconfig.Config, options runtimeOptions) (retErr error) {
+	if options.acmeHTTPClient == nil || options.serviceHTTPClient == nil {
 		return errors.New("ACME and service HTTP clients are required")
 	}
 	clusterSecret := cfg.ClusterSecret
@@ -96,9 +93,9 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &daemon{
 		ctx: lifetime, processRunID: rand.Text(),
-		dnsBackend:  dns,
-		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
-		relayClientTLS: relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
+		dnsBackend:  options.dns,
+		serviceHTTP: options.serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
+		relayClientTLS: options.relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
 	}
 	metrics := observability.FromContext(ctx)
 	if metrics == nil {
@@ -134,7 +131,7 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 	}
 
 	if cfg.Role.RunsControl() {
-		if err := d.startControlWorkers(ctx, lifetime, cfg, acmeHTTPClient, metrics); err != nil {
+		if err := d.startControlWorkers(ctx, lifetime, cfg, options.acmeHTTPClient, metrics); err != nil {
 			return err
 		}
 		d.startVisitorPermissionWorkers(lifetime)
@@ -155,9 +152,12 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 	// serve it only after startup; readiness reads those listeners during setup.
 	var metricsListener net.Listener
 	if cfg.MetricsListen != "" {
-		metricsListener, err = net.Listen("tcp", cfg.MetricsListen)
-		if err != nil {
-			return fmt.Errorf("listen for observability: %w", err)
+		metricsListener = options.listeners.metrics
+		if metricsListener == nil {
+			metricsListener, err = net.Listen("tcp", cfg.MetricsListen)
+			if err != nil {
+				return fmt.Errorf("listen for observability: %w", err)
+			}
 		}
 		defer func() {
 			if metricsListener != nil {
@@ -182,6 +182,8 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 		}
 	case tnldconfig.RoleStandalone:
 		settings := standaloneSettingsFrom(cfg)
+		settings.control.listener = options.listeners.control
+		settings.publicListener = options.listeners.standalonePublic
 		settings.relayTransportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err
@@ -190,7 +192,9 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 			return err
 		}
 	case tnldconfig.RoleControl:
-		if err := d.startControl(controlSettingsFrom(cfg), controlHandler); err != nil {
+		settings := controlSettingsFrom(cfg)
+		settings.listener = options.listeners.control
+		if err := d.startControl(settings, controlHandler); err != nil {
 			return err
 		}
 		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg), metrics); err != nil {

@@ -28,6 +28,7 @@ type integrationProcessOptions struct {
 	serviceHTTPClient *http.Client
 	relayClientTLS    *tls.Config
 	dns               dnsBackend
+	listeners         runtimeListeners
 	owner             *runtimeTopology
 }
 
@@ -160,7 +161,10 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 		})
 	}
 	go func() {
-		err := serveWithDNSBackend(ctx, cfg, options.acmeHTTPClient, options.serviceHTTPClient, options.relayClientTLS, options.dns)
+		err := serveRuntime(ctx, cfg, runtimeOptions{
+			acmeHTTPClient: options.acmeHTTPClient, serviceHTTPClient: options.serviceHTTPClient,
+			relayClientTLS: options.relayClientTLS, dns: options.dns, listeners: options.listeners,
+		})
 		process.mu.Lock()
 		process.err = err
 		process.mu.Unlock()

@@ -53,3 +53,26 @@ func TestIntegrationPrivateRuntimeReservesControlPorts(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegrationStandalonePublishReservesSockets(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	newStandalonePublishFixture(t, "reserved", func(cfg tnldconfig.Config) {
+		addresses := []string{cfg.ControlListen, cfg.MetricsListen, cfg.IngressListen}
+		ports, err := cfg.ServicePortInventory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, interval := range ports {
+			for port := interval.First; port <= interval.Last; port++ {
+				addresses = append(addresses, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+			}
+		}
+		for _, address := range addresses {
+			listener, err := net.Listen("tcp", address)
+			if err == nil {
+				_ = listener.Close()
+				t.Fatalf("standalone socket %s was released before the runtime claimed it", address)
+			}
+		}
+	})
+}

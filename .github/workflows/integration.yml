@@ -303,20 +303,46 @@ jobs:
       - name: Run DNS integration test
         run: task go:test:integration:dns
 
+  postgres-result:
+    name: PostgreSQL integration
+    if: always()
+    needs: [postgres]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify every PostgreSQL shard passed
+        env:
+          RESULT: ${{ needs.postgres.result }}
+        run: test "$RESULT" = success
+
+  binary-result:
+    name: Binary integration
+    if: always()
+    needs: [binary]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify every binary boundary passed
+        env:
+          RESULT: ${{ needs.binary.result }}
+        run: test "$RESULT" = success
+
   integration:
     name: Go integration
     if: always()
-    needs: [postgres, workload-function, clients, binary, compose, dns]
+    needs: [postgres-result, workload-function, clients, binary-result, compose, dns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: Verify integration jobs passed
         env:
-          POSTGRES_RESULT: ${{ needs.postgres.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-result.result }}
           WORKLOAD_FUNCTION_RESULT: ${{ needs.workload-function.result }}
           CLIENTS_RESULT: ${{ needs.clients.result }}
-          BINARY_RESULT: ${{ needs.binary.result }}
+          BINARY_RESULT: ${{ needs.binary-result.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
           DNS_RESULT: ${{ needs.dns.result }}
         run: |
