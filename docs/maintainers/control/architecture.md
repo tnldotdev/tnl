@@ -62,7 +62,7 @@ grant, current team access, and URL state at run creation and heartbeat. Purpose
 `app`, `alias`, `demo`, `oauth`, and `webhooks` are immutable saved URL facts.
 Hostnames follow control's namespace/domain policy. Certificate plans are exact
 for saved-URL grants or narrow approved namespace plans, with publisher-private
-keys and DNS-01 automation. Managed services keep separate IDs, hostnames, ports,
+keys and DNS-01 automation. services keep separate IDs, hostnames, ports,
 certificate plans, and grants; they do not borrow a public URL record.
 
 Control encrypts recoverable values and IP-policy/request digests using the
@@ -92,7 +92,7 @@ through issuance and cleanup after a move.
 ## deeper references
 
 - [applied projects](applied-projects.md): revisions, groups, local identity, endpoint ownership, and durable restoration
-- [private services](private-services.md): run preparation, claims, admission, grants, and publisher/connector handoffs
+- [services](services.md): run preparation, claims, admission, grants, and publisher/connector handoffs
 - [human authentication](oidc.md), [company access](company-access.md), and [workload sessions](workload-sessions.md)
 - [hosted integration](hosted-integration.md), [signed-human service access](service-access.md), and [website usage](team-usage.md)
 - [HTTP contract map](../architecture.md#own-each-http-surface) and [server readiness](../development/server-readiness.md)

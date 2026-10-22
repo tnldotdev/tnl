@@ -168,7 +168,7 @@ or application credentials. the job cannot read management configuration.
 HTTP uses the same key-bound native owner and session as the other protocols.
 the SDK no longer mints a separate HTTP-only credential. public native access
 can use the session's service-scoped client certificate; SDK access uses the
-authenticated local connector for both public and private services. see
+authenticated local connector for both public and services. see
 [platform access integration](../connector/platform-access.md) for verified owner selection
 and authenticated rotating-assertion attachment.
 
@@ -236,17 +236,17 @@ control, err := tcpconnect.NewWorkloadControl(job)
 if err != nil {
     return err
 }
-run, err := control.ResolvePrivateService(ctx, serviceID)
+run, err := control.ResolveService(ctx, serviceID)
 if err != nil {
     return err
 }
 return tcpconnect.Serve(ctx, listener, tcpconnect.Config{
     Control: control,
-    PrivateServiceID: serviceID,
+    ServiceID: serviceID,
     IdentityID: "",
     Protocol: run.Protocol,
     TrustRevision: run.TrustRevision,
-    ManagedTLS: run.ManagedTLS,
+    Endpoint: run.Endpoint,
     ServiceTLS: visitorTLS,
 })
 ```
@@ -259,8 +259,8 @@ connector. public native clients connect directly with the workload's
 a denied workload never falls back to browser approval or another credential.
 
 `tcpconnect.NewControl` remains the human adapter. both adapters implement
-`PrivateConnectorSigner`, `PrivateConnectorAssignment`, and
-`ResolvePrivateService`. `tcpconnect.Signer` carries `Subject`, `PublicKey`, and
+`ConnectorSigner`, `ConnectorAssignment`, and
+`ResolveService`. `tcpconnect.Signer` carries `Subject`, `PublicKey`, and
 `Sign`, with no raw signing key. `NewControlWithConfig(ControlConfig)` exposes
 the `Signer`, `Assignment`, `Resolve`, `Release`, and `Close` hooks for native
 connection owners. `Serve` closes its adapter and releases only its own handles;
@@ -280,7 +280,7 @@ the baseline stores a workload session foreign key separately from nullable
 human identity/device foreign keys and enforces the exclusive variants.
 
 the state APIs available to transport adapters are `AuthenticateVisitorConnector`,
-`SelectVisitorServiceRun`, `AuthorizePrivateServiceStream`,
+`SelectVisitorServiceRun`, `AuthorizeServiceStream`,
 `RecheckVisitorServiceStream`, and `AuthorizeVisitorServiceConnector`.
 `VisitorSubjectAccess` and `AuthenticateVisitorSubjectKey` share current permission
 and key checks across both variants. protocol version 1 carries the tagged
@@ -356,7 +356,7 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-services-native-owner`.
+`tnl-control-fresh-v1-services`.
 its connector constraint allows workload auth material through six hours;
 current authorization remains bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.

@@ -52,7 +52,7 @@ identity. ESM/CommonJS workload callers share one configuration singleton.
 There is no `/server` or private IPC extension export.
 
 Go validates ignored `.tnl/local/project.json`; the SDK validates the assignment
-again. Metadata distinguishes public URL IDs from managed service IDs and keeps
+again. Metadata distinguishes public URL IDs from service IDs and keeps
 allocated HTTP ports. `tnl generate` writes portable
 `.tnl/generated/project.d.ts` and applicable workload/deployment artifacts for
 source control. Runtime writes local values, not declarations. See
@@ -111,12 +111,7 @@ from deployable `deploy/server/{standalone,split}` and
 state; reset removes trust, containers, volumes, and `.local`. Hosted Fly
 manifests and selected production digests belong to sibling `tnl.dev`.
 
-## shared contracts and execution evidence
+## references
 
 - [failure boundaries](errors.md), [metrics](metrics.md), [client tracing](client-tracing.md), [server readiness](server-readiness.md), and [client state](client-state.md)
-- [full domain plan](../domain-boundaries-plan.md) and [full organization plan](../reorganization-plan.md), retained at their original paths for historical evidence and the pending newer domain-plan merge
-- move ledgers: [Go](go-move-ledger.md), [publisher](publisher-move-ledger.md), [connector](connector-move-ledger.md), [contracts](contracts-move-ledger.md), [SDK](sdk-move-ledger.md), [tooling](tooling-move-ledger.md), and [documentation](documentation-move-ledger.md)
-
-These inventories establish where assertions and generators moved. Scoped
-compilation, static counts, dry runs, and historical first-PR results do not
-establish final role-organization behavioral/platform qualification.
+- [domain plan](../domain-boundaries-plan.md) and [organization plan](../reorganization-plan.md)

@@ -1,6 +1,6 @@
 # native kubernetes boundary
 
-`protocol: kubernetes` uses the existing managed-service publisher stream and
+`protocol: kubernetes` uses the existing service publisher stream and
 publisher connection slots. the publisher terminates managed visitor TLS,
 authorizes the visitor, then verifies a separate HTTPS connection to the cluster.
 tunnel protocol version 1 carries the same stream headers and bytes.
@@ -103,7 +103,7 @@ Kubernetes user credential. the discovery owner supplies the AWS describe adapte
 
 the generation-123 base accepts the config protocol but its serving OpenAPI enum
 and control authorization still need the parent backend update. native adapters
-can use `controlv1.PrivateServiceProtocol("kubernetes")` until the generated named
+can use `controlv1.ServiceProtocol("kubernetes")` until the generated named
 constant exists. the parent also owns the SDK native-result consumer and CI
 session/export hooks. those callers should reuse `PrepareConnection` rather than
 reimplement kubeconfig or credential composition.

@@ -252,7 +252,7 @@ server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
 `ecstatic-penguin` instead. Publisher certificate issuance requires DNS-01
 automation, including for exact-hostname certificates. Namespace wildcard plans
 can reuse DNS and certificates; pointing an exact hostname at ingress alone does
-not enable issuance. Managed service endpoints also require a ready team domain
+not enable issuance. service endpoints also require a ready team domain
 with DNS-01 automation.
 
 After deploying the `tnl` server, update your config with it:

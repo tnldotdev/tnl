@@ -6,18 +6,23 @@ your infrastructure workflow. Keep only structural capacity in project config:
 ```yaml
 version: 1
 tnl:
-  publishers:
-    production:
-      aws: { replicas: 2 }
   services:
     orders:
-      publisher: production
       protocol: postgres
-      target: { type: address, address: "orders.internal:5432", tls: {} }
-      access: { team: true }
+      target:
+        type: address
+        address: orders.internal:5432
+        tls: {}
+      access:
+        team: true
+      publisher_group: production
+  publisher_groups:
+    production:
+      aws:
+        replicas: 2
 ```
 
-TypeScript uses the same `publishers.production.aws` object. An empty `aws: {}`
+TypeScript uses the same `publisher_groups.production.aws` object. An empty `aws: {}`
 defaults to one replica; the supported range is 1–8. Omit `aws` for groups whose
 infrastructure you manage separately. `local` remains reserved.
 

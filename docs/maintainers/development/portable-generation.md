@@ -70,18 +70,22 @@ and source label. API consumers should map these values into their owned models.
 ```yaml
 version: 1
 tnl:
-  publishers:
-    production:
-      aws: { replicas: 2 }
   services:
     cluster:
-      publisher: production
       protocol: kubernetes
-      target: { type: eks, cluster: development, region: us-east-1 }
+      target:
+        type: eks
+        cluster: development
+        region: us-east-1
+      publisher_group: production
     db:
-      publisher: production
       protocol: postgres
-      target: { type: rds, cluster: orders, region: us-east-1, endpoint: writer }
+      target:
+        type: rds
+        cluster: orders
+        region: us-east-1
+        endpoint: writer
+      publisher_group: production
   workloads:
     deploy:
       provider: github
@@ -89,9 +93,17 @@ tnl:
         repository: company/project
         workflow: .github/workflows/deploy.yml
         ref: refs/heads/main
-        events: [push, workflow_dispatch]
-      services: [cluster, db]
+        events:
+          - push
+          - workflow_dispatch
+      services:
+        - cluster
+        - db
       max_duration: 1h
+  publisher_groups:
+    production:
+      aws:
+        replicas: 2
 ```
 
 `workloads.NAME.github` with `provider: github` optionally selects an environment and an exact

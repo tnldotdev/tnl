@@ -17,9 +17,9 @@ tnl publisher setup --namespace
 
 `open` starts ASGI lifespan before publishing, waits for the URL to become
 routable, and removes it when the context exits. The native publisher selects
-the locally provisioned namespace identity, or `TNL_PUBLISHER_FILE` if set.
-Pass `publisher_file="/absolute/private/publisher.json"` or
-`publisher_id="pub_..."` to select one explicitly. A configured invalid file
+the locally provisioned namespace identity, or `TNL_PUBLISHER_CREDENTIAL_FILE` if set.
+Pass `publisher_credential_file="/absolute/private/publisher.json"` or
+`publisher_identity_id="pub_..."` to select one explicitly. A configured invalid file
 fails instead of falling back to another identity. The native publisher keeps
 its signing key private; it never enters app metadata or status.
 

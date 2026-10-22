@@ -78,11 +78,11 @@ closes directly. No request is buffered for authorization or replayed.
 Private connector sessions authenticate two ingress paths and bind the observed
 source, exact service/session/subject, nonce, expiry, and key proof. Each stream
 gets current authorization and an exact publisher claim before bytes. Native
-visitor TLS verifies the managed service hostname; publisher admission precedes
-target dialing. Publicly reachable managed HTTP instead selects one browser,
+visitor TLS verifies the service hostname; publisher admission precedes
+target dialing. Publicly reachable service HTTP instead selects one browser,
 share, token, or optional client-certificate credential, checks Host including the
 allocated port, and promotes ingress capacity before target access. Reachability
-does not imply anonymous access. See [private services](../control/private-services.md)
+does not imply anonymous access. See [services](../control/services.md)
 and [connector architecture](../connector/architecture.md).
 
 Visitor TLS ends at the publisher. Relay transport TLS authenticates the relay

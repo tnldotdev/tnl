@@ -29,7 +29,7 @@ Paths below are relative to `internal/publisher`.
 
 Cross-role publisher signature verification lives in `internal/security/publisherproof`;
 validated provenance lives in `internal/policy/publisherprovenance`. Installed job
-storage and supervisor scheduling live in `internal/client/service`. Target TLS
+storage and supervisor scheduling live in `internal/client/supervisor`. Target TLS
 mechanics live in `internal/transport/targettransport`. These owners are below
 the app and invocation operations that use them.
 

@@ -6,7 +6,7 @@ placement listens on `127.0.0.1` with an assigned TCP port. The HTTP contract is
 `api/publisher/local/v1/openapi.yaml`; generate only this contract with:
 
 ```sh
-mise exec -- go generate ./pkg/api/localpublisherv1
+mise exec -- go generate ./pkg/api/publisher/local/v1
 ```
 
 Configured local publication uses the canonical directory's
@@ -69,7 +69,7 @@ follow redirects.
 | `POST /v1/leases`               | owner          | `{service,owner,pid,configuration_digest}` -> registration with resolved private target; configured non-app services only |
 | `POST /v1/ad-hoc/register`      | invocation     | `{version:1,invocation_id,owner,pid,target,...}` -> registration; optional fields below                                   |
 
-Ad-hoc registration accepts `publisher_id` or `publisher_file`, optional
+Ad-hoc registration accepts `publisher_identity_id` or `publisher_credential_file`, optional
 `server_url`, `access_mode: "restricted" | "anonymous"`, `ip`, and `limits`.
 `ip` is an additional filter, not a visitor credential. `limits` references the
 control contract's `PublisherApplicationLimits`; allocation and the publisher
@@ -111,7 +111,7 @@ selection, discovery, launch, descriptor locking, serving, and shutdown.
 JSON; it does not implement the process lifetime.
 
 The process constructs `app.Manager`, `app.Workers`, this HTTP server, and
-`invocation.ProjectRuntime`. `PublicConfiguration` and `PrivateConfiguration`
+`invocation.ProjectRuntime`. `PublicConfiguration` and `ServiceConfiguration`
 own selected grants, metadata, trust, previews, and publication settings.
 Worker fencing wraps `PromoteVisitor` and `AdmitRequest` after configuration.
 Private readiness uses its authenticated connector and approved target trust.
@@ -137,7 +137,7 @@ native journal. A snapshot contains `services`, `publications`, and one opaque
 exclusive `cursor`. `status --all --output json` returns independent snapshots
 under `projects`; it does not combine unrelated project cursors.
 Both service and publication `service_protocol` use the control contract's
-`PrivateServiceProtocol` enum: `http`, `tcp`, `postgres`, `mysql`, or `kubernetes`.
+`ServiceProtocol` enum: `http`, `tcp`, `postgres`, `mysql`, or `kubernetes`.
 
 Status reads snapshots only. Wait calls the owner's check endpoint. HTTP checks
 renew an in-memory, single-use proof for one exact publish run and readiness
@@ -159,7 +159,7 @@ Configured workers use team sessions for saved-URL management and enrollment,
 then pass the grant-scoped `Native` adapter from `publisher/identity` to
 `publisher.Run`. Run creation uses scoped signing, not the team session.
 Inspection policy includes mode, retention, and byte budget; summary observations
-map directly into the native recorder. Private services have no public address
+map directly into the native recorder. services have no public address
 in project metadata. Preview association and OAuth response
 observation use the same worker lifecycle; the companion lifecycle hook joins
 its workers before that lifecycle closes.

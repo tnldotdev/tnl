@@ -200,8 +200,8 @@ the success response is:
   state: "ready",
   pid: ownerPID,                 // observation only, never a cleanup capability
   expires_at: absoluteDeadline,
-  public_runtime: browserSafeProjectRuntime,
-  private_handle: absolutePrivateHandlePath,
+  project_runtime: browserSafeProjectRuntime,
+  connection_handle: absoluteConnectionHandlePath,
   executable: exactAbsoluteBinaryPath,
   kubeconfig: privateSessionKubeconfigPath // present only for Kubernetes
 }
@@ -239,7 +239,7 @@ their original fixed deadline, including workload sessions.
 
 SDK-owned listeners bind an ephemeral port on `127.0.0.1`, so distinct verified
 identities can coexist without sharing a capability. caller-prepared CLI owners
-bind the allocated managed service port and report collisions. HTTP and
+bind the allocated service port and report collisions. HTTP and
 database readiness performs verified native TLS negotiation without logging in
 or issuing an SQL query. opaque TCP uses the native outer-TLS helper. the service's
 approved public setting, hostname, and port remain unchanged in browser-safe
@@ -247,7 +247,7 @@ metadata; private connection snapshots describe the local listener separately.
 
 `read --handle FILE --service NAME` synchronously reads the current prepared
 schema-1 wrapper through the existing owner's `prepared` IPC operation. it pairs
-`public_runtime` with `connection` under the same owner's operation lock.
+`project_runtime` with `connection` under the same owner's operation lock.
 it reads existing local state only. it does not start an owner, session, listener,
 provider acquisition, control request, or repair. an unprepared sibling fails;
 awaiting the SDK handle sends `prepare` instead. only the
@@ -259,7 +259,7 @@ must prepare again after expiration; a read never replaces the owner.
 ```json
 {
   "schema": 1,
-  "public_runtime": {
+  "project_runtime": {
     "dev": false,
     "namespace": "production.shop.example",
     "services": {
@@ -326,9 +326,9 @@ const started = await nativeJSON(
 
 // save these exact nonsecret paths for post; never resolve PATH again.
 saveState("binary", started.executable);
-saveState("handle", started.private_handle);
-exportVariable("TNL_PROJECT_RUNTIME", JSON.stringify(started.public_runtime));
-exportVariable("TNL_CONNECTION_HANDLE", started.private_handle);
+saveState("handle", started.connection_handle);
+exportVariable("TNL_PROJECT_RUNTIME", JSON.stringify(started.project_runtime));
+exportVariable("TNL_CONNECTION_HANDLE", started.connection_handle);
 if (started.kubeconfig) exportVariable("KUBECONFIG", started.kubeconfig);
 
 // post uses the original binary and private IPC, never a PID match.
@@ -389,7 +389,7 @@ metadata is not a visitor grant; admission and active guards remain authoritativ
 
 `cmd/tnl/connections_backend.go` uses `tcpconnect.NewWorkloadControl` with the
 owner's `*workloadclient.Client`; `Config.IdentityID` is empty for that subject.
-`ResolvePrivateService` supplies the approved run,
+`ResolveService` supplies the approved run,
 trust revision, protocol, and managed TLS endpoint. no human ID substitutes for
 a workload. closing a service adapter releases only its own assignments; the
 owner retains session renewal/revocation.
@@ -427,7 +427,7 @@ shapes, malformed/expired snapshots, opaque TCP, and browser rejection.
 `task go:test:integration:tcp-clients` also installs the packed SDK and matching
 native binary in an isolated pnpm consumer, using Node 22.23.2. the disposable
 TLS PostgreSQL and MySQL providers own real password authentication and SQL
-queries. production ingress port selection and `publisher.ManagedStream` perform
+queries. production ingress port selection and `publisher.ServiceStream` perform
 native PostgreSQL/MySQL negotiation and independent frontend/target TLS. a real
 connection owner serves prepared IPC to the installed binary; policy and placement
 are fixture decisions, without a control service or deployed authority exchange.

@@ -15,13 +15,13 @@ Later compatible changes must add schema before switching serving code to it.
 The baseline creates ingress pools before teams and public URLs. It seeds
 `ingress-a` disabled until the operator verifies its addresses and ports. A
 team's ingress pool is pinned while it owns saved public URLs; each new URL
-inherits that pool. Private services use authenticated ingress assignments,
+inherits that pool. services use authenticated ingress assignments,
 not service-specific public TCP ports or port claims.
 
 Public and private publisher connection slots share
 `control.publisher_service_connection_slots`. The typed
 `control.publish_run_connection_slots` and
-`control.private_service_connection_slots` views enforce their service-kind
+`control.service_connection_slots` views enforce their service-kind
 boundaries on reads and writes. A slot keeps its `id` and
 `(run_id, connection_slot)` identity when its assignment is replaced;
 `publisher_connection_id` changes. Trigger-maintained relay-service reservations
@@ -99,7 +99,7 @@ their entry point already holds identity bootstrap. ordinary control-session
 apply does not take identity bootstrap and can overlap work on another team.
 
 apply and explicit publisher revocation choose their complete parent set under
-the team guard: private service IDs in order, then public URL IDs in order.
+the team guard: service IDs in order, then public URL IDs in order.
 apply includes named group services and existing local worktree realizations.
 publisher revocation locks its affected parents before locking the publisher
 identity; heartbeats already hold the public URL and run when checking that

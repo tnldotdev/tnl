@@ -6,7 +6,7 @@ sessions and opens one admitted native TLS stream per loopback connection.
 `Stream` uses the same transport and admission owner for one opaque stream,
 without opening a listener. Its caller owns the stdin/stdout adaptation.
 Callers provide the immutable service ID, protocol, approved `TrustRevision`
-and control-owned `ManagedTLS` endpoint in `Config`.
+and control-owned `Endpoint` endpoint in `Config`.
 
 ## device and infrastructure trust
 
@@ -44,7 +44,7 @@ trusted admission against control before opening its configured target.
 Connector admission never asks the application for a client certificate.
 
 HTTP, PostgreSQL and MySQL clients use verified native server TLS through the
-connector. Their instructions name the managed service hostname, not localhost or
+connector. Their instructions name the service hostname, not localhost or
 the target certificate. Opaque applications use `ServiceTLS` as a verified TLS
 helper. PostgreSQL retains `channel_binding=disable` across publisher TLS
 termination. public and private managed endpoints use these same connector

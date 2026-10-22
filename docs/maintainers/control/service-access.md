@@ -64,20 +64,20 @@ it would change the request's deadline on retry.
 
 all paths below start with `/v1/service`:
 
-| method and path                                                             | operation                                |
-| --------------------------------------------------------------------------- | ---------------------------------------- |
-| `GET /teams/{team_id}/private-services[?cursor=…]`                          | `listWebsitePrivateServices`             |
-| `GET /private-services/{private_service_id}`                                | `getWebsitePrivateService`               |
-| `GET /private-services/{private_service_id}/grants[?cursor=…]`              | `listWebsitePrivateServiceGrants`        |
-| `DELETE /private-services/{private_service_id}/grants/{grant_id}`           | `revokeWebsitePrivateServiceGrant`       |
-| `GET /private-services/{private_service_id}/invitations[?cursor=…]`         | `listWebsitePrivateServiceInvitations`   |
-| `POST /private-services/{private_service_id}/invitations`                   | `inviteWebsitePrivateServiceVisitor`     |
-| `DELETE /private-services/{private_service_id}/invitations/{invitation_id}` | `revokeWebsitePrivateServiceInvitation`  |
-| `POST /private-service-invitations/preview`                                 | `previewWebsitePrivateServiceInvitation` |
-| `POST /private-service-invitations/accept`                                  | `acceptWebsitePrivateServiceInvitation`  |
-| `GET /private-services/{private_service_id}/http-grants`                    | `listWebsiteManagedHTTPGrants`           |
-| `POST /private-services/{private_service_id}/http-grants`                   | `createWebsiteManagedHTTPGrant`          |
-| `DELETE /private-services/{private_service_id}/http-grants/{grant_id}`      | `revokeWebsiteManagedHTTPGrant`          |
+| method and path                                             | operation                         |
+| ----------------------------------------------------------- | --------------------------------- |
+| `GET /teams/{team_id}/services[?cursor=…]`                  | `listWebsiteServices`             |
+| `GET /services/{service_id}`                                | `getWebsiteService`               |
+| `GET /services/{service_id}/grants[?cursor=…]`              | `listWebsiteServiceGrants`        |
+| `DELETE /services/{service_id}/grants/{grant_id}`           | `revokeWebsiteServiceGrant`       |
+| `GET /services/{service_id}/invitations[?cursor=…]`         | `listWebsiteServiceInvitations`   |
+| `POST /services/{service_id}/invitations`                   | `inviteWebsiteServiceVisitor`     |
+| `DELETE /services/{service_id}/invitations/{invitation_id}` | `revokeWebsiteServiceInvitation`  |
+| `POST /service-invitations/preview`                         | `previewWebsiteServiceInvitation` |
+| `POST /service-invitations/accept`                          | `acceptWebsiteServiceInvitation`  |
+| `GET /services/{service_id}/http-grants`                    | `listWebsiteServiceHTTPGrants`    |
+| `POST /services/{service_id}/http-grants`                   | `createWebsiteServiceHTTPGrant`   |
+| `DELETE /services/{service_id}/http-grants/{grant_id}`      | `revokeWebsiteServiceHTTPGrant`   |
 
 the OpenAPI authority source references the existing control request and response
 schemas. invitation creation uses `{email, expires_at}` and `Idempotency-Key`;
@@ -115,8 +115,8 @@ and the creator's automatic owner grant still requires current owner/admin
 membership. visitor inventory and admission check current grants separately.
 HTTP summaries contain only
 `subject`, `id`, `kind`, `expires_at`, and optional `revoked_at`, never credentials
-or share URLs. native control adds `listManagedHTTPGrants` at
-`GET /v1/private-services/{private_service_id}/http-grants`; `tnl share service list`
+or share URLs. native control adds `listServiceHTTPGrants` at
+`GET /v1/services/{service_id}/http-grants`; `tnl share service list`
 includes those IDs and states under `http_grants` in JSON.
 
 HTTP credential creation retains the existing creator's current visit-access
@@ -126,7 +126,7 @@ bridge returns `source_sign_in_required` for that case, even with valid company
 management proof; it does not mint a session or convert company source proof into
 an unbound credential. signed managers can list and revoke existing credentials.
 
-a managed HTTP service remains `psvc_…`, including public exposure. no service
+a service HTTP service remains `svc_…`, including public exposure. no service
 operation grants permission on a public URL. invitation codes and assertions
 belong only in request bodies/headers, never query strings or logs. all bridge
 responses are `no-store`. website handlers still own session authentication,
@@ -140,5 +140,5 @@ records and revoked/expired history, lost committed response recovery, changed
 request conflicts, explicit CLI revoke/reissue, exact request binding, JWT/JTI replay,
 website-only rejection, current roles and company sources, disabled identities,
 issuer-verified recipient email, preview without acceptance, exact grant/deadline
-and revocation lifecycle, managed HTTP inventory and resource-scope rejection.
+and revocation lifecycle, service HTTP inventory and resource-scope rejection.
 no database schema or tunnel protocol change is needed.

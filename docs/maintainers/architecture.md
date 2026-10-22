@@ -21,7 +21,7 @@ visitor ---> ingress ----------------> relay <=== publisher ---> target
 Control owns durable server state and current authorization. Ingress receives
 short-lived routing projections; a relay owns its current lease and connected
 publishers. Visitor TLS ends at the publisher. A connector is the visitor-side
-native operation for private services; it is separate from publishing even when
+native operation for services; it is separate from publishing even when
 one local `tnl` process composes both capabilities.
 
 ## find the owner
@@ -79,31 +79,27 @@ Each entrypoint owns its `paths/` and `schemas/` fragments. The ingress and rela
 coordination contracts are served by control, not by those roles' visitor
 listeners.
 
-| Source                                                                               | Server and caller                                                                                     | Canonical generated Go package |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------ |
-| [public control](../../api/control/public/v1/openapi.yaml)                           | `internal/control/api/public`; CLI and native publisher credentials                                   | `pkg/api/controlv1`            |
-| [authority](../../api/control/authority/v1/openapi.yaml)                             | `internal/control/api/authority`; identity, sessions, teams, domains, company and workload operations | `pkg/api/authorityv1`          |
-| [private ingress coordination](../../api/control/private/ingress/v1/openapi.yaml)    | `internal/control/api/private/ingress`; cluster-authenticated ingress or standalone direct adapter    | `pkg/api/ingressv1`            |
-| [private relay coordination](../../api/control/private/relay/v1/openapi.yaml)        | `internal/control/api/private/relay`; cluster-authenticated relay or standalone direct adapter        | `pkg/api/relayv1`              |
-| [publisher browser](../../api/publisher/browser/v1/openapi.yaml)                     | Publisher same-origin browser operations after current visitor authorization                          | `pkg/api/publisherv1`          |
-| [local publisher](../../api/publisher/local/v1/openapi.yaml)                         | `internal/publisher/localapi`; scoped private native registration and observation                     | `pkg/api/localpublisherv1`     |
-| [public URL usage receiver](../../api/integrations/public-url-usage/v1/openapi.yaml) | External receiver; control usage worker sends authenticated reports                                   | `pkg/api/publicurlusagev1`     |
+| Source                                                                               | Server and caller                                                                                     | Canonical generated Go package             |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| [public control](../../api/control/public/v1/openapi.yaml)                           | `internal/control/api/public`; CLI and native publisher credentials                                   | `pkg/api/control/public/v1`                |
+| [authority](../../api/control/authority/v1/openapi.yaml)                             | `internal/control/api/authority`; identity, sessions, teams, domains, company and workload operations | `pkg/api/control/authority/v1`             |
+| [private ingress coordination](../../api/control/private/ingress/v1/openapi.yaml)    | `internal/control/api/private/ingress`; cluster-authenticated ingress or standalone direct adapter    | `pkg/api/control/private/ingress/v1`       |
+| [private relay coordination](../../api/control/private/relay/v1/openapi.yaml)        | `internal/control/api/private/relay`; cluster-authenticated relay or standalone direct adapter        | `pkg/api/control/private/relay/v1`         |
+| [publisher browser](../../api/publisher/browser/v1/openapi.yaml)                     | Publisher same-origin browser operations after current visitor authorization                          | `pkg/api/publisher/browser/v1`             |
+| [local publisher](../../api/publisher/local/v1/openapi.yaml)                         | `internal/publisher/localapi`; scoped private native registration and observation                     | `pkg/api/publisher/local/v1`               |
+| [public URL usage receiver](../../api/integrations/public-url-usage/v1/openapi.yaml) | External receiver; control usage worker sends authenticated reports                                   | `pkg/api/integrations/public-url-usage/v1` |
 
-The seven existing public `pkg/api/*` import paths are an explicit compatibility
-exception to role-organized source paths. They remain the canonical generated
-implementations, with their generation configuration beside them; they are not
-forwarding facades. `pkg/tnl` and handwritten `pkg/protocol/tunnelv1` also retain
-their public paths. `pkg/tnl.Publisher` directly aliases the defining
-`publisher/identity.Native` type. No second internal canonical package is kept
-at a deleted path.
+Each contract generates one package beside its generator configuration. The Go
+SDK's `PublisherIdentity` is an opaque prepared identity; it does not expose an
+internal control client or key. `pkg/protocol/tunnelv1` owns the handwritten
+tunnel messages and framing.
 
 OpenAPI defines wire shapes, not a promise that every reserved operation is
 implemented. Identical shapes reference their existing source, usually public
 control schemas. The tunnel protocol is handwritten and tested with golden JSON,
 framed-wire fixtures, invalid input, bounds, fuzzing, and common transport behavior.
-See [generator ownership](../../contributing.md#edit-generated-sources) and the
-[contracts move ledger](development/contracts-move-ledger.md) for source bundling
-and external consumers.
+See [generator ownership](../../contributing.md#edit-generated-sources) for source
+bundling and external consumers.
 
 ## preserve runtime and trust boundaries
 
@@ -112,7 +108,7 @@ and external consumers.
 - Control checks the exact embedded schema version and baseline identity before
   serving. Migration uses the direct URL; serving uses the pooled URL. The
   current PostgreSQL baseline requires a fresh database and coordinated server
-  stop/start. Moving SQL sources changes neither their bytes nor that rule.
+  stop/start.
 - Publisher connection slots use different relay services. Initial routability
   needs the certificate and both connections; afterward one ready connection can
   sustain service while the other is replaced.
@@ -128,7 +124,5 @@ and external consumers.
   registration/run/target freshness survive process and package moves.
 - Public URL DNS points to ingress, independently of relay placement.
 
-The [full domain plan](domain-boundaries-plan.md) and
-[full organization plan](reorganization-plan.md) retain the accepted two-PR scope
-and historical evidence. The [documentation move ledger](development/documentation-move-ledger.md)
-records final documentation paths, validation status, and remaining handoffs.
+The [domain plan](domain-boundaries-plan.md) and
+[organization plan](reorganization-plan.md) describe the accepted scope.

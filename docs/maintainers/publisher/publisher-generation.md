@@ -123,7 +123,7 @@ values := publisherdeployment.Parameters{
 for _, replica := range publisher.Replicas {
     // use the independently provisioned result for this stable replica key.
     values[replica.InstanceParameter] = provisioned[replica.Key].Instance
-    values[replica.PublisherIdentityIDParameter] = provisioned[replica.Key].PublisherID
+    values[replica.PublisherIdentityIDParameter] = provisioned[replica.Key].PublisherIdentityID
     values[replica.IdentitySecretARNParameter] = provisioned[replica.Key].SecretARN
     values[replica.IdentitySecretVersionParameter] = provisioned[replica.Key].VersionID
 }

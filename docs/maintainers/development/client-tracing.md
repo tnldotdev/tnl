@@ -20,7 +20,7 @@ export configuration still returns the authored configuration error.
 
 the connection backend keeps the process metrics context when creating its
 independently canceled lifetime. group runners replace identity for each enrolled
-group before setup; assignment workers narrow that scope to one managed service.
+group before setup; assignment workers narrow that scope to one service.
 group setup, lease renewal, assignment polling, acknowledgement, and shutdown
 remain separate finite observations. no tenant becomes a process resource.
 

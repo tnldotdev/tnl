@@ -1,6 +1,6 @@
 # connector architecture
 
-The connector owns a native visitor's connection to an approved private service.
+The connector owns a native visitor's connection to an approved service.
 It selects the exact service, prepares authenticated ingress paths and a local
 listener or stdio stream, and joins their cleanup. Publishing a service is a
 separate role even when the same native owner supports both SDK capabilities.
@@ -14,7 +14,7 @@ separate role even when the same native owner supports both SDK capabilities.
 | `internal/connector/runtime`    | Bounded private owner IPC, handle validation, owner lock, atomic prepared snapshots, listener generations, and terminal close                                                      |
 | `internal/connector/workload`   | Ephemeral key, provider assertions, exchange/refresh, immutable session binding, and fixed expiry                                                                                  |
 | `internal/connector/kubeconfig` | Owned context projection, selected-user credentials, bounded exec helpers, locks, and cleanup                                                                                      |
-| `internal/client/service`       | Shared installed-job registry and supervisor scheduling                                                                                                                            |
+| `internal/client/supervisor`    | Shared installed-job registry and supervisor scheduling                                                                                                                            |
 
 Root operations compose the stream/runtime children. Stream mechanics do not
 import root operations. The runtime accepts a narrow backend contract; it does

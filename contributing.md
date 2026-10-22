@@ -9,6 +9,27 @@ mise exec -- pnpm install --frozen-lockfile
 mise exec -- uv sync --frozen --project packages/py
 ```
 
+## place your change
+
+Use an operation-focused file in the existing owner before adding a package.
+A new package needs a concrete lifecycle or authority boundary, a useful consumer,
+an allowed dependency direction, and a reason the existing owner cannot be reused.
+Move its implementation, supporting values, fixtures, tests, and callers together.
+See the [practical ownership examples](AGENTS.md#place-implementation-with-its-owner).
+
+Commands own input and presentation. Reusable operations own selection, remote
+calls, retries, and cleanup; process owners own startup, supervision, drain, and
+joins. For example, `internal/client/team` owns shared team/domain selection,
+`internal/client/project/resolve` owns selected project facts, declarations, and
+metadata, `internal/client/project/init` owns install/edit sequencing, and
+`internal/client/project/meta` owns portable generation. Publisher and connector
+operations consume these owners directly.
+
+Keep one defining domain model and one source for identical wire shapes. Resolve
+an upward dependency by moving the real value/operation lower, using a narrow
+consumer-owned interface, or composing above both users. Preserve unique test
+assertions and their tier/selector before removing overlap.
+
 ## check your change
 
 Run the focused check that fits your change first. For a broad change, use this
@@ -106,17 +127,17 @@ explicit files with `--check` instead of a repository-wide formatter.
 | Drizzle Kit and native connection options  | `task go:test:integration:connections`                       | Docker; Task owns disposable PostgreSQL and a real Drizzle Kit migration                                             |
 | Local Vercel Node function artifacts       | `task go:test:integration:vercel`                            | Docker and Pebble; Node 24.20.0 on PATH, installed tarballs, workload-owned native startup and real PostgreSQL       |
 | Shared native workload HTTP boundary       | `task go:test:integration:provider-http`                     | Docker and Pebble; SDK/native IPC fixtures plus real workload HTTP certificates and separated runtime processes      |
-| Private services and groups                | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
+| services and groups                        | `task go:test:integration:services`                          | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
 | Control-state lock ordering                | `task go:test:integration:state-locks`                       | Docker; deterministic lock gates and wait-graph checks in disposable PostgreSQL                                      |
-| Private claim recovery and capacity        | `task go:test:integration:private-claims`                    | Docker; committed HTTP response loss through relay, mixed public/private claims, and certificate deadlines           |
-| Managed HTTP services                      | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
+| Private claim recovery and capacity        | `task go:test:integration:service-claims`                    | Docker; committed HTTP response loss through relay, mixed public/private claims, and certificate deadlines           |
+| HTTP services                              | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
 | Fixed-list cross-team publishers           | `task go:test:integration:publisher-groups`                  | Linux and Docker; one real CLI process, independent group identities, managed TLS and disposable PostgreSQL          |
 | Signed-human service access and CLI lookup | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
 | Publisher egress evidence                  | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
-| Private runtime topology                   | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
+| Private runtime topology                   | `task go:test:integration:service-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
 | Real database clients                      | `task go:test:integration:tcp-clients`                       | Docker CLI, uv and Python; disposable TLS providers, installed Node drivers and an isolated psycopg consumer         |
 | CLI and OpenSSH stdio                      | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
-| Existing OpenSSH target                    | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
+| Existing OpenSSH target                    | `task go:test:integration:sshd`                              | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
 | Binary behavior                            | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
 | Compose target discovery                   | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                                   |
 | Ubuntu and Compose publisher installation  | `task go:test:integration:publisher-install`                 | Docker; privileged disposable Ubuntu/systemd, private trust, and disposable PostgreSQL; never installs on the host   |
@@ -199,8 +220,7 @@ managed Host/SNI and loopback dial boundary. This is local transport evidence;
 deployed provider freeze/thaw remains open. For action OIDC cancellation and
 late-result rejection, run `task connect:check`. The Python lifecycle checks in
 `task py:check` cover joined publication cleanup, fork ownership, and bounded
-native exchange. See the [review ledger](docs/maintainers/releases/prerelease-review.md)
-for commit evidence and outstanding integration/live work.
+native exchange.
 
 Use `RUN` to select an integration test, for example:
 
@@ -353,8 +373,8 @@ remain required after order cleanup. See [publisher groups](docs/maintainers/pub
 For local services, an explicit `publicURL` block (`public_url` in static files)
 enables public HTTPS. Without it, the service is private, including `protocol: http`.
 Named groups use their own `public` setting for reachability and always require
-current HTTP credentials. Their service `publicURL` blocks hold only restricted
-HTTP/IP settings and HTTP request limits; they cannot change the group's endpoint.
+current HTTP credentials. Their service `http.access` and `http.limits` settings
+control restricted HTTP/IP access and request limits on the group's endpoint.
 The protocol defaults to `http`; `tcp` carries opaque bytes, and `mysql` and
 `postgres` select private database handling. A service's saved `name` defaults
 to its configuration key on either path. `access: {team: true}` declares team
@@ -364,7 +384,7 @@ optional `server_name` and project-relative `ca_file` (`serverName` and `caFile`
 in TypeScript); an empty block uses system roots. Omitting it permits a plaintext
 target and never disables managed visitor TLS. Service-level `tls` and
 `target.tls.mode` are rejected. An existing sshd is an
-ordinary private `tcp` target. See [private service boundaries](docs/maintainers/control/private-services.md).
+ordinary private `tcp` target. See [service boundaries](docs/maintainers/control/services.md).
 
 Project configuration stays in Git. `tnl apply` stores an evaluated revision in
 control; named group publishers pull and acknowledge only their assignments.
@@ -376,30 +396,28 @@ AWS settings remain CloudFormation deployment parameters. AWS capacity is exclud
 from control assignments. See [applied projects](docs/maintainers/control/applied-projects.md) and
 the [publisher infrastructure templates](deploy/publisher/fargate/readme.md).
 
-| Authoritative source                                              | Generator / configuration                                                          | Committed generated output                                                                                  |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `api/control/public/v1/openapi.yaml` and its fragments            | `scripts/generate/openapi.ts`; `pkg/api/controlv1/{generate.go,oapi-codegen.yaml}` | `pkg/api/controlv1/openapi.gen.go`                                                                          |
-| `api/control/authority/v1/openapi.yaml` and fragments             | Same generator; `pkg/api/authorityv1` configuration                                | `pkg/api/authorityv1/openapi.gen.go`                                                                        |
-| `api/control/private/ingress/v1/openapi.yaml` and fragments       | Same generator; `pkg/api/ingressv1` configuration                                  | `pkg/api/ingressv1/openapi.gen.go`                                                                          |
-| `api/control/private/relay/v1/openapi.yaml` and fragments         | Same generator; `pkg/api/relayv1` configuration                                    | `pkg/api/relayv1/openapi.gen.go`                                                                            |
-| `api/integrations/public-url-usage/v1/openapi.yaml` and fragments | Same generator; `pkg/api/publicurlusagev1` configuration                           | `pkg/api/publicurlusagev1/openapi.gen.go`                                                                   |
-| `api/publisher/browser/v1/openapi.yaml` and fragments             | Same Go generator plus `scripts/generate/publisher-model.ts`                       | `pkg/api/publisherv1/openapi.gen.go`, `internal/publisher/browserapi/model.gen.ts`                          |
-| `api/publisher/local/v1/openapi.yaml` and fragments               | Same Go generator; `pkg/api/localpublisherv1` configuration                        | `pkg/api/localpublisherv1/openapi.gen.go`                                                                   |
-| `internal/control/state/{migrations,queries,sqlc.yaml}`           | `internal/control/state/generate.go`, sqlc                                         | `internal/control/state/controlstatedb/*.go`                                                                |
-| `internal/client/state/{migrations,queries,sqlc.yaml}`            | `internal/client/state/generate.go`, sqlc                                          | `internal/client/state/clientstatedb/*.go`                                                                  |
-| `internal/config` types and project key mappings                  | `internal/config/cmd/configgen`, `scripts/generate/config-types.ts`                | `schema/v1.json`, `internal/client/project/keys.gen.json`, `packages/ts/src/config.gen.ts`                  |
-| `internal/client/project/loader.ts`                               | `scripts/generate/projectconfig-loader.ts`                                         | Neighboring `loader.mjs`, embedded by Go                                                                    |
-| `internal/publisher/toolbar` TS/TSX/CSS                           | `scripts/build/feedback-toolbar.ts`                                                | Neighboring `toolbar.js`, embedded by Go                                                                    |
-| `internal/publisher/deployment` renderer                          | Its `cmd/fixture` and `generate.go`                                                | `deploy/publisher/fargate/fargate.{yaml,parameters.example.json,manifest.example.json,storage-policy.json}` |
-| `internal/failure/diagnostic/catalog.json`                        | `scripts/generate/diagnostic-codes.ts`                                             | Neighboring `codes.gen.go`; sibling sync generates public diagnostic pages                                  |
-| `internal/failure/reasons.go`                                     | `internal/failure/cmd/cataloggen`                                                  | `internal/failure/catalog.gen.json`; sibling sync generates public error pages                              |
-| `internal/observability` declarations                             | Its vocabulary generator                                                           | `api/observability/v1/vocabulary.json`, shared with tnl.dev                                                 |
-| `scripts/installer/install.sh.in` and CLI renderer                | `scripts/installer/generate.go`, `internal/clioutput/generate.go`                  | `scripts/install.sh`, whose public download path is preserved                                               |
-| `connect/src` and its build inputs                                | `connect/scripts`, `task connect:check`                                            | `connect/dist`, checked separately by `connect:generate-check`                                              |
+| Authoritative source                                              | Generator / configuration                                                                  | Committed generated output                                                                                  |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `api/control/public/v1/openapi.yaml` and its fragments            | `scripts/generate/openapi.ts`; `pkg/api/control/public/v1/{generate.go,oapi-codegen.yaml}` | `pkg/api/control/public/v1/openapi.gen.go`                                                                  |
+| `api/control/authority/v1/openapi.yaml` and fragments             | Same generator; `pkg/api/control/authority/v1` configuration                               | `pkg/api/control/authority/v1/openapi.gen.go`                                                               |
+| `api/control/private/ingress/v1/openapi.yaml` and fragments       | Same generator; `pkg/api/control/private/ingress/v1` configuration                         | `pkg/api/control/private/ingress/v1/openapi.gen.go`                                                         |
+| `api/control/private/relay/v1/openapi.yaml` and fragments         | Same generator; `pkg/api/control/private/relay/v1` configuration                           | `pkg/api/control/private/relay/v1/openapi.gen.go`                                                           |
+| `api/integrations/public-url-usage/v1/openapi.yaml` and fragments | Same generator; `pkg/api/integrations/public-url-usage/v1` configuration                   | `pkg/api/integrations/public-url-usage/v1/openapi.gen.go`                                                   |
+| `api/publisher/browser/v1/openapi.yaml` and fragments             | Same Go generator plus `scripts/generate/publisher-model.ts`                               | `pkg/api/publisher/browser/v1/openapi.gen.go`, `internal/publisher/browserapi/model.gen.ts`                 |
+| `api/publisher/local/v1/openapi.yaml` and fragments               | Same Go generator; `pkg/api/publisher/local/v1` configuration                              | `pkg/api/publisher/local/v1/openapi.gen.go`                                                                 |
+| `internal/control/state/{migrations,queries,sqlc.yaml}`           | `internal/control/state/generate.go`, sqlc                                                 | `internal/control/state/controlstatedb/*.go`                                                                |
+| `internal/client/state/{migrations,queries,sqlc.yaml}`            | `internal/client/state/generate.go`, sqlc                                                  | `internal/client/state/clientstatedb/*.go`                                                                  |
+| `internal/config` types and project key mappings                  | `internal/config/cmd/configgen`, `scripts/generate/config-types.ts`                        | `schema/v1.json`, `internal/client/project/keys.gen.json`, `packages/ts/src/config.gen.ts`                  |
+| `internal/client/project/loader.ts`                               | `scripts/generate/projectconfig-loader.ts`                                                 | Neighboring `loader.mjs`, embedded by Go                                                                    |
+| `internal/publisher/toolbar` TS/TSX/CSS                           | `scripts/build/feedback-toolbar.ts`                                                        | Neighboring `toolbar.js`, embedded by Go                                                                    |
+| `internal/publisher/deployment` renderer                          | Its `cmd/fixture` and `generate.go`                                                        | `deploy/publisher/fargate/fargate.{yaml,parameters.example.json,manifest.example.json,storage-policy.json}` |
+| `internal/failure/diagnostic/catalog.json`                        | `scripts/generate/diagnostic-codes.ts`                                                     | Neighboring `codes.gen.go`; sibling sync generates public diagnostic pages                                  |
+| `internal/failure/reasons.go`                                     | `internal/failure/cmd/cataloggen`                                                          | `internal/failure/catalog.gen.json`; sibling sync generates public error pages                              |
+| `internal/observability` declarations                             | Its vocabulary generator                                                                   | `api/observability/v1/vocabulary.json`, shared with tnl.dev                                                 |
+| `scripts/installer/install.sh.in` and CLI renderer                | `scripts/installer/generate.go`, `internal/clioutput/generate.go`                          | `scripts/install.sh`, whose public download path is preserved                                               |
+| `connect/src` and its build inputs                                | `connect/scripts`, `task connect:check`                                                    | `connect/dist`, checked separately by `connect:generate-check`                                              |
 
-The seven existing `pkg/api/*` paths stay canonical as a public compatibility
-exception, not as facades around new packages. `pkg/tnl.Publisher` remains a direct
-alias of `publisher/identity.Native`. Edit OpenAPI fragments and generator
+Edit OpenAPI fragments and generator
 configuration before regenerating; never patch generated public models. Reference
 identical control schemas instead of copying them. The handwritten
 `pkg/protocol/tunnelv1` remains the only tunnel wire source.

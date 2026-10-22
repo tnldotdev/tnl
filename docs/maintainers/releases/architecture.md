@@ -41,13 +41,12 @@ default `deploy/publishers/aws.json` path is distinct from this repository's
 `deploy/publisher/fargate` reference templates.
 
 Hosted Fly deployment, selected production image digests, staging rollout, and
-HTTPS/private-connector qualification belong to sibling `tnl.dev`. This source
+HTTPS/connector qualification belong to sibling `tnl.dev`. This source
 reorganization does not deploy or qualify an image. Live provider freeze/thaw,
 EFS locking/partial restore, and production rollout retain their explicit
 qualification boundaries.
 
-See [releasing](releasing.md), [deployed release checks](release-checks.md), and
-the [prerelease review ledger](prerelease-review.md). For release assessment,
+See [releasing](releasing.md) and [deployed release checks](release-checks.md). For release assessment,
 version or tag work, follow the root-discovered
 [release skill](../../../.agents/skills/tnl-release/SKILL.md); for mutating checks,
 follow [the release-check skill](../../../.agents/skills/tnl-release-check/SKILL.md).

@@ -14,14 +14,14 @@ assigned services. its existing lease-renewal loop calls the runtime interface;
 control issues the group access lease in the same transaction as the observation.
 the runtime joins its service workers before sending stop.
 
-`Engine` in `internal/client/service` owns the lifecycle for an installed non-group job,
+`Engine` in `internal/client/supervisor` owns the lifecycle for an installed non-group job,
 whether supervised as a user or system service. its worker retains one runtime
-owner across publication retries. the public URL and private-service heartbeat
+owner across publication retries. the public URL and service heartbeat
 adapters refresh that owner's observation after a successful authenticated
 publication heartbeat. there is no additional heartbeat scheduler.
 
 credential-scoped foreground `tnl publish` invocations also start this lifecycle
-after preflight, including portable publisher files and exact private-service
+after preflight, including portable publisher files and exact service
 grants. ordinary app-owned local publishers do not opt in. neither `installed`
 identity kind nor team ownership identifies a process as remote: those properties
 also occur in local setup. the actual runtime entrypoint calls the explicit
@@ -109,7 +109,7 @@ only the family actually seen is reported.
 
 `active` requires the current runtime lease and current identity, key, team and
 scope authority. a group runtime must use its member's enrolled key. a non-group
-runtime requires an available saved public URL, private service or namespace,
+runtime requires an available saved public URL, service or namespace,
 including a ready domain when the resource has one. disabling or deleting the
 resource or releasing its domain makes status offline even if the grant remains
 live. suspending a creator's membership does not revoke a team-owned publisher.

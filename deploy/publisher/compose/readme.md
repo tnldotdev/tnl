@@ -100,7 +100,7 @@ application request or a policy change. Its default `/` must return 2xx.
 A consumed enrollment key cannot recreate a deleted signing key. A missing
 volume fails with `TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED`. Stop the old
 publisher, use `tnl publisher list --team studio` to identify and explicitly
-revoke its identity with `tnl publisher revoke <publisher-id> --team studio`,
+revoke its identity with `tnl publisher revoke <publisher-identity-id> --team studio`,
 then issue a fresh `tnl publisher enroll <same-public-url-id> --team studio`.
 Set the fresh key and recreate the container with a new persistent volume.
 The URL ID and hostname stay the same; the new publisher's run fences older

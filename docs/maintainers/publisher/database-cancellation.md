@@ -26,7 +26,7 @@ installed `pg` fixture checks that this interrupts the intended `pg_sleep`, anot
 sleeping connection finishes, the original session remains usable, and the query
 is not replayed. tnl does not automatically translate driver cancellation into SQL.
 
-retain verified TLS and the managed service name:
+retain verified TLS and the service name:
 
 - `pg`: use the returned native `host`, `port`, and `ssl` settings; leave
   `enableChannelBinding` disabled. `Client.cancel()` sends a plaintext second
@@ -59,7 +59,7 @@ installed Node consumer uses packed SDK/native packages; the Python consumer
 installs a wheel containing the real native executable into an isolated uv
 environment. both read the real connection owner's prepared IPC. their sockets
 pass through trusted PROXY v2 metadata, the real ingress/direct connector, the
-in-process relay-forwarder fixture, `ManagedStream`'s PostgreSQL negotiation and
+in-process relay-forwarder fixture, `ServiceStream`'s PostgreSQL negotiation and
 authentication bridge, then independently verified provider TLS. authority and
 placement decisions are fixtures; this is not a deployed relay or control test.
 
@@ -85,7 +85,7 @@ renewing the original subject retains its PID and temporary table.
 
 ## follow-up: authenticated cancellation ownership
 
-restoring native cancellation needs a separate design. `ManagedVisitorDecision`
+restoring native cancellation needs a separate design. `ServiceVisitorDecision`
 currently exposes only allowance and a deadline, not a stable subject/service
 binding for the backend key. a safe design must:
 

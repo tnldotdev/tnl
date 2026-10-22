@@ -57,7 +57,7 @@ static-target publication or cloud preparation.
 `ProjectServiceConfiguration.TargetDiscovery` fields and assignment protocol
 into `Request`. It rejects mixed address/static trust, local publisher settings,
 empty selectors and incompatible protocols before discovery. The saved
-`PrivateService` exposes protocol and trust revision, not another descriptor;
+`Service` exposes protocol and trust revision, not another descriptor;
 the authenticated group assignment owns the exact cloud selector. No project
 checkout is evaluated on the publisher machine.
 

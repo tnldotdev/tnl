@@ -49,9 +49,9 @@ await tunnel.close();
 ```
 
 The native publisher selects the locally provisioned namespace identity, or
-`TNL_PUBLISHER_FILE` if set. For programmatic selection, pass
-`{ publisherFile: "/absolute/private/publisher.json" }` or
-`{ publisherID: "pub_..." }`. An invalid selected file is an error; tnl does
+`TNL_PUBLISHER_CREDENTIAL_FILE` if set. For programmatic selection, pass
+`{ publisherCredentialFile: "/absolute/private/publisher.json" }` or
+`{ publisherIdentityID: "pub_..." }`. An invalid selected file is an error; tnl does
 not silently use another identity. Enrollment keys belong to setup, not the
 SDK. The native publisher keeps its signing key private; project metadata and
 status contain no credentials.
@@ -134,7 +134,7 @@ Owners supplied through `TNL_CONNECTION_HANDLE` stay caller-owned,
 including fixed-deadline workload sessions. Their caller must prepare and supply
 a fresh owner after expiry; the SDK never stops or replaces them.
 
-HTTP settings contain `{ url, fetch }`. The URL retains the managed HTTPS origin;
+HTTP settings contain `{ url, fetch }`. The URL retains the service HTTPS origin;
 the SDK's origin-restricted `fetch` dispatcher dials the native loopback listener
 with verified TLS and the managed SNI and Host. Workload protocols use this same
 native owner, as described below.

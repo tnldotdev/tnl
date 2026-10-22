@@ -82,9 +82,9 @@ worker, finish := observability.PublisherOperation(worker, "target_preflight")
 defer func() { finish(err) }()
 ```
 
-`ServiceID` is only a managed service. `PublicURLID` is only a public URL; they
-are mutually exclusive. the scope derives `ServiceKind=managed_service|public_url`.
-`NormalizeServiceKind` translates the `private_service` wire value.
+`ServiceID` is only a service. `PublicURLID` is only a public URL; they
+are mutually exclusive. the scope derives `ServiceKind=service|public_url`.
+`NormalizeServiceKind` translates the `service` wire value.
 `PublisherGroupID` maps the authenticated `group_id`; `PublisherIdentityID`,
 `DeploymentID`, and `ReplicaKey` retain their distinct meanings. only the publisher
 instruments and the signed control runtime lifecycle instrument allow scoped identity
@@ -357,7 +357,7 @@ matter when reading it:
   certificate work, claims, transitions, and installation use the same kinds.
   the shared service certificate queue reports failed claims and empty polls as
   `service_queue`; only a successfully claimed row identifies `public_url` or
-  `managed_service`. relay claims retain `relay`.
+  `service`. relay claims retain `relay`.
 - certificate and DNS worker attempt deadlines are operational timeouts while the
   process lifetime remains live. their owner attempt and one authored diagnostic
   retain the timeout and trace correlation even if saving retry state succeeds.
@@ -375,5 +375,5 @@ matter when reading it:
 
 publisher live payload-byte instruments and complete HTTP streaming instrumentation
 belong to their data-path owners. this backend does not add tunnel headers or
-managed-service/database desired-version state. see [server readiness](server-readiness.md)
+service/database desired-version state. see [server readiness](server-readiness.md)
 for the private diagnostic surfaces and lease-loss boundary.

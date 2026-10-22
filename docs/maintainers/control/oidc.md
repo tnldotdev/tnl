@@ -165,7 +165,7 @@ Reauthentication accepts an optional current `refresh_token` in the device start
 request to bind the browser to the same identity. It copies only still-current
 other-team proofs, preserving their original deadlines. Refresh never extends
 source authentication time. A CLI replacing its session must call
-`POST /v1/private-services/{private_service_id}/client-certificates` under the
+`POST /v1/services/{service_id}/client-certificates` under the
 new control session before using a cached client certificate. This existing API
 rechecks current permission and rebinds the same device/CSR certificate to the
 new session; a cache hit alone does not renew session provenance.
