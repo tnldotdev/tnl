@@ -56,10 +56,10 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 		}
 	}
 	if flags.Name == "" && flags.PublicURL == "" || flags.Demo || flags.Ephemeral || flags.Open || flags.Protocol != "" && flags.Protocol != "http" {
-		return publisherCLIError("install a saved HTTP public URL with --name or --public-url and a stable target")
+		return failure.Wrap("select installed publication", failure.PublisherInstallOptions, errors.New("unsupported installation options"))
 	}
 	if flags.inspectionModeFromCLI && flags.InspectionMode != config.InspectionNone {
-		return publisherCLIError("installed publications support --inspection-mode=none")
+		return failure.Wrap("select installed inspection", failure.PublisherInstallInspection, errors.New("inspection capture selected"))
 	}
 	if err := validateTCPPublishOptions(flags, controlv1.Http); err != nil {
 		return err

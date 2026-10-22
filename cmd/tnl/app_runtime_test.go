@@ -22,13 +22,17 @@ func testAppRuntime(t *testing.T) (*appRuntime, privateprotocol.Endpoint) {
 	return testAppRuntimeWorkers(t, false)
 }
 
-func testAppRuntimeWorkers(t *testing.T, realWorkers bool) (*appRuntime, privateprotocol.Endpoint) {
+func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...bool) (*appRuntime, privateprotocol.Endpoint) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	options := clientstate.OpenOptions{Protection: clientstate.ProtectionFile}
+	if len(defaultProtection) != 0 && defaultProtection[0] {
+		options.Protection = ""
+	}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), options)
 	if err != nil {
 		t.Fatal(err)
 	}

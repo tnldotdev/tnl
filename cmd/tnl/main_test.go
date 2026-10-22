@@ -79,7 +79,7 @@ func TestInstallRequiresASavedURLSelectorBeforeProjectState(t *testing.T) {
 	service := filepath.Join(t.TempDir(), "service-state")
 	var output, diagnostics bytes.Buffer
 	err := run(t.Context(), []string{"publish", "orders", "--install", "--state-dir", state, "--system-state-dir", service}, &output, &diagnostics)
-	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.InvalidTunnelFlags {
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.PublisherInstallOptions {
 		t.Fatalf("project state opened before service preflight: %v", err)
 	}
 	for _, path := range []string{state, service} {

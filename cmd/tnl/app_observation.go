@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
@@ -56,7 +57,31 @@ func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, stat
 		}
 	}
 	snapshot.Services = configured
+	checkAppSnapshotOwner(ctx, state, &snapshot)
 	return snapshot, nil
+}
+
+// a private worker has no public tunnel heartbeat. verify the owner before
+// presenting durable readiness as current, including status --all and watch.
+func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, snapshot *clientruntime.Snapshot) {
+	if !slices.ContainsFunc(snapshot.Services, func(s clientruntime.Service) bool { return s.Registered }) {
+		return
+	}
+	probe, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	path, err := privateprotocol.DescriptorPath(state.Root(), snapshot.Project)
+	if err == nil {
+		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(probe, endpoint) {
+			return
+		}
+	}
+	for index := range snapshot.Services {
+		service := &snapshot.Services[index]
+		if service.Registered {
+			service.Registered, service.Routable, service.Ready = false, false, false
+			service.Observation, service.Failure = nil, "runtime.manager_unavailable"
+		}
+	}
 }
 
 func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
@@ -122,10 +147,24 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
 	for _, name := range flags.Service {
-		if _, found := project.Config.Services[name]; !found {
+		definition, found := project.Config.Services[name]
+		if !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
 		}
+		if config.PublisherName(definition) != "local" {
+			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service belongs to a remote publisher"))
+		}
 	}
+	if len(flags.Service) == 0 {
+		for _, service := range configuredRuntimeServices(project) {
+			flags.Service = append(flags.Service, service.Name)
+		}
+	}
+	if len(flags.Service) == 0 {
+		return failure.Wrap("wait for local services", failure.AppRemoteService, errors.New("no local services are configured"))
+	}
+	slices.Sort(flags.Service)
+	flags.Service = slices.Compact(flags.Service)
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -166,9 +205,6 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 			return !configured
 		})
 		want := len(flags.Service)
-		if want == 0 {
-			want = len(project.Config.Services)
-		}
 		ready := checked && len(snapshot.Services) == want
 		for index := range snapshot.Services {
 			if !checked {

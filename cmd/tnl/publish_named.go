@@ -31,14 +31,14 @@ type resolvedPrivateInvocation struct {
 // the owner cannot change one lease's policy independently of its other workers.
 func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 	if flags.namedOverrides {
-		return resolvedNamedInvocation{}, publisherCLIError("named project publishing uses configured policy; set public URL, TLS, limits, and inspection options in the selected configuration")
+		return resolvedNamedInvocation{}, failure.Wrap("select named publication", failure.NamedPublishOverrides, errors.New("policy overrides supplied"))
 	}
 	if flags.AccessToken != "" || os.Getenv("TNL_ACCESS_TOKEN") != "" {
-		return resolvedNamedInvocation{}, publisherCLIError("named project publishing uses its saved session; omit the access token or publish an explicit target")
+		return resolvedNamedInvocation{}, failure.Wrap("select named publication", failure.NamedPublishSession, errors.New("access token supplied"))
 	}
 	project := flags.project
 	if project.Config.Team != nil && flags.selectedTeam == "" {
-		return resolvedNamedInvocation{}, publisherCLIError("select --team explicitly when publishing this project on another server")
+		return resolvedNamedInvocation{}, failure.Wrap("select named team", failure.NamedPublishTeam, errors.New("explicit team required"))
 	}
 	if flags.ServerURL != "" {
 		server, err := clientstate.CanonicalServer(flags.ServerURL)
@@ -58,7 +58,7 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) {
 	invocation, err := namedInvocation(flags)
 	if err == nil && !config.IsPublicService(invocation.project.Config.Services[invocation.service]) {
-		err = publisherCLIError("configured service is private")
+		err = failure.Wrap("select public service", failure.PublisherGrantMismatch, errors.New("configured service is private"))
 	}
 	return resolvedPublicInvocation{invocation}, err
 }
@@ -67,7 +67,7 @@ func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error
 	invocation, err := namedInvocation(flags)
 	protocol := controlv1.PrivateServiceProtocol(flags.Protocol)
 	if err == nil && (!protocol.Valid() || config.IsPublicService(invocation.project.Config.Services[invocation.service])) {
-		err = publisherCLIError("configured service is not private")
+		err = failure.Wrap("select private service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
 	}
 	return resolvedPrivateInvocation{invocation, protocol}, err
 }
@@ -138,7 +138,7 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 			var response *privateprotocol.ResponseError
 			if errors.As(err, &response) {
 				if response.Code == "runtime.owner_conflict" {
-					return publisherCLIError("the current local publisher uses another configuration or owns this service; stop it before publishing with these settings")
+					return failure.Wrap("acquire named service", failure.AppOwnerConflict, err)
 				}
 				if reason := failure.Reason(response.Code); reason != "" {
 					if _, known := failure.DefinitionFor(reason); known {
@@ -172,6 +172,7 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 		if endpoint.OwnerId != lastOwner {
 			lastOwner = endpoint.OwnerId
 			lastRun = 0
+			lastTunnel, lastPrivateTarget = "", ""
 		}
 		var snapshot clientruntime.Snapshot
 		status, finishStatus := observability.ClientOperation(ctx, "client.publish.status")
@@ -206,7 +207,13 @@ func runNamedPublish(ctx context.Context, invocation resolvedNamedInvocation, st
 					lastRun = service.PublishRunNumber
 				}
 				if !service.Routable && service.Failure != "" && service.ProvisioningStage == "" {
-					return failure.Wrap("publish service", failure.TransportUnavailable, errors.New("service publication failed"))
+					reason := failure.TransportUnavailable
+					if owned := failure.Reason(service.Failure); owned != "" {
+						if _, known := failure.DefinitionFor(owned); known {
+							reason = owned
+						}
+					}
+					return failure.Wrap("publish service", reason, errors.New("service publication failed"))
 				}
 			}
 		}

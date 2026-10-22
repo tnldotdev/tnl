@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -355,6 +356,56 @@ func TestInvocationSetupFailureCleansAllocationAndReservation(t *testing.T) {
 	}
 	if len(a.prepared) != 0 {
 		t.Fatal("setup failure retained worker preparation")
+	}
+}
+
+func TestAppWorkflowSlowPreparationDoesNotBlockAnotherInvocation(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, _ := invocationRuntime(t)
+	a.workers.RunPublisher = readyInvocation
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	firstID := body["invocation_id"].(string)
+	a.AttachPublication = func(_ context.Context, service clientruntime.Service, _ *publisher.Config) error {
+		if service.Name == firstID {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- privateprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first preparation never started")
+	}
+	secondID, _ := opaqueid.New(opaqueid.InvocationPrefix)
+	secondEndpoint, err := a.capabilities.Issue(privateprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &secondID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := make(map[string]any, len(body))
+	for k, value := range body {
+		second[k] = value
+	}
+	second["invocation_id"] = secondID
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	var registration privateprotocol.Registration
+	secondErr := privateprotocol.Call(ctx, secondEndpoint, "POST", "/v1/ad-hoc/register", second, &registration)
+	unblock()
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if secondErr != nil {
+		t.Fatal("unrelated invocation waited for slow preparation", secondErr)
 	}
 }
 

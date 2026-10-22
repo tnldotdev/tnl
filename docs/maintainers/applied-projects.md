@@ -6,6 +6,29 @@ allocated port; they never borrow a `public_url_id`. Generated `.tnl/local/proje
 URLs retain that port, including after publisher namespace renames. Private
 targets and trust material remain outside browser metadata.
 
+## local publication identity
+
+configured local apps and named local publishers use a directory-bound
+`LocalPublicationIdentity`. they need neither Git nor a network origin. creating
+a Git repository or changing its origin retains the same local service IDs,
+public URLs, and local worktree key. `SourceIdentity` remains the portable Git
+identity for apply, named publisher groups, and workload declarations; local
+startup never invents an origin or applies a portable revision.
+
+one local owner retains one evaluated configuration. app endpoint discovery and
+named leases compare its configuration digest before reuse. after changing
+policy, stop the project's apps and named publishers and restart them together;
+restarting just one app cannot silently publish with the old owner's policy.
+preparation serializes competing owners for one service, while unrelated
+services can authenticate and discover their targets independently.
+
+public workers perform automatic, proof-bearing readiness checks. a changed
+target invalidates the current run's previous observation. `tnl wait` selects
+local configured services by default; explicit remote selections point to
+`tnl status` for applied group state. local status verifies owner availability
+before presenting durable readiness, including private workers without a public
+tunnel heartbeat.
+
 ## managed endpoint ownership
 
 named groups reserve a durable namespace beneath the selected team's existing

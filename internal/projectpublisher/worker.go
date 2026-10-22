@@ -41,13 +41,14 @@ type proofEntry struct {
 }
 
 type Workers struct {
-	Database      *clientstate.Database
-	Manager       *clientruntime.Manager
-	Configure     func(context.Context, clientruntime.Service) (Configuration, error)
-	RunPublisher  func(context.Context, publisher.Config) error
-	HTTPTransport http.RoundTripper
-	mu            sync.Mutex
-	proofs        map[string]*proofEntry
+	Database           *clientstate.Database
+	Manager            *clientruntime.Manager
+	Configure          func(context.Context, clientruntime.Service) (Configuration, error)
+	RunPublisher       func(context.Context, publisher.Config) error
+	HTTPTransport      http.RoundTripper
+	AutomaticReadiness bool
+	mu                 sync.Mutex
+	proofs             map[string]*proofEntry
 }
 
 func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
@@ -64,6 +65,13 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	cfg := configuration.Publisher
 	var captured TargetSnapshot
 	if configuration.TargetBinding != nil {
+		previous := configuration.TargetBinding.Changed
+		configuration.TargetBinding.Changed = func() {
+			w.Manager.TargetChanged(service.Name, service.RegistrationID, service.Target)
+			if previous != nil {
+				previous()
+			}
+		}
 		captured, err = configuration.TargetBinding.Capture(ctx)
 		if err != nil {
 			return err
@@ -79,6 +87,24 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 		return err
 	}
 	ctx = tunnel.Context()
+	if w.AutomaticReadiness {
+		checks, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for attempt := 0; ; attempt++ {
+				timer := time.NewTimer(clientruntime.RetryDelay(attempt))
+				select {
+				case <-checks.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				_, _ = w.Check(checks, []string{service.Name})
+			}
+		}()
+		defer func() { cancel(); <-done }()
+	}
 	defer func() {
 		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

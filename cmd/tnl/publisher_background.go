@@ -60,7 +60,7 @@ func backgroundSelection(flags publishCommand, selection enrolledPublishSelectio
 		return publisherjob.ErrScope
 	}
 	if flags.inspectionModeFromCLI && string(flags.InspectionMode) != "none" {
-		return publisherCLIError("installed publications support --inspection-mode=none")
+		return failure.Wrap("select installed inspection", failure.PublisherInstallInspection, errors.New("inspection capture selected"))
 	}
 	return nil
 }
@@ -120,6 +120,7 @@ func runEnrolledBackgroundPublish(ctx context.Context, flags publishCommand, sel
 	if err != nil {
 		return err
 	}
+	flags.StateDir = root
 	digest := sha256.Sum256([]byte(options.Root))
 	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: filepath.Join(root, "publisher-install-"+hex.EncodeToString(digest[:12])), User: true})
 	if err != nil {
@@ -219,6 +220,21 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 			return err
 		}
 	} else if selection.PublisherID != "" {
+		// explicit IDs refer to the invoking client's profile. the setup journal
+		// is a destination for the exact grant, not a second credential search path.
+		root, err := clientStateRoot(flags.StateDir)
+		if err != nil {
+			return err
+		}
+		database, err := clientstate.Open(ctx, root)
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+		profile, err = database.Server(ctx, job.Server)
+		if err != nil {
+			return err
+		}
 		native, identity, err = nativeauth.LoadNative(ctx, profile, control, authority, selection.PublisherID)
 		if err != nil {
 			return err
@@ -306,7 +322,7 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 		return publisherjob.ErrScope
 	}
 	if flags.Service != "" && !serviceScope.matches(publicURL, identity) {
-		return publisherCLIError("publisher grant does not match the configured service public URL")
+		return failure.Wrap("select installed service", failure.PublisherGrantMismatch, errors.New("grant differs from configured public URL"))
 	}
 	if flags.Protocol != "" && flags.Protocol != string(publicURL.ServiceProtocol) {
 		return publisherjob.ErrScope

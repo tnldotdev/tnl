@@ -24,7 +24,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
@@ -121,8 +120,23 @@ func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root 
 	if err != nil {
 		return privateprotocol.Endpoint{}, err
 	}
-	if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(ctx, endpoint) {
+	_, digest, err := project.Snapshot()
+	if err != nil {
+		return privateprotocol.Endpoint{}, err
+	}
+	selected := func(endpoint privateprotocol.Endpoint) (privateprotocol.Endpoint, error) {
+		err := privateprotocol.Call(ctx, endpoint, "GET", "/v1/health?configuration_digest="+digest, nil, nil)
+		if err != nil {
+			var response *privateprotocol.ResponseError
+			if errors.As(err, &response) && response.Code == string(failure.AppConfigurationConflict) {
+				return privateprotocol.Endpoint{}, failure.Wrap("reuse project owner", failure.AppConfigurationConflict, err)
+			}
+			return privateprotocol.Endpoint{}, failure.Wrap("check project owner", failure.ClientStateUnavailable, err)
+		}
 		return endpoint, nil
+	}
+	if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(ctx, endpoint) {
+		return selected(endpoint)
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -146,7 +160,7 @@ func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root 
 	defer ticker.Stop()
 	for {
 		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(ctx, endpoint) {
-			return endpoint, nil
+			return selected(endpoint)
 		}
 		select {
 		case err := <-childDone:
@@ -219,11 +233,47 @@ type appRuntime struct {
 	project      projectConfiguration
 	state        *clientstate.Database
 	mu           sync.Mutex
-	prepareMu    sync.Mutex
+	preparing    map[string]*appPreparationGate
 	prepared     map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
 	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
+}
+
+type appPreparationGate struct {
+	token chan struct{}
+	users int
+}
+
+// serialize only competing preparations for the same service or invocation.
+// no project-wide lock is held while authentication or discovery does I/O.
+func (a *appRuntime) beginPreparation(ctx context.Context, name string) (func(), error) {
+	a.mu.Lock()
+	if a.preparing == nil {
+		a.preparing = map[string]*appPreparationGate{}
+	}
+	gate := a.preparing[name]
+	if gate == nil {
+		gate = &appPreparationGate{token: make(chan struct{}, 1)}
+		a.preparing[name] = gate
+	}
+	gate.users++
+	a.mu.Unlock()
+	releaseUser := func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		gate.users--
+		if gate.users == 0 {
+			delete(a.preparing, name)
+		}
+	}
+	select {
+	case gate.token <- struct{}{}:
+		return func() { <-gate.token; releaseUser() }, nil
+	case <-ctx.Done():
+		releaseUser()
+		return nil, ctx.Err()
+	}
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
@@ -288,7 +338,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) (result error)
 			return runtimeConfigurePublication(ctx, state, project.Project, service, cfg)
 		}
 	}
-	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration}
+	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = clientruntime.New(observability.Independent(ctx), project.Root, state, configuredRuntimeServices(project), a.workers.Run)
 	if err != nil {
 		return err
@@ -344,7 +394,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) (result error)
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, AppService: func(name string) bool {
+	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+		_, digest, err := a.project.Snapshot()
+		return digest, err
+	}, AppService: func(name string) bool {
 		service, found := a.project.Config.Services[name]
 		return found && config.TargetType(service) == "app"
 	}}).Handler()
@@ -370,8 +423,11 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	a.prepareMu.Lock()
-	defer a.prepareMu.Unlock()
+	release, err := a.beginPreparation(ctx, name)
+	if err != nil {
+		return privateprotocol.Assignment{}, err
+	}
+	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	resolver := newProjectMetadataResolver(a.state, a.project, strings.NewReader(""), io.Discard, "app prepare")
@@ -401,10 +457,13 @@ func (a *appRuntime) acquire(ctx context.Context, request privateprotocol.Lease)
 		return privateprotocol.Registration{}, err
 	}
 	if request.ConfigurationDigest != digest {
-		return privateprotocol.Registration{}, clientruntime.ErrOwnerConflict
+		return privateprotocol.Registration{}, failure.Wrap("acquire configured service", failure.AppConfigurationConflict, clientruntime.ErrOwnerConflict)
 	}
-	a.prepareMu.Lock()
-	defer a.prepareMu.Unlock()
+	release, err := a.beginPreparation(ctx, request.Service)
+	if err != nil {
+		return privateprotocol.Registration{}, err
+	}
+	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	resolved, err := projectpublisher.ResolveTarget(ctx, a.project.Project, request.Service, runtimeTargetResolver)
@@ -498,10 +557,6 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	var binding *projectpublisher.TargetBinding
 	{
 		binding = runtimeTargetBinding(project.Project, service.Name, service.Target, nil)
-		binding.Changed = func() {
-			a.manager.Observe(clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID,
-				PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"})
-		}
 		selected, err := binding.Capture(ctx)
 		if err != nil {
 			return projectpublisher.Configuration{}, err
@@ -555,27 +610,9 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 			return projectpublisher.Configuration{}, err
 		}
 	}
-	for prefix, mount := range config.ServicePaths(project.Config.Services[service.Name]) {
-		options := localproxy.TargetOptions{}
-		mounted := config.ServicePublish(project.Config.Services[mount.Service])
-		if mounted.TargetCAFile != nil {
-			options, err = targetOptionsForCA(*mounted.TargetCAFile, project.Root)
-			if err != nil {
-				return projectpublisher.Configuration{}, err
-			}
-		}
-		mountTarget := ""
-		if mounted.Target != nil {
-			mountTarget = string(*mounted.Target)
-		}
-		cfg.Mounts = append(cfg.Mounts, localproxy.Mount{Prefix: prefix, Target: mountTarget, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
-			for _, candidate := range a.manager.Snapshot().Services {
-				if candidate.Name == mount.Service && a.manager.Current(candidate.Name, candidate.RegistrationID, candidate.Target, 0) {
-					return candidate.Target
-				}
-			}
-			return ""
-		}})
+	cfg.Mounts, err = a.resolveRuntimeMounts(project, service.Name)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
 	}
 	previewID, err := ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, project.Root)
 	if err != nil {

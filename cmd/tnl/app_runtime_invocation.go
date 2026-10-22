@@ -29,8 +29,11 @@ import (
 )
 
 func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Invocation) (_ privateprotocol.Registration, result error) {
-	a.prepareMu.Lock()
-	defer a.prepareMu.Unlock()
+	release, err := a.beginPreparation(ctx, request.InvocationId)
+	if err != nil {
+		return privateprotocol.Registration{}, err
+	}
+	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	canonical, err := localproxy.NormalizeTarget(request.Target)

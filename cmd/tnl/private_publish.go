@@ -308,12 +308,9 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 		return failure.Wrap("read managed service endpoint", failure.ServerResponseInvalid, err)
 	}
 	if flags.Service != "" {
-		source, err := flags.project.SourceIdentity(ctx)
-		if err != nil {
-			return err
-		}
+		source := flags.project.LocalPublicationIdentity()
 		if approved.Source == nil || approved.Source.ProjectKey != source.Key || approved.Source.SourceFingerprint != source.Fingerprint || approved.Source.Service != flags.Service || approved.Source.WorktreeKey != flags.project.LocalWorktreeKey() {
-			return publisherCLIError("publisher grant does not match this source-bound local service")
+			return failure.Wrap("select local service publisher", failure.PublisherGrantMismatch, errors.New("grant differs from local publication identity"))
 		}
 	}
 	// a scoped, ad-hoc publisher uses its saved target trust unless the caller

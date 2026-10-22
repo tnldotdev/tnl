@@ -99,7 +99,7 @@ func TestNamedPublishRejectsUnsupportedPolicyBeforeOwnerState(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := runPublish(t.Context(), flags, io.Discard, io.Discard)
-	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.NamedPublishOverrides {
 		t.Fatalf("unsupported named policy = %v", err)
 	}
 	if _, err := os.Stat(flags.StateDir); !errors.Is(err, os.ErrNotExist) {

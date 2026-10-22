@@ -120,6 +120,38 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 	}
 }
 
+func TestAppWorkflowInstallLoadsExplicitPublisherFromClientState(t *testing.T) {
+	r, a, c, selection := backgroundFixture(t)
+	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "operator"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	profile, err := state.Server(t.Context(), "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, identity, err := nativeauth.EnrollNative(t.Context(), profile, c, a, selection.EnrollmentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := publishCommand{Target: "http://127.0.0.1:3000", remoteFlags: remoteFlags{ServerURL: "https://control.example", StateDir: state.Root()}}
+	clients := func(publisherjob.Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error) {
+		return c, a, nil
+	}
+	if err := installBackgroundJob(t.Context(), r, flags, enrolledPublishSelection{PublisherID: identity.ClientId}, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
+		t.Fatal("explicit publisher was looked up in staging instead of client state", err)
+	}
+	jobs, err := r.List(t.Context())
+	if err != nil || len(jobs) != 1 || jobs[0].PublisherID != identity.ClientId || a.redemptions != 1 {
+		t.Fatalf("installed wrong identity: %+v %v", jobs, err)
+	}
+	credential, err := r.Credential(t.Context(), jobs[0])
+	if err != nil || credential.PublisherID != identity.ClientId {
+		t.Fatal("exact credential was not imported", err)
+	}
+}
+
 func TestBackgroundImportsPortableFileWithoutRedeemingEnrollment(t *testing.T) {
 	r, a, c, _ := backgroundFixture(t)
 	_, private, err := ed25519.GenerateKey(nil)
@@ -280,6 +312,31 @@ func TestConfiguredInstallPersistsReadinessWithExactGrant(t *testing.T) {
 	service.HTTP = &config.HTTPService{Readiness: &config.Readiness{Path: "/ready"}}
 	flags.project.Config.Services[flags.Service] = service
 	selection = enrolledPublishSelection{PublisherID: job.PublisherID}
+	staged, err := r.Profile(t.Context(), flags.ServerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, private, err := privateSigningIdentity(t.Context(), staged, job.PublisherID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "operator"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operator.Close()
+	flags.StateDir = operator.Root()
+	profile, err := operator.Server(t.Context(), flags.ServerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := profile.ImportPublisherIdentity(t.Context(), clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: document, SigningKey: private}); err != nil {
+		t.Fatal(err)
+	}
 	if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{ServiceName: flags.ServiceName, System: true}, strings.NewReader(""), clients, nil); err != nil {
 		t.Fatal(err)
 	}

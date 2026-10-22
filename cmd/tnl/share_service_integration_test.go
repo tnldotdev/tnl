@@ -173,7 +173,8 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := ownerControl.RealizeLocalProjectService(ctx, source.Key, "localdb", controlv1.RealizeLocalProjectServiceRequest{TeamId: team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), WorktreeLabel: new(project.Worktree.Label.FullLabel), Configuration: applied.Configuration.Services["localdb"]})
+	localSource := project.LocalPublicationIdentity()
+	local, err := ownerControl.RealizeLocalProjectService(ctx, localSource.Key, "localdb", controlv1.RealizeLocalProjectServiceRequest{TeamId: team.Id, SourceFingerprint: localSource.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), WorktreeLabel: new(project.Worktree.Label.FullLabel), Configuration: applied.Configuration.Services["localdb"]})
 	if err != nil {
 		t.Fatal(err)
 	}

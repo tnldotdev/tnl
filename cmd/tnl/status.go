@@ -120,6 +120,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			if err != nil {
 				return err
 			}
+			checkAppSnapshotOwner(ctx, state, &appSnapshot)
 		}
 	} else {
 		projects, err := clientruntime.ListSnapshotsFrom(ctx, state)
@@ -127,6 +128,9 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			return err
 		}
 		projectSnapshots = projects
+		for index := range projectSnapshots {
+			checkAppSnapshotOwner(ctx, state, &projectSnapshots[index])
+		}
 	}
 	projects := []projectStatus{}
 	if flags.All {
@@ -155,6 +159,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				if readErr != nil {
 					return readErr
 				}
+				checkAppSnapshotOwner(ctx, state, &local)
 				entry := projectStatus{Project: tunnel.Project}
 				if flags.Scope != "server" {
 					projectTunnels, readErr := state.SnapshotProject(ctx, tunnel.Project)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/kubeconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -36,11 +37,15 @@ func prepareKubernetesConnection(ctx context.Context, session *teamSession, flag
 	}
 	sourceID, projectLabel, serviceLabel := service.Id, "services", service.Name
 	if key != "" {
-		source, err := flags.project.SourceIdentity(ctx)
-		if err != nil {
-			return err
+		if config.PublisherName(flags.project.Config.Services[key]) == "local" {
+			sourceID = flags.project.LocalPublicationIdentity().Fingerprint
+		} else {
+			source, err := flags.project.SourceIdentity(ctx)
+			if err != nil {
+				return err
+			}
+			sourceID = source.Fingerprint
 		}
-		sourceID = source.Fingerprint
 		projectLabel, serviceLabel = flags.project.Worktree.Label.Project, key
 	}
 	source := kubeconfig.Source{ConfigFile: flags.KubeUserConfig, ExistingUser: flags.KubeUser, TokenFile: flags.KubeTokenFile}

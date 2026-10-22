@@ -9,6 +9,11 @@ paths:
   /v1/health:
     get:
       operationId: health
+      parameters:
+        - name: configuration_digest
+          in: query
+          description: Owner only. Fence reuse of an evaluated project configuration; a mismatch returns 409.
+          schema: { type: string, pattern: "^[a-f0-9]{64}$" }
       responses:
         default: { $ref: "#/components/responses/Problem" }
         "204": { description: authenticated owner is available }

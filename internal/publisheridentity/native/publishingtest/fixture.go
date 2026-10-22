@@ -207,7 +207,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.VisitorDecisions.Add(1)
-		write(w, controlv1.HTTPVisitorResponse{VisitAllowed: true})
+		write(w, controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: new(time.Now().Add(time.Minute))})
 		return
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && (strings.HasSuffix(r.URL.Path, "/share-access") || strings.HasSuffix(r.URL.Path, "/share-state")) {

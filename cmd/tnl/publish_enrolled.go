@@ -54,7 +54,7 @@ func enrollmentKeyInput(value string, input io.Reader) (string, error) {
 		value = strings.TrimSpace(string(b))
 	}
 	if len(value) == 0 || len(value) > 256 || strings.ContainsAny(value, " \t\r\n") {
-		return "", publisherCLIError("pass one enrollment key or --enroll-key - to read stdin")
+		return "", failure.Wrap("read enrollment key", failure.PublisherEnrollmentInput, errors.New("invalid enrollment input"))
 	}
 	return value, nil
 }
@@ -74,7 +74,7 @@ func enrolledTarget(route controlv1.PublicURL, selected string) (string, error) 
 		return "", err
 	}
 	if route.Target != "" && route.Target != target {
-		return "", publisherCLIError("the HTTP target differs from the saved public URL")
+		return "", failure.Wrap("select enrolled target", failure.PublisherGrantMismatch, errors.New("HTTP target differs from saved URL"))
 	}
 	return target, nil
 }
@@ -88,7 +88,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		}
 	}
 	if selected != 1 || flags.Name != "" || flags.PublicURL != "" || flags.Domain != "" || flags.Team != "" || flags.AccessToken != "" || flags.Demo {
-		return publisherCLIError("select one enrollment key, publisher identity, or publisher file; its grant selects the public URL scope")
+		return failure.Wrap("select scoped publisher", failure.PublisherSelectionInvalid, errors.New("conflicting selection"))
 	}
 	if selection.PublisherFile != "" {
 		f, err := credentialfile.Read(selection.PublisherFile)
@@ -158,14 +158,14 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	}
 	if identity.Kind == authorityv1.PrivateService {
 		if flags.Service != "" && config.IsPublicService(flags.project.Config.Services[flags.Service]) {
-			return publisherCLIError("the publisher grant is private; select a configured service without publicURL")
+			return failure.Wrap("select enrolled service", failure.PublisherGrantMismatch, errors.New("grant is private"))
 		}
 		service, err := native.SavedPrivateService(ctx)
 		if err != nil {
 			return err
 		}
 		if flags.Protocol != "" && flags.Protocol != string(service.Protocol) {
-			return publisherCLIError("--protocol differs from the approved private service")
+			return failure.Wrap("select enrolled protocol", failure.PublisherGrantMismatch, errors.New("protocol differs from private service"))
 		}
 		flags.Protocol = string(service.Protocol)
 		flags.privateService = true
@@ -182,7 +182,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	route, err := native.SavedURL(ctx)
 	if errors.Is(err, nativeauth.ErrScope) {
 		if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetTLSName != "" {
-			return publisherCLIError("namespace publication requires an HTTP target")
+			return failure.Wrap("select namespace target", failure.PublisherNamespaceOptions, errors.New("unsupported namespace options"))
 		}
 		target, err := normalizePublishTarget(flags.Target, controlv1.Http)
 		if err != nil {
@@ -215,13 +215,13 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	} else if err != nil {
 		return err
 	} else if flags.Ephemeral || flags.Anonymous || flags.access != nil || len(flags.IP) > 0 {
-		return publisherCLIError("the saved URL sets visitor policy and lifecycle")
+		return failure.Wrap("select saved URL policy", failure.PublisherSavedPolicy, errors.New("saved policy overrides supplied"))
 	}
 	if route.Purpose != controlv1.App || !route.ServiceProtocol.Valid() {
 		return failure.Wrap("read enrolled public URL", failure.ServerResponseInvalid, errors.New("control returned an unsupported saved URL"))
 	}
 	if flags.Protocol != "" && flags.Protocol != string(route.ServiceProtocol) {
-		return publisherCLIError("--protocol differs from the saved public URL")
+		return failure.Wrap("select enrolled protocol", failure.PublisherGrantMismatch, errors.New("protocol differs from public URL"))
 	}
 	if err := selectPublishInspection(&flags, route.ServiceProtocol); err != nil {
 		return err
@@ -246,6 +246,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	if err != nil {
 		return err
 	}
+	options.ServerName = flags.TargetTLSName
 	if flags.projectRoot == "" {
 		flags.projectRoot, err = currentProjectRoot(ctx)
 		if err != nil {
@@ -312,7 +313,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		return err
 	}
 	if route.ServiceProtocol != controlv1.Http && len(cfg.Mounts) > 0 {
-		return publisherCLIError("TCP public URLs cannot use HTTP path mounts")
+		return failure.Wrap("select enrolled mounts", failure.PublisherGrantMismatch, errors.New("TCP publication has HTTP path mounts"))
 	}
 	cfg.Logf = output.logf
 	cfg.Observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })

@@ -44,6 +44,19 @@ const (
 	InvalidCommand                        Reason = "TNL_CLIENT_INVALID_COMMAND"
 	AppReadinessTimeout                   Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
 	AppCursorExpired                      Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
+	AppConfigurationConflict              Reason = "TNL_CLIENT_APP_CONFIGURATION_CONFLICT"
+	AppRemoteService                      Reason = "TNL_CLIENT_APP_REMOTE_SERVICE"
+	NamedPublishOverrides                 Reason = "TNL_CLIENT_NAMED_PUBLISH_OVERRIDES"
+	NamedPublishSession                   Reason = "TNL_CLIENT_NAMED_PUBLISH_SESSION"
+	NamedPublishTeam                      Reason = "TNL_CLIENT_NAMED_PUBLISH_TEAM"
+	AppOwnerConflict                      Reason = "TNL_CLIENT_APP_OWNER_CONFLICT"
+	PublisherSelectionInvalid             Reason = "TNL_CLIENT_PUBLISHER_SELECTION_INVALID"
+	PublisherGrantMismatch                Reason = "TNL_CLIENT_PUBLISHER_GRANT_MISMATCH"
+	PublisherSavedPolicy                  Reason = "TNL_CLIENT_PUBLISHER_SAVED_POLICY"
+	PublisherEnrollmentInput              Reason = "TNL_CLIENT_PUBLISHER_ENROLLMENT_INPUT"
+	PublisherNamespaceOptions             Reason = "TNL_CLIENT_PUBLISHER_NAMESPACE_OPTIONS"
+	PublisherInstallOptions               Reason = "TNL_CLIENT_PUBLISHER_INSTALL_OPTIONS"
+	PublisherInstallInspection            Reason = "TNL_CLIENT_PUBLISHER_INSTALL_INSPECTION"
 	OutputUnavailable                     Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
 	InitFailed                            Reason = "TNL_CLIENT_INIT_FAILED"
 	TunnelUnavailable                     Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
@@ -282,7 +295,59 @@ var definitions = map[Reason]Definition{
 	},
 	InvalidTunnelFlags: {
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
-		Action: "check --public-url, --name, --allow-ip, and --concurrency", Retry: RetryAfterChange,
+		Action: "check --public-url, --name, --ip, and HTTP limits such as --concurrency", Retry: RetryAfterChange,
+	},
+	AppConfigurationConflict: {
+		Class: Conflict, Message: "the local publisher uses another project configuration",
+		Action: "stop this project's apps and named publishers, then start them with the selected configuration", Retry: RetryAfterChange,
+	},
+	AppRemoteService: {
+		Class: Invalid, Message: "readiness checks require a local configured service",
+		Action: "select a local service with --service; use tnl status for applied publisher groups", Retry: RetryAfterChange,
+	},
+	NamedPublishOverrides: {
+		Class: Invalid, Message: "named publishing uses the selected project configuration",
+		Action: "set public URL, access, TLS, limits, and inspection in the selected configuration", Retry: RetryAfterChange,
+	},
+	NamedPublishSession: {
+		Class: Invalid, Message: "named publishing requires its saved sign-in",
+		Action: "omit the access token or publish an explicit target", Retry: RetryAfterChange,
+	},
+	NamedPublishTeam: {
+		Class: Invalid, Message: "the configured team belongs to another server selection",
+		Action: "select --team explicitly for the selected server", Retry: RetryAfterChange,
+	},
+	AppOwnerConflict: {
+		Class: Conflict, Message: "another live app or named publisher owns this service",
+		Action: "stop that service's current owner before starting another", Retry: RetryAfterChange,
+	},
+	PublisherSelectionInvalid: {
+		Class: Invalid, Message: "scoped publisher selection conflicts with publication options",
+		Action: "select one --enroll-key, --publisher, or --publisher-file; its grant selects the URL and team", Retry: RetryAfterChange,
+	},
+	PublisherGrantMismatch: {
+		Class: Invalid, Message: "the selected publisher grant does not match this publication",
+		Action: "match the configured service, target, protocol, and public or private scope to the saved grant", Retry: RetryAfterChange,
+	},
+	PublisherSavedPolicy: {
+		Class: Invalid, Message: "the saved public URL owns visitor policy and lifecycle",
+		Action: "remove anonymous, access, IP, and ephemeral overrides; change policy on the saved URL", Retry: RetryAfterChange,
+	},
+	PublisherEnrollmentInput: {
+		Class: Invalid, Message: "one publisher enrollment key is required",
+		Action: "pass one enrollment key or use --enroll-key - to read it from stdin", Retry: RetryAfterChange,
+	},
+	PublisherNamespaceOptions: {
+		Class: Invalid, Message: "namespace publication requires an HTTP target",
+		Action: "select an HTTP target and remove private-protocol and target TLS name overrides", Retry: RetryAfterChange,
+	},
+	PublisherInstallOptions: {
+		Class: Invalid, Message: "installed publication requires a saved HTTP public URL and stable target",
+		Action: "select --name or --public-url with a stable HTTP target; remove demo, ephemeral, and open options", Retry: RetryAfterChange,
+	},
+	PublisherInstallInspection: {
+		Class: Invalid, Message: "installed publication does not support inspection capture",
+		Action: "use --inspection-mode=none", Retry: RetryAfterChange,
 	},
 	ConnectModeInvalid: {
 		Class: Invalid, Message: "connect options select incompatible modes",

@@ -343,6 +343,24 @@ tasks:
       - go test -race -v ./cmd/tnl -run='^Test(Invocation|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|StatusSnapshot|WaitDoesNotTreatOldSnapshotAsFreshOwnerCheck)' -count=1 -timeout=2m
       - go test -race ./internal/projectpublisher ./internal/localpublisher ./internal/privateprotocol ./internal/clientruntime -count=1 -timeout=2m
 
+  go:test:app-workflows:
+    desc: Check configured app owners, local identity, readiness, mounts, enrollment and installation locally
+    vars:
+      RUN: '{{default "^Test(AppWorkflow|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|Status|Wait|Background|Configured|ConnectConfigured|ServiceShareSelection|Invocation|Enrolled|Install|SystemInstall|PrivateInstallation|ScopedPrivateInstall|ExplicitPublisherCannotInstall|InvalidConfiguredCA)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} -race ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -race ./internal/clientruntime ./internal/projectpublisher ./internal/localpublisher ./internal/privateprotocol ./internal/projectconfig -count=1 -timeout=3m
+
+  go:test:integration:app-workflows:
+    desc: Check built CLI named publication and local identity against disposable PostgreSQL on Linux
+    vars:
+      RUN: '{{default "^TestIntegration(CLINamed|ServiceShareManagerLookup)" .RUN}}'
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: App workflow CLI integration requires isolated Linux client-state protection
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   go:test:client-tracing:
     desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
     cmds:

@@ -217,10 +217,7 @@ func selectConnectService(ctx context.Context, control connectServiceReader, pro
 	if key != "" {
 		definition := project.Config.Services[key]
 		if config.PublisherName(definition) == "local" {
-			source, err := project.SourceIdentity(ctx)
-			if err != nil {
-				return controlv1.PrivateService{}, failure.Wrap("identify local project service", failure.ProjectConfigInvalid, err)
-			}
+			source := project.LocalPublicationIdentity()
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
 			if errors.Is(err, controlclient.ErrNotFound) {

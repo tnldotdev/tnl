@@ -26,8 +26,9 @@ import (
 )
 
 var cliWorkflowPersonalTeam = flag.Bool("tnl-cli-workflow-personal-team", false, "qualify direct managed-domain local public URL realization")
+var cliWorkflowNoGit = flag.Bool("tnl-cli-workflow-no-git", false, "qualify local publication continuity before and after Git initialization")
 
-func runNamedWorkflowProcess(t *testing.T, personal bool) {
+func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -37,12 +38,23 @@ func runNamedWorkflowProcess(t *testing.T, personal bool) {
 	if personal {
 		args = append(args, "-tnl-cli-workflow-personal-team")
 	}
+	if len(noGit) != 0 && noGit[0] {
+		args = append(args, "-tnl-cli-workflow-no-git")
+	}
 	command := exec.CommandContext(t.Context(), executable, args...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("named CLI workflow: %v\n%s", err, output)
 	} else {
 		t.Logf("%s", output)
 	}
+}
+
+func TestIntegrationCLINamedLocalIdentityContinuity(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	if runtime.GOOS != "linux" {
+		t.Skip("real CLI state protection is qualified in Linux")
+	}
+	runNamedWorkflowProcess(t, true, true)
 }
 
 func TestIntegrationCLINamedPersonalServiceRealization(t *testing.T) {
@@ -77,6 +89,9 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	}
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/named/workflow.git"}} {
+		if *cliWorkflowNoGit {
+			break
+		}
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("Git fixture: %v %s", err, output)
 		}
@@ -103,13 +118,18 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "selected target") }))
 	defer target.Close()
 	configuration := filepath.Join(root, "development.json")
+	services := map[string]any{
+		"api": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
+		"web": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
+	}
+	if !*cliWorkflowNoGit {
+		services["db"] = map[string]any{"publisher": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": "127.0.0.1:9"}}
+	} else {
+		services["sdk"] = map[string]any{"access": map[string]any{"team": true}}
+	}
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
 		"server": "https://unselected.example.test", "team": "unselected", "publishers": map[string]any{"production": map[string]any{}},
-		"services": map[string]any{
-			"api": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "access": map[string]any{"team": true}},
-			"web": map[string]any{"target": map[string]any{"type": "address", "address": target.URL}, "public_url": map[string]any{}, "access": map[string]any{"team": true}, "http": map[string]any{"readiness": map[string]any{"path": "/health"}}},
-			"db":  map[string]any{"publisher": "production", "protocol": "tcp", "target": map[string]any{"type": "address", "address": "127.0.0.1:9"}},
-		},
+		"services": services,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -134,10 +154,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := project.SourceIdentity(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := project.LocalPublicationIdentity()
 	connection, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -209,9 +226,125 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 	assertRealized := func() {
 		t.Helper()
 		var resources, grants int
-		if err := connection.QueryRow(t.Context(), `SELECT count(*),count(visitor_grant_id) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND worktree_key=$3`, team, source.Key, project.LocalWorktreeKey()).Scan(&resources, &grants); err != nil || resources != 2 || grants != 2 {
+		want := 2
+		if *cliWorkflowNoGit {
+			want = 3
+		}
+		if err := connection.QueryRow(t.Context(), `SELECT count(*),count(visitor_grant_id) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2 AND worktree_key=$3`, team, source.Key, project.LocalWorktreeKey()).Scan(&resources, &grants); err != nil || resources != want || grants != want {
 			t.Fatalf("local public/private team access realization: resources=%d grants=%d err=%v", resources, grants, err)
 		}
+	}
+	if *cliWorkflowNoGit {
+		startSDK := func() func() {
+			t.Helper()
+			selected, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected.Config.Server, selected.Config.Team = &f.url, &team
+			snapshot, _, err := selected.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := exec.CommandContext(t.Context(), bin, "runtime", "endpoint", "--directory", root, "--state-dir", person, "--service", "sdk", "--snapshot-stdin")
+			command.Stdin = bytes.NewReader(snapshot)
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			if err := command.Run(); err != nil {
+				t.Fatalf("built app endpoint: %v\n%s", err, &stderr)
+			}
+			var app privateprotocol.Endpoint
+			if err := json.Unmarshal(stdout.Bytes(), &app); err != nil {
+				t.Fatal(err)
+			}
+			owner := "0123456789abcdef0123456789abcdef"
+			var assignment privateprotocol.Assignment
+			if err := privateprotocol.Call(t.Context(), app, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: root, Service: "sdk", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment); err != nil {
+				t.Fatal(err)
+			}
+			registration := privateprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: target.URL}
+			if err := privateprotocol.Call(t.Context(), app, "POST", "/v1/register", registration, nil); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(3 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						_ = privateprotocol.Call(ctx, app, "POST", "/v1/renew", registration, nil)
+					}
+				}
+			}()
+			stopped := false
+			stop := func() {
+				if stopped {
+					return
+				}
+				stopped = true
+				cancel()
+				<-done
+				_ = privateprotocol.Call(context.Background(), app, "POST", "/v1/unregister", registration, nil)
+			}
+			t.Cleanup(stop)
+			workflowWait(t, 20*time.Second, func() bool {
+				var snapshot clientruntime.Snapshot
+				names := []string{"sdk"}
+				if err := privateprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", privateprotocol.Check{Services: &names}, &snapshot); err != nil {
+					return false
+				}
+				for _, service := range snapshot.Services {
+					if service.Name == "sdk" {
+						return service.Registered && service.Routable && service.Ready
+					}
+				}
+				return false
+			})
+			return stop
+		}
+		firstSDK := startSDK()
+		assertRealized()
+		var originalIDs string
+		readIDs := func() string {
+			var ids string
+			if err := connection.QueryRow(t.Context(), `SELECT string_agg(COALESCE(private_service_id, public_url_id), ',' ORDER BY service) FROM control.local_project_services WHERE team_id=$1 AND project_key=$2`, team, source.Key).Scan(&ids); err != nil {
+				t.Fatal(err)
+			}
+			return ids
+		}
+		originalIDs = readIDs()
+		for phase := range 3 {
+			firstAPI()
+			firstWeb()
+			firstSDK()
+			workflowWait(t, 15*time.Second, func() bool { return !runtimeAvailable(t.Context(), endpoint) })
+			args := []string{"init", "--quiet", root}
+			if phase == 1 {
+				args = []string{"-C", root, "remote", "add", "origin", "https://example.test/first.git"}
+			}
+			if phase == 2 {
+				args = []string{"-C", root, "remote", "set-url", "origin", "https://elsewhere.test/second.git"}
+			}
+			if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
+				t.Fatalf("Git transition: %v %s", err, output)
+			}
+			firstAPI, firstWeb = start("api"), start("web")
+			firstSDK = startSDK()
+			assertRealized()
+			if ids := readIDs(); ids != originalIDs {
+				t.Fatalf("Git transition replaced local services: %s != %s", ids, originalIDs)
+			}
+		}
+		firstAPI()
+		firstWeb()
+		firstSDK()
+		t.Log("built CLI reused the same private service and public URL before Git, after git init without origin, and across origin changes")
+		return
 	}
 	assertRealized()
 	cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--server", f.url, "--team", team, "--state-dir", person, "--output", "json"})
