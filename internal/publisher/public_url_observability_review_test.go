@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/relay"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"go.opentelemetry.io/otel/trace"
 )
 

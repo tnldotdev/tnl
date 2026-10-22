@@ -13,18 +13,16 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
@@ -74,7 +72,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 }
 
-func TestInstallRequiresASavedURLSelectorBeforeProjectState(t *testing.T) {
+func TestInstallRequiresASavedPublicURLSelectorBeforeProjectState(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "user-state")
 	service := filepath.Join(t.TempDir(), "service-state")
 	var output, diagnostics bytes.Buffer
@@ -256,9 +254,9 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"publisher", "enroll", "--namespace"}, "publisher enroll <public-url-id>"},
 		{[]string{"publisher", "enroll", "url_0123456789abcdefghijkl"}, "publisher enroll <public-url-id>"},
 		{[]string{"publisher", "list"}, "publisher list"},
-		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-id>"},
-		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
-		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
+		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-identity-id>"},
+		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-identity-id>"},
+		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-identity-id> <grant-id>"},
 		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
 		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
@@ -324,37 +322,6 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	})
 	if flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
-	}
-}
-
-func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
-	current := teamContext{
-		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4},
-		membership: authorityv1.Membership{
-			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
-			MemberSlug: "chase", ManagedLabel: "chase-abc",
-		},
-		domains: []authorityv1.Domain{{
-			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
-		}},
-	}
-	hostname, domain, scope, err := resolvePublishHostname("", "api", "", current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" || scope != controlv1.Member {
-		t.Fatalf("resolution = %q, %#v, %q", hostname, domain, scope)
-	}
-	if _, _, _, err := resolvePublishHostname("https://shared.tnl.dev", "", "", current); err == nil {
-		t.Fatal("member was allowed to create a shared route")
-	}
-	generated, _, generatedScope, err := resolvePublishHostname("", "", "", current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
-	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
-		t.Fatalf("generated route = %q, %q", generated, generatedScope)
 	}
 }
 
@@ -611,9 +578,9 @@ func TestTerminalResultUsesErrorLeaves(t *testing.T) {
 }
 
 func TestClassifyCommandErrorMapsAuthenticationTimeout(t *testing.T) {
-	err := classifyCommandError(fmt.Errorf("login: %w", clientauth.ErrAuthenticationTimeout))
+	err := classifyCommandError(fmt.Errorf("login: %w", auth.ErrAuthenticationTimeout))
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.AuthenticationTimeout ||
-		!errors.Is(err, clientauth.ErrAuthenticationTimeout) {
+		!errors.Is(err, auth.ErrAuthenticationTimeout) {
 		t.Fatalf("classified error = %v, code = %q", err, code)
 	}
 	if canceled := classifyCommandError(context.Canceled); canceled != context.Canceled {
@@ -626,10 +593,10 @@ func TestClassifyCommandErrorMapsCommonServerFailures(t *testing.T) {
 		cause error
 		code  diagnostic.Code
 	}{
-		{controlclient.ErrUnavailable, diagnostic.ServerUnavailable},
-		{authorityclient.ErrRateLimited, diagnostic.RateLimited},
-		{controlclient.ErrDNSProofPending, diagnostic.DNSSetupPending},
-		{authorityclient.ErrUnauthenticated, diagnostic.AuthenticationRequired},
+		{clientcontrol.ErrUnavailable, diagnostic.ServerUnavailable},
+		{clientauthority.ErrRateLimited, diagnostic.RateLimited},
+		{clientcontrol.ErrDNSProofPending, diagnostic.DNSSetupPending},
+		{clientauthority.ErrUnauthenticated, diagnostic.AuthenticationRequired},
 	} {
 		classified := classifyCommandError(fmt.Errorf("request: %w", test.cause))
 		if code, ok := diagnostic.CodeOf(classified); !ok || code != test.code || !errors.Is(classified, test.cause) {

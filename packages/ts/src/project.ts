@@ -145,7 +145,7 @@ export type TnlProjectFromConfig<Config> = Config extends unknown
       >;
     } & {
       readonly [
-        Key in keyof Config as Key extends "publishers" | "workloads" ? Key : never
+        Key in keyof Config as Key extends "publisherGroups" | "workloads" ? Key : never
       ]: DeepReadonly<Config[Key]>;
     } & {
       readonly [Key in keyof Config as Key extends "oauth" ? Key : never]:

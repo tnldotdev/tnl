@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/demo"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/publisher/demo"
 )
 
 func TestPublishOutputNDJSONLifecycle(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.ready("https://demo.example", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.failed(&controlclient.RateLimitError{RetryAfter: time.Second}); err != nil {
+	if err := output.failed(&clientcontrol.RateLimitError{RetryAfter: time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.stopped(); err != nil {
@@ -322,8 +322,8 @@ func TestPublishOutputNDJSONAuthorityRetryMetadata(t *testing.T) {
 		err         error
 		wantRetryAt bool
 	}{
-		{name: "unavailable", err: authorityclient.ErrUnavailable},
-		{name: "rate limited", err: &authorityclient.RateLimitError{RetryAfter: time.Second}, wantRetryAt: true},
+		{name: "unavailable", err: clientauthority.ErrUnavailable},
+		{name: "rate limited", err: &clientauthority.RateLimitError{RetryAfter: time.Second}, wantRetryAt: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout bytes.Buffer

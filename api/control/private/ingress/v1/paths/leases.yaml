@@ -1,0 +1,62 @@
+paths:
+  /internal/v1/ingresses/register:
+    post:
+      operationId: registerIngress
+      summary: Register one ingress process run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/IngressRegistration"
+      responses:
+        "200":
+          description: Ingress lease created or renewed when the same registration is repeated
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/IngressLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/renew:
+    post:
+      operationId: renewIngress
+      summary: Renew a matching ingress lease
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/IngressRenewal"
+      responses:
+        "200":
+          description: Ingress lease renewed
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/IngressLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/drain:
+    post:
+      operationId: drainIngress
+      summary: Stop a matching ingress process from accepting new visitors
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/IngressDrainRequest"
+      responses:
+        "200":
+          description: Ingress drain recorded
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/IngressLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

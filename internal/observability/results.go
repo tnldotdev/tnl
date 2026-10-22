@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"go.opentelemetry.io/otel/trace"
 )
 

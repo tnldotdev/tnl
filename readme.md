@@ -252,7 +252,7 @@ server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
 `ecstatic-penguin` instead. Publisher certificate issuance requires DNS-01
 automation, including for exact-hostname certificates. Namespace wildcard plans
 can reuse DNS and certificates; pointing an exact hostname at ingress alone does
-not enable issuance. Managed service endpoints also require a ready team domain
+not enable issuance. service endpoints also require a ready team domain
 with DNS-01 automation.
 
 After deploying the `tnl` server, update your config with it:
@@ -274,7 +274,7 @@ control. Enrolled publishers pull only their group's assignments and report
 their observed revision and health. Starting `pnpm dev` still registers only
 the local listener; it does not apply production changes. Cloud capacity and
 task replacement belong to your infrastructure. The
-[Fargate templates](deploy/publishers/readme.md) show that boundary.
+[Fargate templates](deploy/publisher/fargate/readme.md) show that boundary.
 
 [Run your own server](https://tnl.dev/docs/self-hosting).
 

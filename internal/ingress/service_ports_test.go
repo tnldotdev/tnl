@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func TestIngressInventoryValidationAndOwnership(t *testing.T) {

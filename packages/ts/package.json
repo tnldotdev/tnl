@@ -71,8 +71,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/build-ts-bridges.ts && node ../../scripts/node-licenses.ts",
-    "clean": "node ../../scripts/clean-package.ts",
+    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/build/ts-bridges.ts && node ../../scripts/package/node-licenses.ts",
+    "clean": "node ../../scripts/build/clean-package.ts",
     "prepack": "pnpm run build"
   },
   "dependencies": {

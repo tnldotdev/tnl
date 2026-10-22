@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // VisitorSubject is the visitor principal, independent of publisher identity.
@@ -65,7 +65,7 @@ func (s VisitorSubject) Validate() error {
 // contract. transport adapters carry this proof without inventing device IDs.
 type VisitorConnectorClaim struct {
 	Subject    VisitorSubject `json:"subject"`
-	ServiceID  string         `json:"private_service_id"`
+	ServiceID  string         `json:"service_id"`
 	SessionID  string         `json:"connector_session_id"`
 	Credential string         `json:"session_credential"`
 	Nonce      []byte         `json:"nonce"`
@@ -73,7 +73,7 @@ type VisitorConnectorClaim struct {
 }
 
 func (c VisitorConnectorClaim) Digest() ([]byte, error) {
-	if c.Subject.Validate() != nil || !opaqueid.Valid(c.ServiceID, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(c.SessionID, opaqueid.PrivateConnectorSessionPrefix) || len(c.Nonce) != 32 || len(c.Credential) != 43 || !validCredential(c.Credential) {
+	if c.Subject.Validate() != nil || !opaqueid.Valid(c.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(c.SessionID, opaqueid.ConnectorSessionPrefix) || len(c.Nonce) != 32 || len(c.Credential) != 43 || !validCredential(c.Credential) {
 		return nil, errors.New("invalid visitor connector claim")
 	}
 	data, _ := json.Marshal([]any{"tnl-visitor-connector/v1", c.Subject, c.ServiceID, c.SessionID, c.Credential, c.Nonce})

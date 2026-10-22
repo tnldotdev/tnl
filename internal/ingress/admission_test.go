@@ -7,7 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 )
 
 func TestPublicURLConnectionClassUsesProcessCapacity(t *testing.T) {
@@ -55,7 +55,7 @@ func TestClientHelloCapacityAndTimeoutRelease(t *testing.T) {
 			done <- server.handle(connection, func() { t.Error("stalled ClientHello finished inspection") })
 		}()
 		synctest.Wait()
-		time.Sleep(router.ClientHelloReadTimeout)
+		time.Sleep(clienthello.ClientHelloReadTimeout)
 		synctest.Wait()
 		if err := <-done; err != nil {
 			t.Fatal(err)
@@ -88,7 +88,7 @@ func TestFailedHandoffReleasesCapacity(t *testing.T) {
 	defer b.Close()
 	for range 2 {
 		called := false
-		if server.handoff(a, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("127.0.0.1:443"), router.ClientHello{}, relayConnection,
+		if server.handoff(a, netip.MustParseAddrPort("127.0.0.1:40000"), netip.MustParseAddrPort("127.0.0.1:443"), clienthello.ClientHello{}, relayConnection,
 			func(net.Conn) bool { called = true; return false }) || !called {
 			t.Fatal("failed handoff retained a slot")
 		}

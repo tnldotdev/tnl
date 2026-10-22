@@ -87,8 +87,8 @@ const (
 	ServiceNotInstalled                   Reason = "TNL_CLIENT_SERVICE_NOT_INSTALLED"
 	InstalledPublisherSelectionMissing    Reason = "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING"
 	InstalledServiceIdentityUnavailable   Reason = "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE"
-	PrivatePublisherUnavailable           Reason = "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE"
-	LocalPrivateServiceUnavailable        Reason = "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE"
+	ServicePublisherUnavailable           Reason = "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE"
+	LocalServiceUnavailable               Reason = "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE"
 	InstalledTargetMissing                Reason = "TNL_CLIENT_INSTALLED_TARGET_MISSING"
 	InstalledJobAmbiguous                 Reason = "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS"
 	DetachedNotFound                      Reason = "TNL_CLIENT_DETACHED_NOT_FOUND"
@@ -203,7 +203,7 @@ const (
 
 var definitions = map[Reason]Definition{
 	WorkloadAssertionUnavailable:       {Class: Unauthenticated, Message: "the workload provider assertion is unavailable", Action: "check the selected workload's token file or provider acquisition callback", Retry: RetryAfterChange},
-	ConnectionTLSRejected:              {Class: Invalid, Message: "the native service TLS certificate could not be verified", Action: "check the managed service hostname and the client's server trust roots, then prepare connections again", Retry: RetryAfterChange},
+	ConnectionTLSRejected:              {Class: Invalid, Message: "the native service TLS certificate could not be verified", Action: "check the service hostname and the client's server trust roots, then prepare connections again", Retry: RetryAfterChange},
 	ConnectionCleanupFailed:            {Class: Unavailable, Message: "the native connection owner stopped with a cleanup failure", Action: "check the selected server's availability and revoke the workload session if it remains active", Retry: RetryAfterChange},
 	ConnectionPortInUse:                {Class: Conflict, Message: "the service's allocated loopback port is already in use", Action: "stop the process using that port and prepare connections again", Retry: RetryAfterChange},
 	ConnectionTeamBinding:              {Class: Invalid, Message: "the workload has no configured team selector", Action: "set team in project configuration and run tnl generate", Retry: RetryAfterChange},
@@ -323,7 +323,7 @@ var definitions = map[Reason]Definition{
 	},
 	PublisherSelectionInvalid: {
 		Class: Invalid, Message: "scoped publisher selection conflicts with publication options",
-		Action: "select one --enroll-key, --publisher, or --publisher-file; its grant selects the URL and team", Retry: RetryAfterChange,
+		Action: "select one --enroll-key, --publisher, or --publisher-credential-file; its grant selects the URL and team", Retry: RetryAfterChange,
 	},
 	PublisherGrantMismatch: {
 		Class: Invalid, Message: "the selected publisher grant does not match this publication",
@@ -439,12 +439,12 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "tnl could not determine the configured service's exact public hostname and team",
 		Action: "sign in to resolve the selected team and domain, or configure an exact tunnel.public_url and select its publisher explicitly", Retry: RetryAfterChange,
 	},
-	PrivatePublisherUnavailable: {
+	ServicePublisherUnavailable: {
 		Class: Unavailable, Message: "the private TCP publisher is not connected to the relay service yet",
 		Action: "wait for private publisher relay support before installing this service", Retry: RetryAfterChange,
 	},
-	LocalPrivateServiceUnavailable: {
-		Class: NotFound, Message: "the local private service is not available in this worktree",
+	LocalServiceUnavailable: {
+		Class: NotFound, Message: "the local service is not available in this worktree",
 		Action: "start the app or run tnl publish with the configured service key, check visitor access, then retry tnl connect", Retry: RetryAfterChange,
 	},
 	InstalledTargetMissing: {

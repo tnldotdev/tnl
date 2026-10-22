@@ -2,7 +2,7 @@
 
 Write for a developer trying to do something or understand a specific boundary.
 Lead with the result, show a command or example when useful, then link to more
-detail. The [README](README.md) is the model for public introductions.
+detail. The [readme](readme.md) is the model for public introductions.
 
 Use everyday words unless a technical term makes an important distinction;
 explain the term when the reader needs it. Name the component doing the work and
@@ -30,6 +30,10 @@ Public product, client, and operator docs live in the sibling `../tnl.dev`
 repository, under `apps/accounts/src/content/docs/`. The repository README and
 npm package README link there. Keep contributor, maintainer, and benchmark docs
 with this code. Update the relevant docs alongside behavior changes.
+
+Write maintainer docs only for reasons, rules, or setup that are hard to find in
+code or tests. Keep them short and plain, link to the source, and put work logs
+and check results in the PR.
 
 # canonical terms
 
@@ -61,16 +65,16 @@ mutation counters; public URL counters are publish run numbers.
 
 ## people and local processes
 
-| Term              | Definition                                                                                          |
-| ----------------- | --------------------------------------------------------------------------------------------------- |
-| **identity**      | A person or administrator known to one tnl server.                                                  |
-| **implementer**   | The person or AI coding agent working in the project directory.                                     |
-| **reviewer**      | A person using a share to visit a preview and optionally leave feedback.                            |
-| **publisher**     | The native local `tnl` process, or a `tnl publish` invocation, when its architectural role matters. |
-| **visitor**       | A browser or other client connecting to a public URL.                                               |
-| **local service** | The project's local HTTP application.                                                               |
-| **target**        | The HTTP or HTTPS origin the publisher uses to reach a service.                                     |
-| **tunnel**        | One registered app service's publication, or a `tnl publish` invocation, and its lifecycle.         |
+| Term              | Definition                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| **identity**      | A person or administrator known to one tnl server.                                          |
+| **implementer**   | The person or AI coding agent working in the project directory.                             |
+| **reviewer**      | A person using a share to visit a preview and optionally leave feedback.                    |
+| **publisher**     | A native `tnl` process serving public URLs or services through assigned relays.             |
+| **visitor**       | A browser or native client connecting to a public URL or service.                           |
+| **local service** | An application listener reached by the publisher.                                           |
+| **target**        | The destination the publisher dials, with protocol-specific target trust.                   |
+| **tunnel**        | One registered app service's publication, or a `tnl publish` invocation, and its lifecycle. |
 
 ## projects and client state
 
@@ -87,6 +91,16 @@ mutation counters; public URL counters are publish run numbers.
 | **local event cursor**      | A position in the app runtime's local event history; pass it to `tnl watch --after` to resume.                              |
 | **worktree label**          | A DNS-safe label derived from the project, checkout directory, and client state for use in default public URL hostnames.    |
 | **path mount**              | Serving one configured local service beneath a path on another service's public URL; the hostname's visitor policy applies. |
+
+## services
+
+Use **service** for a saved application service and **service run** for one active
+publication of it. A **publisher group** assigns services to enrolled publisher
+identities. Keep the group name, group ID, service name, service ID, and publisher
+identity ID distinct. A **service endpoint** contains its visitor hostname, port,
+and reachability; **service target TLS** describes publisher-to-target trust.
+Reachability (public or connector-only) and visitor access rules are independent.
+Services and public URLs have separate records, credentials, and lifecycles.
 
 ## addresses and dns
 
@@ -161,7 +175,7 @@ not _inbox_, for the collection of threads.
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
 | **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
 | **publisher identity**              | A native publisher's signed identity, independent of a person's control session.                   |
-| **publisher grant**                 | A revocable permission for one saved public URL or an authorized HTTP namespace.                   |
+| **publisher grant**                 | Revocable permission for one saved public URL, service, or authorized public URL namespace.        |
 | **publisher enrollment key**        | A one-use bootstrap secret for installing a publisher identity's signing key.                      |
 | **publisher credential file**       | A private, portable JSON file containing one publisher identity's key and exact grant.             |
 
@@ -243,37 +257,41 @@ not _inbox_, for the collection of threads.
 
 ## machine field names
 
-| Concept                         | Field                             |
-| ------------------------------- | --------------------------------- |
-| Public URL ID                   | `public_url_id`                   |
-| Preview ID                      | `preview_id`                      |
-| Share ID                        | `share_id`                        |
-| Feedback ID                     | `feedback_id`                     |
-| Publish run ID                  | `publish_run_id`                  |
-| Publish run number              | `publish_run_number`              |
-| Publish run token               | `publish_run_token`               |
-| Policy revision                 | `policy_revision`                 |
-| Public URL mutation revision    | `public_url_mutation_revision`    |
-| Publisher connection ID         | `publisher_connection_id`         |
-| Connection slot                 | `connection_slot`                 |
-| Connection assignment revision  | `connection_assignment_revision`  |
-| Publisher connection credential | `publisher_connection_credential` |
-| Visitor connection ID           | `visitor_connection_id`           |
-| Ingress identity                | `ingress_id`                      |
-| Ingress process run ID          | `ingress_run_id`                  |
-| Ingress lease revision          | `ingress_lease_revision`          |
-| Relay service identity          | `relay_service_id`                |
-| Relay identity                  | `relay_id`                        |
-| Relay process run ID            | `relay_run_id`                    |
-| Relay lease revision            | `relay_lease_revision`            |
-| Lease expiration                | `lease_expires_at`                |
-| Relay address                   | `relay_address`                   |
-| Internal relay address          | `internal_relay_address`          |
-| Ingress routing-table revision  | `routing_table_revision`          |
-| Recovery episode ID             | `recovery_episode_id`             |
-| DNS authority reference         | `dns_authority_reference`         |
-| Transport                       | `transport`                       |
-| Cluster secret                  | `cluster_secret`                  |
+| Concept                         | Field                                                |
+| ------------------------------- | ---------------------------------------------------- |
+| Public URL ID                   | `public_url_id`                                      |
+| Preview ID                      | `preview_id`                                         |
+| Share ID                        | `share_id`                                           |
+| Feedback ID                     | `feedback_id`                                        |
+| Publish run ID                  | `publish_run_id`                                     |
+| Publish run number              | `publish_run_number`                                 |
+| Publish run token               | `publish_run_token`                                  |
+| Service ID                      | `service_id`                                         |
+| Service run ID                  | `service_run_id`                                     |
+| Service run number              | `run_number` (`service_run_number` in mixed records) |
+| Service run token               | `run_token`                                          |
+| Policy revision                 | `policy_revision`                                    |
+| Public URL mutation revision    | `public_url_mutation_revision`                       |
+| Publisher connection ID         | `publisher_connection_id`                            |
+| Connection slot                 | `connection_slot`                                    |
+| Connection assignment revision  | `connection_assignment_revision`                     |
+| Publisher connection credential | `publisher_connection_credential`                    |
+| Visitor connection ID           | `visitor_connection_id`                              |
+| Ingress identity                | `ingress_id`                                         |
+| Ingress process run ID          | `ingress_run_id`                                     |
+| Ingress lease revision          | `ingress_lease_revision`                             |
+| Relay service identity          | `relay_service_id`                                   |
+| Relay identity                  | `relay_id`                                           |
+| Relay process run ID            | `relay_run_id`                                       |
+| Relay lease revision            | `relay_lease_revision`                               |
+| Lease expiration                | `lease_expires_at`                                   |
+| Relay address                   | `relay_address`                                      |
+| Internal relay address          | `internal_relay_address`                             |
+| Ingress routing-table revision  | `routing_table_revision`                             |
+| Recovery episode ID             | `recovery_episode_id`                                |
+| DNS authority reference         | `dns_authority_reference`                            |
+| Transport                       | `transport`                                          |
+| Cluster secret                  | `cluster_secret`                                     |
 
 # cli human output
 
@@ -314,14 +332,82 @@ for runtime invariants, trust boundaries, and package/API ownership. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
-- The seven HTTP OpenAPI sources are `api/control/v1/openapi.yaml`, `api/authority/v1/openapi.yaml`, `api/ingress/v1/openapi.yaml`, `api/relay/v1/openapi.yaml`, `api/public-url-usage/v1/openapi.yaml`, `api/publisher/v1/openapi.yaml`, and `api/local-publisher/v1/openapi.yaml`. They generate committed models, clients, and server interfaces under `pkg/api/*`. The local publisher contract is private to native app/CLI registration, not a server API; the publisher contract also generates browser validators under `internal/publisherapi`. Reference control schemas where the wire shapes are identical. `api/shared/v1/components.yaml` may contain only byte-identical referenced schemas and does not generate a Go package.
+- The seven HTTP OpenAPI contracts under `api/{control,publisher,integrations}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
-- PostgreSQL migrations and queries under `internal/controlstate` generate the committed `controlstatedb` package. Client SQLite sources under `internal/clientstate` generate `clientstatedb`. Edit sources, not generated Go files, then run `task generate` and `task format`.
+- PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` orders Go API generation, browser validators, then the remaining Go directives; `task format` formats the resulting tree.
 - `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
+
+## place implementation with its owner
+
+Start with an operation-focused file in the package that owns the behavior.
+Create a package only for a concrete lifecycle or authority boundary with a useful
+consumer. Explain its owner, allowed dependency direction, and why the existing
+owner cannot be reused. File size or a new directory name is not an ownership
+reason. Move supporting types, fixtures, assertions, and callers with the real
+implementation.
+
+| Tree                                                                | Responsibility                                                                                                                                                      |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/{tnl,tnld,tnlbench}`                                           | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
+| `internal/publisher`                                                | Publication runtime; children own app state, local process/API, invocation operations, identity, groups, targets, and browser assets                                |
+| `internal/connector`                                                | Visitor-side selection, native owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                      |
+| `internal/control`                                                  | Serving APIs, PostgreSQL state, authorization, certificates, DNS, OIDC, delivery, and maintenance                                                                   |
+| `internal/{ingress,relay,daemon}`                                   | Visitor acceptance, publisher streams, and server process composition, respectively                                                                                 |
+| `internal/client`                                                   | Shared auth/state/team selection, project evaluation/resolution/init/generation, and installed service jobs                                                         |
+| `internal/config`                                                   | Static project configuration types, validation, and schema; `client/project` evaluates selected configuration, `daemon/config` resolves operational server settings |
+| `internal/{transport,policy,security,naming,failure,observability}` | Focused mechanics and validated shared values; no command or daemon startup                                                                                         |
+| `packages/{ts,py}`, `connect`                                       | SDK bindings and the independently built GitHub Action                                                                                                              |
+| `tasks`, `scripts`, `development`, `deploy`, `tests/integration`    | Task implementations, owned tooling, contributor stack, deployment templates, and black-box suites/fixtures                                                         |
+
+Commands compose operations, operations compose owned runtimes/state, and those
+owners depend on focused shared leaves and public contracts. Directory nesting
+does not make a parent a shared helper: a child must not import a parent
+orchestrator for convenience. Put a validated value or consumer-owned interface
+at the smallest boundary, or compose it above both users. For example,
+`publisher/local` composes `app`, `localapi`, and `invocation`; `localapi` does not
+call back into the process owner. Connector `stream` does not import connector
+root operations. Control state never imports HTTP handlers; ingress and relay
+never import control state.
+
+Classify by lifecycle and authority, not executable: `tnl publish` is publisher
+work, `tnl connect` is connector work, `tnl apply` sends a control mutation, and
+`tnld` composes server roles. A single native process may compose both publisher
+and connector without merging their capabilities. The public SDK exposes a
+prepared publisher identity without its internal control client or signing key.
+
+Use these practical boundaries when placing a change:
+
+| Change                                 | Owner and boundary                                                                                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Replace an app registration            | `internal/publisher/app` cancels and joins the old publication before replacement; `publisher/local` composes the process and API                                                                |
+| Renew a native connection owner        | `internal/connector/runtime` owns the renewal loop and fixed-expiry fence; connector operations provide the backend and join its work                                                            |
+| Authorize certificate issuance         | `internal/control/state` checks the current run, publisher grant, and certificate plan; certificate workers execute approved work                                                                |
+| Retry a visitor connection             | `internal/ingress` chooses another eligible relay only before sending the first visitor byte                                                                                                     |
+| Claim a publisher connection           | `internal/relay` owns local reservation, current lease/claim validation, connected-session lifetime, and release; control state authorizes the durable claim                                     |
+| Change multiplexed stream mechanics    | `internal/transport/muxsession` owns QUIC/yamux mechanics without placement or visitor policy                                                                                                    |
+| Persist protected certificate material | `internal/client/state` owns keys, pending CSRs, locks, and atomic persistence; publisher TLS files use the private identity directory, while service-client keys use the local secret protector |
+| Change project configuration syntax    | `internal/config` owns types and validation; `client/project` evaluates the selected source and `client/project/resolve` combines it with selected state/server/team facts                       |
+| Change CLI framing                     | `internal/clioutput` owns frame syntax, wrapping, width, and escaping; commands supply semantic facts                                                                                            |
+
+Shared client operations are implemented, not command-private helpers:
+`client/team` owns session/team/domain selection, `client/project/resolve` owns
+declarations and browser-safe metadata resolution, `client/project/init` owns
+planning/install/edit sequencing, and `client/project/meta` owns portable artifact
+generation. Commands supply arguments, prompts, browser opening, and presentation.
+Process owners such as `publisher/local`, connector owner operations, and
+`daemon` own startup, supervision, bounded drain, cancellation, and joins. A
+presentation callback does not transfer that lifetime to a command.
+
+Keep one authority for each wire shape and validated domain value. Reuse the
+defining source or a genuinely identical shared wire schema; do not copy models,
+policy checks, or lifecycle engines to avoid an import. Move the implementation
+and its support together instead of leaving forwarding facades. Before combining
+or retiring suites, preserve every unique assertion at the lowest sufficient
+owner and retain its Task selector, tier, fixtures, and execution evidence.
 
 # development workflow
 
-When adding or changing errors, follow [failure boundaries](docs/maintainers/errors.md).
+When adding or changing errors, follow [failure boundaries](docs/maintainers/development/errors.md).
 
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
@@ -334,7 +420,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - PostgreSQL-backed targets must create, use, and remove digest-pinned disposable PostgreSQL themselves.
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
-- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
+- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/client/project/loader.ts`. See the source/generator/output table in [contributing](contributing.md#edit-generated-sources); disposable SDK `dist` output is separate from committed generated source.
 - Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned native socket protocol shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
 
 # tests and benchmarks
@@ -345,6 +431,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
 - Local and deployed benchmarks share publisher, visitor, and measurement implementations.
 - Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
+- Colocate Go unit and white-box integration tests with their implementation, including daemon composition proofs. Put built-CLI black-box suites in `tests/integration/<boundary>` and shared subprocess/Compose assets in `tests/integration/fixtures`. Keep package-local `testdata` with its owner and shared helpers in test-only `internal/testutil` children. SDK suites and fixtures live under `packages/ts/test`; Python remains under `packages/py`.
 
 # operational safety and releases
 

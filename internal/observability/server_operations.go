@@ -59,7 +59,7 @@ func AuthenticatedServerScope(ctx context.Context, identity Identity, fields Fie
 type certificateKindKey struct{}
 
 func WithCertificateKind(ctx context.Context, kind string) context.Context {
-	if kind != "public_url" && kind != "managed_service" && kind != "relay" {
+	if kind != "public_url" && kind != "service" && kind != "relay" {
 		return ctx
 	}
 	trace.SpanFromContext(ctx).SetAttributes(CertificateKind.String(kind))
@@ -67,8 +67,8 @@ func WithCertificateKind(ctx context.Context, kind string) context.Context {
 }
 
 func CertificateDNSKind(ctx context.Context) string {
-	if kind, _ := ctx.Value(certificateKindKey{}).(string); kind == "managed_service" {
-		return "managed_service_challenge"
+	if kind, _ := ctx.Value(certificateKindKey{}).(string); kind == "service" {
+		return "service_challenge"
 	}
 	return "public_url_challenge"
 }
@@ -88,7 +88,7 @@ func ObservePublisherRuntime(ctx context.Context, action, result string, elapsed
 	if reason != "" {
 		attrs = append(attrs, Reason.String(reason))
 	}
-	m.publisherRuntime.instrument.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
+	m.publisherruntime.instrument.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
 }
 
 func (m *Metrics) completedResult(ctx context.Context, name operationName, outcome string, elapsed time.Duration) (context.Context, func()) {

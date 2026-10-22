@@ -8,7 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type urlAvailableCommand struct {
@@ -25,7 +25,7 @@ func runURLAvailable(ctx context.Context, f urlAvailableCommand, o, d io.Writer)
 	items := []controlv1.AvailablePublicURL{}
 	cursor := ""
 	for {
-		page, err := s.authenticated.Control.ListAvailablePublicURLs(ctx, "", cursor)
+		page, err := s.Authenticated().Control.ListAvailablePublicURLs(ctx, "", cursor)
 		if err != nil {
 			return err
 		}

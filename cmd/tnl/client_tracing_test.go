@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/connectionruntime"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -51,7 +51,7 @@ func TestClientTracingExporterDownDoesNotFailCLIAndFlushIsBounded(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory, err := connectionruntime.NewDirectory(parent)
+	directory, err := connectorruntime.NewDirectory(parent)
 	if err != nil {
 		t.Fatal(err)
 	}

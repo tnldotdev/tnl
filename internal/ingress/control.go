@@ -14,9 +14,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/operatorlog"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 const routingTablePageSize = 1000

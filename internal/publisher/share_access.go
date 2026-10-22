@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const (

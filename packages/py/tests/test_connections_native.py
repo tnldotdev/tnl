@@ -43,7 +43,7 @@ def test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options
                 selector.register(process.stdout, selectors.EVENT_READ)
                 assert selector.select(10)
             status = json.loads(process.stdout.readline())
-            monkeypatch.setenv("TNL_CONNECTION_HANDLE", status["private_handle"])
+            monkeypatch.setenv("TNL_CONNECTION_HANDLE", status["connection_handle"])
             handle = tnl.connect("database", directory=tmp_path)
             db = handle.snapshot()
             assert isinstance(db, tnl.PostgresConnection) and db.ca is not None
@@ -145,8 +145,8 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
                 "state",
                 "pid",
                 "expires_at",
-                "public_runtime",
-                "private_handle",
+                "project_runtime",
+                "connection_handle",
                 "executable",
             },
         )
@@ -217,7 +217,7 @@ def test_prepared_native_cli_and_python_verified_tls(
                 assert selector.select(10), "native owner did not become ready"
             value = cast(dict[str, object], json.loads(process.stdout.readline()))
             assert value["schema"] == 1 and value["state"] == "ready"
-            handle_path = value["private_handle"]
+            handle_path = value["connection_handle"]
             assert isinstance(handle_path, str)
             assert Path(handle_path).stat().st_mode & 0o777 == 0o600
             assert Path(handle_path).parent.stat().st_mode & 0o777 == 0o700

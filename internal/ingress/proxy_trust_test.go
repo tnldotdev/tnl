@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
 func TestUntrustedPeerCannotSupplyOriginalDestination(t *testing.T) {

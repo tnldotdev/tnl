@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 type TrafficLimits = trafficlimits.Limits

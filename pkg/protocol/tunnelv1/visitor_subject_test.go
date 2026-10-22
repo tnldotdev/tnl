@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func TestVisitorSubjectVariants(t *testing.T) {
@@ -41,7 +41,7 @@ func TestVisitorSubjectRejectsMixedWireVariants(t *testing.T) {
 		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","identity_id":""}`,
 		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","device_id":null}`,
 		`{"kind":"human_device","identity_id":"ident_aaaaaaaaaaaaaaaaaaaaaa","device_id":"vdev_aaaaaaaaaaaaaaaaaaaaaa","workload_session_id":""}`,
-		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","publisher_id":"pub_aaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","publisher_identity_id":"pub_aaaaaaaaaaaaaaaaaaaaaa"}`,
 		`{"kind":"workload_session","workload_session_id":"wls_` + strings.Repeat("a", 10000) + `"}`,
 	} {
 		var subject VisitorSubject
@@ -60,25 +60,25 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 		subject VisitorSubject
 		golden  string
 	}{
-		{VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, `{"session_id":"pcs_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"human_device","identity_id":"ident_aaaaaaaaaaaaaaaaaaaaaa","device_id":"vdev_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
-		{VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: testOpaqueID("wls_")}, `{"session_id":"pcs_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
+		{VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, `{"session_id":"cns_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"human_device","identity_id":"ident_aaaaaaaaaaaaaaaaaaaaaa","device_id":"vdev_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
+		{VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: testOpaqueID("wls_")}, `{"session_id":"cns_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
 	} {
 		t.Run(test.subject.Kind, func(t *testing.T) {
-			hello := PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: test.subject, Nonce: bytes.Repeat([]byte{1}, 32)}
+			hello := ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: testOpaqueID(opaqueid.ServicePrefix), SessionID: testOpaqueID(opaqueid.ConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: test.subject, Nonce: bytes.Repeat([]byte{1}, 32)}
 			digest, err := hello.Claim().Digest()
 			if err != nil {
 				t.Fatal(err)
 			}
 			hello.Signature = ed25519.Sign(key, digest)
 			var frame bytes.Buffer
-			if err = WritePrivateConnectorSessionHello(&frame, hello); err != nil {
+			if err = WriteConnectorSessionHello(&frame, hello); err != nil {
 				t.Fatal(err)
 			}
 			wire := bytes.Clone(frame.Bytes())
-			if len(wire)-4 > MaxPrivateHeaderBytes || int(binary.BigEndian.Uint32(wire[:4])) != len(wire)-4 {
+			if len(wire)-4 > MaxServiceHeaderBytes || int(binary.BigEndian.Uint32(wire[:4])) != len(wire)-4 {
 				t.Fatal("hello framing bound")
 			}
-			decoded, err := ReadPrivateConnectorSessionHello(&frame)
+			decoded, err := ReadConnectorSessionHello(&frame)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 			}
 			for _, mutate := range []func(*VisitorConnectorClaim){func(c *VisitorConnectorClaim) {
 				c.Subject = VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: "wls_bbbbbbbbbbbbbbbbbbbbbb"}
-			}, func(c *VisitorConnectorClaim) { c.Credential = strings.Repeat("b", 43) }, func(c *VisitorConnectorClaim) { c.SessionID = "pcs_bbbbbbbbbbbbbbbbbbbbbb" }, func(c *VisitorConnectorClaim) { c.Nonce = bytes.Repeat([]byte{2}, 32) }} {
+			}, func(c *VisitorConnectorClaim) { c.Credential = strings.Repeat("b", 43) }, func(c *VisitorConnectorClaim) { c.SessionID = "cns_bbbbbbbbbbbbbbbbbbbbbb" }, func(c *VisitorConnectorClaim) { c.Nonce = bytes.Repeat([]byte{2}, 32) }} {
 				claim := decoded.Claim()
 				mutate(&claim)
 				changed, err := claim.Digest()
@@ -101,11 +101,11 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 			if err != nil || string(data) != test.golden {
 				t.Fatalf("admission golden: %s %v", data, err)
 			}
-			accepted := PrivateConnectorSessionAccepted{ProtocolVersion: 1, Kind: "private_connector_session_accepted", PrivateServiceID: hello.PrivateServiceID, SessionID: hello.SessionID, Subject: test.subject, SourceIP: "192.0.2.1", ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
-			if err := WritePrivateConnectorSessionAccepted(&frame, accepted); err != nil {
+			accepted := ConnectorSessionAccepted{ProtocolVersion: 1, Kind: "connector_session_accepted", ServiceID: hello.ServiceID, SessionID: hello.SessionID, Subject: test.subject, SourceIP: "192.0.2.1", ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
+			if err := WriteConnectorSessionAccepted(&frame, accepted); err != nil {
 				t.Fatal(err)
 			}
-			if got, err := ReadPrivateConnectorSessionAccepted(&frame); err != nil || got != accepted {
+			if got, err := ReadConnectorSessionAccepted(&frame); err != nil || got != accepted {
 				t.Fatal("accepted subject", err)
 			}
 			// removed human fields are never an alternative to the tagged subject.
@@ -114,18 +114,18 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 				frame.Reset()
 				_ = binary.Write(&frame, binary.BigEndian, uint32(len(body)))
 				frame.Write(body)
-				if _, err := ReadPrivateConnectorSessionHello(&frame); err == nil {
+				if _, err := ReadConnectorSessionHello(&frame); err == nil {
 					t.Fatal("legacy field accepted")
 				}
 			}
-			hello.Subject.WorkloadSessionID = strings.Repeat("a", MaxPrivateHeaderBytes)
+			hello.Subject.WorkloadSessionID = strings.Repeat("a", MaxServiceHeaderBytes)
 			frame.Reset()
-			if err := WritePrivateConnectorSessionHello(&frame, hello); err == nil || frame.Len() != 0 {
+			if err := WriteConnectorSessionHello(&frame, hello); err == nil || frame.Len() != 0 {
 				t.Fatal("unbounded subject wrote bytes")
 			}
 			frame.Reset()
-			_ = binary.Write(&frame, binary.BigEndian, uint32(MaxPrivateHeaderBytes+1))
-			if _, err := ReadPrivateConnectorSessionHello(&frame); err == nil {
+			_ = binary.Write(&frame, binary.BigEndian, uint32(MaxServiceHeaderBytes+1))
+			if _, err := ReadConnectorSessionHello(&frame); err == nil {
 				t.Fatal("unbounded frame accepted")
 			}
 		})

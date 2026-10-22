@@ -7,9 +7,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {

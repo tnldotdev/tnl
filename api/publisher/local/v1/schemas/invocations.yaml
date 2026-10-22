@@ -1,0 +1,40 @@
+schemas:
+  Registration:
+    type: object
+    additionalProperties: false
+    required: [version, registration_id, owner]
+    properties:
+      version: { type: integer, enum: [1] }
+      registration_id: { type: string, maxLength: 128, x-go-name: RegistrationID }
+      owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      target: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+  Lease:
+    type: object
+    additionalProperties: false
+    required: [service, owner, pid, configuration_digest]
+    properties:
+      service: { type: string, maxLength: 63 }
+      owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      pid: { type: integer, minimum: 1 }
+      configuration_digest:
+        type: string
+        pattern: "^[a-f0-9]{64}$"
+        description: Digest of the complete selected native project snapshot, including configuration provenance and resolved server/team selection. The owner rejects another snapshot before reserving a service.
+  Invocation:
+    type: object
+    additionalProperties: false
+    required: [version, invocation_id, owner, pid, target]
+    properties:
+      version: { type: integer, enum: [1] }
+      invocation_id: { type: string, maxLength: 128 }
+      owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      pid: { type: integer, minimum: 1 }
+      target: { type: string, maxLength: 4096 }
+      server_url: { type: string, maxLength: 4096 }
+      publisher_identity_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
+      publisher_credential_file:
+        { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+      access_mode: { type: string, enum: [restricted, anonymous] }
+      ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
+      limits:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublisherApplicationLimits"

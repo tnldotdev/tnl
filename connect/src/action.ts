@@ -244,9 +244,9 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       onResponse: async (value) => {
         // retain a usable cleanup capability before checking readiness, even
         // when the starter dies after delivering a complete response.
-        const candidate = z.object({ private_handle: z.string() }).safeParse(value);
-        if (candidate.success && inside(session, candidate.data.private_handle)) {
-          owned.handle = candidate.data.private_handle;
+        const candidate = z.object({ connection_handle: z.string() }).safeParse(value);
+        if (candidate.success && inside(session, candidate.data.connection_handle)) {
+          owned.handle = candidate.data.connection_handle;
           await save();
         }
       },
@@ -255,28 +255,28 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     if (
       !ready.success ||
       ready.data.executable !== binary ||
-      owned.handle !== ready.data.private_handle ||
+      owned.handle !== ready.data.connection_handle ||
       !Number.isFinite(Date.parse(ready.data.expires_at)) ||
       Date.parse(ready.data.expires_at) <= Date.now() ||
       Date.parse(ready.data.expires_at) > Date.now() + 6 * 60 * 60 * 1000 ||
-      Object.keys(ready.data.public_runtime.services).length !== context.services.length ||
-      context.services.some((key) => !Object.hasOwn(ready.data.public_runtime.services, key)) ||
+      Object.keys(ready.data.project_runtime.services).length !== context.services.length ||
+      context.services.some((key) => !Object.hasOwn(ready.data.project_runtime.services, key)) ||
       (ready.data.kubeconfig !== undefined && !inside(session, ready.data.kubeconfig))
     )
       throw new ActionError("TNL_ACTION_READY_INVALID", {
         cause: ready.success ? undefined : ready.error,
       });
     try {
-      await privatePath(session, ready.data.private_handle);
+      await privatePath(session, ready.data.connection_handle);
       if (ready.data.kubeconfig !== undefined) await privatePath(session, ready.data.kubeconfig);
     } catch (cause) {
       throw new ActionError("TNL_ACTION_READY_INVALID", { cause });
     }
     checkCancelled(options.signal);
     try {
-      core.setSecret(ready.data.private_handle);
-      core.exportVariable("TNL_CONNECTION_HANDLE", ready.data.private_handle);
-      core.exportVariable("TNL_PROJECT_RUNTIME", JSON.stringify(ready.data.public_runtime));
+      core.setSecret(ready.data.connection_handle);
+      core.exportVariable("TNL_CONNECTION_HANDLE", ready.data.connection_handle);
+      core.exportVariable("TNL_PROJECT_RUNTIME", JSON.stringify(ready.data.project_runtime));
       if (ready.data.kubeconfig !== undefined)
         core.exportVariable("KUBECONFIG", ready.data.kubeconfig);
       core.info("tnl connections ready");

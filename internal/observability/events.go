@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -98,7 +98,7 @@ func (m *Metrics) ObservePublisherExit(unexpected bool) {
 }
 
 func (m *Metrics) ObserveRelayTransfer(kind string, toPublisher, toVisitor int64, err error) {
-	if m == nil || kind != "public_url" && kind != "managed_service" {
+	if m == nil || kind != "public_url" && kind != "service" {
 		return
 	}
 	serviceKind := NormalizeServiceKind(kind)
@@ -148,7 +148,7 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
-	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" && kind != "service_queue" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "service" && kind != "service_queue" {
 		return
 	}
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
@@ -158,14 +158,14 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 }
 
 func (m *Metrics) ObserveCertificateOrder(kind, domain, plan string) {
-	if m == nil || kind != "public_url" && kind != "managed_service" || domain != "managed" && domain != "custom" || plan != "exact" && plan != "wildcard" {
+	if m == nil || kind != "public_url" && kind != "service" || domain != "managed" && domain != "custom" || plan != "exact" && plan != "wildcard" {
 		return
 	}
 	m.certificateOrders.With(CertificateKind.Dimension(kind), domainKind.Dimension(domain), certificatePlan.Dimension(plan)).Inc()
 }
 
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
-	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "service" {
 		return
 	}
 	switch state {
@@ -185,7 +185,7 @@ func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string,
 		return
 	}
 	switch kind {
-	case "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge":
+	case "authority", "public_url", "service", "public_url_challenge", "service_challenge", "relay_challenge":
 	default:
 		return
 	}
@@ -206,7 +206,7 @@ func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string,
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {
-	if m == nil || kind != "authority" && kind != "public_url" && kind != "managed_service" {
+	if m == nil || kind != "authority" && kind != "public_url" && kind != "service" {
 		return
 	}
 	switch state {

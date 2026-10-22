@@ -258,7 +258,7 @@
       "slug": "connection-tls-rejected",
       "class": "invalid",
       "message": "the native service TLS certificate could not be verified",
-      "action": "check the managed service hostname and the client's server trust roots, then prepare connections again"
+      "action": "check the service hostname and the client's server trust roots, then prepare connections again"
     },
     {
       "code": "TNL_CLIENT_CONNECTION_TRANSPORT_MISSING",
@@ -579,7 +579,7 @@
       "code": "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE",
       "slug": "local-private-service-unavailable",
       "class": "not_found",
-      "message": "the local private service is not available in this worktree",
+      "message": "the local service is not available in this worktree",
       "action": "start the app or run tnl publish with the configured service key, check visitor access, then retry tnl connect"
     },
     {
@@ -769,7 +769,7 @@
       "slug": "publisher-selection-invalid",
       "class": "invalid",
       "message": "scoped publisher selection conflicts with publication options",
-      "action": "select one --enroll-key, --publisher, or --publisher-file; its grant selects the URL and team"
+      "action": "select one --enroll-key, --publisher, or --publisher-credential-file; its grant selects the URL and team"
     },
     {
       "code": "TNL_CLIENT_SERVER_CONFLICT",

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 

@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
@@ -25,7 +25,7 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := projectConfiguration{Project: projectconfig.Project{Root: projectRoot, Config: config.TNL{Services: config.Services{"web": {}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Root: projectRoot, Config: config.TNL{Services: config.Services{"web": {}}}}}
 	for _, service := range []string{"", "web"} {
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Project: projectRoot, Service: service, Target: "http://127.0.0.1:3000", ServiceProtocol: controlv1.PublicURLServiceProtocol("http")})
 		if err != nil {
@@ -48,7 +48,7 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 	if len(snapshot.Publications) != 2 || len(snapshot.Services) != 1 || snapshot.Cursor == "" {
 		t.Fatalf("status=%s", output.String())
 	}
-	events, err := clientruntime.EventsAfterFrom(t.Context(), state, projectRoot, snapshot.Cursor)
+	events, err := publisherapp.EventsAfterFrom(t.Context(), state, projectRoot, snapshot.Cursor)
 	if err != nil || len(events) != 0 {
 		t.Fatalf("status cursor is not native exclusive cursor: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	project := t.TempDir()
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, Scope: "both", StateDir: root, Project: project, Configuration: projectConfiguration{Project: projectconfig.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, Scope: "both", StateDir: root, Project: project, Configuration: projectConfiguration{Project: clientproject.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var result statusResult
@@ -102,7 +102,7 @@ func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 func TestStatusDefaultsToBothAndKeepsLocalFactsWithAnUnreachableServer(t *testing.T) {
 	project := t.TempDir()
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, StateDir: filepath.Join(t.TempDir(), "state"), Project: project, Configuration: projectConfiguration{Project: projectconfig.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, StateDir: filepath.Join(t.TempDir(), "state"), Project: project, Configuration: projectConfiguration{Project: clientproject.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var result statusResult

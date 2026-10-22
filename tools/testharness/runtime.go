@@ -97,7 +97,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 		return err
 	}
 	project := "tnl-separated-load-" + hex.EncodeToString(random[:])
-	file := filepath.Join(root, "internal/tnldruntime/testdata/separated-load.compose.yaml")
+	file := filepath.Join(root, "tests/integration/fixtures/separated-stack/compose.yaml")
 	stack, err := compose.NewDockerComposeWith(compose.StackIdentifier(project), compose.WithStackFiles(file), compose.WithProfiles(profiles...))
 	if err != nil {
 		return fmt.Errorf("configure runtime topology: %w", err)

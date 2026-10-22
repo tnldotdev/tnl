@@ -8,13 +8,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type statusOutputMode string
@@ -38,7 +40,7 @@ type statusCommand struct {
 type statusLocal struct {
 	Available bool                       `json:"available"`
 	CheckedAt time.Time                  `json:"checked_at"`
-	Snapshot  clientruntime.Snapshot     `json:"snapshot"`
+	Snapshot  publisherapp.Snapshot      `json:"snapshot"`
 	Tunnels   clientstate.TunnelSnapshot `json:"tunnels"`
 }
 
@@ -103,8 +105,8 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	appSnapshot := clientruntime.Snapshot{Services: []clientruntime.Service{}}
-	var projectSnapshots []clientruntime.Snapshot
+	appSnapshot := publisherapp.Snapshot{Services: []publisherapp.Service{}}
+	var projectSnapshots []publisherapp.Snapshot
 	if !flags.All {
 		project, resolveErr := flags.Configuration, error(nil)
 		if project.Root == "" {
@@ -116,14 +118,14 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				return err
 			}
 		} else {
-			appSnapshot, err = clientruntime.ReadSnapshotFrom(ctx, state, flags.Project)
+			appSnapshot, err = publisherapp.ReadSnapshotFrom(ctx, state, flags.Project)
 			if err != nil {
 				return err
 			}
 			checkAppSnapshotOwner(ctx, state, &appSnapshot)
 		}
 	} else {
-		projects, err := clientruntime.ListSnapshotsFrom(ctx, state)
+		projects, err := publisherapp.ListSnapshotsFrom(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -155,7 +157,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				}
 			}
 			if !found {
-				local, readErr := clientruntime.ReadSnapshotFrom(ctx, state, tunnel.Project)
+				local, readErr := publisherapp.ReadSnapshotFrom(ctx, state, tunnel.Project)
 				if readErr != nil {
 					return readErr
 				}
@@ -284,7 +286,7 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	auth, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: token})
+	auth, err := auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token})
 	if err != nil {
 		result.AppliedReason = "control API or signed-in session unavailable"
 		return
@@ -299,23 +301,23 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 		result.AppliedReason = "client state unavailable"
 		return
 	}
-	team, err := projectTeamForServer(server, project.Config.Server, project.Config.Team)
+	team, err := resolve.TeamForServer(server, project.Config.Server, project.Config.Team)
 	if err != nil {
 		result.AppliedReason = "project team selection unavailable"
 		return
 	}
-	session := &teamSession{store: profile, authenticated: auth, api: auth.Authority, identity: identity, projectTeam: team}
-	current, err := session.current(ctx)
+	session := clientteam.NewSession(nil, profile, auth, identity, clientteam.Options{ProjectTeam: team})
+	current, err := session.Current(ctx)
 	if err != nil {
 		result.AppliedReason = "select a project team"
 		return
 	}
-	applied, err := auth.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	applied, err := auth.Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
 	if err != nil {
 		result.AppliedReason = "not applied or unavailable; run tnl apply"
 		return
 	}
-	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.team.Id {
+	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.Team().Id {
 		result.AppliedReason = "server returned another project source"
 		return
 	}
@@ -350,7 +352,7 @@ func readStatusServer(ctx context.Context, state *clientstate.Database, server, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	auth, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: token})
+	auth, err := auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token})
 	if err != nil {
 		result.Reason = "control API or signed-in session unavailable"
 		return result
@@ -398,7 +400,7 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	worktree, err := projectconfig.ResolveWorktree(ctx, cwd)
+	worktree, err := clientproject.ResolveWorktree(ctx, cwd)
 	if err != nil {
 		return "", err
 	}

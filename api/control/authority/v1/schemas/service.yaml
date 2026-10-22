@@ -1,0 +1,32 @@
+schemas:
+  ServiceIdentity:
+    type: object
+    additionalProperties: false
+    required: [subject, display_name]
+    properties:
+      subject:
+        type: string
+        minLength: 1
+        maxLength: 256
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 256
+      verified_email:
+        type: string
+        format: email
+        maxLength: 320
+  ServiceInvitationCredential:
+    $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceInvitationCredential"
+  ServiceInvitationPreview:
+    type: object
+    additionalProperties: false
+    required: [service_id, team_id, name, protocol, expires_at]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { type: string }
+      protocol: { type: string }
+      expires_at: { type: string, format: date-time }
+  ServiceID:
+    $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceID"

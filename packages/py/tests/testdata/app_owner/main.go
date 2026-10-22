@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/localpublisher"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/localapi"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func run() error {
 	if *invocations {
 		return serveInvocations()
 	}
-	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "member.example", Services: map[string]projectmeta.Service{}}
+	metadata := meta.Metadata{Version: meta.Version, Namespace: "member.example", Services: map[string]meta.Service{}}
 	for _, entry := range []struct {
 		name, protocol string
 		port           int
@@ -55,21 +55,21 @@ func run() error {
 		if *omit && entry.name == "web" {
 			continue
 		}
-		service, err := projectmeta.NewEndpoint(metadata.Namespace, entry.name+"."+metadata.Namespace, entry.protocol, entry.port, entry.public)
+		service, err := meta.NewEndpoint(metadata.Namespace, entry.name+"."+metadata.Namespace, entry.protocol, entry.port, entry.public)
 		if err != nil {
 			return err
 		}
 		metadata.Services[entry.name] = service
 	}
 	if service, found := metadata.Services["web"]; found {
-		service.Paths = map[string]projectmeta.Path{"/api": {Service: "api", URL: service.URL + "/api", StripPrefix: true}}
+		service.Paths = map[string]meta.Path{"/api": {Service: "api", URL: service.URL + "/api", StripPrefix: true}}
 		metadata.Services["web"] = service
 	}
 	if err := metadata.Validate(); err != nil {
 		return err
 	}
 	selected := metadata.Services["web"]
-	assignment := privateprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	if *metadataOnly {
 		return json.NewEncoder(os.Stdout).Encode(assignment)
 	}
@@ -87,7 +87,7 @@ func run() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := clientruntime.New(ctx, root, database, []clientruntime.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ clientruntime.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -100,18 +100,18 @@ func run() error {
 		return err
 	}
 	defer listener.Close()
-	capabilities, err := privateprotocol.NewCapabilities("http://" + listener.Addr().String())
+	capabilities, err := publisherprotocol.NewCapabilities("http://" + listener.Addr().String())
 	if err != nil {
 		return err
 	}
 	name := "web"
-	endpoint, err := capabilities.Issue(privateprotocol.CapabilityRequest{Scope: "app", Service: &name})
+	endpoint, err := capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "app", Service: &name})
 	if err != nil {
 		return err
 	}
-	boundary := &localpublisher.Server{Capabilities: capabilities, Manager: manager, Database: database, Project: root, Prepare: func(_ context.Context, request privateprotocol.Prepare) (privateprotocol.Assignment, error) {
-		if request.Directory != root || request.Service != name || request.Framework != privateprotocol.FrameworkPython {
-			return privateprotocol.Assignment{}, errors.New("unexpected fixture preparation")
+	boundary := &localapi.Server{Capabilities: capabilities, Manager: manager, Database: database, Project: root, Prepare: func(_ context.Context, request publisherprotocol.Prepare) (publisherprotocol.Assignment, error) {
+		if request.Directory != root || request.Service != name || request.Framework != publisherprotocol.FrameworkPython {
+			return publisherprotocol.Assignment{}, errors.New("unexpected fixture preparation")
 		}
 		value := assignment
 		id, err := manager.Reserve(name, request.Owner, request.PID, selected.URL)

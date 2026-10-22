@@ -11,8 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/streamcopy"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -101,12 +101,12 @@ func TestPendingPromotionAcceptsCurrentFullRelay(t *testing.T) {
 	}
 }
 
-type stalledPrivateForwarder struct {
-	alternate  PrivateForwarder
+type stalledServiceForwarder struct {
+	alternate  ServiceForwarder
 	stallProxy bool
 }
 
-func (f stalledPrivateForwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServiceRelay, header tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
+func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
 	if relay.ConnectionSlot == 0 {
 		if f.stallProxy {
 			connection, peer := net.Pipe()
@@ -119,12 +119,12 @@ func (f stalledPrivateForwarder) OpenPrivate(ctx context.Context, relay ingressv
 	return f.alternate.OpenPrivate(ctx, relay, header)
 }
 
-func TestPrivateConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
+func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	for _, proxy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
 			p, control, forwarder, roots, _, _ := privateTestSetup(t)
 			p.config.PendingTimeout = 600 * time.Millisecond
-			p.config.Forwarder = stalledPrivateForwarder{alternate: forwarder, stallProxy: proxy}
+			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			transport, stop := privateTestConnect(t, p, control, roots)
 			defer stop()
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -135,10 +135,10 @@ func TestPrivateConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			}
 			defer stream.Close()
 			_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
-			if err := tunnelv1.WritePrivateVisitorEntry(stream, privateEntry(control)); err != nil {
+			if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := tunnelv1.ReadPrivateVisitorAccepted(stream); err != nil {
+			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
 				t.Fatalf("alternate could not accept after stalled preferred relay: %v", err)
 			}
 			if _, err := stream.Write([]byte("ping")); err != nil {
@@ -156,7 +156,7 @@ type directControlFixture struct{ control *privateControlFixture }
 
 func (f directControlFixture) AdmitDirectServiceVisitor(_ context.Context, _ string, claim ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
 	c := f.control
-	return ingressv1.DirectServiceVisitorAdmission{PrivateServiceId: c.service, PrivateRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: *c.projection.ConnectedRelays}, nil
+	return ingressv1.DirectServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: *c.projection.ConnectedRelays}, nil
 }
 func (directControlFixture) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
 	return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
@@ -174,7 +174,7 @@ func TestDirectVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			p, control, forwarder, _, _, _ := privateTestSetup(t)
 			p.config.PendingTimeout = 600 * time.Millisecond
 			p.config.DirectControl = directControlFixture{control}
-			p.config.Forwarder = stalledPrivateForwarder{alternate: forwarder, stallProxy: proxy}
+			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			connection, visitor := net.Pipe()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

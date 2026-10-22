@@ -9,12 +9,12 @@
     "types": ["node", "react", "react-dom"]
   },
   "files": [
-    "config-type-test.ts",
-    "sdk-type-test.ts",
-    "next-type-test.ts",
-    "runtime-type-test.ts",
-    "vite-type-test.ts",
-    "workload-type-test.ts",
-    "workload-cjs-type-test.cts"
+    "test/types/config-type-test.ts",
+    "test/types/sdk-type-test.ts",
+    "test/types/next-type-test.ts",
+    "test/types/runtime-type-test.ts",
+    "test/types/vite-type-test.ts",
+    "test/types/workload-type-test.ts",
+    "test/types/workload-cjs-type-test.cts"
   ]
 }

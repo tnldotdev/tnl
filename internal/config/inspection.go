@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"go.yaml.in/yaml/v3"
 )
 

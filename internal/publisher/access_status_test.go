@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
 )
 
 func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {

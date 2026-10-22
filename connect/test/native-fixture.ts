@@ -230,8 +230,8 @@ if (op === "oidc") {
     pid: process.pid,
     expires_at: new Date(expires).toISOString(),
     executable,
-    private_handle: handle,
-    public_runtime: config.secretRuntime
+    connection_handle: handle,
+    project_runtime: config.secretRuntime
       ? { ...runtime, private_key: "fixture-private-material" }
       : runtime,
     ...(config.kube || config.unsafeKubeconfig ? { kubeconfig } : {}),

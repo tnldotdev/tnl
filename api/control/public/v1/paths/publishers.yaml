@@ -1,0 +1,154 @@
+paths:
+  /v1/publisher-runtime:
+    post:
+      operationId: observePublisherRuntime
+      security: []
+      description: >-
+        Explicit remote runtime lifecycle, independent of enrollment, verification,
+        and identity kind. A one-use Ed25519 assertion binds scope_id, action,
+        process_run_id and expected_epoch through the runtime proof scope, with
+        this path as its audience. Inspect reads the current epoch without recording
+        an address. Start compares that epoch and installs a new process run;
+        retries retain that run and epoch. Renew and stop require the current run
+        and epoch. Control records only the validated request source, never a body
+        address. Group start/renew also issue the existing group lease atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeRequest" }
+      responses:
+        "200":
+          description: Current runtime epoch and optional group lease
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/service:
+    get:
+      operationId: getPublisherService
+      security: [{ publisherAuth: [] }]
+      description: Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+      responses:
+        "200":
+          description: Exact granted service, without target addresses or credentials
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/guest-demo/publisher:
+    post:
+      operationId: enrollGuestPublisher
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/EnrollGuestPublisherRequest" }
+      responses:
+        "200":
+          description: Trial-bound publisher for the assigned demo URL
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/GuestPublisherIdentity" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher/public-url:
+    get:
+      operationId: getPublisherPublicURL
+      summary: Read the saved URL selected by the current grant
+      security:
+        - publisherAuth: []
+      responses:
+        "200":
+          description: Bound public URL
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURL"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher-enrollments:
+    post:
+      operationId: createPublisherEnrollment
+      summary: Issue an expiring one-use publisher enrollment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreatePublisherEnrollmentRequest"
+      responses:
+        "201":
+          description: One-use enrollment secret
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublisherEnrollment"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher-identities:
+    get:
+      operationId: listPublisherIdentities
+      summary: List publisher identities and grants without secrets
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - $ref: "../openapi.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Publisher identities
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublisherIdentityPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher-identities/{publisher_identity_id}:
+    delete:
+      operationId: revokePublisherIdentity
+      summary: Revoke an identity independently of its grants
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID"
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+      responses:
+        "204":
+          description: Revoked
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/publisher-identities/{publisher_identity_id}/grants:
+    post:
+      operationId: createPublisherGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreatePublisherGrantRequest" }
+      responses:
+        "201":
+          description: Grant created
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGrant" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}:
+    delete:
+      operationId: revokePublisherGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/PublisherIdentityID"
+        - $ref: "../openapi.yaml#/components/parameters/TeamIDQuery"
+        - name: grant_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

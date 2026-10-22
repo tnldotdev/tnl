@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/oidcauth"
+	"github.com/tnldotdev/tnl/internal/client/auth"
 )
 
 func TestAuthenticationPromptUsesCommandFrame(t *testing.T) {
 	var output bytes.Buffer
 	prompt := authenticationPrompt(&output, "tnl auth login")
-	if err := prompt(oidcauth.Prompt{URL: "https://account.example/device", Code: "ABCD-EFGH"}); err != nil {
+	if err := prompt(auth.Prompt{URL: "https://account.example/device", Code: "ABCD-EFGH"}); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()

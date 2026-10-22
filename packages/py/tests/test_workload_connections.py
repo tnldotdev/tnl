@@ -185,9 +185,9 @@ def test_rotating_assertions_and_services_share_only_control_verified_owners(
                 "state": "ready",
                 "pid": 1,
                 "expires_at": deadline,
-                "private_handle": file,
+                "connection_handle": file,
                 "executable": str(binary),
-                "public_runtime": {},
+                "project_runtime": {},
             }
         if args[0] == "attach":
             assert binding == owners[args[2]]
@@ -205,7 +205,7 @@ def test_rotating_assertions_and_services_share_only_control_verified_owners(
         protocol = "postgres" if name == "db" else "mysql"
         return {
             "schema": 1,
-            "public_runtime": {
+            "project_runtime": {
                 "dev": False,
                 "namespace": "example.test",
                 "services": {

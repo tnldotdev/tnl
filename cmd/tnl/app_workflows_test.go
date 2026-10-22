@@ -12,98 +12,61 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestAppWorkflowRejectsStaleOwnerAfterOneAppRestart(t *testing.T) {
-	a, endpoint := testAppRuntime(t)
-	a.project.Config.Services = config.Services{
-		"web": {Tunnel: &config.Tunnel{}},
-		"api": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}},
-	}
-	for _, name := range []string{"web", "api"} {
-		id, err := a.manager.Reserve(name, name, os.Getpid(), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := a.manager.Register(id, name, "http://127.0.0.1:3000", "node"); err != nil {
-			t.Fatal(err)
-		}
-		if name == "web" {
-			t.Cleanup(func() { _ = a.manager.Unregister(id, name) })
-		}
-		if name == "api" {
-			if err := a.manager.Unregister(id, name); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	path, err := privateprotocol.DescriptorPath(a.state.Root(), a.project.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := privateprotocol.WriteEndpoint(path, endpoint); err != nil {
-		t.Fatal(err)
-	}
-	changed := a.project
-	changed.Config.Services = config.Services{"web": {Tunnel: &config.Tunnel{}}, "api": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "restricted"}}}}
-	if _, err := ensureRuntimeOwner(t.Context(), changed, a.state.Root()); err == nil {
-		t.Fatal("restarted app silently reused the old owner's policy")
-	}
-}
-
 func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
-	a, endpoint := testAppRuntimeWorkers(t, false, true)
-	a.project.Config.Services = config.Services{"web": {}, "remote": {Publisher: new("production")}}
-	if err := a.manager.Configure(configuredRuntimeServices(a.project)); err != nil {
+	project, state, manager, endpoint := observationFixture(t, true)
+	project.Config.Services = config.Services{"web": {}, "remote": {PublisherGroup: new("production")}}
+	if err := manager.Configure(configuredRuntimeServices(project)); err != nil {
 		t.Fatal(err)
 	}
-	id, err := a.manager.Reserve("web", "owner", os.Getpid(), "")
+	id, err := manager.Reserve("web", "owner", os.Getpid(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
+	if err := manager.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
 		t.Fatal(err)
 	}
-	waitInvocation(t, a, func(s clientruntime.Snapshot) bool { return s.Services[0].Routable })
-	a.workers.Configure = nil
+	waitObservationFixture(t, manager, func(s publisherapp.Snapshot) bool { return s.Services[0].Routable })
 	// the owner reports a fresh check; the CLI must count only local services.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request privateprotocol.Check
+		var request publisherprotocol.Check
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		s := a.manager.Snapshot()
+		s := manager.Snapshot()
 		s.Services[0].Ready = true
 		_ = json.NewEncoder(w).Encode(s)
 	}))
 	defer server.Close()
 	endpoint.Url = server.URL
-	path, _ := privateprotocol.DescriptorPath(a.state.Root(), a.project.Root)
-	if err := privateprotocol.WriteEndpoint(path, endpoint); err != nil {
+	path, _ := publisherprotocol.DescriptorPath(state.Root(), project.Root)
+	if err := publisherprotocol.WriteEndpoint(path, endpoint); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runAppWait(t.Context(), a.project, a.state.Root(), waitCommand{Timeout: 3 * time.Second, Output: "json"}, &output); err != nil {
+	if err := runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 3 * time.Second, Output: "json"}, &output); err != nil {
 		t.Fatalf("mixed local/remote wait failed: %v\n%s", err, &output)
 	}
 }
 
 func TestAppWorkflowCrashInvalidatesPrivateReadiness(t *testing.T) {
-	a, _ := testAppRuntime(t)
-	s := a.manager.Snapshot()
+	project, state, manager, _ := observationFixture(t, false)
+	s := manager.Snapshot()
 	s.Services[0].Registered, s.Services[0].Routable, s.Services[0].Ready = true, true, true
-	s.Services[0].RegistrationID, s.Services[0].PublishRunNumber = "old", 7
-	if err := clientruntime.CommitSnapshot(t.Context(), a.state, &s, "service.readiness", nil); err != nil {
+	s.Services[0].RegistrationID, s.Services[0].RunNumber = "old", 7
+	if err := publisherapp.CommitSnapshot(t.Context(), state, &s, "service.readiness", nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readAppSnapshotFrom(t.Context(), a.project, a.state)
+	got, err := readAppSnapshotFrom(t.Context(), project, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,10 +83,10 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 			t.Error(err)
 		}
 		identities = append(identities, r.URL.Path+":"+body.SourceFingerprint+":"+body.WorktreeKey)
-		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_test", ServiceKind: "private_service", WorktreeKey: body.WorktreeKey})
+		_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "web", ServiceId: "svc_test", ServiceKind: "service", WorktreeKey: body.WorktreeKey})
 	}))
 	defer server.Close()
-	control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))
+	control, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("session"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +111,11 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 				t.Fatalf("git remote: %v %s", err, out)
 			}
 		}
-		p, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: configuration}, root, [32]byte{})
+		p, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: configuration}, root, [32]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = realizeLocalService(t.Context(), control, projectConfiguration{Project: p}, teamContext{team: authorityv1.Team{Id: "team"}}, "web", "")
+		_, err = invocation.RealizeLocalService(t.Context(), control, invocation.LocalService{Project: p, Team: invocation.NewTeamSelection(authorityv1.Team{Id: "team"}, authorityv1.Membership{}, nil, ""), Name: "web"})
 		if err != nil {
 			t.Fatalf("step %d local app requires Git identity: %v", step, err)
 		}

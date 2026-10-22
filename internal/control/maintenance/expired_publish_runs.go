@@ -1,0 +1,27 @@
+package maintenance
+
+import (
+	"context"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+)
+
+const expiredPublishRunCleanupInterval = 30 * time.Second
+
+type expiredPublishRunStore interface {
+	ExpireSavedPublishRuns(context.Context, time.Time) (int, error)
+}
+
+// run on startup as well as periodically: a control restart must not leave
+// saved expired runs reserving relay capacity until their public URLs are used.
+func RunExpiredPublishRunCleanup(ctx context.Context, store expiredPublishRunStore, metrics *observability.Metrics) error {
+	return runBatchCleanup(ctx, expiredPublishRunCleanupInterval, store.ExpireSavedPublishRuns, func(closed int, err error) {
+		metrics.ObserveCleanup("expired_publish_runs", closed, false, err)
+		if err != nil && ctx.Err() == nil {
+			operatorlog.ReportContext(ctx, "expire publish runs", failure.ServerWorkerFailed, "", err)
+		}
+	})
+}

@@ -13,15 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/ippolicy"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -39,7 +39,7 @@ type PublicURL struct {
 	RecoveryEpisodeID uint64
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
-	Backends          []routebackend.Backend
+	Backends          []ingressbackend.Backend
 	PublishRunID      string
 	ServiceProtocol   string
 	AccessMode        string
@@ -85,9 +85,9 @@ type Config struct {
 	RelayHostname             string
 	HandleRelay               func(net.Conn) bool
 	PrivateHostname           string
-	PrivateConnector          *PrivateConnector
-	PrivateConnectors         map[string]*PrivateConnector
-	DirectConnector           *PrivateConnector
+	Connector                 *Connector
+	Connectors                map[string]*Connector
+	DirectConnector           *Connector
 	ServicePortRanges         []tcpport.Range
 	DirectOnly                bool
 	RequireProxyHeader        bool
@@ -96,7 +96,7 @@ type Config struct {
 	MaxClientHelloConnections int
 	MaxControlConnections     int
 	MaxRelayConnections       int
-	MaxPrivateConnections     int
+	MaxServiceConnections     int
 	OpenTimeout               time.Duration
 	Metrics                   Metrics
 	Observer                  OperationObserver
@@ -179,11 +179,11 @@ func New(listener net.Listener, config Config) (*Server, error) {
 			return nil, errors.New("ingress: private infrastructure hostname is invalid or shared with another handler")
 		}
 	}
-	if config.PrivateConnector != nil && (config.PrivateHostname == "" || config.PrivateConnector.config.Hostname != config.PrivateHostname) {
+	if config.Connector != nil && (config.PrivateHostname == "" || config.Connector.config.Hostname != config.PrivateHostname) {
 		return nil, errors.New("ingress: private connector and infrastructure hostname must match")
 	}
-	private := make(map[string]*PrivateConnector, len(config.PrivateConnectors)+1)
-	for hostname, connector := range config.PrivateConnectors {
+	private := make(map[string]*Connector, len(config.Connectors)+1)
+	for hostname, connector := range config.Connectors {
 		canonical, err := naming.CanonicalizeHostname(hostname)
 		if err != nil || canonical != hostname || hostname == config.ServerHostname || hostname == config.RelayHostname || connector != nil && connector.config.Hostname != hostname {
 			return nil, errors.New("ingress: private infrastructure hostname and connector must match")
@@ -191,12 +191,12 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		private[hostname] = connector
 	}
 	if config.PrivateHostname != "" {
-		if existing, ok := private[config.PrivateHostname]; ok && existing != config.PrivateConnector {
+		if existing, ok := private[config.PrivateHostname]; ok && existing != config.Connector {
 			return nil, errors.New("ingress: private infrastructure hostname has two handlers")
 		}
-		private[config.PrivateHostname] = config.PrivateConnector
+		private[config.PrivateHostname] = config.Connector
 	}
-	config.PrivateConnectors = private
+	config.Connectors = private
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
@@ -295,7 +295,7 @@ func (s *Server) Load() int64 {
 }
 
 func (s *Server) handle(public net.Conn, finishInspection func()) error {
-	if err := public.SetReadDeadline(time.Now().Add(router.ClientHelloReadTimeout)); err != nil {
+	if err := public.SetReadDeadline(time.Now().Add(clienthello.ClientHelloReadTimeout)); err != nil {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("deadline")
 		}
@@ -326,7 +326,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			return nil
 		}
 		finishInspection()
-		release, rejected := s.admitClass(privateConnection, "")
+		release, rejected := s.admitClass(serviceConnection, "")
 		if release == nil {
 			s.rejectCapacity(rejected)
 			return nil
@@ -335,7 +335,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		return s.config.DirectConnector.AcceptDirect(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
-	hello, err := router.InspectClientHello(inspected)
+	hello, err := clienthello.InspectClientHello(inspected)
 	if err != nil {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("client_hello")
@@ -351,11 +351,11 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	hello.ServerName = serverName
 	finishInspection()
-	if connector, reserved := s.config.PrivateConnectors[hello.ServerName]; reserved {
+	if connector, reserved := s.config.Connectors[hello.ServerName]; reserved {
 		if connector == nil {
 			return nil
 		}
-		release, rejected := s.admitClass(privateConnection, "")
+		release, rejected := s.admitClass(serviceConnection, "")
 		if release == nil {
 			s.rejectCapacity(rejected)
 			return nil
@@ -386,7 +386,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 func (s *Server) handoff(
 	public net.Conn,
 	source, destination netip.AddrPort,
-	hello router.ClientHello,
+	hello clienthello.ClientHello,
 	kind connectionKind,
 	handler func(net.Conn) bool,
 ) bool {

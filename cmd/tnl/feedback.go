@@ -11,12 +11,13 @@ import (
 	"strings"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/sourcestate"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type feedbackOutputMode string
@@ -96,19 +97,19 @@ type feedbackInspectResult struct {
 	LocalProject feedbackLocalProject      `json:"local_project"`
 }
 
-func feedbackSession(ctx context.Context, flags scopedTeamFlags, project projectConfiguration, command string, diagnostics io.Writer) (*teamSession, string, string, error) {
+func feedbackSession(ctx context.Context, flags scopedTeamFlags, project projectConfiguration, command string, diagnostics io.Writer) (*clientteam.Session, string, string, error) {
 	session, err := openTeamSession(ctx, flags.selection(), command, diagnostics)
 	if err != nil {
 		return nil, "", "", err
 	}
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		session.Close()
 		return nil, "", "", err
 	}
 	previewID := ""
 	if project.Found() && project.Root != "" {
-		id, found, readErr := session.store.PreviewID(ctx, current.team.Id, project.Root)
+		id, found, readErr := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
 		if readErr != nil {
 			session.Close()
 			return nil, "", "", readErr
@@ -117,7 +118,7 @@ func feedbackSession(ctx context.Context, flags scopedTeamFlags, project project
 			previewID = id
 		}
 	}
-	return session, current.team.Id, previewID, nil
+	return session, current.Team().Id, previewID, nil
 }
 
 func validFeedbackID(id string) error {
@@ -136,7 +137,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	if project.Found() && previewID == "" {
 		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; start a configured app service first"))
 	}
-	threads, cursor, err := session.authenticated.Control.ListFeedbackThreads(ctx, teamID)
+	threads, cursor, err := session.Authenticated().Control.ListFeedbackThreads(ctx, teamID)
 	if err != nil {
 		return err
 	}
@@ -246,14 +247,14 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 		return err
 	}
 	defer session.Close()
-	thread, err := session.authenticated.Control.GetFeedbackThread(ctx, flags.FeedbackID)
+	thread, err := session.Authenticated().Control.GetFeedbackThread(ctx, flags.FeedbackID)
 	if err != nil {
 		return err
 	}
 	if thread.SchemaVersion != 1 {
 		return failure.Wrap("inspect feedback", failure.ServerResponseInvalid, errors.New("feedback format is not supported by this client"))
 	}
-	events, cursor, err := readFeedbackHistory(ctx, session.authenticated.Control, flags.FeedbackID)
+	events, cursor, err := readFeedbackHistory(ctx, session.Authenticated().Control, flags.FeedbackID)
 	if err != nil {
 		return err
 	}
@@ -385,8 +386,8 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	cursor := flags.After
 	for {
 		var more bool
-		cursor, more, err = pollFeedbackEvents(ctx, session.authenticated.Control, teamID, previewID, cursor, output, flags.Output)
-		if err != nil && !errors.Is(err, controlclient.ErrUnavailable) {
+		cursor, more, err = pollFeedbackEvents(ctx, session.Authenticated().Control, teamID, previewID, cursor, output, flags.Output)
+		if err != nil && !errors.Is(err, clientcontrol.ErrUnavailable) {
 			return err
 		}
 		if more && err == nil {
@@ -421,7 +422,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 		body.Text = &message
 	}
 	if kind == "update" {
-		thread, err := session.authenticated.Control.GetFeedbackThread(ctx, flags.FeedbackID)
+		thread, err := session.Authenticated().Control.GetFeedbackThread(ctx, flags.FeedbackID)
 		if err != nil {
 			return err
 		}
@@ -438,7 +439,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	if err != nil {
 		return err
 	}
-	event, err := session.authenticated.Control.AppendFeedbackEvent(ctx, flags.FeedbackID, key, body)
+	event, err := session.Authenticated().Control.AppendFeedbackEvent(ctx, flags.FeedbackID, key, body)
 	if err != nil {
 		return err
 	}

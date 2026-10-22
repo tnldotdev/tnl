@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 var (

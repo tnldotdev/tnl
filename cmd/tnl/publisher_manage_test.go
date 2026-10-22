@@ -16,7 +16,7 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		{[]string{"publisher", "setup", "--url", "url_selected"}, "publisher setup"},
 		{[]string{"publisher", "provision", "--namespace", "--output-file", "/tmp/publisher.json"}, "publisher provision"},
 		{[]string{"publisher", "provision", "--url", "url_selected", "--output-file", "/tmp/publisher.json"}, "publisher provision"},
-		{[]string{"publish", "3000", "--publisher-file", "/tmp/publisher.json"}, "publish <service-or-target>"},
+		{[]string{"publish", "3000", "--publisher-credential-file", "/tmp/publisher.json"}, "publish <service-or-target>"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(io.Discard, io.Discard))
@@ -30,7 +30,7 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		if command := canonicalParsedCommand(parsed.Command()); command != tc.command {
 			t.Fatalf("%v: command %s, want %s", tc.args, command, tc.command)
 		}
-		if tc.command == "publish <service-or-target>" && flags.Publish.PublisherFile != "/tmp/publisher.json" {
+		if tc.command == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "/tmp/publisher.json" {
 			t.Fatal("file flag was lost")
 		}
 	}

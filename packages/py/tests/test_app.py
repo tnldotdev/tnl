@@ -14,11 +14,11 @@ import pytest
 
 
 @pytest.mark.parametrize("reload", [False, True])
-@pytest.mark.parametrize("private_service", [False, True])
+@pytest.mark.parametrize("service", [False, True])
 def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
     tmp_path: Path,
     reload: bool,
-    private_service: bool,
+    service: bool,
     native_app_assignment: dict[str, object],
 ) -> None:
     async def scenario() -> None:
@@ -57,7 +57,7 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     active["registration_id"] = "reg_" + str(len(requests) % 10) * 32
                     assert payload["framework"] == "python"
                     native_app_assignment["registration_id"] = active["registration_id"]
-                    if private_service:
+                    if service:
                         native_app_assignment["hostname"] = ""
                         native_app_assignment["public_url"] = ""
                         project = native_app_assignment["project"]

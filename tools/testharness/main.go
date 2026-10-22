@@ -148,7 +148,7 @@ func run() error {
 
 func runDNS(ctx context.Context, root string) error {
 	stack, err := compose.NewDockerComposeWith(compose.WithStackFiles(
-		filepath.Join(root, "internal/tnldruntime/testdata/dns-integration.compose.yaml")))
+		filepath.Join(root, "tests/integration/fixtures/dns/compose.yaml")))
 	if err != nil {
 		return fmt.Errorf("configure disposable DNS test topology: %w", err)
 	}

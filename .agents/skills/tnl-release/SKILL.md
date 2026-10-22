@@ -15,7 +15,7 @@ Python wheels, with root `v<version>`
 tags. GitHub Actions is the publisher; never publish artifacts manually during
 a normal release.
 
-## Safety rules
+## safety rules
 
 - Work only from `main` with a clean worktree and `HEAD` synchronized with
   `origin/main`.
@@ -25,7 +25,7 @@ a normal release.
 - Stop on failed signing, verification, CI, push, workflow, or registry checks.
   Do not bypass branch protection or signing.
 
-## Assess releases
+## assess releases
 
 1. Fetch `origin/main` and tags, then verify the branch, worktree, and tracking
    state.
@@ -52,7 +52,7 @@ a normal release.
 During the `0.1.0` prerelease series, default to incrementing `rc.N`. Never
 infer that a stable release is wanted.
 
-## Prepare approved versions
+## prepare approved versions
 
 1. The combined product version comes from its tag. The release workflow
    derives the npm client package versions from GoReleaser metadata; do not edit
@@ -70,7 +70,7 @@ infer that a stable release is wanted.
    registries.
 5. Show the user the final version, verification results, and exact diff.
 
-## Commit and push
+## commit and push
 
 1. If release preparation changed files, ask for approval to create one signed
    release-preparation commit. Stage only approved files.
@@ -80,7 +80,7 @@ infer that a stable release is wanted.
 4. Verify `origin/main` points to the release commit and wait for the main CI
    checks. If checks cannot be queried, ask the user to confirm they passed.
 
-## Tag releases
+## tag releases
 
 For the combined product, show and separately approve:
 

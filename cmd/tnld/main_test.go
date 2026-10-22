@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -91,8 +91,8 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
-	base := tnldconfig.Config{
-		Role: tnldconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, PublicURLCertificateWorkers: 4,
+	base := daemonconfig.Config{
+		Role: daemonconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, PublicURLCertificateWorkers: 4,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
@@ -138,7 +138,7 @@ func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Command() != "serve" || flags.Serve.Values.Role != tnldconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
+	if parsed.Command() != "serve" || flags.Serve.Values.Role != daemonconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
 		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }

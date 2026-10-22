@@ -9,16 +9,16 @@ export default defineConfig(({ mode }) => ({
         resolve: {
           alias: [
             {
-              find: /^\.\/internal\/connection_bridge\.js$/,
+              find: /^\.\/internal\/connector\/connection_bridge\.js$/,
               replacement: fileURLToPath(
-                new URL("packages/ts/test-helper/source-connection-bridge.ts", import.meta.url),
+                new URL("packages/ts/test/helpers/source-connection-bridge.ts", import.meta.url),
               ),
             },
             // internal tests normally exercise dist too; coverage deliberately uses the
             // same source graph as the public aliases below. Framework subprocesses
             // still resolve the built package, outside Vitest's coverage instrumentation.
             {
-              find: /^\.\/dist\/(errors|internal\/[a-z_-]+)\.js$/,
+              find: /^\.\.\/\.\.\/dist\/(errors|internal\/[a-z_/-]+)\.js$/,
               replacement: `${sourceDirectory}$1.ts`,
             },
             {
@@ -88,7 +88,7 @@ export default defineConfig(({ mode }) => ({
     mockReset: true,
     pool: "forks",
     restoreMocks: true,
-    setupFiles: ["packages/ts/test-helper/environment-setup.ts"],
+    setupFiles: ["packages/ts/test/helpers/environment-setup.ts"],
     testTimeout: 10_000,
     unstubEnvs: true,
     unstubGlobals: true,

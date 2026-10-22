@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
 type auditSinkFunc func(serviceaudit.Observation) bool
@@ -16,9 +16,9 @@ func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
 
 func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	var events []serviceaudit.Observation
-	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []routebackend.Backend{&singleBackend{}}}
+	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []ingressbackend.Backend{&singleBackend{}}}
 	s := &Server{config: Config{Lookup: func(string) (PublicURL, LookupReason) { return route, LookupCurrent }, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })}}
-	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), router.ClientHello{ServerName: "private.example"}); err != nil {
+	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].Validate() != nil || events[0].Outcome != "denied" || events[0].Reason != "ip_policy" || events[0].SourceIP != "192.0.2.8" {
@@ -63,7 +63,7 @@ func TestKnownUnavailableServiceIsAuditedWithoutInventingARun(t *testing.T) {
 	s := &Server{config: Config{Lookup: func(string) (PublicURL, LookupReason) {
 		return PublicURL{ID: "url_0123456789ABCDEFGHIJKL"}, LookupNoBackends
 	}, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })}}
-	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), router.ClientHello{ServerName: "private.example"}); err != nil {
+	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].Validate() != nil || events[0].RunID != "" || events[0].RunNumber != 0 || events[0].Reason != "unavailable" {

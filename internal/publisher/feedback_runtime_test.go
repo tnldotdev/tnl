@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/feedbacktoolbar"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"github.com/tnldotdev/tnl/pkg/api/publisherv1"
+	"github.com/tnldotdev/tnl/internal/publisher/toolbar"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
 )
 
 type feedbackControlStub struct {
@@ -60,7 +60,7 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 		_, _ = response.Write([]byte("<!doctype html><html><head></head><body>app</body></html>"))
 	}))
 	defer upstream.Close()
-	asset, assetPath := feedbacktoolbar.Script()
+	asset, assetPath := toolbar.Script()
 	runtime := &feedbackRuntime{
 		client: &feedbackControlStub{}, previewID: "pv_0123456789abcdefghijkl", service: "web",
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,

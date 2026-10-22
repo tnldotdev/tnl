@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // publicRunAuthority binds the secret to the complete approved setup once.
@@ -34,7 +34,7 @@ func bindPublicRun(config Config, setup controlv1.PublishRunSetup) (publicRunAut
 		return publicRunAuthority{}, errors.New("publisher: server returned a different publish run")
 	}
 	if setup.PublicUrl.ServiceProtocol != controlv1.Http {
-		return publicRunAuthority{}, errors.New("publisher: public HTTPS requires a certificate plan; private services use private publisher runs")
+		return publicRunAuthority{}, errors.New("publisher: public HTTPS requires a certificate plan; services use private publisher runs")
 	}
 	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {

@@ -1,0 +1,258 @@
+schemas:
+  IngressRoutingPublisherConnection:
+    type: object
+    additionalProperties: false
+    required:
+      - connection_slot
+      - publisher_connection_id
+      - connection_assignment_revision
+      - relay_service_id
+      - relay_id
+      - relay_run_id
+      - relay_lease_revision
+      - internal_relay_address
+      - tls_server_name
+      - lease_expires_at
+    properties:
+      available_streams:
+        type: integer
+        format: int64
+        minimum: 0
+        description: Last relay-reported free stream capacity; the relay enforces its current capacity at open.
+      connection_slot:
+        type: integer
+        minimum: 0
+        maximum: 1
+      publisher_connection_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      connection_assignment_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      internal_relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      lease_expires_at:
+        type: string
+        format: date-time
+  IngressRoutingTableEntry:
+    type: object
+    additionalProperties: false
+    required:
+      - public_url_id
+      - publish_run_id
+      - publish_run_number
+      - canonical_hostname
+      - policy_revision
+      - access_mode
+      - ip_policy
+      - allowed_ip_hashes
+      - public_url_expires_at
+      - publisher_connections
+    properties:
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      canonical_hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+      ingress_pool_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      service_protocol:
+        type: string
+        enum: [http]
+      policy_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      access_mode:
+        type: string
+        enum: [restricted, anonymous]
+      ip_policy:
+        type: string
+        enum: [allow_all, hashed_allowlist]
+      allowed_ip_hashes:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "../openapi.yaml#/components/schemas/HashedIPPrefix"
+      ip_policy_key:
+        type: string
+        format: byte
+        description: Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
+      public_url_expires_at:
+        type: string
+        format: date-time
+      recovery_episode_id:
+        type: integer
+        format: int64
+        minimum: 1
+      publish_run_closed:
+        type: boolean
+        description: True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
+      publisher_connections:
+        type: array
+        maxItems: 2
+        items:
+          $ref: "../openapi.yaml#/components/schemas/IngressRoutingPublisherConnection"
+      traffic:
+        $ref: "../openapi.yaml#/components/schemas/IngressTrafficLimits"
+  HashedIPPrefix:
+    type: object
+    additionalProperties: false
+    required: [family, prefix_length, digest]
+    properties:
+      family:
+        type: string
+        enum: [ipv4, ipv6]
+      prefix_length:
+        type: integer
+        minimum: 0
+        maximum: 128
+      digest:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"
+  IngressRoutingTableEvent:
+    type: object
+    additionalProperties: false
+    required:
+      - routing_table_revision
+      - kind
+      - public_url_id
+      - publish_run_number
+      - canonical_hostname
+      - entry_revision
+      - entry
+      - created_at
+    properties:
+      routing_table_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      kind:
+        type: string
+        enum: [public_url_upsert, public_url_tombstone]
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      canonical_hostname:
+        type: string
+      entry_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      entry:
+        $ref: "../openapi.yaml#/components/schemas/IngressRoutingTableEntry"
+      public_url_expires_at:
+        type: string
+        format: date-time
+      created_at:
+        type: string
+        format: date-time
+  IngressRoutingTableSnapshot:
+    type: object
+    additionalProperties: false
+    required: [through_revision, retained_after_revision, entries]
+    properties:
+      through_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      retained_after_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      entries:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/IngressRoutingTableEvent"
+  IngressRoutingTablePage:
+    type: object
+    additionalProperties: false
+    required: [through_revision, retained_after_revision, next_revision, more, events]
+    properties:
+      through_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      retained_after_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      next_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      more:
+        type: boolean
+      events:
+        type: array
+        maxItems: 1000
+        items:
+          $ref: "../openapi.yaml#/components/schemas/IngressRoutingTableEvent"
+  ProblemCode:
+    type: string
+    enum:
+      - invalid_request
+      - invalid_json
+      - unsupported_media_type
+      - unauthenticated
+      - not_found
+      - internal
+      - ingress_already_running
+      - ingress_lease_stale
+      - recovery_episode_stale
+      - invalid_usage_report
+      - usage_route_not_found
+      - stale_usage_report
+      - usage_report_conflict
+      - usage_bucket_finalized
+      - routing_table_resnapshot_required
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [type, title, status, code, detail, request_id]
+    properties:
+      type:
+        type: string
+        format: uri
+      title:
+        type: string
+      status:
+        type: integer
+        minimum: 400
+        maximum: 599
+      code:
+        $ref: "../openapi.yaml#/components/schemas/ProblemCode"
+      detail:
+        type: string
+        minLength: 1
+      request_id:
+        type: string
+        minLength: 1
+      retry_at:
+        type: string
+        format: date-time
+      details:
+        type: object
+        additionalProperties: true

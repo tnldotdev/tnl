@@ -1,0 +1,68 @@
+schemas:
+  ServiceID:
+    type: string
+    pattern: "^svc_[A-Za-z0-9]{22}$"
+  ServiceRunID:
+    type: string
+    pattern: "^srun_[A-Za-z0-9]{22}$"
+  ServicePublisherConnectionClaim:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        service_id,
+        service_run_id,
+        run_number,
+        connection_assignment_revision,
+        relay_id,
+        relay_run_id,
+        relay_lease_revision,
+        credential,
+      ]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+      relay_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      relay_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+      credential: { type: string, minLength: 1, maxLength: 4096 }
+  ServicePublisherConnection:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_connection_id,
+        connection_assignment_revision,
+        relay_service_id,
+      ]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_connection_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+      relay_service_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+  ServicePublisherConnectionTransition:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        service_run_id,
+        run_number,
+        connection_assignment_revision,
+        relay_id,
+        relay_run_id,
+        relay_lease_revision,
+      ]
+    properties:
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+      relay_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      relay_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
+      relay_lease_revision: { type: integer, format: int64, minimum: 1 }

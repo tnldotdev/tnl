@@ -9,7 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
+
+	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
 )
 
 func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
@@ -42,55 +43,22 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 	}
 }
 
-func TestRunInitInstallPreservesCommandContextCancellation(t *testing.T) {
+func TestRunInitInstallCancellationHasSuccessfulTerminalResult(t *testing.T) {
+	root := copyInitFixture(t, "next")
+	plan, err := planInit(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-	err := runInitInstall(ctx, t.TempDir(), []string{"sh", "-c", "exec sleep 30"})
+	cancel()
+	_, err = plan.Apply(ctx, projectinit.Options{Generate: func(context.Context, string, string) error {
+		t.Fatal("generated after canceled installation")
+		return nil
+	}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("install error = %v", err)
 	}
 	if code, render := terminalResult(err); code != 0 || render != nil {
 		t.Fatalf("terminal result = %d, %v", code, render)
-	}
-}
-
-func TestInitDoesNotChooseAPackageManagerWhenLockfilesConflict(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !plan.installBlocked || len(plan.actions) == 0 || !strings.Contains(plan.actions[0], "run tnl init again") {
-		t.Fatalf("plan = %#v", plan)
-	}
-}
-
-func TestInitDetectsPackageManagerFromWorkspaceAncestor(t *testing.T) {
-	workspace := t.TempDir()
-	root := filepath.Join(workspace, "apps", "web")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for path, data := range map[string]string{
-		filepath.Join(workspace, "package.json"):   `{"packageManager":"pnpm@10","workspaces":["apps/*"]}`,
-		filepath.Join(workspace, "pnpm-lock.yaml"): "lockfileVersion: '9.0'\n",
-		filepath.Join(root, "package.json"):        `{"dependencies":{"vite":"8.2.2"}}`,
-	} {
-		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.manager != "pnpm" || plan.root != root {
-		t.Fatalf("plan = %#v", plan)
 	}
 }

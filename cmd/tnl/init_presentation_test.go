@@ -40,7 +40,7 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 					t.Fatalf("framework config changed: %q, %v", after, err)
 				}
 				config, err := os.ReadFile(filepath.Join(root, "tnl.config.ts"))
-				if err != nil || !bytes.Equal(config, plan.configData) {
+				if err != nil || !bytes.Equal(config, plan.NewConfiguration) {
 					t.Fatalf("config = %q, %v", config, err)
 				}
 				gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -247,7 +247,11 @@ func TestInitPreservesCustomizedGenericService(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, "tnl.config.ts")
-			custom := bytes.Replace(initConfigSource("app"), []byte("  services:"), []byte("  // configured by the developer\n  services:"), 1)
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			custom := bytes.Replace(original, []byte("  services:"), []byte("  // configured by the developer\n  services:"), 1)
 			if err := os.WriteFile(path, custom, 0o600); err != nil {
 				t.Fatal(err)
 			}

@@ -18,10 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/client/filelock"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -42,7 +43,7 @@ type detachedControlKey struct{}
 type detachedControl struct {
 	mu         sync.Mutex
 	state      string
-	connection *nativeConnectionProfile
+	connection *connector.Profile
 }
 
 func (c *detachedControl) set(state string) {
@@ -71,7 +72,7 @@ func detachedPublicationReady(ctx context.Context) {
 	}
 }
 
-func detachedConnectorPrepared(ctx context.Context, profile nativeConnectionProfile) {
+func detachedConnectorPrepared(ctx context.Context, profile connector.Profile) {
 	if control, ok := ctx.Value(detachedControlKey{}).(*detachedControl); ok {
 		control.mu.Lock()
 		defer control.mu.Unlock()
@@ -284,7 +285,7 @@ func writeDetachedConnection(root, id string, mode statusOutputMode, output io.W
 	if err != nil {
 		return err
 	}
-	var profile nativeConnectionProfile
+	var profile connector.Profile
 	if json.Unmarshal(data, &profile) != nil || profile.Schema != 1 || !profile.ConnectorRequired {
 		return failure.Wrap("read detached connection", failure.ServerResponseInvalid, errors.New("invalid prepared connection"))
 	}

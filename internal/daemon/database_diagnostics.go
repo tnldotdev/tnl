@@ -1,0 +1,24 @@
+package daemon
+
+import (
+	"encoding/json"
+	"net/http"
+
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+)
+
+// database activity is served only on the private observability listener.
+func withDatabaseDiagnostics(handler http.Handler, database *controlstate.Database) http.Handler {
+	if database == nil {
+		return handler
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/", handler)
+	mux.HandleFunc("GET /debug/database", func(w http.ResponseWriter, r *http.Request) {
+		snapshot, _ := database.Diagnostics(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		// local activity remains useful even when the upstream snapshot failed.
+		_ = json.NewEncoder(w).Encode(snapshot)
+	})
+	return mux
+}

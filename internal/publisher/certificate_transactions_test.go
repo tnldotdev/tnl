@@ -12,9 +12,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
@@ -34,7 +34,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 					}
 					if phase == "create" && !lost && !committed {
 						lost = true
-						return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
+						return controlv1.CertificateIssuance{}, clientcontrol.ErrUnavailable
 					}
 					if issued.Id == "" {
 						var err error
@@ -45,7 +45,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 					}
 					if phase == "create" && !lost {
 						lost = true
-						return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
+						return controlv1.CertificateIssuance{}, clientcontrol.ErrUnavailable
 					}
 					return issued, nil
 				}
@@ -62,12 +62,12 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 						if installed {
 							issued.State = controlv1.CertificateIssuanceStateInstalled
 						}
-						return controlclient.ErrUnavailable
+						return clientcontrol.ErrUnavailable
 					}
 					installed = true
 					return nil
 				}
-				if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); !errors.Is(err, controlclient.ErrUnavailable) {
+				if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); !errors.Is(err, clientcontrol.ErrUnavailable) {
 					t.Fatalf("injected response loss = %v", err)
 				}
 				if !lost {
@@ -76,7 +76,7 @@ func TestCertificateTransactionRecoversResponseLoss(t *testing.T) {
 				// reopen the cache and public URL server to recover locally committed,
 				// unacknowledged certificate material.
 				var err error
-				state, err = control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
+				state, err = control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherIdentityID(), control.setup.CertificatePlan)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -137,12 +137,12 @@ func TestCertificateTransactionTerminalDNSOrderAfterLostResponse(t *testing.T) {
 					}
 					issuance.State, issuance.CertificatePem, issuance.NotBefore, issuance.NotAfter = controlv1.CertificateIssuanceStateAuthorizing, nil, nil, nil
 					issuance.State = terminal
-					return controlv1.CertificateIssuance{}, controlclient.ErrUnavailable
+					return controlv1.CertificateIssuance{}, clientcontrol.ErrUnavailable
 				}
 				return issuance, nil
 			}
 			_, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
-			if !errors.Is(err, controlclient.ErrUnavailable) {
+			if !errors.Is(err, clientcontrol.ErrUnavailable) {
 				t.Fatalf("lost ready response = %v", err)
 			}
 			_, err = attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false)
@@ -277,7 +277,7 @@ func TestCertificateRenewalPreservesOldCertificateUntilExpiration(t *testing.T) 
 }
 
 func TestCertificateRenewalAcknowledgementPreservesCurrent(t *testing.T) {
-	for _, failure := range []error{controlclient.ErrUnavailable, controlclient.ErrStatusConflict, context.Canceled} {
+	for _, failure := range []error{clientcontrol.ErrUnavailable, clientcontrol.ErrStatusConflict, context.Canceled} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				control, route, cache := newCertificateTransactionTest(t)

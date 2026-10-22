@@ -19,13 +19,13 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/internal/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -100,15 +100,15 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				ingressCtx, relayCtx, publisherCtx := newOwner("ingress"), newOwner("relay"), newOwner("publisher")
 				lease := relayv1.RelayLease{RelayServiceId: "relay-service", RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 				ref := tunnelv1.PublisherConnectionRef{PublicURLID: "public-url", PublishRunID: "publish-run", PublishRunNumber: 3, PublisherConnectionID: "publisher-connection", ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
-				privateRef := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 3, PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
+				privateRef := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3, PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
 				hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "publisher-secret", PublisherConnection: &ref}
 				if private {
 					hello.PublisherConnection = nil
-					hello.PrivateConnection = &privateRef
+					hello.ServiceConnection = &privateRef
 				}
-				registry, privateRegistry := NewRegistry(), NewPrivateRegistry()
+				registry, serviceRegistry := NewRegistry(), NewServiceRegistry()
 				defer registry.Close()
-				defer privateRegistry.Close()
+				defer serviceRegistry.Close()
 				registered := make(chan struct{})
 				publisherAddress := traceMuxServer(t, relayCtx, transport, serverTLS, func(owner context.Context, mux muxsession.Session) error {
 					session, _, err := tunnel.Accept(owner, mux, func(_ context.Context, h tunnelv1.Message) error {
@@ -123,7 +123,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 					defer session.Close()
 					if private {
 						paths := newStreamLifetime(session)
-						if err := privateRegistry.insert(&privateConnection{ref: privateRef, lease: lease, paths: paths}); err != nil {
+						if err := serviceRegistry.insert(&serviceConnection{ref: privateRef, lease: lease, paths: paths}); err != nil {
 							return err
 						}
 					} else {
@@ -166,7 +166,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: registry, PrivateRegistry: privateRegistry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 4})
+				acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: registry, ServiceRegistry: serviceRegistry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 4})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -187,12 +187,12 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 						var stream muxsession.Stream
 						var received context.Context
 						if private {
-							v, e := publisher.AcceptPrivateForwardingStream(publisherCtx)
+							v, e := publisher.AcceptServiceForwardingStream(publisherCtx)
 							if e != nil {
 								publisherDone <- e
 								return
 							}
-							stream = v.Stream
+							stream = v.Stream()
 							received = v.Context()
 							if e = v.Accept(); e != nil {
 								publisherDone <- e
@@ -230,8 +230,8 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 						if e != nil {
 							t.Fatal(e)
 						}
-						header := tunnelv1.PrivateForwardingHeader{PrivateStreamHeader: tunnelv1.PrivateStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.PrivateForwardingStream, PrivateServiceID: privateRef.PrivateServiceID, PrivateRunID: privateRef.PrivateRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, Connector: &tunnelv1.ConnectorAdmission{SessionID: privateRelayID(opaqueid.PrivateConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: privateRelayID(opaqueid.IdentityPrefix), DeviceID: privateRelayID(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.LeaseExpiresAt}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
-						relay := ingressv1.PrivateServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
+						header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream, ServiceID: privateRef.ServiceID, ServiceRunID: privateRef.ServiceRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, Connector: &tunnelv1.ConnectorAdmission{SessionID: privateRelayID(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: privateRelayID(opaqueid.IdentityPrefix), DeviceID: privateRelayID(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.LeaseExpiresAt}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
+						relay := ingressv1.ServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
 						stream, err = forwarder.OpenPrivate(setup, relay, header)
 					} else {
 						entry := ingressv1.IngressRoutingTableEntry{PublicUrlId: ref.PublicURLID, PublishRunId: ref.PublishRunID, PublishRunNumber: 3, PublicUrlExpiresAt: lease.LeaseExpiresAt, PublisherConnections: []ingressv1.IngressRoutingPublisherConnection{{PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}}}
@@ -290,7 +290,7 @@ func assertInfrastructureTrace(t *testing.T, spans []*tracepb.Span, id trace.Tra
 	}
 	attempt, relayOpen := "ingress.relay_attempt", "relay.open_visitor_stream"
 	if private {
-		attempt, relayOpen = "ingress.private_relay_attempt", "relay.open_private_visitor_stream"
+		attempt, relayOpen = "ingress.private_relay_attempt", "relay.open_connector_visitor_stream"
 	}
 	chain := []string{"fixture.ingress_setup", attempt, relayOpen, "fixture.publisher_receive"}
 	for i, name := range chain {

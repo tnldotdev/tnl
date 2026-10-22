@@ -1,0 +1,191 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+)
+
+func TestIntegrationUsageReplayPreservesPostgresTimestampPrecision(t *testing.T) {
+	database, base, lease, report := newIngressUsageFixture(t)
+	report.ObservedThrough = base.Add(20*time.Second + 123456789*time.Nanosecond)
+	report.ConnectionAttempts = 1
+	batch := IngressUsageBatch{Reports: []IngressUsageReport{report}, ObservedThrough: &report.ObservedThrough}
+	for range 2 {
+		if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, batch, base.Add(21*time.Second)); err != nil {
+			t.Fatalf("identical high-precision report/replay: %v", err)
+		}
+	}
+	changed := report
+	changed.ObservedThrough = changed.ObservedThrough.Add(time.Microsecond)
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{changed}}, base.Add(22*time.Second)); !errors.Is(err, ErrIngressUsageReportConflict) {
+		t.Fatalf("changed stored timestamp: %v", err)
+	}
+	var attempts int64
+	var observed time.Time
+	if err := database.pool.QueryRow(t.Context(), `SELECT connection_attempts, observed_through FROM control.public_url_usage_buckets WHERE public_url_id = $1`, report.PublicURLID).Scan(&attempts, &observed); err != nil || attempts != 1 || !observed.Equal(report.ObservedThrough.Truncate(time.Microsecond)) {
+		t.Fatalf("replayed usage attempts=%d observed=%s: %v", attempts, observed, err)
+	}
+}
+
+func TestIntegrationIngressUsageReplaySkipsRouteLocks(t *testing.T) {
+	for _, lock := range []string{"route", "session"} {
+		t.Run(lock, func(t *testing.T) {
+			database, base, lease, older := newIngressUsageFixture(t)
+			older.ObservedThrough, older.ConnectionAttempts, older.PolicyDenials = base.Add(20*time.Second), 2, 1
+			latest := older
+			latest.ReportRevision, latest.ConnectionAttempts, latest.PolicyDenials = 3, 4, 2
+			latest.ObservedThrough = base.Add(30 * time.Second)
+			for _, report := range []IngressUsageReport{older, latest} {
+				if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{report}}, base.Add(40*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			gate, err := database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, gate)
+			if lock == "route" {
+				// simulate an identity-changing/deleting writer. publish run operations
+				// deliberately allow usage's KEY SHARE public URL references now.
+				_, err = gate.Exec(ctx, `SELECT id FROM control.public_urls WHERE id = $1 FOR UPDATE`, older.PublicURLID)
+			} else {
+				_, err = controlstatedb.New(gate).LockPublishRunForUsage(ctx, controlstatedb.LockPublishRunForUsageParams{
+					PublicURLID: older.PublicURLID, PublishRunNumber: int64(older.PublishRunNumber),
+				})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			workers := newIntegrationWorkers(t, cancel)
+			defer workers.stop()
+			olderConflict, latestConflict, missing := older, latest, older
+			olderConflict.PolicyDenials++
+			latestConflict.ConnectionAttempts++
+			missing.ReportRevision = 2
+			watermark := base.Add(40 * time.Second)
+			for _, test := range []struct {
+				name   string
+				report IngressUsageReport
+				want   error
+			}{
+				{"latest replay", latest, nil},
+				{"older replay", older, nil},
+				{"latest conflict", latestConflict, ErrIngressUsageReportConflict},
+				{"older conflict", olderConflict, ErrIngressUsageReportConflict},
+				{"missing revision", missing, ErrIngressUsageReportStale},
+			} {
+				replayCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+				err := database.ReportIngressUsage(replayCtx, lease.IngressLeaseIdentity, IngressUsageBatch{
+					Reports: []IngressUsageReport{test.report}, ObservedThrough: &watermark,
+				}, base.Add(42*time.Second))
+				stop()
+				if !errors.Is(err, test.want) {
+					t.Fatalf("%s while %s lock is held: got %v, want %v", test.name, lock, err, test.want)
+				}
+			}
+			var lastReported, observed time.Time
+			if err := database.pool.QueryRow(ctx, `SELECT last_reported_at, observed_through FROM control.ingress_usage_runs WHERE ingress_id = $1 AND ingress_run_id = $2`, lease.IngressID, lease.IngressRunID).Scan(&lastReported, &observed); err != nil || !lastReported.Equal(base.Add(42*time.Second)) || !observed.Equal(watermark) {
+				t.Fatalf("replay did not advance usage run: last reported=%v observed=%v: %v", lastReported, observed, err)
+			}
+
+			next := latest
+			next.ReportRevision, next.ConnectionAttempts, next.PolicyDenials = 4, 6, 3
+			next.ObservedThrough = watermark
+			batch := IngressUsageBatch{Reports: []IngressUsageReport{next}, ObservedThrough: &watermark}
+			applied := make(chan error, 1)
+			workers.Go(func() {
+				applied <- database.ReportIngressUsage(ctx, lease.IngressLeaseIdentity, batch, base.Add(43*time.Second))
+			})
+			writerPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), applied)
+			// a concurrent copy must wait for the ingress guard, then replay the
+			// committed revision instead of applying the same delta twice.
+			replayed := make(chan error, 1)
+			workers.Go(func() {
+				replayed <- database.ReportIngressUsage(ctx, lease.IngressLeaseIdentity, batch, base.Add(44*time.Second))
+			})
+			waitForPostgresBlock(t, ctx, database, writerPID, replayed)
+			if err := gate.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, done := range []chan error{applied, replayed} {
+				if err := awaitIntegrationResult(t, ctx, done); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var attempts, denials, sessionDenials, revision, reports int64
+			if err := database.pool.QueryRow(ctx, `
+				SELECT buckets.connection_attempts, buckets.policy_denials, sessions.policy_denials, buckets.bucket_revision,
+				       (SELECT count(*) FROM control.ingress_usage_reports)
+				FROM control.public_url_usage_buckets AS buckets
+				JOIN control.publish_runs AS sessions USING (public_url_id, publish_run_number)
+				WHERE buckets.public_url_id = $1 AND buckets.publish_run_number = $2 AND buckets.bucket_start = $3
+			`, next.PublicURLID, int64(next.PublishRunNumber), next.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 6 || denials != 3 || sessionDenials != 3 || revision != 3 || reports != 3 {
+				t.Fatalf("usage after replay/new revision: attempts=%d denials=%d session denials=%d bucket revision=%d reports=%d: %v", attempts, denials, sessionDenials, revision, reports, err)
+			}
+		})
+	}
+}
+
+func TestIntegrationIngressUsageFinalizedReplayChecksLiveGuards(t *testing.T) {
+	database, base, lease, report := newIngressUsageFixture(t)
+	report.ObservedThrough, report.ConnectionAttempts, report.PolicyDenials = base.Add(20*time.Second), 2, 1
+	watermark := report.BucketEnd
+	batch := IngressUsageBatch{Reports: []IngressUsageReport{report}, ObservedThrough: &watermark}
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, batch, base.Add(59*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// keep the ingress lease live after the bucket can finalize. the report is
+	// not final, so a new revision must reach the aggregate finalization guard.
+	lease, err := database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: lease.IngressLeaseIdentity}, base.Add(59*time.Second), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), watermark, watermark); err != nil || count != 1 {
+		t.Fatalf("finalize bucket: count=%d: %v", count, err)
+	}
+	wrongRun, wrongRevision := lease.IngressLeaseIdentity, lease.IngressLeaseIdentity
+	wrongRun.IngressRunID = "other-run"
+	wrongRevision.IngressLeaseRevision++
+	for _, test := range []struct {
+		name     string
+		identity IngressLeaseIdentity
+		at       time.Time
+		want     error
+	}{
+		{"exact replay after finalization", lease.IngressLeaseIdentity, base.Add(61 * time.Second), nil},
+		{"wrong run", wrongRun, base.Add(62 * time.Second), ErrIngressLeaseStale},
+		{"wrong lease revision", wrongRevision, base.Add(62 * time.Second), ErrIngressLeaseStale},
+		{"expired lease", lease.IngressLeaseIdentity, lease.LeaseExpiresAt, ErrIngressLeaseStale},
+	} {
+		if err := database.ReportIngressUsage(t.Context(), test.identity, batch, test.at); !errors.Is(err, test.want) {
+			t.Fatalf("%s: got %v, want %v", test.name, err, test.want)
+		}
+	}
+	stale := batch
+	stale.ObservedThrough = &report.ObservedThrough
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, stale, base.Add(62*time.Second)); !errors.Is(err, ErrIngressUsageReportStale) {
+		t.Fatalf("exact replay with stale watermark: %v", err)
+	}
+	next := report
+	next.ReportRevision, next.ConnectionAttempts, next.PolicyDenials = 2, 4, 2
+	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{next}}, base.Add(62*time.Second)); !errors.Is(err, ErrPublicURLUsageBucketFinalized) {
+		t.Fatalf("new revision after finalization: %v", err)
+	}
+	var attempts, denials, sessionDenials, revision, reports int64
+	if err := database.pool.QueryRow(t.Context(), `
+		SELECT buckets.connection_attempts, buckets.policy_denials, sessions.policy_denials, buckets.bucket_revision,
+		       (SELECT count(*) FROM control.ingress_usage_reports)
+		FROM control.public_url_usage_buckets AS buckets
+		JOIN control.publish_runs AS sessions USING (public_url_id, publish_run_number)
+		WHERE buckets.public_url_id = $1 AND buckets.publish_run_number = $2 AND buckets.bucket_start = $3
+	`, report.PublicURLID, int64(report.PublishRunNumber), report.BucketStart).Scan(&attempts, &denials, &sessionDenials, &revision, &reports); err != nil || attempts != 2 || denials != 1 || sessionDenials != 1 || revision != 1 || reports != 1 {
+		t.Fatalf("finalized usage changed: attempts=%d denials=%d session denials=%d bucket revision=%d reports=%d: %v", attempts, denials, sessionDenials, revision, reports, err)
+	}
+}

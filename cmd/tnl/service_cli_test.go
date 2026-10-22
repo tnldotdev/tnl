@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
 )
 
 func TestSystemServiceCommandWiring(t *testing.T) {
@@ -67,11 +67,11 @@ func TestUserAndSystemServiceScopesAndInactiveDiagnostic(t *testing.T) {
 	if !user.User || system.User || user.Root == system.Root || user.Root == "" {
 		t.Fatalf("service scopes were mixed: user=%+v system=%+v", user, system)
 	}
-	err = requireInstalledService(t.Context(), publisherjob.ServiceOptions{Root: t.TempDir(), User: true}, publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
+	err = requireInstalledService(t.Context(), supervisor.ServiceOptions{Root: t.TempDir(), User: true}, supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
 		t.Fatal("uninstalled service reached the manager")
 		return nil
 	}))
-	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled || !errors.Is(err, publisherjob.ErrServiceNotLoaded) {
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled || !errors.Is(err, supervisor.ErrServiceNotLoaded) {
 		t.Fatalf("uninstalled service had no authored next step: %v", err)
 	}
 }
@@ -109,7 +109,7 @@ func TestUserHomeFailureNeverFallsBackToSystemState(t *testing.T) {
 	if _, err := flags.options(); err == nil {
 		t.Fatal("missing home silently selected a service scope")
 	}
-	err := runServiceInstall(t.Context(), serviceInstallCommand{}, io.Discard, publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
+	err := runServiceInstall(t.Context(), serviceInstallCommand{}, io.Discard, supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
 		t.Fatal("user-home failure reached the service manager")
 		return nil
 	}))
@@ -123,7 +123,7 @@ func TestUserHomeFailureNeverFallsBackToSystemState(t *testing.T) {
 		"list":   func() error { return runServiceList(t.Context(), serviceListCommand{}, io.Discard) },
 		"serve":  func() error { return runServiceServe(t.Context(), serviceServeCommand{}) },
 		"publish install": func() error {
-			return runEnrolledBackgroundPublish(t.Context(), publishCommand{}, enrolledPublishSelection{PublisherFile: filepath.Join(t.TempDir(), "missing")}, backgroundPublishFlags{}, io.Discard, strings.NewReader(""), nil)
+			return runEnrolledBackgroundPublish(t.Context(), publishCommand{}, enrolledPublishSelection{PublisherCredentialFile: filepath.Join(t.TempDir(), "missing")}, backgroundPublishFlags{}, io.Discard, strings.NewReader(""), nil)
 		},
 	} {
 		if err := run(); err == nil {
@@ -140,8 +140,8 @@ func TestUserHomeFailureNeverFallsBackToSystemState(t *testing.T) {
 
 func TestSystemSupervisorRejectsConnectorRunner(t *testing.T) {
 	runner := testServiceRunner(func(context.Context) error { t.Fatal("system service ran a user connector"); return nil })
-	err := runServiceServeWithUserJobs(t.Context(), serviceServeCommand{systemStateFlags: systemStateFlags{System: true}}, []publisherjob.UserJobRunner{runner})
-	if !errors.Is(err, publisherjob.ErrScope) {
+	err := runServiceServeWithUserJobs(t.Context(), serviceServeCommand{systemStateFlags: systemStateFlags{System: true}}, []supervisor.UserJobRunner{runner})
+	if !errors.Is(err, supervisor.ErrScope) {
 		t.Fatalf("system supervisor accepted a user connector: %v", err)
 	}
 }
@@ -167,7 +167,7 @@ func TestUserSupervisorCanAttachConnectorRunner(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runServiceServeWithUserJobs(ctx, serviceServeCommand{systemStateFlags: systemStateFlags{SystemStateDir: filepath.Join(root, "state"), User: true}}, []publisherjob.UserJobRunner{runner})
+		done <- runServiceServeWithUserJobs(ctx, serviceServeCommand{systemStateFlags: systemStateFlags{SystemStateDir: filepath.Join(root, "state"), User: true}}, []supervisor.UserJobRunner{runner})
 	}()
 	select {
 	case <-started:
@@ -197,9 +197,9 @@ type testServiceRunner func(context.Context) error
 func (f testServiceRunner) Serve(ctx context.Context) error { return f(ctx) }
 
 func TestSystemServiceNativeStateOutput(t *testing.T) {
-	job := publisherjob.Job{ID: "url-012345", Name: "orders", Server: "https://control.example", PublisherID: "pub_selected", PublicURLID: "url_selected", Target: "private-target-secret", Protocol: "postgres", TargetCAPEM: []byte("trust-secret"), Enabled: true, Status: publisherjob.Status{State: "ready", PublishRunNumber: 42}}
+	job := supervisor.Job{ID: "url-012345", Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", PublicURLID: "url_selected", Target: "private-target-secret", Protocol: "postgres", TargetCAPEM: []byte("trust-secret"), Enabled: true, Status: supervisor.Status{State: "ready", RunNumber: 42}}
 	var output bytes.Buffer
-	if err := renderSystemJobs(&output, "tnl service list", []publisherjob.Job{job}, ""); err != nil {
+	if err := renderSystemJobs(&output, "tnl service list", []supervisor.Job{job}, ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{"orders", "url-012345", "postgres", "ready", "42", "url_selected", "pub_selected"} {

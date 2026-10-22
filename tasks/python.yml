@@ -1,0 +1,65 @@
+version: "3"
+
+tasks:
+  format:
+    dir: "{{.ROOT_DIR}}"
+    desc: Format the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py ruff format packages/py/src packages/py/tests
+
+  format-check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Python SDK formatting
+    cmds:
+      - uv run --frozen --project packages/py ruff format --check packages/py/src packages/py/tests
+
+  lint:
+    dir: "{{.ROOT_DIR}}"
+    desc: Lint the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py ruff check packages/py/src packages/py/tests
+
+  typecheck:
+    dir: "{{.ROOT_DIR}}"
+    desc: Typecheck the Python SDK
+    cmds:
+      - uv run --frozen --project packages/py mypy packages/py/src packages/py/tests
+
+  test:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run Python tests with the real native CLI and local owners
+    cmds:
+      - |
+        set -eu
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnl-python-native.XXXXXXXX")"
+        trap 'rm -rf "$build_dir"' EXIT
+        go build -race -o "$build_dir/tnl" ./cmd/tnl
+        go build -race -o "$build_dir/owner" ./packages/py/tests/testdata/connection_owner
+        go build -race -o "$build_dir/app-owner" ./packages/py/tests/testdata/app_owner
+        uv run --frozen --project packages/py pytest -q packages/py/tests --tnl-binary="$build_dir/tnl" --tnl-connection-owner="$build_dir/owner" --tnl-app-owner="$build_dir/app-owner" {{.CLI_ARGS}}
+
+  build:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build and verify four platform Python wheels from a GoReleaser snapshot
+    preconditions:
+      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
+        msg: Run task release:snapshot before building Python wheels
+    cmds:
+      - node scripts/package/pack-python-wheels.ts dist/py
+      - node scripts/package/verify-python-wheels.ts dist/py
+
+  check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run all Python SDK checks
+    cmds:
+      - task: :py:format-check
+      - task: :py:lint
+      - task: :py:typecheck
+      - task: :py:test
+      - task: :py:package-check
+
+  package-check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Python wheel source and type-marker packaging without release artifacts
+    cmds:
+      - pnpm exec vitest run scripts/package/python-package.test.ts

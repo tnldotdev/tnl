@@ -1,5 +1,5 @@
 #!/bin/sh
-# generated from scripts/install.sh.in; do not edit install.sh.
+# generated from scripts/installer/install.sh.in; do not edit install.sh.
 # curl -fsSL https://tnl.dev/install | sh
 # TNL_VERSION selects an exact release (default: latest stable).
 # TNL_INSTALL overrides ~/.local/bin; legal files go in its tnl-notices directory.

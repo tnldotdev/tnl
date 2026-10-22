@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 

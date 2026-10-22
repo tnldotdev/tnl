@@ -14,7 +14,7 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
-	"github.com/tnldotdev/tnl/internal/oidcauth"
+	"github.com/tnldotdev/tnl/internal/control/oidc"
 )
 
 type Issuer struct {
@@ -23,7 +23,7 @@ type Issuer struct {
 }
 
 func New(t *testing.T) *Issuer {
-	return NewProvider(t, oidcauth.GitHubIssuer)
+	return NewProvider(t, oidc.GitHubIssuer)
 }
 
 // NewProvider keeps the production issuer and redirects only its key fetches.
@@ -94,7 +94,7 @@ func (i *Issuer) Sign(t *testing.T, claims map[string]any) string {
 
 func Claims(audience string, now time.Time) map[string]any {
 	return map[string]any{
-		"iss": oidcauth.GitHubIssuer, "aud": audience, "sub": "repo:example/repository:ref:refs/heads/main", "jti": "job-assertion-one", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"iss": oidc.GitHubIssuer, "aud": audience, "sub": "repo:example/repository:ref:refs/heads/main", "jti": "job-assertion-one", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
 		"repository": "example/repository", "repository_id": "12345", "repository_owner_id": "6789", "workflow_ref": "example/repository/.github/workflows/test.yml@refs/heads/main", "ref": "refs/heads/main", "event_name": "push", "run_id": "111", "run_attempt": "1", "check_run_id": "222",
 	}
 }

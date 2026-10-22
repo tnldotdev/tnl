@@ -1,0 +1,288 @@
+schemas:
+  PublisherRuntimeRequest:
+    type: object
+    additionalProperties: false
+    required: [publisher_identity_id, scope_id, process_run_id, expected_epoch, action, assertion]
+    properties:
+      publisher_identity_id: { type: string }
+      scope_id:
+        type: string
+        description: Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
+      process_run_id: { type: string, pattern: "^[a-f0-9]{32}$" }
+      expected_epoch: { type: integer, format: int64, minimum: 0 }
+      action:
+        type: string
+        enum: [inspect, start, renew, stop]
+        x-enum-varnames: [RuntimeInspect, RuntimeStart, RuntimeRenew, RuntimeStop]
+      assertion: { type: string, maxLength: 4096 }
+      deployment: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentReport" }
+  PublisherDeploymentReport:
+    type: object
+    additionalProperties: false
+    description: >-
+      Optional, bounded metadata reported by a signed group publisher process.
+      The runtime assertion binds every field. It supplies no tenant, group, or
+      publisher authority and is not AWS attestation. Values stay fixed within
+      a process run. Deployment, provider, replica and instance stay bound to
+      the same publisher identity across replacement processes.
+    required:
+      [
+        deployment_id,
+        provider,
+        replica_key,
+        instance,
+        image,
+        software_version,
+        template_version,
+        template_sha256,
+      ]
+    properties:
+      deployment_id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", maxLength: 48 }
+      provider: { type: string, enum: [aws] }
+      replica_key: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$", maxLength: 32 }
+      instance: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$", maxLength: 32 }
+      image:
+        type: string
+        maxLength: 512
+        pattern: "^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+        description: Reported digest-pinned image reference, without a tag, scheme or credentials. Control does not inspect the running image.
+      software_version:
+        { type: string, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$" }
+      template_version:
+        { type: string, maxLength: 32, pattern: "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$" }
+      template_sha256: { type: string, pattern: "^[a-f0-9]{64}$", maxLength: 64 }
+  PublisherDeploymentObservation:
+    type: object
+    additionalProperties: false
+    description: >-
+      A deployment report accepted through the signed runtime lifecycle.
+      Publisher and team are the surrounding runtime's authenticated identity;
+      group_id is derived by control from current publisher membership.
+      Timestamps are control receipt times. This is evidence of a publisher
+      report, not cloud deployment state, image attestation or target health.
+      The group/deployment/replica tuple is reserved for this publisher identity.
+    required: [report, group_id, evidence, first_observed_at, observed_at]
+    properties:
+      report: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentReport" }
+      group_id: { type: string }
+      evidence: { type: string, enum: [publisher_reported] }
+      first_observed_at: { type: string, format: date-time }
+      observed_at: { type: string, format: date-time }
+  PublisherRuntimeResponse:
+    type: object
+    required: [epoch]
+    properties:
+      epoch: { type: integer, format: int64, minimum: 0 }
+      lease_expires_at: { type: string, format: date-time }
+      group_lease: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLease" }
+  PublisherRuntimeStatus:
+    type: object
+    additionalProperties: false
+    description: >-
+      Latest explicitly started runtime for this immutable publisher identity.
+      A single bounded record survives stop and lease expiry. Active describes
+      the runtime lease, not target reachability or a permanent static IP.
+      Control egress may differ from database-target routing, address family,
+      or NAT. This evidence never grants access or configures an allowlist.
+    required:
+      [
+        publisher_identity_id,
+        team_id,
+        process_run_id,
+        epoch,
+        evidence,
+        address_family,
+        started_at,
+        observed_at,
+        last_seen_at,
+        lease_expires_at,
+        active,
+      ]
+    properties:
+      publisher_identity_id: { type: string }
+      team_id: { type: string }
+      process_run_id: { type: string }
+      epoch: { type: integer, format: int64 }
+      evidence: { type: string, enum: [control_observed] }
+      address:
+        type: string
+        description: Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
+      address_family: { type: string, enum: [ipv4, ipv6, unknown] }
+      started_at: { type: string, format: date-time }
+      observed_at: { type: string, format: date-time }
+      last_seen_at: { type: string, format: date-time }
+      lease_expires_at: { type: string, format: date-time }
+      stopped_at: { type: string, format: date-time }
+      active: { type: boolean }
+      deployment: { $ref: "../openapi.yaml#/components/schemas/PublisherDeploymentObservation" }
+  EnrollGuestPublisherRequest:
+    type: object
+    additionalProperties: false
+    required: [public_url_id, public_key]
+    properties:
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      public_key: { type: string, minLength: 43, maxLength: 43 }
+  GuestPublisherIdentity:
+    type: object
+    additionalProperties: false
+    required: [client_id, key_id, grant_id, team_id, public_url_id]
+    properties:
+      client_id: { type: string }
+      key_id: { type: string }
+      grant_id: { type: string }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+  PublisherGrant:
+    type: object
+    additionalProperties: false
+    required: [id, kind, created_at]
+    properties:
+      id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      kind:
+        type: string
+        enum: [saved_public_url, namespace, service]
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/PublicURLID"
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      domain_id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      namespace:
+        type: string
+      created_at:
+        type: string
+        format: date-time
+      expires_at:
+        type: string
+        format: date-time
+      revoked_at:
+        type: string
+        format: date-time
+  PublisherIdentityPage:
+    type: object
+    additionalProperties: false
+    required: [identities]
+    properties:
+      identities:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/PublisherIdentity"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  PublisherIdentity:
+    type: object
+    additionalProperties: false
+    required: [id, name, kind, created_at, grants, ownership]
+    properties:
+      runtime: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeStatus" }
+      id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      name: { type: string }
+      kind: { type: string, enum: [installed, automation, run, guest] }
+      ownership:
+        {
+          type: string,
+          enum: [member, team, guest],
+          x-enum-varnames: [PublisherOwnerMember, PublisherOwnerTeam, PublisherOwnerGuest],
+        }
+      owner_membership_id: { $ref: "../openapi.yaml#/components/schemas/MembershipID" }
+      created_at: { type: string, format: date-time }
+      revoked_at: { type: string, format: date-time }
+      grants:
+        type: array
+        items: { $ref: "../openapi.yaml#/components/schemas/PublisherGrant" }
+  CreatePublisherGrantRequest:
+    type: object
+    additionalProperties: false
+    description: Select exactly one saved public URL, HTTP namespace, or service ID within the team.
+    required: [team_id]
+    properties:
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      domain_id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      expires_at: { type: string, format: date-time }
+  CreatePublisherEnrollmentRequest:
+    type: object
+    additionalProperties: false
+    description: Enroll with one exact saved public URL, HTTP namespace, or service ID.
+    required: [team_id, name, kind]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { type: string, minLength: 1, maxLength: 63 }
+      kind: { type: string, enum: [installed, automation, run] }
+      ownership:
+        type: string
+        enum: [member, team]
+        x-enum-varnames: [EnrollmentOwnerMember, EnrollmentOwnerTeam]
+        description: Member-owned publishers stop with that membership. Team ownership requires a shared URL or service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and services.
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+  PublisherApplicationLimits:
+    type: object
+    additionalProperties: false
+    properties:
+      requests:
+        type: integer
+        minimum: 1
+      concurrency:
+        type: integer
+        minimum: 1
+      rate:
+        type: object
+        additionalProperties: false
+        required: [requests, per]
+        properties:
+          requests:
+            type: integer
+            minimum: 1
+          per:
+            type: string
+  PublisherEnrollment:
+    type: object
+    additionalProperties: false
+    required: [id, kind, team_id, expires_at, enrollment_key]
+    properties:
+      id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      kind:
+        type: string
+        enum: [saved_public_url, namespace, service]
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      domain_id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      namespace:
+        type: string
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      expires_at:
+        type: string
+        format: date-time
+      enrollment_key:
+        type: string
+  PublisherShare:
+    type: object
+    additionalProperties: false
+    required: [schema_version, share_id, expires_at, secret_fingerprint, cookie_hashes]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      share_id:
+        $ref: "../openapi.yaml#/components/schemas/ShareID"
+      expires_at:
+        type: string
+        format: date-time
+      secret_fingerprint:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      cookie_hashes:
+        type: array
+        items:
+          type: string
+          pattern: "^[0-9a-f]{64}$"

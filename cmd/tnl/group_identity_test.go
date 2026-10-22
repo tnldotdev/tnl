@@ -13,12 +13,12 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestGroupIdentityInputConsumesInjectedSecretWithoutFallback(t *testing.T) {
@@ -166,7 +166,7 @@ func TestGroupIdentityBindsControlBeforeProjectDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectServer, team := "https://unrelated.example", "unrelated-team"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &projectServer, Team: &team}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Server: &projectServer, Team: &team}}}
 	for _, selected := range []string{"", value.ControlURL + "/"} {
 		var flags cli
 		flags.Publisher.Serve = publisherServeCommand{IdentityFile: []string{path}, Group: "production", Instance: "replica-1", ProjectKey: "shop", scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: selected}}}
@@ -219,7 +219,7 @@ func TestGroupIdentityProvisionRejectsMixedAndIncompleteScopes(t *testing.T) {
 	for _, flags := range []publisherProvisionCommand{
 		{Group: "production", Instance: "replica-1", Namespace: true},
 		{Group: "production", Instance: "replica-1", URL: "url_selected"},
-		{Group: "production", Instance: "replica-1", PrivateServiceID: "psvc_selected"},
+		{Group: "production", Instance: "replica-1", ServiceID: "svc_selected"},
 		{Group: "production", Instance: "replica-1", Domain: "example.test"},
 		{Group: "production"},
 		{Group: "local", Instance: "replica-1"},

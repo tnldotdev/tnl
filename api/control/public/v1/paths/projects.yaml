@@ -1,0 +1,132 @@
+paths:
+  /v1/projects/{project_key}/public-metadata:
+    get:
+      operationId: getProjectPublicMetadata
+      security: [{ bearerAuth: [] }]
+      description: Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Authorized public service metadata
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicMetadata" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/local-services/{service}:
+    get:
+      operationId: getLocalProjectService
+      security: [{ bearerAuth: [] }]
+      description: Read the exact service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+      parameters:
+        - {
+            name: project_key,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" },
+          }
+        - {
+            name: service,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" },
+          }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - {
+            name: source_fingerprint,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
+          }
+        - {
+            name: worktree_key,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+          }
+      responses:
+        "200":
+          description: Exact authorized local service and approved visitor metadata
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/LocalProjectService" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    put:
+      operationId: realizeLocalProjectService
+      security: [{ bearerAuth: [] }]
+      description: Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: service, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/RealizeLocalProjectServiceRequest" }
+      responses:
+        "200":
+          description: Exact local resource and approved private metadata
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/LocalProjectService" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/configuration:
+    parameters:
+      - {
+          name: project_key,
+          in: path,
+          required: true,
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" },
+        }
+    put:
+      operationId: applyProjectConfiguration
+      security: [{ bearerAuth: [] }]
+      description: Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "../openapi.yaml#/components/schemas/ApplyProjectConfigurationRequest",
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Applied desired state and observed publisher revisions,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: getProjectConfiguration
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }]
+      responses:
+        "200":
+          {
+            description: Manager-only normalized configuration and status,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

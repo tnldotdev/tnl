@@ -3,8 +3,8 @@ package controltest
 import (
 	"context"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 func SaveSession(ctx context.Context, client *clientstate.Database, origin string, session controlstate.ControlSession) error {

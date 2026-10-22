@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
 func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {

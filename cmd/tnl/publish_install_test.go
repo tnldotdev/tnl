@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/publisher/setup"
 )
 
 func TestSystemInstallLoadsConfiguredTargetBeforeSetup(t *testing.T) {
@@ -32,14 +33,14 @@ func TestSystemInstallLoadsConfiguredTargetBeforeSetup(t *testing.T) {
 func TestPrivateInstallationResultPreservesOnlyAnOwnedFailure(t *testing.T) {
 	var output bytes.Buffer
 	err := runPublicationRegister(t.Context(), serviceRegisterCommand{PrivateResult: true}, strings.NewReader(`{"job":{"access_token":"human-secret"}}`), &output,
-		publisherjob.ExecutorFunc(func(context.Context, publisherjob.Command) error {
+		supervisor.ExecutorFunc(func(context.Context, supervisor.Command) error {
 			t.Fatal("invalid private payload reached the supervisor")
 			return nil
 		}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result publicationRegistrationResult
+	var result setup.RegistrationResult
 	if json.Unmarshal(output.Bytes(), &result) != nil || result.Reason != failure.InvalidTunnelFlags || result.Output != "" || bytes.Contains(output.Bytes(), []byte("human-secret")) {
 		t.Fatal("private installer exposed raw input or lost its failure reason")
 	}

@@ -1,0 +1,39 @@
+securitySchemes:
+  clusterAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl cluster secret
+parameters:
+  IngressID:
+    name: ingress_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/Identifier"
+  IngressRunID:
+    name: ingress_run_id
+    in: query
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/Identifier"
+  IngressLeaseRevision:
+    name: ingress_lease_revision
+    in: query
+    required: true
+    schema:
+      type: integer
+      format: int64
+      minimum: 1
+responses:
+  Problem:
+    description: Request failed
+    content:
+      application/problem+json:
+        schema:
+          $ref: "../openapi.yaml#/components/schemas/Problem"
+schemas:
+  Identifier:
+    type: string
+    minLength: 1
+    maxLength: 256
+    pattern: '^\S(?:.*\S)?$'

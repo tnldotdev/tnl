@@ -3,13 +3,13 @@ package main
 import (
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // local CLI workflows must record an unknown address from the socket peer, not
 // skip the observation or invent a public source. epoch zero means never started.
-func assertWorkflowPublisherRuntime(t *testing.T, client *controlclient.Client, team, id string, epoch int64, active bool) *controlv1.PublisherRuntimeStatus {
+func assertWorkflowPublisherRuntime(t *testing.T, client *clientcontrol.Client, team, id string, epoch int64, active bool) *controlv1.PublisherRuntimeStatus {
 	t.Helper()
 	page, err := client.ListPublisherIdentities(t.Context(), team, "")
 	if err != nil {

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/publicurlusage"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 const (

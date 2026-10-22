@@ -10,9 +10,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 // NormalizeTarget returns a canonical HTTP or HTTPS origin.

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/localproxy"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -103,7 +103,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	var forwarded, promoted, checked int
 	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get(localproxy.ReadinessProbeHeader) != "" || !localproxy.IsReadinessProbe(r) {
+			if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || !publisherproxy.IsReadinessProbe(r) {
 				t.Error("unverified or unstripped readiness proof")
 			}
 			forwarded++
@@ -123,7 +123,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 		r := httptest.NewRequest(test.method, test.path, nil)
 		r.Host = run.Hostname
 		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
-		r.Header.Set(localproxy.ReadinessProbeHeader, test.proof)
+		r.Header.Set(publisherproxy.ReadinessProbeHeader, test.proof)
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, &visitorSession{visitor: Visitor{Run: run}, guard: func(_ context.Context, v Visitor) error {
 			if !v.Readiness {
@@ -143,7 +143,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	}
 	other, _ := NewReadinessProof(run, "/health")
 	r := httptest.NewRequest("GET", "/health", nil)
-	r.Header.Set(localproxy.ReadinessProbeHeader, other.HeaderValue())
+	r.Header.Set(publisherproxy.ReadinessProbeHeader, other.HeaderValue())
 	run.Number++
 	if other.consume(r, run) {
 		t.Fatal("proof crossed publish runs")
@@ -154,14 +154,14 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	var forwarded atomic.Int32
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
-		if r.Header.Get("Authorization") != "caller-value" || r.Header.Get(localproxy.ReadinessProbeHeader) != "" {
+		if r.Header.Get("Authorization") != "caller-value" || r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
 			t.Error("application auth or readiness credential separation failed")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	options := localproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}
-	if err := localproxy.PreflightWithOptions(t.Context(), upstream.URL, options); err != nil {
+	options := publisherproxy.TargetOptions{RootCAs: upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}
+	if err := publisherproxy.PreflightWithOptions(t.Context(), upstream.URL, options); err != nil {
 		t.Fatal(err)
 	}
 	if forwarded.Load() != 0 {
@@ -172,7 +172,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := localproxy.NewWithMountsHooksOptions(upstream.URL, run.Hostname, 1, nil, localproxy.ResponseHooks{}, options)
+	proxy, err := publisherproxy.NewWithMountsHooksOptions(upstream.URL, run.Hostname, 1, nil, publisherproxy.ResponseHooks{}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 		r.Host = run.Hostname
 		r.TLS = &tls.ConnectionState{ServerName: run.Hostname}
-		r.Header.Set(localproxy.ReadinessProbeHeader, secret)
+		r.Header.Set(publisherproxy.ReadinessProbeHeader, secret)
 		r.Header.Set("Authorization", "caller-value")
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 		w := httptest.NewRecorder()
@@ -250,7 +250,7 @@ func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
 	target.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
 	target.StartTLS()
 	defer target.Close()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: localproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: publisherproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
 	if err != nil {
 		t.Fatal(err)
 	}

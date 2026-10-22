@@ -1,0 +1,348 @@
+version: "3"
+
+tasks:
+  live-authorization:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check browser and alias authorization in disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  auth:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check control-owned OIDC browser approval and device polling in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority -run='^TestIntegrationControlOwnedDeviceLogin$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  workload:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check provider workload sessions, saved policy races, and visitor admission with signed local issuer fixtures
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  workload-runtime:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransport' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  workload-http:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check key-bound workload HTTP certificates, streaming and replacement subject isolation with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/daemon -run='^TestIntegrationWorkloadHTTP' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  provider-http:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check shared native workload SDK/IPC and real workload HTTP certificate boundaries locally
+    cmds:
+      - task: :js:test:connections
+      - task: :go:test:connections
+      - task: :go:test:integration:workload-http
+
+  http-services:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check applied HTTP settings, visitor admission, and service HTTP streams with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/daemon -run='^TestIntegration(AppliedProjectHTTPContracts|ServiceHTTPAuthentication)' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  owner-lifecycle:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check a real shared HTTP/PostgreSQL owner while a sibling stalls, using disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector -run='^TestIntegrationConnectionSharedOwnerStalledSibling$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+
+  app-workflows:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check built CLI named publication and local identity against disposable PostgreSQL on Linux
+    vars:
+      RUN: '{{default "^TestIntegration(CLINamed|ServiceShareManagerLookup)" .RUN}}'
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: App workflow CLI integration requires isolated Linux client-state protection
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  connections:
+    dir: "{{.ROOT_DIR}}"
+    desc: Migrate disposable PostgreSQL with real Drizzle Kit and prepared connector options
+    deps: [":js:build"]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionDrizzleKit$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+
+  vercel:
+    dir: "{{.ROOT_DIR}}"
+    desc: Qualify workload-owned Vercel Node 24 artifacts against real local server roles and disposable PostgreSQL
+    deps: [":js:build"]
+    preconditions:
+      - sh: |
+          node -e 'process.exit(process.versions.node === "24.20.0" ? 0 : 1)'
+        msg: "Put pinned Node 24.20.0 on PATH (locally use mise exec node@24.20.0 -- task go:test:integration:vercel)"
+    vars:
+      ARTIFACTS: '{{default (printf "%s/.local/vercel-function-check" .ROOT_DIR) .ARTIFACTS}}'
+      LINUX_NODE_IMAGE: '{{default "" .LINUX_NODE_IMAGE}}'
+    cmds:
+      - pnpm --dir tools/vercel-function-check install --frozen-lockfile
+      - pnpm --dir tools/vercel-function-check typecheck
+      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives tools/vercel-function-check/*.ts
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadVercelFunction$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-vercel-artifacts='{{.ARTIFACTS}}' -tnl-vercel-linux-node-image='{{.LINUX_NODE_IMAGE}}'
+
+  kubernetes:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)
+    vars:
+      KIND: '{{default "kind" .KIND}}'
+    cmds:
+      - go test -v ./internal/publisher -run='^TestIntegrationKubernetesKubectl$' -count=1 -timeout=8m -args -tnl-test-tier=integration -tnl-kind-binary={{.KIND}}
+
+  aws-bootstrap:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check applied publisher identity bootstrap with disposable PostgreSQL and local AWS HTTPS
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher/deployment/aws ./cmd/tnl -run='^TestIntegrationAWSBootstrap' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  default:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run PostgreSQL-backed Go integration tests
+    vars:
+      RUN: '{{default "^TestIntegration" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
+
+  api:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check API, generated database, certificate and DNS boundaries with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  state:shard:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run one complete control-state integration shard (SHARD=1/4 through 4/4)
+    requires:
+      vars: [SHARD]
+    cmds:
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/control/state -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  runtime:shard:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run one runtime integration shard, with real-clock lease proofs in separate targets
+    requires:
+      vars: [SHARD]
+    cmds:
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(WorkloadTransportLifecycle|PrivateDefaultLeaseCycles)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  runtime:leases:
+    dir: "{{.ROOT_DIR}}"
+    desc: Cross production private visitor lease cycles and outage deadlines on real sockets
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPrivateDefaultLeaseCycles$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  runtime:workload:
+    dir: "{{.ROOT_DIR}}"
+    desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  services:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check services, applied publisher groups, and audit in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state ./internal/control/state/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  state-locks:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check control-state lock ordering with disposable PostgreSQL
+    vars:
+      RUN: '{{.RUN | default "^TestIntegrationStateLockOrder"}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  state-boundaries:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check durable secret, retention, admission, and inventory boundaries in disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(StorageRotation|WorkloadRetention|CompanyAdmission|PrivateInventory|AuthorityProjectManaged)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public ./internal/control/api/authority -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  company:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check company activation replay, disabled-subject offboarding and admission boundaries on disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/authority -run='^TestIntegrationCompany' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  service-access:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./cmd/tnl -run='^TestIntegration(ServiceActor|ServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  management:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check publisher claims, manager lookup, AWS bootstrap and connector lifecycle
+    cmds:
+      - task: :go:test:integration:service-claims
+      - task: :go:test:integration:service-access
+      - task: :go:test:integration:aws-bootstrap
+      - task: :go:test:integration:tcp-lifecycle
+      - task: :go:test:integration:sshd
+
+  publisher-egress:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check signed publisher runtime egress and trusted proxy evidence in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state -run='^TestIntegrationPublisherRuntime' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  service-topology:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify private visitor lifecycle through separated and standalone roles
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|EndpointProductionPath|ServiceHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  publisher-observability:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check exported parent chains across separated public and private publisher transports
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPublisherObservability' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  runtime:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify split and standalone runtime boundaries with disposable PostgreSQL and Pebble
+    vars:
+      RUN: '{{default "^TestIntegration" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
+
+  tcp-clients:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify database client TLS, cancellation boundaries, and selected lifetimes with disposable providers
+    deps: [":js:build"]
+    cmds:
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  tcp-lifecycle:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector/stream -run='^TestIntegration(ConnectorReleasesLowCapacityReservations|ConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  service-claims:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/relay -run='^TestIntegrationPrivate(ClaimCommittedResponseLoss|ClaimExpiredResponseRecovery|MixedProcessClaimCapacity|VisitorCertificateDeadline)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  ingress:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check ingress terminal retirement and production role forwarding with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(IngressTerminalRetirementProof|PublicURLRecovery|RouteRoutingTableLifecycle|ExpiredIngressRestartsAndRecoversVisitors|StandalonePublish|SplitPublish)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  local-oidc:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check the real nonroot local OIDC container with a private host TLS key
+    cmds:
+      - go test -v ./internal/development/oidc -run='^TestIntegrationLocalOIDCPrivateKeyMount$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+
+  cli:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
+    vars:
+      RUN: '{{default "^TestIntegrationCLI" .RUN}}'
+      SHARD: '{{default "1/1" .SHARD}}'
+      SKIP: '{{default "^$" .SKIP}}'
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: CLI integration tests require Linux for isolated credential protection
+    cmds:
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  cli:shard:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run one ordinary CLI shard, with real-clock Git identity continuity in its own target
+    requires:
+      vars: [SHARD]
+    cmds:
+      - task: :go:test:integration:cli
+        vars:
+          SHARD: "{{.SHARD}}"
+          SKIP: ^TestIntegrationCLINamedLocalIdentityContinuity$
+
+  cli:identity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify stable local service identity through three complete owner and Git transitions
+    cmds:
+      - task: :go:test:integration:cli
+        vars:
+          RUN: ^TestIntegrationCLINamedLocalIdentityContinuity$
+          SHARD: 1/1
+
+  binary:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run Linux binary integration tests
+    deps: [":js:build"]
+    vars:
+      RUN: '{{default "^TestBinaryIntegration" .RUN}}'
+      COMPOSE_HOST_ADDRESS: '{{default "host-gateway" .COMPOSE_HOST_ADDRESS}}'
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: Binary integration tests require Linux
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=binary -tnl-test-compose-host-address='{{.COMPOSE_HOST_ADDRESS}}'
+
+  sshd:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify an existing OpenSSH daemon through private QUIC and TLS/TCP streams
+    cmds:
+      - go test -race -v ./internal/connector/stream -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  compose:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check disposable host-side Compose HTTP and TCP targets
+    cmds:
+      - go test -race -v ./internal/publisher/target -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
+
+  publisher-install:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify installation, reboot, and Compose enrollment in disposable Ubuntu/systemd with disposable PostgreSQL (Docker opt-in)
+    cmds:
+      - go -C tools/testharness run . publisher-install
+
+  publisher-groups:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify one CLI process serving independent cross-team groups with disposable PostgreSQL
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: Group CLI integration requires Linux for isolated credential protection
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationFixedGroupsCrossTeamIsolation$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  publisher-replacement:
+    dir: "{{.ROOT_DIR}}"
+    desc: Restore one publisher identity after deleting task-local SQLite, using disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./deploy/publisher/fargate -run='^TestIntegrationPublisherIdentitySurvivesTaskStateDeletion$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  publisher-recovery:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check fresh publisher plan checkpoints and order retention in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state -run='^TestIntegration(ManagedCertificateRunAuthority|PublisherFreshBaseline|PostgresMigrationAndOpen)' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  dns:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run the authoritative DNS integration test in disposable Linux containers
+    cmds:
+      - go -C tools/testharness run . dns
+
+  route53:
+    dir: "{{.ROOT_DIR}}"
+    desc: Issue one staging ACME certificate using real Route 53 TXT propagation in the staging zone
+    requires:
+      vars: [ZONE_ID]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'

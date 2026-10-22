@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 

@@ -32,24 +32,24 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/miekg/dns"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisheridentity"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/internal/targetdiscovery"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const targetHostname = "cluster.local.example.test"
 
 type Fixture struct {
 	Server           *httptest.Server
-	Job              publisherjob.Job
+	Job              supervisor.Job
 	Key              ed25519.PrivateKey
 	Profile          *clientstate.Store
-	Heartbeat        chan controlv1.PrivateServiceRunHeartbeat
+	Heartbeat        chan controlv1.ServiceRunHeartbeat
 	DiscoveryStarted chan struct{}
 	DiscoveryStopped chan struct{}
 	Requests         atomic.Int32
@@ -59,10 +59,10 @@ type Fixture struct {
 	Block            atomic.Bool
 	mu               sync.Mutex
 	assignment       controlv1.PublisherGroupAssignments
-	service          controlv1.PrivateService
-	setup            controlv1.PrivateServiceRunSetup
-	prepare          controlv1.PrivateServiceRunPreparation
-	provider         targetdiscovery.AWS
+	service          controlv1.Service
+	setup            controlv1.ServiceRunSetup
+	prepare          controlv1.ServiceRunPreparation
+	provider         publisherdiscovery.AWS
 	port             string
 	started, stopped sync.Once
 	proofs           map[string]bool
@@ -82,21 +82,21 @@ func New(t *testing.T) *Fixture {
 		t.Fatal(err)
 	}
 	member := controlv1.PublisherGroupMember{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GroupId: id("pgrp_"), GroupName: "cloud", ProjectKey: strings.Repeat("a", 56)}
-	serviceID, runID, grantID := id(opaqueid.PrivateServicePrefix), id(opaqueid.PrivateRunPrefix), id(opaqueid.PublisherGrantPrefix)
-	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.PrivateServiceRunHeartbeat, 16), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
-	protocol := controlv1.PrivateServiceProtocol("kubernetes")
-	f.assignment = controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.PublisherGroupServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "private_service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, Publisher: &member.GroupName, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
-	f.service = controlv1.PrivateService{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "managed.example.test", Port: 25443}}
-	f.prepare = controlv1.PrivateServiceRunPreparation{PrivateServiceId: serviceID, PrivateRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.ManagedTls.Hostname, ServicePort: 25443, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.ManagedTls.Hostname, Identifiers: []string{f.service.ManagedTls.Hostname}, ChallengeMethod: controlv1.Dns01}}
-	f.setup = controlv1.PrivateServiceRunSetup{PrivateServiceId: serviceID, PrivateRunId: runID, RunNumber: 1, RunToken: "fixture-run"}
+	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
+	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
+	protocol := controlv1.ServiceProtocol("kubernetes")
+	f.assignment = controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.PublisherGroupServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, PublisherGroup: &member.GroupName, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
+	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
+	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, ServicePort: 25443, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
+	f.setup = controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "fixture-run"}
 	for slot := range 2 {
 		f.setup.PublisherConnections = append(f.setup.PublisherConnections, controlv1.ConnectionAssignment{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: "127.0.0.1:1", TlsServerName: "relay.example.test", PublisherConnectionCredential: "fixture-connection", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute)})
 	}
 	f.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f.serve(t, w, r) }))
 	t.Cleanup(f.Server.Close)
 	serverCA := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.Server.Certificate().Raw})
-	f.Job = publisherjob.Job{Kind: publisherjob.KindGroup, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: "default"}
-	f.Job.ID = publisherjob.JobKey(f.Job.Server, "group", member.GroupId+":default")
+	f.Job = supervisor.Job{Kind: supervisor.KindGroup, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: "default"}
+	f.Job.ID = supervisor.JobKey(f.Job.Server, "group", member.GroupId+":default")
 	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -128,13 +128,13 @@ func (f *Fixture) SetAssignment(assignment controlv1.PublisherGroupServiceAssign
 	f.assignment.ConfigurationHash = hex.EncodeToString(sum[:])
 }
 
-func (f *Fixture) ChangeService(change func(*controlv1.PrivateService)) {
+func (f *Fixture) ChangeService(change func(*controlv1.Service)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	change(&f.service)
 }
 
-func (f *Fixture) Discover(ctx context.Context, request targetdiscovery.Request) (targetdiscovery.ResolvedTarget, error) {
+func (f *Fixture) Discover(ctx context.Context, request publisherdiscovery.Request) (publisherdiscovery.ResolvedTarget, error) {
 	f.Requests.Add(1)
 	target, err := f.provider.Discover(ctx, request)
 	if err != nil {
@@ -154,7 +154,7 @@ func write(w http.ResponseWriter, value any) {
 func (f *Fixture) verify(t *testing.T, proof, scope, audience string) bool {
 	t.Helper()
 	m := f.assignment.Member
-	assertion, err := publisheridentity.Verify(proof, m.PublisherIdentityId, m.KeyId, scope, audience, f.Key.Public().(ed25519.PublicKey), time.Now())
+	assertion, err := publisherproof.Verify(proof, m.PublisherIdentityId, m.KeyId, scope, audience, f.Key.Public().(ed25519.PublicKey), time.Now())
 	if err != nil || f.proofs[assertion.ID] {
 		t.Error("publisher proof or replay boundary failed")
 		return false
@@ -180,7 +180,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(400)
 			return
 		}
-		scope := publisheridentity.RuntimeScope(m.GroupId, string(request.Action), request.ProcessRunId, request.ExpectedEpoch, "")
+		scope := publisherproof.RuntimeScope(m.GroupId, string(request.Action), request.ProcessRunId, request.ExpectedEpoch, "")
 		if !f.verify(t, request.Assertion, scope, f.Server.URL+r.URL.Path) {
 			w.WriteHeader(401)
 			return
@@ -226,15 +226,15 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(w, authorityv1.PublisherTokenResponse{AccessToken: "fixture-service", GrantId: request.GrantId, TokenType: "Bearer", ExpiresIn: 60})
-	case "/v1/publisher/private-service":
+	case "/v1/publisher/service":
 		if r.Header.Get("Authorization") != "Bearer fixture-service" {
 			t.Error("saved service lacked scoped grant")
 			w.WriteHeader(401)
 			return
 		}
 		write(w, f.service)
-	case "/v1/private-services/" + f.service.Id + "/runs":
-		var declaration controlv1.PrivateServiceRunDeclaration
+	case "/v1/services/" + f.service.Id + "/runs":
+		var declaration controlv1.ServiceRunDeclaration
 		_ = json.NewDecoder(r.Body).Decode(&declaration)
 		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
 			t.Error("discovered trust leaked into control declaration")
@@ -242,15 +242,15 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		preparation := f.prepare
 		preparation.IdempotencyKey = r.Header.Get("Idempotency-Key")
 		write(w, preparation)
-	case "/v1/private-services/" + f.service.Id + "/runs/" + f.setup.PrivateRunId + "/start":
+	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/start":
 		write(w, f.setup)
-	case "/v1/private-services/" + f.service.Id + "/runs/" + f.setup.PrivateRunId:
+	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId:
 		if r.Method == "DELETE" {
 			f.Closes.Add(1)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var health controlv1.PrivateServiceRunHeartbeat
+		var health controlv1.ServiceRunHeartbeat
 		_ = json.NewDecoder(r.Body).Decode(&health)
 		select {
 		case f.Heartbeat <- health:
@@ -370,6 +370,6 @@ func (f *Fixture) startAWSAndTarget(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	cfg := aws.Config{Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider(credential.AccessKeyID, credential.SecretAccessKey, credential.SessionToken), HTTPClient: server.Client(), RetryMaxAttempts: 1}
-	clients := targetdiscovery.Clients{EKS: eks.NewFromConfig(cfg, func(o *eks.Options) { o.BaseEndpoint = aws.String(server.URL) }), Caller: sts.NewFromConfig(cfg, func(o *sts.Options) { o.BaseEndpoint = aws.String(server.URL) })}
-	f.provider = targetdiscovery.AWS{Load: func(context.Context, string) (targetdiscovery.Clients, error) { return clients, nil }}
+	clients := publisherdiscovery.Clients{EKS: eks.NewFromConfig(cfg, func(o *eks.Options) { o.BaseEndpoint = aws.String(server.URL) }), Caller: sts.NewFromConfig(cfg, func(o *sts.Options) { o.BaseEndpoint = aws.String(server.URL) })}
+	f.provider = publisherdiscovery.AWS{Load: func(context.Context, string) (publisherdiscovery.Clients, error) { return clients, nil }}
 }

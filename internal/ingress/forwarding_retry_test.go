@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
 type failingForwardingConnector struct {

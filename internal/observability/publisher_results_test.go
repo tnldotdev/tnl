@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 

@@ -1,0 +1,17 @@
+schemas:
+  BrowserAccessStatus:
+    type: object
+    additionalProperties: false
+    required: [schema_version, allowed, preview_id, public_url_id, publish_run_number]
+    properties:
+      schema_version:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      allowed: { type: boolean }
+      preview_id:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PreviewID"
+      public_url_id:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublicURLID"
+      publish_run_number: { type: integer, format: int64, minimum: 1 }
+      access_method: { type: string, enum: [anonymous, share, team, visitor] }
+      expires_at: { type: string, format: date-time }
+      reason: { type: string, enum: [TNL_VISITOR_ACCESS_DENIED] }

@@ -1,0 +1,55 @@
+package state
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+)
+
+// ExpireSavedPublishRuns closes expired HTTP and private runs, including runs
+// no publisher will touch again. each closure releases its shared relay
+// reservations and publishes a run-scoped routing tombstone.
+func (d *Database) ExpireSavedPublishRuns(ctx context.Context, now time.Time) (count int, retErr error) {
+	if err := d.requireOpen(); err != nil {
+		return 0, err
+	}
+	if err := d.expireCompanyEligibility(ctx, now); err != nil {
+		return 0, err
+	}
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("controlstate: expire saved publish runs: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "expire saved publish runs", &retErr)()
+	queries := controlstatedb.New(tx)
+	pendingEvents := pendingIngressRoutingTableEvents{}
+	routes, err := queries.LockExpiredPublishRunPublicURLs(ctx, controlstatedb.LockExpiredPublishRunPublicURLsParams{
+		Now: timestamptz(now), BatchSize: maximumExpiredPublishRunBatch,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("controlstate: expire saved publish runs: lock public URLs: %w", err)
+	}
+	for _, route := range routes {
+		// the candidate may have been renewed after the query's snapshot.
+		// recheck the publish run under its public URL lock before closing it.
+		_, closed, err := expireStaleOpenPublishRuns(ctx, queries, &pendingEvents, route, now)
+		if err != nil {
+			return 0, err
+		}
+		count += closed
+	}
+	if err := pendingEvents.publish(ctx, queries); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("controlstate: expire saved publish runs: commit: %w", err)
+	}
+	private, err := d.ExpireServiceRuns(ctx, now)
+	if err != nil {
+		return count, err
+	}
+	return count + private, nil
+}

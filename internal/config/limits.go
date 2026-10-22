@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/tnldotdev/tnl/internal/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 // MaxConfigInteger is the largest integer shared exactly by Go and JavaScript.

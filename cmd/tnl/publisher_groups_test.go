@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 )
 
 func TestFixedGroupsRejectDuplicateOwnershipBeforeStateOrControl(t *testing.T) {
@@ -35,10 +35,10 @@ func TestFixedGroupsRejectDuplicateOwnershipBeforeStateOrControl(t *testing.T) {
 			}
 			second := write(duplicate)
 			flags := publisherServeCommand{IdentityFile: []string{first, second}, StateDir: "/does/not/exist/state", IdentityDir: "/does/not/exist/identity"}
-			if _, err := readFixedPublisherGroups(flags); !errors.Is(err, publisherjob.ErrJobExists) {
+			if _, err := readFixedPublisherGroups(flags); !errors.Is(err, supervisor.ErrJobExists) {
 				t.Fatal("duplicate ownership was not rejected locally", err)
 			}
-			if err := run(t.Context(), []string{"--no-telemetry", "--no-config", "publisher", "serve", "--identity-file", first, "--identity-file", second, "--state-dir", flags.StateDir, "--identity-dir", flags.IdentityDir}, io.Discard, io.Discard); !errors.Is(err, publisherjob.ErrJobExists) {
+			if err := run(t.Context(), []string{"--no-telemetry", "--no-config", "publisher", "serve", "--identity-file", first, "--identity-file", second, "--state-dir", flags.StateDir, "--identity-dir", flags.IdentityDir}, io.Discard, io.Discard); !errors.Is(err, supervisor.ErrJobExists) {
 				t.Fatal("repeatable CLI input did not reject duplicate ownership before opening state", err)
 			}
 		})

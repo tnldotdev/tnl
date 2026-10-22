@@ -10,7 +10,7 @@ const (
 	DefaultClientHelloConnectionLimit = 1024
 	DefaultControlConnectionLimit     = 1024
 	DefaultRelayConnectionLimit       = 4096
-	DefaultPrivateConnectionLimit     = 256
+	DefaultServiceConnectionLimit     = 256
 )
 
 type connectionKind uint8
@@ -20,7 +20,7 @@ const (
 	pendingConnection
 	controlConnection
 	relayConnection
-	privateConnection
+	serviceConnection
 	connectionKinds
 )
 
@@ -32,7 +32,7 @@ func admissionDefaults(config *Config) error {
 		{&config.MaxClientHelloConnections, DefaultClientHelloConnectionLimit},
 		{&config.MaxControlConnections, DefaultControlConnectionLimit},
 		{&config.MaxRelayConnections, DefaultRelayConnectionLimit},
-		{&config.MaxPrivateConnections, DefaultPrivateConnectionLimit},
+		{&config.MaxServiceConnections, DefaultServiceConnectionLimit},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -66,8 +66,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		limit, resource = s.config.MaxControlConnections, "control_connections"
 	case relayConnection:
 		limit, resource = s.config.MaxRelayConnections, "relay_tcp_connections"
-	case privateConnection:
-		limit, resource = s.config.MaxPrivateConnections, "private_connector_sessions"
+	case serviceConnection:
+		limit, resource = s.config.MaxServiceConnections, "connector_sessions"
 	}
 	if s.admitted[kind] >= limit {
 		return nil, resource
@@ -110,7 +110,7 @@ func (s *Server) reportAdmittedLocked() {
 	if s.config.Metrics == nil {
 		return
 	}
-	for kind, class := range []string{"public", "denied", "control", "relay_tcp", "private_connector"} {
+	for kind, class := range []string{"public", "denied", "control", "relay_tcp", "connector"} {
 		s.config.Metrics.SetIngressConnections(class, s.admitted[kind])
 	}
 }

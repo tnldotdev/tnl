@@ -1,0 +1,31 @@
+securitySchemes:
+  shareCookie:
+    type: apiKey
+    in: cookie
+    name: __Host-tnl-share
+    description: Current share access; allowed visitor IPs may use the API without this cookie
+parameters:
+  FeedbackID:
+    name: feedback_id
+    in: path
+    required: true
+    schema:
+      $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/FeedbackID"
+  IdempotencyKey:
+    name: Idempotency-Key
+    in: header
+    required: true
+    description: Reuse for retries of one mutation; at most 128 bytes
+    schema: { type: string, minLength: 1, maxLength: 128 }
+responses:
+  FeedbackError:
+    description: >-
+      400 for invalid input, 403 for expired or missing preview access, 404 for
+      an unavailable thread or path, 405 for an unsupported method, 409 for a
+      state or idempotency conflict, 429 for rate limiting, or 503 when control
+      is unavailable. The browser displays its own diagnostic rather than the
+      upstream error body. Use the same mutation key and body for retries.
+    content:
+      text/plain:
+        schema: { type: string }
+        example: feedback changed; reload and retry

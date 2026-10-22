@@ -1,0 +1,496 @@
+schemas:
+  FeedbackID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  ReviewSchemaVersion:
+    type: integer
+    minimum: 1
+    description: Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
+  FeedbackThreadState:
+    type: string
+    enum: [open, resolved]
+  FeedbackEventType:
+    type: string
+    enum: [thread.created, reply, update, thread.resolved, thread.reopened]
+  FeedbackScope:
+    type: object
+    additionalProperties: false
+    required: [preview_id, public_url_id, publish_run_id, publish_run_number, page_path, service]
+    properties:
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      public_url_id:
+        $ref: "../openapi.yaml#/components/schemas/PublicURLID"
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/PublishRunID"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      page_path:
+        type: string
+        minLength: 1
+        maxLength: 2048
+        pattern: "^/"
+      page_title:
+        type: string
+        maxLength: 256
+      service:
+        type: string
+        minLength: 1
+        maxLength: 32
+  FeedbackAuthor:
+    type: object
+    additionalProperties: false
+    required: [display_name, verified]
+    properties:
+      identity_id:
+        $ref: "../openapi.yaml#/components/schemas/IdentityID"
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 256
+      verified:
+        type: boolean
+  FeedbackReport:
+    type: object
+    additionalProperties: false
+    required: [text, created_at]
+    properties:
+      text:
+        type: string
+        minLength: 1
+        maxLength: 4000
+      author:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAuthor"
+      created_at:
+        type: string
+        format: date-time
+  FeedbackTextBoundary:
+    type: object
+    additionalProperties: false
+    required: [selectors, text_node, offset]
+    properties:
+      selectors:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackSelectors"
+      text_node:
+        type: integer
+        minimum: 0
+        maximum: 65535
+      offset:
+        type: integer
+        minimum: 0
+        maximum: 1048576
+  FeedbackSelectors:
+    type: array
+    minItems: 1
+    maxItems: 6
+    uniqueItems: true
+    items:
+      type: string
+      minLength: 1
+      maxLength: 512
+  FeedbackAnchor:
+    type: object
+    additionalProperties: false
+    required: [schema_version, selectors, x, y]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      selectors:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackSelectors"
+      x:
+        type: number
+        minimum: 0
+        maximum: 1
+      y:
+        type: number
+        minimum: 0
+        maximum: 1
+      selection:
+        type: object
+        additionalProperties: false
+        required: [start, end, text]
+        properties:
+          start:
+            $ref: "../openapi.yaml#/components/schemas/FeedbackTextBoundary"
+          end:
+            $ref: "../openapi.yaml#/components/schemas/FeedbackTextBoundary"
+          text:
+            type: string
+            minLength: 1
+            maxLength: 2000
+  FeedbackElement:
+    type: object
+    additionalProperties: false
+    properties:
+      role:
+        type: string
+        maxLength: 128
+      label:
+        type: string
+        maxLength: 256
+      test_id:
+        type: string
+        maxLength: 128
+      html:
+        type: string
+        maxLength: 4096
+  FeedbackEvidence:
+    type: object
+    additionalProperties: false
+    required: [schema_version, actions, failed_requests]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      element:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackElement"
+      actions:
+        type: array
+        maxItems: 20
+        items:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [navigation, click, submit]
+            path:
+              type: string
+              maxLength: 2048
+            label:
+              type: string
+              maxLength: 256
+            test_id:
+              type: string
+              maxLength: 128
+      failed_requests:
+        type: array
+        maxItems: 20
+        items:
+          type: object
+          additionalProperties: false
+          required: [method, path, status, duration_ms]
+          properties:
+            method:
+              type: string
+              minLength: 1
+              maxLength: 12
+            path:
+              type: string
+              minLength: 1
+              maxLength: 2048
+              pattern: "^/"
+            status:
+              type: integer
+              minimum: 0
+              maximum: 599
+            duration_ms:
+              type: integer
+              minimum: 0
+              maximum: 600000
+  SourceFileState:
+    type: object
+    additionalProperties: false
+    required: [path, status]
+    properties:
+      path:
+        type: string
+        minLength: 1
+        maxLength: 512
+        description: Path relative to the selected project directory
+      status:
+        type: string
+        enum: [added, modified, deleted]
+        description: Working-tree change from HEAD; staging does not affect this value
+      blob_id:
+        type: string
+        pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        description: Git blob ID from git hash-object --no-filters; absent for deleted or unreadable files
+      mode:
+        type: string
+        pattern: "^100(?:644|755)$"
+        description: Git file mode; absent for deleted or unsupported files
+  SourceState:
+    type: object
+    additionalProperties: false
+    required: [schema_version, head_commit, project_path, branch, changed_files, complete]
+    description: >-
+      Bounded Git identifiers for the source present in one project directory.
+      Compare HEAD, project_path, and changed_files only when both records are
+      complete. Branch names and index state do not affect matching. Source
+      bytes and absolute paths are not stored. Ignored files are outside this
+      comparison; an unsupported or truncated capture is incomplete.
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      head_commit:
+        type: string
+        pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})?$"
+        description: Full Git HEAD commit ID; empty when unavailable
+      project_path:
+        type: string
+        maxLength: 512
+        description: Selected project's path relative to the repository root; empty at the root
+      branch:
+        type: string
+        maxLength: 128
+        description: Informational branch name; empty for detached HEAD or when unavailable
+      changed_files:
+        type: array
+        maxItems: 64
+        description: Unique project-relative paths sorted lexically; renames are a deletion and an addition
+        items:
+          $ref: "../openapi.yaml#/components/schemas/SourceFileState"
+      complete:
+        type: boolean
+        description: All supported Git-visible project changes were captured within the bounds
+  FeedbackThread:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        schema_version,
+        id,
+        state,
+        scope,
+        report,
+        evidence,
+        source_at_report,
+        message_count,
+        latest_event_cursor,
+      ]
+    properties:
+      message_count:
+        type: integer
+        format: int64
+        minimum: 1
+      latest_event_cursor:
+        type: integer
+        format: int64
+        minimum: 0
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      id:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackID"
+      state:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackThreadState"
+      scope:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackScope"
+      report:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReport"
+      anchor:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAnchor"
+      evidence:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEvidence"
+      source_at_report:
+        $ref: "../openapi.yaml#/components/schemas/SourceState"
+  FeedbackThreadSummary:
+    type: object
+    additionalProperties: false
+    required: [schema_version, id, state, scope, report, message_count, latest_event_cursor]
+    properties:
+      message_count:
+        type: integer
+        format: int64
+        minimum: 1
+      latest_event_cursor:
+        type: integer
+        format: int64
+        minimum: 0
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      id:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackID"
+      state:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackThreadState"
+      scope:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackScope"
+      report:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReport"
+      anchor:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAnchor"
+  FeedbackThreadPage:
+    type: object
+    additionalProperties: false
+    required: [schema_version, threads, event_cursor]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      threads:
+        type: array
+        maxItems: 100
+        items:
+          $ref: "../openapi.yaml#/components/schemas/FeedbackThreadSummary"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackID"
+      event_cursor:
+        type: integer
+        format: int64
+        minimum: 0
+  FeedbackEvent:
+    type: object
+    additionalProperties: false
+    required: [schema_version, cursor, feedback_id, type, at, actor]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      cursor:
+        type: integer
+        format: int64
+        minimum: 1
+      feedback_id:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackID"
+      type:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEventType"
+      actor:
+        type: string
+        enum: [implementer, reviewer]
+      author:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAuthor"
+      at:
+        type: string
+        format: date-time
+      text:
+        type: string
+        minLength: 1
+        maxLength: 4000
+      evidence:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEvidence"
+      source_state:
+        $ref: "../openapi.yaml#/components/schemas/SourceState"
+  FeedbackEventPage:
+    type: object
+    additionalProperties: false
+    required: [schema_version, events, event_cursor]
+    properties:
+      schema_version:
+        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
+      events:
+        type: array
+        maxItems: 25
+        items:
+          $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
+      next_cursor:
+        type: integer
+        format: int64
+        minimum: 1
+      event_cursor:
+        type: integer
+        format: int64
+        minimum: 0
+  FeedbackReviewerAccess:
+    type: object
+    additionalProperties: false
+    required: [visit_allowed]
+    properties:
+      source_ip:
+        type: string
+        maxLength: 64
+      visit_allowed:
+        type: boolean
+      share_secret: { type: string, minLength: 43, maxLength: 43 }
+      share_id:
+        $ref: "../openapi.yaml#/components/schemas/ShareID"
+      cookie_secret:
+        type: string
+        minLength: 43
+        maxLength: 43
+      browser_cookie_secret:
+        type: string
+        minLength: 43
+        maxLength: 43
+  CreateFeedbackReportRequest:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        preview_id,
+        publish_run_number,
+        service,
+        page_path,
+        report,
+        evidence,
+        source_at_report,
+        access,
+      ]
+    properties:
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      service:
+        type: string
+      page_path:
+        type: string
+      page_title:
+        type: string
+        maxLength: 256
+      report:
+        type: object
+        additionalProperties: false
+        required: [text]
+        properties:
+          text:
+            type: string
+          display_name:
+            type: string
+      anchor:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAnchor"
+      evidence:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEvidence"
+      source_at_report:
+        $ref: "../openapi.yaml#/components/schemas/SourceState"
+      access:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"
+  AppendFeedbackEventRequest:
+    type: object
+    additionalProperties: false
+    required: [type]
+    properties:
+      type:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEventType"
+      text:
+        type: string
+      evidence:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEvidence"
+      source_state:
+        $ref: "../openapi.yaml#/components/schemas/SourceState"
+  AppendReviewerFeedbackEventRequest:
+    type: object
+    additionalProperties: false
+    required: [publish_run_number, type, access]
+    properties:
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      type:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEventType"
+      text:
+        type: string
+      evidence:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackEvidence"
+      source_state:
+        $ref: "../openapi.yaml#/components/schemas/SourceState"
+      access:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"
+  ReviewerFeedbackReadRequest:
+    type: object
+    additionalProperties: false
+    required: [publish_run_number, preview_id, access]
+    properties:
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      after_cursor:
+        type: integer
+        format: int64
+        minimum: 0
+      access:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"

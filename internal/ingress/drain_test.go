@@ -10,7 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
 type singleBackend struct{ connection net.Conn }

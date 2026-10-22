@@ -1,0 +1,83 @@
+securitySchemes:
+  clusterAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: tnl cluster secret
+parameters:
+  RelayID:
+    name: relay_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/Identifier"
+  RelayServiceID:
+    name: relay_service_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/Identifier"
+  PublisherConnectionID:
+    name: publisher_connection_id
+    in: path
+    required: true
+    schema:
+      $ref: "../openapi.yaml#/components/schemas/Identifier"
+responses:
+  Problem:
+    description: Request failed
+    content:
+      application/problem+json:
+        schema:
+          $ref: "../openapi.yaml#/components/schemas/Problem"
+schemas:
+  Identifier:
+    type: string
+    minLength: 1
+    maxLength: 256
+    pattern: '^\S(?:.*\S)?$'
+  ProblemCode:
+    type: string
+    enum:
+      - invalid_request
+      - invalid_json
+      - unsupported_media_type
+      - unauthenticated
+      - not_found
+      - internal
+      - relay_registration_conflict
+      - relay_lease_stale
+      - certificate_unavailable
+      - stale_connection_assignment
+      - publisher_connection_already_claimed
+      - invalid_publisher_connection_credential
+      - relay_draining
+      - relay_connection_capacity_exhausted
+      - publisher_connection_unavailable
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [type, title, status, code, detail, request_id]
+    properties:
+      type:
+        type: string
+        format: uri
+      title:
+        type: string
+      status:
+        type: integer
+        minimum: 400
+        maximum: 599
+      code:
+        $ref: "../openapi.yaml#/components/schemas/ProblemCode"
+      detail:
+        type: string
+        minLength: 1
+      request_id:
+        type: string
+        minLength: 1
+      retry_at:
+        type: string
+        format: date-time
+      details:
+        type: object
+        additionalProperties: true

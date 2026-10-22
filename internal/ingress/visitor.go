@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/router"
-	"github.com/tnldotdev/tnl/internal/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/streamcopy"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
 
 type committedVisitorStream struct {
@@ -29,7 +29,7 @@ type committedVisitorStream struct {
 var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
 
 // forward resolves policy and admission before attempting a publisher stream.
-func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) (retErr error) {
+func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello clienthello.ClientHello) (retErr error) {
 	owner := s.openContext
 	if owner == nil {
 		owner = context.Background()
@@ -37,7 +37,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	ctx, finishConnection := observability.Start(owner, "ingress.visitor_connection")
 	defer func() { finishConnection(retErr) }()
 	var route PublicURL
-	var backends []routebackend.Backend
+	var backends []ingressbackend.Backend
 	var ok bool
 	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
@@ -294,7 +294,7 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 
 // openVisitorStream retries only before a visitor byte reaches a relay. the
 // returned connection is owned by the caller even when its setup write failed.
-func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (result committedVisitorStream, retErr error) {
+func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (result committedVisitorStream, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.open_visitor_stream")
 	observability.Visitor(ctx, visitorID)
 	defer func() { finish(errors.Join(retErr, result.setupErr)) }()
@@ -320,7 +320,7 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 		var candidate net.Conn
 		var openErr error
 		if kind == pendingConnection {
-			if pendingBackend, ok := backend.(routebackend.PendingBackend); ok {
+			if pendingBackend, ok := backend.(ingressbackend.PendingBackend); ok {
 				candidate, openErr = pendingBackend.OpenPending(attemptCtx, visitorID)
 			} else {
 				openErr = errors.New("ingress: backend does not support pending authorization")
@@ -394,7 +394,7 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 	return err
 }
 
-func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome observability.RelayAttemptOutcome) {
+func (s *Server) observeRelayAttempt(backend ingressbackend.Backend, outcome observability.RelayAttemptOutcome) {
 	if s.config.Metrics == nil {
 		return
 	}

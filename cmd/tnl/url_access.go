@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
-	"net/netip"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type urlAccessCommand struct {
@@ -57,42 +55,16 @@ func runURLAccessShow(ctx context.Context, flags urlAccessShowCommand, out, diag
 	return writeAccessPolicy(out, "tnl url access show", item)
 }
 
-func resolveManagedPublicURL(ctx context.Context, session *teamSession, selector string) (controlv1.PublicURL, error) {
-	current, err := session.current(ctx)
+func resolveManagedPublicURL(ctx context.Context, session *clientteam.Session, selector string) (controlv1.PublicURL, error) {
+	current, err := session.Current(ctx)
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
-	routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
+	routes, err := session.Authenticated().Control.ListPublicURLs(ctx, current.Team().Id)
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
 	return selectSharePublicURL(selector, routes)
-}
-
-func accessIPPrefixes(ctx context.Context, control interface {
-	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
-}, values []string) ([]string, error) {
-	input := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "current" {
-			current, err := control.ClientIP(ctx)
-			if err != nil {
-				return nil, err
-			}
-			address, err := netip.ParseAddr(current.Ip)
-			if err != nil || address.Zone() != "" {
-				return nil, errors.New("control returned an invalid current IP")
-			}
-			address = address.Unmap()
-			value = netip.PrefixFrom(address, address.BitLen()).String()
-		}
-		input = append(input, value)
-	}
-	result, err := authorization.CanonicalizeIPPrefixes(input)
-	if err != nil || len(result) > 256 {
-		return nil, failure.Wrap("validate visitor IP list", failure.InvalidCommand, errors.New("IP list must contain at most 256 distinct addresses or prefixes"))
-	}
-	return append([]string{}, result...), nil
 }
 
 func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagnostics io.Writer) error {
@@ -105,11 +77,11 @@ func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagno
 	if err != nil {
 		return err
 	}
-	ips, err := accessIPPrefixes(ctx, session.authenticated.Control, flags.IP)
+	ips, err := invocation.AccessIPPrefixes(ctx, session.Authenticated().Control, flags.IP)
 	if err != nil {
 		return err
 	}
-	item, err = session.authenticated.Control.ReplaceVisitorAccess(ctx, item.Id, controlv1.ReplaceVisitorAccessRequest{
+	item, err = session.Authenticated().Control.ReplaceVisitorAccess(ctx, item.Id, controlv1.ReplaceVisitorAccessRequest{
 		Mode: flags.Mode, Ip: ips, ExpectedRevision: item.MutationRevision,
 	})
 	if err != nil {

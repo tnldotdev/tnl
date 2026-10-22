@@ -1,0 +1,80 @@
+package ingress
+
+import (
+	"net/http"
+
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+)
+
+type generatedServer struct {
+	handler *handler
+}
+
+func (s generatedServer) CloseServiceStream(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID, visitorID ingressv1.VisitorConnectionID) {
+	s.handler.closeServiceStream(w, r, id, visitorID)
+}
+
+var _ ingressv1.ServerInterface = generatedServer{}
+
+func (s generatedServer) ClaimConnectorSession(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.claimConnectorSession(w, r, id)
+}
+
+func (s generatedServer) AuthorizeServiceStream(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.authorizeServiceStream(w, r, id)
+}
+
+func (s generatedServer) RecheckServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.recheckServiceVisitor(w, r, id)
+}
+
+func (s generatedServer) GetServiceSnapshot(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID, p ingressv1.GetServiceSnapshotParams) {
+	s.handler.serviceSnapshot(w, r, id, p)
+}
+
+func (s generatedServer) GetServiceEvents(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID, p ingressv1.GetServiceEventsParams) {
+	s.handler.serviceEvents(w, r, id, p)
+}
+
+func (s generatedServer) RegisterIngress(response http.ResponseWriter, request *http.Request) {
+	s.handler.registerIngress(response, request)
+}
+
+func (s generatedServer) DrainIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.drainIngress(response, request, ingressID)
+}
+
+func (s generatedServer) RenewIngress(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.renewIngress(response, request, ingressID)
+}
+
+func (s generatedServer) ObservePublicURLRecovery(
+	response http.ResponseWriter,
+	request *http.Request,
+	ingressID ingressv1.IngressID,
+	recoveryEpisodeID int64,
+) {
+	s.handler.observeRecovery(response, request, ingressID, recoveryEpisodeID)
+}
+
+func (s generatedServer) GetIngressRoutingTableEvents(
+	response http.ResponseWriter,
+	request *http.Request,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableEventsParams,
+) {
+	s.handler.routingTableEvents(response, request, ingressID, params)
+}
+
+func (s generatedServer) GetIngressRoutingTableSnapshot(
+	response http.ResponseWriter,
+	request *http.Request,
+	ingressID ingressv1.IngressID,
+	params ingressv1.GetIngressRoutingTableSnapshotParams,
+) {
+	s.handler.routingTableSnapshot(response, request, ingressID, params)
+}
+
+func (s generatedServer) ReportIngressUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
+	s.handler.reportUsage(response, request, ingressID)
+}

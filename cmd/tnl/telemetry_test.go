@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/demo"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/demo"
 )
 
 type telemetryReporterFunc func(telemetryPayload)

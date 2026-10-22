@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: tnl authority API
+  version: 1.0.0
+  license:
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://control.example
+paths:
+  /v1/service/teams/{team_id}/usage-authorization:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1usage-authorization"
+  /v1/service/teams/{team_id}/services:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1services"
+  /v1/service/services/{service_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}"
+  /v1/service/services/{service_id}/grants:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1grants"
+  /v1/service/services/{service_id}/grants/{grant_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1grants~1{grant_id}"
+  /v1/service/services/{service_id}/invitations:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1invitations"
+  /v1/service/services/{service_id}/invitations/{invitation_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1invitations~1{invitation_id}"
+  /v1/service/service-invitations/preview:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1service-invitations~1preview"
+  /v1/service/service-invitations/accept:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1service-invitations~1accept"
+  /v1/service/services/{service_id}/http-grants:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants"
+  /v1/service/services/{service_id}/http-grants/{grant_id}:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1services~1{service_id}~1http-grants~1{grant_id}"
+  /v1/workload-sessions/identity:
+    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1identity"
+  /v1/workload-sessions/{session_id}/assertions:
+    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}~1assertions"
+  /v1/workload-sessions/exchange:
+    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1exchange"
+  /v1/workload-sessions/{session_id}/renew:
+    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}~1renew"
+  /v1/workload-sessions/{session_id}:
+    $ref: "./paths/workload.yaml#/paths/~1v1~1workload-sessions~1{session_id}"
+  /v1/service/teams/{team_id}/identity-connections:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1identity-connections"
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1identity-connections~1{identity_connection_id}"
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1identity-connections~1{identity_connection_id}~1activate"
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1identity-connections~1{identity_connection_id}~1provisioning-token"
+  /v1/service/company-eligibility:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1company-eligibility"
+  /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1memberships~1{membership_id}~1company-decision"
+  /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1invitations~1{invitation_id}~1company-decision"
+  /v1/service/teams/{team_id}/company-admissions:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1company-admissions"
+  /v1/service/teams/{team_id}/company-admissions/{request_id}:
+    $ref: "./paths/company.yaml#/paths/~1v1~1service~1teams~1{team_id}~1company-admissions~1{request_id}"
+  /v1/auth/company-admissions:
+    $ref: "./paths/company.yaml#/paths/~1v1~1auth~1company-admissions"
+  /v1/auth/company-intents:
+    $ref: "./paths/company.yaml#/paths/~1v1~1auth~1company-intents"
+  /v1/auth/company-intents/{intent_id}/resolve:
+    $ref: "./paths/company.yaml#/paths/~1v1~1auth~1company-intents~1{intent_id}~1resolve"
+  /v1/company-access/recovery:
+    $ref: "./paths/company.yaml#/paths/~1v1~1company-access~1recovery"
+  /v1/teams/{team_id}/feedback-policy:
+    $ref: "./paths/teams.yaml#/paths/~1v1~1teams~1{team_id}~1feedback-policy"
+  /v1/auth/browser-handoff:
+    $ref: "./paths/sessions.yaml#/paths/~1v1~1auth~1browser-handoff"
+  /v1/publisher-enrollments/redeem:
+    $ref: "./paths/publisherauth.yaml#/paths/~1v1~1publisher-enrollments~1redeem"
+  /v1/publisher-token:
+    $ref: "./paths/publisherauth.yaml#/paths/~1v1~1publisher-token"
+  /v1/publisher-keys/rotate:
+    $ref: "./paths/publisherauth.yaml#/paths/~1v1~1publisher-keys~1rotate"
+  /v1/service/identity-context:
+    $ref: "./paths/service.yaml#/paths/~1v1~1service~1identity-context"
+  /v1/service/invitations/preview:
+    $ref: "./paths/invites.yaml#/paths/~1v1~1service~1invitations~1preview"
+  /v1/service/invitations/accept:
+    $ref: "./paths/invites.yaml#/paths/~1v1~1service~1invitations~1accept"
+  /v1/auth/device:
+    $ref: "./paths/login.yaml#/paths/~1v1~1auth~1device"
+  /v1/auth/device/poll:
+    $ref: "./paths/login.yaml#/paths/~1v1~1auth~1device~1poll"
+  /v1/auth/device/approve:
+    $ref: "./paths/login.yaml#/paths/~1v1~1auth~1device~1approve"
+  /v1/auth/device/callback:
+    $ref: "./paths/login.yaml#/paths/~1v1~1auth~1device~1callback"
+  /v1/auth/refresh:
+    $ref: "./paths/sessions.yaml#/paths/~1v1~1auth~1refresh"
+  /v1/auth/device/cancel:
+    $ref: "./paths/login.yaml#/paths/~1v1~1auth~1device~1cancel"
+  /v1/auth/logout:
+    $ref: "./paths/sessions.yaml#/paths/~1v1~1auth~1logout"
+  /v1/identity:
+    $ref: "./paths/login.yaml#/paths/~1v1~1identity"
+  /v1/teams:
+    $ref: "./paths/teams.yaml#/paths/~1v1~1teams"
+  /v1/teams/{team_id}:
+    $ref: "./paths/teams.yaml#/paths/~1v1~1teams~1{team_id}"
+  /v1/teams/{team_id}/memberships:
+    $ref: "./paths/memberships.yaml#/paths/~1v1~1teams~1{team_id}~1memberships"
+  /v1/teams/{team_id}/memberships/{membership_id}:
+    $ref: "./paths/memberships.yaml#/paths/~1v1~1teams~1{team_id}~1memberships~1{membership_id}"
+  /v1/teams/{team_id}/invitations:
+    $ref: "./paths/invites.yaml#/paths/~1v1~1teams~1{team_id}~1invitations"
+  /v1/teams/{team_id}/invitations/{invitation_id}:
+    $ref: "./paths/invites.yaml#/paths/~1v1~1teams~1{team_id}~1invitations~1{invitation_id}"
+  /v1/invitations/accept:
+    $ref: "./paths/invites.yaml#/paths/~1v1~1invitations~1accept"
+  /v1/teams/{team_id}/domains:
+    $ref: "./paths/domains.yaml#/paths/~1v1~1teams~1{team_id}~1domains"
+  /v1/teams/{team_id}/domains/{domain_id}/default:
+    $ref: "./paths/domains.yaml#/paths/~1v1~1teams~1{team_id}~1domains~1{domain_id}~1default"
+  /v1/teams/{team_id}/domains/{domain_id}:
+    $ref: "./paths/domains.yaml#/paths/~1v1~1teams~1{team_id}~1domains~1{domain_id}"
+components:
+  securitySchemes:
+    workloadAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/workloadAuth"
+    webServiceAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/webServiceAuth"
+    bearerAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/bearerAuth"
+  parameters:
+    ServiceID:
+      $ref: "./schemas/common.yaml#/parameters/ServiceID"
+    ServiceActorToken:
+      $ref: "./schemas/common.yaml#/parameters/ServiceActorToken"
+    CompanyActorToken:
+      $ref: "./schemas/common.yaml#/parameters/CompanyActorToken"
+    IdempotencyKey:
+      $ref: "./schemas/common.yaml#/parameters/IdempotencyKey"
+    TeamID:
+      $ref: "./schemas/common.yaml#/parameters/TeamID"
+    MembershipID:
+      $ref: "./schemas/common.yaml#/parameters/MembershipID"
+    InvitationID:
+      $ref: "./schemas/common.yaml#/parameters/InvitationID"
+    DomainID:
+      $ref: "./schemas/common.yaml#/parameters/DomainID"
+  responses:
+    Problem:
+      $ref: "./schemas/common.yaml#/responses/Problem"
+    BearerProblem:
+      $ref: "./schemas/common.yaml#/responses/BearerProblem"
+  schemas:
+    ServiceInvitationCredential:
+      $ref: "./schemas/service.yaml#/schemas/ServiceInvitationCredential"
+    ServiceInvitationPreview:
+      $ref: "./schemas/service.yaml#/schemas/ServiceInvitationPreview"
+    WorkloadIdentityRequest:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentityRequest"
+    WorkloadIdentity:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentity"
+    WorkloadAssertion:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadAssertion"
+    WorkloadExchange:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadExchange"
+    WorkloadSession:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadSession"
+    WorkloadSessionFields:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadSessionFields"
+    WorkloadGitHubExecution:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadGitHubExecution"
+    CompanyConnections:
+      $ref: "./schemas/company.yaml#/schemas/CompanyConnections"
+    CompanyAdmissionPage:
+      $ref: "./schemas/company.yaml#/schemas/CompanyAdmissionPage"
+    CompanyAdmissionRequest:
+      $ref: "./schemas/company.yaml#/schemas/CompanyAdmissionRequest"
+    CompanyIntentCredential:
+      $ref: "./schemas/company.yaml#/schemas/CompanyIntentCredential"
+    CompanyLoginIntent:
+      $ref: "./schemas/company.yaml#/schemas/CompanyLoginIntent"
+    IdentityConnectionSetup:
+      $ref: "./schemas/company.yaml#/schemas/IdentityConnectionSetup"
+    IdentityConnection:
+      $ref: "./schemas/company.yaml#/schemas/IdentityConnection"
+    CreateIdentityConnectionRequest:
+      $ref: "./schemas/company.yaml#/schemas/CreateIdentityConnectionRequest"
+    IdentityConnectionSecret:
+      $ref: "./schemas/company.yaml#/schemas/IdentityConnectionSecret"
+    CompanyEligibilityRequest:
+      $ref: "./schemas/company.yaml#/schemas/CompanyEligibilityRequest"
+    VerifiedOIDCTeamContext:
+      $ref: "./schemas/teams.yaml#/schemas/VerifiedOIDCTeamContext"
+    ServiceID:
+      $ref: "./schemas/service.yaml#/schemas/ServiceID"
+    TeamFeedbackPolicy:
+      $ref: "./schemas/teams.yaml#/schemas/TeamFeedbackPolicy"
+    RedeemPublisherEnrollmentRequest:
+      $ref: "./schemas/publisherauth.yaml#/schemas/RedeemPublisherEnrollmentRequest"
+    PublisherEnrollmentResult:
+      $ref: "./schemas/publisherauth.yaml#/schemas/PublisherEnrollmentResult"
+    PublisherTokenRequest:
+      $ref: "./schemas/publisherauth.yaml#/schemas/PublisherTokenRequest"
+    PublisherTokenResponse:
+      $ref: "./schemas/publisherauth.yaml#/schemas/PublisherTokenResponse"
+    RotatePublisherKeyRequest:
+      $ref: "./schemas/publisherauth.yaml#/schemas/RotatePublisherKeyRequest"
+    EmailDeliveryRequest:
+      $ref: "./schemas/common.yaml#/schemas/EmailDeliveryRequest"
+    TeamInvitationEmail:
+      $ref: "./schemas/invites.yaml#/schemas/TeamInvitationEmail"
+    ServiceIdentity:
+      $ref: "./schemas/service.yaml#/schemas/ServiceIdentity"
+    ServiceInvitationRequest:
+      $ref: "./schemas/invites.yaml#/schemas/ServiceInvitationRequest"
+    InvitationPreview:
+      $ref: "./schemas/invites.yaml#/schemas/InvitationPreview"
+    ResourceID:
+      $ref: "./schemas/common.yaml#/schemas/ResourceID"
+    IdentityID:
+      $ref: "./schemas/login.yaml#/schemas/IdentityID"
+    TeamID:
+      $ref: "./schemas/teams.yaml#/schemas/TeamID"
+    MembershipID:
+      $ref: "./schemas/memberships.yaml#/schemas/MembershipID"
+    InvitationID:
+      $ref: "./schemas/invites.yaml#/schemas/InvitationID"
+    DomainID:
+      $ref: "./schemas/domains.yaml#/schemas/DomainID"
+    PublicURLID:
+      $ref: "./schemas/common.yaml#/schemas/PublicURLID"
+    CanonicalHostname:
+      $ref: "./schemas/domains.yaml#/schemas/CanonicalHostname"
+    CanonicalLabel:
+      $ref: "./schemas/common.yaml#/schemas/CanonicalLabel"
+    StartDeviceLoginRequest:
+      $ref: "./schemas/login.yaml#/schemas/StartDeviceLoginRequest"
+    DeviceLoginCredential:
+      $ref: "./schemas/login.yaml#/schemas/DeviceLoginCredential"
+    DeviceLoginChallenge:
+      $ref: "./schemas/login.yaml#/schemas/DeviceLoginChallenge"
+    DeviceLoginResult:
+      $ref: "./schemas/login.yaml#/schemas/DeviceLoginResult"
+    RefreshControlSessionRequest:
+      $ref: "./schemas/sessions.yaml#/schemas/RefreshControlSessionRequest"
+    ControlSessionResponse:
+      $ref: "./schemas/sessions.yaml#/schemas/ControlSessionResponse"
+    Identity:
+      $ref: "./schemas/login.yaml#/schemas/Identity"
+    IdentityContext:
+      $ref: "./schemas/login.yaml#/schemas/IdentityContext"
+    TeamRole:
+      $ref: "./schemas/teams.yaml#/schemas/TeamRole"
+    TeamKind:
+      $ref: "./schemas/teams.yaml#/schemas/TeamKind"
+    Team:
+      $ref: "./schemas/teams.yaml#/schemas/Team"
+    TeamPage:
+      $ref: "./schemas/teams.yaml#/schemas/TeamPage"
+    CreateTeamRequest:
+      $ref: "./schemas/teams.yaml#/schemas/CreateTeamRequest"
+    Membership:
+      $ref: "./schemas/memberships.yaml#/schemas/Membership"
+    MembershipPage:
+      $ref: "./schemas/memberships.yaml#/schemas/MembershipPage"
+    SetMembershipRoleRequest:
+      $ref: "./schemas/memberships.yaml#/schemas/SetMembershipRoleRequest"
+    InvitationState:
+      $ref: "./schemas/invites.yaml#/schemas/InvitationState"
+    Invitation:
+      $ref: "./schemas/invites.yaml#/schemas/Invitation"
+    InvitationPage:
+      $ref: "./schemas/invites.yaml#/schemas/InvitationPage"
+    InvitationSecret:
+      $ref: "./schemas/invites.yaml#/schemas/InvitationSecret"
+    CreateInvitationRequest:
+      $ref: "./schemas/invites.yaml#/schemas/CreateInvitationRequest"
+    AcceptInvitationRequest:
+      $ref: "./schemas/invites.yaml#/schemas/AcceptInvitationRequest"
+    DomainKind:
+      $ref: "./schemas/domains.yaml#/schemas/DomainKind"
+    DomainState:
+      $ref: "./schemas/domains.yaml#/schemas/DomainState"
+    DNSRecord:
+      $ref: "./schemas/domains.yaml#/schemas/DNSRecord"
+    Domain:
+      $ref: "./schemas/domains.yaml#/schemas/Domain"
+    DomainPage:
+      $ref: "./schemas/domains.yaml#/schemas/DomainPage"
+    ClaimDomainRequest:
+      $ref: "./schemas/domains.yaml#/schemas/ClaimDomainRequest"
+    PublicURLScope:
+      $ref: "./schemas/common.yaml#/schemas/PublicURLScope"
+    CertificateChallengeMethod:
+      $ref: "./schemas/common.yaml#/schemas/CertificateChallengeMethod"
+    CertificatePlan:
+      $ref: "./schemas/common.yaml#/schemas/CertificatePlan"
+    Problem:
+      $ref: "./schemas/common.yaml#/schemas/Problem"

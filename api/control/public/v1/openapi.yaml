@@ -1,0 +1,738 @@
+openapi: 3.1.0
+info:
+  title: tnl control API
+  version: 1.0.0
+  license:
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: https://control.example.com
+paths:
+  /v1/workload/services/{service_id}/run:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1run"
+  /v1/workload/ingress-assignments/{session_id}:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1ingress-assignments~1{session_id}"
+  /v1/workload/ingress-assignments/{session_id}/transport-trust:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1ingress-assignments~1{session_id}~1transport-trust"
+  /v1/workload/services:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services"
+  /v1/workload/services/{service_id}/authorization:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1authorization"
+  /v1/workload/services/{service_id}/ingress-assignments:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1ingress-assignments"
+  /v1/workload/services/{service_id}/client-certificate:
+    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1client-certificate"
+  /v1/browser/service-login:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1service-login"
+  /v1/services/{service_id}/http-grants:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants"
+  /v1/services/{service_id}/http-grants/{grant_id}:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants~1{grant_id}"
+  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1http-authorize"
+  /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1handoff"
+  /v1/services/{service_id}/runs/{service_run_id}/browser/session:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1session"
+  /v1/projects/{project_key}/services/{service}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1services~1{service}"
+  /v1/services/{service_id}/runs/{service_run_id}/start:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
+  /v1/services/{service_id}/client-certificates:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1client-certificates"
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-connector"
+  /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-client-certificate"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances~1{issuance_id}"
+  /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-installed"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1namespace~1rename"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1rename"
+  /v1/visitor-ingress-assignments/{connector_session_id}:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-ingress-assignments~1{connector_session_id}"
+  /v1/projects/{project_key}/public-metadata:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1public-metadata"
+  /v1/projects/{project_key}/local-services/{service}:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1local-services~1{service}"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1members~1{publisher_identity_id}"
+  /v1/projects/{project_key}/configuration:
+    $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1configuration"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1enrollments"
+  /v1/publisher-groups/enroll:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1enroll"
+  /v1/publisher-groups/verify:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1verify"
+  /v1/publisher-runtime:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-runtime"
+  /v1/publisher-groups/lease:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1lease"
+  /v1/publisher-groups/assignments:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1assignments"
+  /v1/publisher-groups/ack:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1publisher-groups~1ack"
+  /v1/teams/{team_id}/service-audit:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1teams~1{team_id}~1service-audit"
+  /v1/publish-runs/{run_id}/service-observations:
+    $ref: "./paths/observations.yaml#/paths/~1v1~1publish-runs~1{run_id}~1service-observations"
+  /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-ingress-assignments~1{connector_session_id}~1transport-trust"
+  /v1/publisher/service:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1service"
+  /v1/visitor-devices:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-devices"
+  /v1/visitor-devices/{device_id}:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-devices~1{device_id}"
+  /v1/services:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services"
+  /v1/services/{service_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}"
+  /v1/services/{service_id}/grants:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants"
+  /v1/services/{service_id}/grants/{grant_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1grants~1{grant_id}"
+  /v1/services/{service_id}/invitations:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1invitations"
+  /v1/services/{service_id}/invitations/{invitation_id}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}~1invitations~1{invitation_id}"
+  /v1/service-invitations/accept:
+    $ref: "./paths/services.yaml#/paths/~1v1~1service-invitations~1accept"
+  /v1/visitor/services:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor~1services"
+  /v1/services/{service_id}/ingress-assignment:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignment"
+  /v1/services/{service_id}/ingress-assignments:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignments"
+  /v1/services/{service_id}/select-run:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1select-run"
+  /v1/services/{service_id}/runs:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
+  /v1/services/{service_id}/runs/{service_run_id}:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}"
+  /v1/publish-runs/{publish_run_id}/visitor-access:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1visitor-access"
+  /v1/visitor/public-urls:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1visitor~1public-urls"
+  /v1/public-urls/{public_url_id}/visitor-grants:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1visitor-grants"
+  /v1/public-urls/{public_url_id}/visitor-identity-grants:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1visitor-identity-grants"
+  /v1/public-urls/{public_url_id}/visitor-grants/{grant_id}:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1visitor-grants~1{grant_id}"
+  /v1/public-urls/{public_url_id}/visitor-invitations:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1visitor-invitations"
+  /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1visitor-invitations~1{invitation_id}"
+  /v1/visitor-invitations/accept:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1visitor-invitations~1accept"
+  /v1/public-urls/{public_url_id}/access:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1access"
+  /v1/guest-demo/publisher:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1guest-demo~1publisher"
+  /v1/browser/login:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1login"
+  /v1/browser/callback:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1callback"
+  /v1/publish-runs/{publish_run_id}/browser/handoff:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1browser~1handoff"
+  /v1/publish-runs/{publish_run_id}/browser/access:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1browser~1access"
+  /v1/publish-runs/{publish_run_id}/browser/logout:
+    $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1browser~1logout"
+  /v1/publish-runs/{publish_run_id}/preview:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1preview"
+  /v1/health:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1health"
+  /v1/ready:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1ready"
+  /v1/client-ip:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1client-ip"
+  /v1/discovery:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1discovery"
+  /v1/webhook-providers/{provider}/source:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1webhook-providers~1{provider}~1source"
+  /v1/guest-demo:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1guest-demo"
+  /v1/guest-demo/number:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1guest-demo~1number"
+  /v1/previews:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1previews"
+  /v1/previews/{preview_id}:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1previews~1{preview_id}"
+  /v1/previews/{preview_id}/public-urls:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1previews~1{preview_id}~1public-urls"
+  /v1/previews/{preview_id}/team-access:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1previews~1{preview_id}~1team-access"
+  /v1/previews/{preview_id}/shares:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1previews~1{preview_id}~1shares"
+  /v1/shares:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1shares"
+  /v1/shares/{share_id}:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1shares~1{share_id}"
+  /v1/shares/{share_id}/revoke:
+    $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1shares~1{share_id}~1revoke"
+  /v1/feedback:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback"
+  /v1/feedback/events:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1events"
+  /v1/feedback/{feedback_id}:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1{feedback_id}"
+  /v1/feedback/{feedback_id}/events:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1{feedback_id}~1events"
+  /v1/public-urls:
+    $ref: "./paths/public-urls.yaml#/paths/~1v1~1public-urls"
+  /v1/public-urls/{public_url_id}:
+    $ref: "./paths/public-urls.yaml#/paths/~1v1~1public-urls~1{public_url_id}"
+  /v1/public-urls/{public_url_id}/publish-runs:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1public-urls~1{public_url_id}~1publish-runs"
+  /v1/publisher/public-url:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1public-url"
+  /v1/publisher-enrollments:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-enrollments"
+  /v1/publisher-identities:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-identities"
+  /v1/publisher-identities/{publisher_identity_id}:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-identities~1{publisher_identity_id}"
+  /v1/publisher-identities/{publisher_identity_id}/grants:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-identities~1{publisher_identity_id}~1grants"
+  /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}:
+    $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-identities~1{publisher_identity_id}~1grants~1{grant_id}"
+  /v1/publisher/public-urls:
+    $ref: "./paths/public-urls.yaml#/paths/~1v1~1publisher~1public-urls"
+  /v1/publisher/public-urls/{public_url_id}:
+    $ref: "./paths/public-urls.yaml#/paths/~1v1~1publisher~1public-urls~1{public_url_id}"
+  /v1/publish-runs/{publish_run_id}/heartbeat:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1heartbeat"
+  /v1/publish-runs/{publish_run_id}/share-access:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-access"
+  /v1/publish-runs/{publish_run_id}/share-state:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-state"
+  /v1/publish-runs/{publish_run_id}/share-redemptions:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-redemptions"
+  /v1/publish-runs/{publish_run_id}/feedback:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1feedback"
+  /v1/publish-runs/{publish_run_id}/feedback/query:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1feedback~1query"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1feedback~1{feedback_id}~1events"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1feedback~1{feedback_id}~1query"
+  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1feedback~1{feedback_id}~1events~1query"
+  /v1/publish-runs/{publish_run_id}/ready:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1ready"
+  /v1/publish-runs/{publish_run_id}/certificate-installed:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1certificate-installed"
+  /v1/publish-runs/{publish_run_id}:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}"
+  /v1/publish-runs/{publish_run_id}/certificate-issuances:
+    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1certificate-issuances"
+  /v1/certificate-issuances/{issuance_id}:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1certificate-issuances~1{issuance_id}"
+  /v1/admin/status:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1status"
+  /v1/admin/relays:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1relays"
+  /v1/admin/relays/{relay_id}/drain:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1relays~1{relay_id}~1drain"
+  /v1/admin/maintenance-controls:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1maintenance-controls"
+  /v1/admin/maintenance-controls/{control_name}:
+    $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1maintenance-controls~1{control_name}"
+components:
+  securitySchemes:
+    workloadAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/workloadAuth"
+    bearerAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/bearerAuth"
+    publishRunAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/publishRunAuth"
+    serviceRunAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/serviceRunAuth"
+    publisherAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/publisherAuth"
+  parameters:
+    ServiceID:
+      $ref: "./schemas/common.yaml#/parameters/ServiceID"
+    ServiceCursor:
+      $ref: "./schemas/common.yaml#/parameters/ServiceCursor"
+    PublisherIdentityID:
+      $ref: "./schemas/common.yaml#/parameters/PublisherIdentityID"
+    IdempotencyKey:
+      $ref: "./schemas/common.yaml#/parameters/IdempotencyKey"
+    Cursor:
+      $ref: "./schemas/common.yaml#/parameters/Cursor"
+    TeamIDQuery:
+      $ref: "./schemas/common.yaml#/parameters/TeamIDQuery"
+    CanonicalHostnameQuery:
+      $ref: "./schemas/common.yaml#/parameters/CanonicalHostnameQuery"
+    PublicURLID:
+      $ref: "./schemas/common.yaml#/parameters/PublicURLID"
+    PreviewID:
+      $ref: "./schemas/common.yaml#/parameters/PreviewID"
+    ShareID:
+      $ref: "./schemas/common.yaml#/parameters/ShareID"
+    FeedbackID:
+      $ref: "./schemas/common.yaml#/parameters/FeedbackID"
+    FeedbackAfterCursor:
+      $ref: "./schemas/common.yaml#/parameters/FeedbackAfterCursor"
+    PublishRunID:
+      $ref: "./schemas/common.yaml#/parameters/PublishRunID"
+    IssuanceID:
+      $ref: "./schemas/common.yaml#/parameters/IssuanceID"
+    RelayID:
+      $ref: "./schemas/common.yaml#/parameters/RelayID"
+    MaintenanceControlName:
+      $ref: "./schemas/common.yaml#/parameters/MaintenanceControlName"
+    DNSAuthorityReference:
+      $ref: "./schemas/common.yaml#/parameters/DNSAuthorityReference"
+  responses:
+    Problem:
+      $ref: "./schemas/common.yaml#/responses/Problem"
+  schemas:
+    KubernetesAuth:
+      $ref: "./schemas/common.yaml#/schemas/KubernetesAuth"
+    VisitorSubject:
+      $ref: "./schemas/common.yaml#/schemas/VisitorSubject"
+    WorkloadServiceAuthorization:
+      $ref: "./schemas/workloads.yaml#/schemas/WorkloadServiceAuthorization"
+    WorkloadServices:
+      $ref: "./schemas/workloads.yaml#/schemas/WorkloadServices"
+    WorkloadIngressAssignments:
+      $ref: "./schemas/workloads.yaml#/schemas/WorkloadIngressAssignments"
+    HTTPAuthorizationSubject:
+      $ref: "./schemas/browser-access.yaml#/schemas/HTTPAuthorizationSubject"
+    CreateServiceHTTPGrantRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
+    ServiceHTTPGrant:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrant"
+    ServiceHTTPGrantSummary:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrantSummary"
+    ServiceInvitationCredential:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationCredential"
+    ServiceHTTPCredential:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPCredential"
+    ServiceHTTPVisitorRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPVisitorRequest"
+    ServiceBrowserRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/ServiceBrowserRequest"
+    ProjectPublicMetadata:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectPublicMetadata"
+    RealizeLocalProjectServiceRequest:
+      $ref: "./schemas/projects.yaml#/schemas/RealizeLocalProjectServiceRequest"
+    LocalProjectService:
+      $ref: "./schemas/projects.yaml#/schemas/LocalProjectService"
+    ApplyProjectConfigurationRequest:
+      $ref: "./schemas/projects.yaml#/schemas/ApplyProjectConfigurationRequest"
+    ProjectConfiguration:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectConfiguration"
+    ProjectPublisherGroup:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectPublisherGroup"
+    ProjectWorkload:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWorkload"
+    WorkloadProvider:
+      $ref: "./schemas/workloads.yaml#/schemas/WorkloadProvider"
+    WorkloadTrust:
+      $ref: "./schemas/workloads.yaml#/schemas/WorkloadTrust"
+    ProjectWorkloadGitHub:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGitHub"
+    ProjectTargetDiscovery:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectTargetDiscovery"
+    RenamePublisherNamespaceRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherNamespaceRequest"
+    RenamePublisherGroupRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/RenamePublisherGroupRequest"
+    ProjectWebhook:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWebhook"
+    ProjectServiceConfiguration:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectServiceConfiguration"
+    ProjectServiceHTTP:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectServiceHTTP"
+    ProjectServicePublicURL:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectServicePublicURL"
+    ProjectPublicAccess:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectPublicAccess"
+    ProjectPublicLimits:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectPublicLimits"
+    ProjectHTTPApplicationLimits:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectHTTPApplicationLimits"
+    ProjectApplicationRate:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectApplicationRate"
+    ProjectTargetTLS:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectTargetTLS"
+    ProjectServiceAccess:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectServiceAccess"
+    AppliedProjectConfiguration:
+      $ref: "./schemas/projects.yaml#/schemas/AppliedProjectConfiguration"
+    AppliedPublisherGroup:
+      $ref: "./schemas/projects.yaml#/schemas/AppliedPublisherGroup"
+    AppliedProjectService:
+      $ref: "./schemas/projects.yaml#/schemas/AppliedProjectService"
+    CreatePublisherGroupEnrollmentRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupEnrollmentRequest"
+    PublisherGroupEnrollment:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupEnrollment"
+    RedeemPublisherGroupEnrollmentRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/RedeemPublisherGroupEnrollmentRequest"
+    PublisherGroupMember:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMember"
+    PublisherGroupMemberStatus:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupMemberStatus"
+    PublisherRuntimeRequest:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeRequest"
+    PublisherDeploymentReport:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherDeploymentReport"
+    PublisherDeploymentObservation:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherDeploymentObservation"
+    PublisherRuntimeResponse:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeResponse"
+    PublisherRuntimeStatus:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherRuntimeStatus"
+    PublisherGroupLeaseRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLeaseRequest"
+    PublisherGroupLease:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupLease"
+    PublisherGroupVerification:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupVerification"
+    PublisherGroupAssignments:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAssignments"
+    PublisherGroupServiceAssignment:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupServiceAssignment"
+    PublisherGroupAcknowledgement:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupAcknowledgement"
+    ServiceAuditEvent:
+      $ref: "./schemas/admin.yaml#/schemas/ServiceAuditEvent"
+    ServiceAuditPage:
+      $ref: "./schemas/admin.yaml#/schemas/ServiceAuditPage"
+    ServiceObservation:
+      $ref: "./schemas/observations.yaml#/schemas/ServiceObservation"
+    PublishRunServiceObservations:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunServiceObservations"
+    ServiceObservationResult:
+      $ref: "./schemas/observations.yaml#/schemas/ServiceObservationResult"
+    IngressTransportTrust:
+      $ref: "./schemas/connectors.yaml#/schemas/IngressTransportTrust"
+    VisitorDevice:
+      $ref: "./schemas/connectors.yaml#/schemas/VisitorDevice"
+    ServiceSelection:
+      $ref: "./schemas/services.yaml#/schemas/ServiceSelection"
+    ServiceID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceID"
+    VisitorConnectionID:
+      $ref: "./schemas/service-runs.yaml#/schemas/VisitorConnectionID"
+    ServiceRunID:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceRunID"
+    ConnectorSessionID:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionID"
+    ServiceInvitationID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationID"
+    ServiceGrantID:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrantID"
+    ServiceName:
+      $ref: "./schemas/services.yaml#/schemas/ServiceName"
+    CreateServiceRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceRequest"
+    ServicePlacement:
+      $ref: "./schemas/services.yaml#/schemas/ServicePlacement"
+    LocalServiceSource:
+      $ref: "./schemas/projects.yaml#/schemas/LocalServiceSource"
+    ServiceProtocol:
+      $ref: "./schemas/services.yaml#/schemas/ServiceProtocol"
+    ServiceTargetTLS:
+      $ref: "./schemas/services.yaml#/schemas/ServiceTargetTLS"
+    ServiceMetadata:
+      $ref: "./schemas/services.yaml#/schemas/ServiceMetadata"
+    ServiceEndpoint:
+      $ref: "./schemas/common.yaml#/schemas/ServiceEndpoint"
+    IssueServiceClientCertificateRequest:
+      $ref: "./schemas/connectors.yaml#/schemas/IssueServiceClientCertificateRequest"
+    ServiceClientCertificate:
+      $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificate"
+    AuthorizeServiceConnectorRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceConnectorRequest"
+    AuthorizeServiceClientCertificateRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceClientCertificateRequest"
+    ServiceClientCertificateDecision:
+      $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificateDecision"
+    ServiceRunDeclaration:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunDeclaration"
+    Service:
+      $ref: "./schemas/services.yaml#/schemas/Service"
+    ServicePage:
+      $ref: "./schemas/services.yaml#/schemas/ServicePage"
+    CreateServiceGrantRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceGrantRequest"
+    ServiceGrant:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrant"
+    ServiceGrantPage:
+      $ref: "./schemas/services.yaml#/schemas/ServiceGrantPage"
+    CreateServiceInvitationRequest:
+      $ref: "./schemas/services.yaml#/schemas/CreateServiceInvitationRequest"
+    ServiceInvitation:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitation"
+    ServiceInvitationPage:
+      $ref: "./schemas/services.yaml#/schemas/ServiceInvitationPage"
+    ConnectorSessionSetup:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionSetup"
+    ServiceRunPreparation:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunPreparation"
+    CreateServiceCertificateIssuanceRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/CreateServiceCertificateIssuanceRequest"
+    ServiceCertificateInstalledRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceCertificateInstalledRequest"
+    ServiceCertificateIssuance:
+      $ref: "./schemas/service-runs.yaml#/schemas/ServiceCertificateIssuance"
+    ServiceRunSetup:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunSetup"
+    ServiceRunState:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunState"
+    HTTPVisitorRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/HTTPVisitorRequest"
+    ServiceRunHeartbeat:
+      $ref: "./schemas/services.yaml#/schemas/ServiceRunHeartbeat"
+    ReplaceVisitorAccessRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/ReplaceVisitorAccessRequest"
+    HTTPVisitorResponse:
+      $ref: "./schemas/browser-access.yaml#/schemas/HTTPVisitorResponse"
+    CreateTeamVisitorGrantRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateTeamVisitorGrantRequest"
+    CreateIdentityVisitorGrantRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateIdentityVisitorGrantRequest"
+    VisitorGrant:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorGrant"
+    CreateVisitorInvitationRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateVisitorInvitationRequest"
+    VisitorInvitation:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorInvitation"
+    AvailablePublicURLPage:
+      $ref: "./schemas/browser-access.yaml#/schemas/AvailablePublicURLPage"
+    AvailablePublicURL:
+      $ref: "./schemas/browser-access.yaml#/schemas/AvailablePublicURL"
+    EnrollGuestPublisherRequest:
+      $ref: "./schemas/publishers.yaml#/schemas/EnrollGuestPublisherRequest"
+    GuestPublisherIdentity:
+      $ref: "./schemas/publishers.yaml#/schemas/GuestPublisherIdentity"
+    WebhookProvider:
+      $ref: "./schemas/common.yaml#/schemas/WebhookProvider"
+    WebhookProviderSourceResponse:
+      $ref: "./schemas/discovery.yaml#/schemas/WebhookProviderSourceResponse"
+    ResourceID:
+      $ref: "./schemas/common.yaml#/schemas/ResourceID"
+    IdentityID:
+      $ref: "./schemas/common.yaml#/schemas/IdentityID"
+    TeamID:
+      $ref: "./schemas/common.yaml#/schemas/TeamID"
+    MembershipID:
+      $ref: "./schemas/common.yaml#/schemas/MembershipID"
+    DomainID:
+      $ref: "./schemas/common.yaml#/schemas/DomainID"
+    PublicURLID:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLID"
+    PreviewID:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/PreviewID"
+    ShareID:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/ShareID"
+    FeedbackID:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackID"
+    PublishRunID:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunID"
+    PublisherConnectionID:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublisherConnectionID"
+    IssuanceID:
+      $ref: "./schemas/common.yaml#/schemas/IssuanceID"
+    RelayServiceID:
+      $ref: "./schemas/common.yaml#/schemas/RelayServiceID"
+    RelayID:
+      $ref: "./schemas/admin.yaml#/schemas/RelayID"
+    IdempotencyKey:
+      $ref: "./schemas/common.yaml#/schemas/IdempotencyKey"
+    CanonicalHostname:
+      $ref: "./schemas/common.yaml#/schemas/CanonicalHostname"
+    HealthResponse:
+      $ref: "./schemas/discovery.yaml#/schemas/HealthResponse"
+    ReadinessResponse:
+      $ref: "./schemas/discovery.yaml#/schemas/ReadinessResponse"
+    ClientIPResponse:
+      $ref: "./schemas/discovery.yaml#/schemas/ClientIPResponse"
+    ControlDiscovery:
+      $ref: "./schemas/discovery.yaml#/schemas/ControlDiscovery"
+    GuestDemoSession:
+      $ref: "./schemas/discovery.yaml#/schemas/GuestDemoSession"
+    GuestDemoNumber:
+      $ref: "./schemas/discovery.yaml#/schemas/GuestDemoNumber"
+    AuthenticationFacts:
+      $ref: "./schemas/discovery.yaml#/schemas/AuthenticationFacts"
+    OIDCAuthenticationFacts:
+      $ref: "./schemas/discovery.yaml#/schemas/OIDCAuthenticationFacts"
+    PublicURLScope:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLScope"
+    PublicURLPurpose:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLPurpose"
+    VisitorAccessMode:
+      $ref: "./schemas/common.yaml#/schemas/VisitorAccessMode"
+    PublicURLServiceProtocol:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLServiceProtocol"
+    PublicURLLifecycleState:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLLifecycleState"
+    PublicURL:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURL"
+    PublisherGrant:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherGrant"
+    PublisherIdentityPage:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherIdentityPage"
+    PublisherIdentity:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherIdentity"
+    CreatePublisherGrantRequest:
+      $ref: "./schemas/publishers.yaml#/schemas/CreatePublisherGrantRequest"
+    CreatePublisherEnrollmentRequest:
+      $ref: "./schemas/publishers.yaml#/schemas/CreatePublisherEnrollmentRequest"
+    AllocateEphemeralPublicURLRequest:
+      $ref: "./schemas/public-urls.yaml#/schemas/AllocateEphemeralPublicURLRequest"
+    PublisherApplicationLimits:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherApplicationLimits"
+    PublisherEnrollment:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherEnrollment"
+    PublicURLPage:
+      $ref: "./schemas/public-urls.yaml#/schemas/PublicURLPage"
+    CreatePublicURLRequest:
+      $ref: "./schemas/public-urls.yaml#/schemas/CreatePublicURLRequest"
+    ReviewSchemaVersion:
+      $ref: "./schemas/feedback.yaml#/schemas/ReviewSchemaVersion"
+    CreatePreviewRequest:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/CreatePreviewRequest"
+    AddPreviewPublicURLRequest:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/AddPreviewPublicURLRequest"
+    SetPreviewTeamAccessRequest:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/SetPreviewTeamAccessRequest"
+    BrowserHandoffRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/BrowserHandoffRequest"
+    BrowserHandoffResponse:
+      $ref: "./schemas/browser-access.yaml#/schemas/BrowserHandoffResponse"
+    BrowserAccessRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/BrowserAccessRequest"
+    BrowserAccessResponse:
+      $ref: "./schemas/browser-access.yaml#/schemas/BrowserAccessResponse"
+    Preview:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/Preview"
+    CreateShareRequest:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/CreateShareRequest"
+    Share:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/Share"
+    SharePage:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/SharePage"
+    FeedbackThreadState:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackThreadState"
+    FeedbackEventType:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackEventType"
+    FeedbackScope:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackScope"
+    FeedbackAuthor:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackAuthor"
+    FeedbackReport:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackReport"
+    FeedbackTextBoundary:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackTextBoundary"
+    FeedbackSelectors:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackSelectors"
+    FeedbackAnchor:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackAnchor"
+    FeedbackElement:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackElement"
+    FeedbackEvidence:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackEvidence"
+    SourceFileState:
+      $ref: "./schemas/feedback.yaml#/schemas/SourceFileState"
+    SourceState:
+      $ref: "./schemas/feedback.yaml#/schemas/SourceState"
+    FeedbackThread:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackThread"
+    FeedbackThreadSummary:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackThreadSummary"
+    FeedbackThreadPage:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackThreadPage"
+    FeedbackEvent:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackEvent"
+    FeedbackEventPage:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackEventPage"
+    FeedbackReviewerAccess:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackReviewerAccess"
+    CreateFeedbackReportRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/CreateFeedbackReportRequest"
+    PreviewPageFeedbackRequest:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/PreviewPageFeedbackRequest"
+    AppendFeedbackEventRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/AppendFeedbackEventRequest"
+    AppendReviewerFeedbackEventRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/AppendReviewerFeedbackEventRequest"
+    ReviewerFeedbackReadRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/ReviewerFeedbackReadRequest"
+    UpdatePublicURLRequest:
+      $ref: "./schemas/public-urls.yaml#/schemas/UpdatePublicURLRequest"
+    CertificateChallengeMethod:
+      $ref: "./schemas/common.yaml#/schemas/CertificateChallengeMethod"
+    CertificatePlan:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CertificatePlan"
+    CreatePublishRunRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CreatePublishRunRequest"
+    TrafficSelection:
+      $ref: "./schemas/common.yaml#/schemas/TrafficSelection"
+    TrafficLimits:
+      $ref: "./schemas/publish-runs.yaml#/schemas/TrafficLimits"
+    PublishRunState:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunState"
+    PublishRun:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRun"
+    PublisherConnectionState:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublisherConnectionState"
+    ConnectionAssignment:
+      $ref: "./schemas/common.yaml#/schemas/ConnectionAssignment"
+    PublishRunSetup:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunSetup"
+    PublishRunVersionRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunVersionRequest"
+    EnableShareAccessRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/EnableShareAccessRequest"
+    RedeemShareRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/RedeemShareRequest"
+    PublishRunShareState:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunShareState"
+    PublisherShare:
+      $ref: "./schemas/publishers.yaml#/schemas/PublisherShare"
+    ShareRedemption:
+      $ref: "./schemas/previews-and-shares.yaml#/schemas/ShareRedemption"
+    PublishRunHeartbeat:
+      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunHeartbeat"
+    CertificateInstalledRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CertificateInstalledRequest"
+    CreateCertificateIssuanceRequest:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CreateCertificateIssuanceRequest"
+    CertificateIssuanceState:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CertificateIssuanceState"
+    CertificateIssuance:
+      $ref: "./schemas/publish-runs.yaml#/schemas/CertificateIssuance"
+    AdminServerStatus:
+      $ref: "./schemas/admin.yaml#/schemas/AdminServerStatus"
+    AdminRelayLease:
+      $ref: "./schemas/admin.yaml#/schemas/AdminRelayLease"
+    AdminRelayPage:
+      $ref: "./schemas/admin.yaml#/schemas/AdminRelayPage"
+    AdminDrainRelayRequest:
+      $ref: "./schemas/admin.yaml#/schemas/AdminDrainRelayRequest"
+    MaintenanceControlName:
+      $ref: "./schemas/admin.yaml#/schemas/MaintenanceControlName"
+    MaintenanceControl:
+      $ref: "./schemas/admin.yaml#/schemas/MaintenanceControl"
+    SetMaintenanceControlRequest:
+      $ref: "./schemas/admin.yaml#/schemas/SetMaintenanceControlRequest"
+    ProblemCode:
+      $ref: "./schemas/common.yaml#/schemas/ProblemCode"
+    Problem:
+      $ref: "./schemas/common.yaml#/schemas/Problem"

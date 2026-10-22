@@ -90,8 +90,8 @@ values. Its run name is the matching directory under the ignored
 `tunnel-bandwidth-summary.json`, `steady-exact-latency.json`, and
 `steady-summary.json`. The dataset and SVGs are committed so the comparisons
 remain readable when local artifacts are unavailable. Regenerate the figures
-with `mise exec -- node scripts/render-local-capacity.ts` and check them with
-`mise exec -- node scripts/render-local-capacity.ts --check`.
+with `mise exec -- node scripts/development/render-local-capacity.ts` and check them with
+`mise exec -- node scripts/development/render-local-capacity.ts --check`.
 
 These results have different durations, topology settings, configured limits,
 and generator headroom. No result here includes a health-aware ingress address

@@ -1,0 +1,68 @@
+version: "3"
+
+vars:
+  GENERATED_PATHS: >-
+    pkg/api
+    internal/client/state/clientstatedb
+    internal/control/state/controlstatedb
+    internal/failure/diagnostic/codes.gen.go
+    internal/failure/catalog.gen.json
+    internal/publisher/toolbar/toolbar.js
+    internal/publisher/browserapi/model.gen.ts
+    internal/client/project/keys.gen.json
+    internal/client/project/loader.mjs
+    packages/ts/src/config.gen.ts
+    schema/v1.json
+    scripts/install.sh
+    deploy/publisher/fargate/fargate.yaml
+    deploy/publisher/fargate/fargate.parameters.example.json
+    deploy/publisher/fargate/fargate.manifest.example.json
+    deploy/publisher/fargate/fargate.storage-policy.json
+    api/observability/v1/vocabulary.json
+
+tasks:
+  generate:
+    dir: "{{.ROOT_DIR}}"
+    desc: Regenerate all committed artifacts
+    deps: [":go:generate"]
+
+  generate-check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check generated files for drift
+    deps: [":go:generate-check"]
+
+  format:
+    dir: "{{.ROOT_DIR}}"
+    desc: Format all source files
+    deps: [":go:format", ":js:format", ":py:format"]
+
+  format-check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check formatting without changing files
+    deps: [":go:format-check", ":js:format-check", ":py:format-check"]
+
+  go:generate:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      # internal generators compile the committed API models; toolbar generation
+      # also needs the browser validators before Go reaches its package.
+      - node scripts/generate/openapi.ts
+      - node scripts/generate/publisher-model.ts
+      - go generate -skip 'scripts/generate/(openapi|publisher-model)\.ts' ./...
+
+  go:generate-check:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: :go:generate
+      - git diff --exit-code HEAD -- {{.GENERATED_PATHS}}
+      - test -z "$(git ls-files --others --exclude-standard -- {{.GENERATED_PATHS}})"
+
+  go:format:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - goimports -w .
+
+  go:format-check:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - test -z "$(goimports -l .)"

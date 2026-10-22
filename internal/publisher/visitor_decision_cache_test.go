@@ -10,12 +10,12 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func TestVisitorDecisionCacheExplicitErrorsEvictAllowance(t *testing.T) {
-	for _, denied := range []error{controlclient.ErrUnauthenticated, &controlclient.ProblemError{Status: 403}, errors.New("invalid authority response")} {
+	for _, denied := range []error{clientcontrol.ErrUnauthenticated, &clientcontrol.ProblemError{Status: 403}, errors.New("invalid authority response")} {
 		t.Run(denied.Error(), func(t *testing.T) {
 			var cache visitorDecisionCache[bool]
 			key := sha256.Sum256([]byte("original browser cookie"))
@@ -66,7 +66,7 @@ func TestVisitorDecisionCacheBoundsRevocationAndOutages(t *testing.T) {
 	cache.mu.Unlock()
 	unavailable := func(context.Context) (string, time.Time, bool, error) {
 		checks++
-		return "", time.Time{}, false, controlclient.ErrUnavailable
+		return "", time.Time{}, false, clientcontrol.ErrUnavailable
 	}
 	if result, err := cache.check(t.Context(), key, unavailable); err != nil || result != "allowed" {
 		t.Fatalf("unexpired decision during outage = %q, %v", result, err)
@@ -223,9 +223,9 @@ func TestVisitorDecisionCacheOwnedTimeoutPreservesDeadlineAndTerminalFailures(t 
 		err      error
 		fallback bool
 	}{
-		{"owned timeout", controlclient.ErrUnavailable, true},
-		{"unauthenticated", controlclient.ErrUnauthenticated, false},
-		{"forbidden", &controlclient.ProblemError{Status: 403}, false},
+		{"owned timeout", clientcontrol.ErrUnavailable, true},
+		{"unauthenticated", clientcontrol.ErrUnauthenticated, false},
+		{"forbidden", &clientcontrol.ProblemError{Status: 403}, false},
 		{"malformed", errors.New("invalid authority response"), false},
 		{"malformed with timeout cause", failure.Wrap("decode authority response", failure.ServerResponseInvalid, context.DeadlineExceeded), false},
 	} {

@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/invopop/jsonschema"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/tcpport"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
-	"github.com/tnldotdev/tnl/internal/webhookips"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if err := writeFile(filepath.Join(root, "internal", "projectconfig", "keys.gen.json"), append(data, '\n')); err != nil {
+	if err := writeFile(filepath.Join(root, "internal", "client", "project", "keys.gen.json"), append(data, '\n')); err != nil {
 		fatal(err)
 	}
 }
@@ -125,7 +125,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		}
 		properties.Set("events", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), UniqueItems: true, Items: &jsonschema.Schema{Type: "string", Enum: events}})
 		return &jsonschema.Schema{Type: "object", Properties: properties, Required: []string{"workflow", "ref", "events"}, AdditionalProperties: jsonschema.FalseSchema}
-	case reflect.TypeOf(map[string]config.Publisher{}):
+	case reflect.TypeOf(map[string]config.PublisherGroup{}):
 		properties := jsonschema.NewProperties()
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
 		properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
@@ -170,8 +170,8 @@ func servicesSchema() *jsonschema.Schema {
 // where JSON Schema conditionals alone would not constrain the declarations.
 func serviceSchema(protocol string) *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "Saved name for either HTTP or private services; defaults to the service key."})
-	properties.Set("publisher", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Default: "local", Description: "Assigned publisher group; defaults to the built-in local publisher."})
+	properties.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Description: "Saved name; defaults to the configuration key."})
+	properties.Set("publisher_group", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Default: "local", Description: "Assigned publisher group; defaults to the built-in local publisher."})
 	properties.Set("publisher_pool", jsonschema.FalseSchema)
 	access := jsonschema.NewProperties()
 	access.Set("team", &jsonschema.Schema{Type: "boolean", Const: true})
@@ -196,6 +196,9 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 	properties.Set("target", target)
 	properties.Set("tls", jsonschema.FalseSchema)
 	httpProperties := jsonschema.NewProperties()
+	httpProperties.Set("access", accessSchema("restricted"))
+	httpLimits, _ := limits.Properties.Get("http")
+	httpProperties.Set("limits", httpLimits)
 	readiness := jsonschema.NewProperties()
 	readiness.Set("path", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	httpProperties.Set("readiness", &jsonschema.Schema{Type: "object", Properties: readiness, Required: []string{"path"}, AdditionalProperties: jsonschema.FalseSchema, Description: "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."})
@@ -233,14 +236,19 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 
 func remotePublisherRestrictions() *jsonschema.Schema {
 	selector := jsonschema.NewProperties()
-	selector.Set("publisher", &jsonschema.Schema{Not: &jsonschema.Schema{Const: "local"}})
+	selector.Set("publisher_group", &jsonschema.Schema{Not: &jsonschema.Schema{Const: "local"}})
 	restrictions := jsonschema.NewProperties()
-	restrictions.Set("http", jsonschema.FalseSchema)
+	restrictions.Set("public_url", jsonschema.FalseSchema)
+	http := jsonschema.NewProperties()
+	for _, name := range []string{"readiness", "paths", "open"} {
+		http.Set(name, jsonschema.FalseSchema)
+	}
+	restrictions.Set("http", &jsonschema.Schema{Properties: http})
 	target := jsonschema.NewProperties()
 	target.Set("type", &jsonschema.Schema{Enum: []any{"address", "eks", "rds"}})
 	restrictions.Set("target", &jsonschema.Schema{Properties: target, Required: []string{"type"}})
 	return &jsonschema.Schema{
-		If:   &jsonschema.Schema{Required: []string{"publisher"}, Properties: selector},
+		If:   &jsonschema.Schema{Required: []string{"publisher_group"}, Properties: selector},
 		Then: &jsonschema.Schema{Required: []string{"target"}, Properties: restrictions},
 	}
 }
@@ -263,14 +271,7 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("publisher_pool", jsonschema.FalseSchema)
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain used for generated public URL hostnames."})
 	properties.Set("hostname", &jsonschema.Schema{Type: "string", Description: "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."})
-	accessProperties := jsonschema.NewProperties()
-	accessProperties.Set("mode", &jsonschema.Schema{Type: "string", Enum: []any{"restricted", "anonymous"}})
-	accessProperties.Set("ip", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), MaxItems: integerPointer(256),
-		Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
-	properties.Set("access", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		{Type: "string", Enum: []any{"restricted", "anonymous"}},
-		{Type: "object", Properties: accessProperties, AdditionalProperties: jsonschema.FalseSchema},
-	}})
+	properties.Set("access", accessSchema("restricted", "anonymous"))
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
 	limits := jsonschema.NewProperties()
 	for _, protocol := range []string{"http", "tcp"} {
@@ -292,14 +293,24 @@ func tunnelSchema() *jsonschema.Schema {
 	}
 }
 
+func accessSchema(modes ...any) *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("mode", &jsonschema.Schema{Type: "string", Enum: modes})
+	properties.Set("ip", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), MaxItems: integerPointer(256), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
+	return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+		{Type: "string", Enum: modes},
+		{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema},
+	}}
+}
+
 func webhookSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("service", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Configured local HTTP service with an explicit public_url block. App, address, Compose and Docker targets are supported."})
 	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
 	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "selected"}})
 	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
-	providerValues := make([]any, 0, len(webhookips.Names()))
-	for _, name := range webhookips.Names() {
+	providerValues := make([]any, 0, len(webhooksource.Names()))
+	for _, name := range webhooksource.Names() {
 		providerValues = append(providerValues, name)
 	}
 	properties.Set("provider", &jsonschema.Schema{Type: "string", Enum: providerValues})
@@ -410,7 +421,7 @@ func aliasSchema() *jsonschema.Schema {
 
 func tnldSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	typeOfConfig := reflect.TypeOf(tnldconfig.Config{})
+	typeOfConfig := reflect.TypeOf(daemonconfig.Config{})
 	durationType := reflect.TypeOf(time.Duration(0))
 	for index := 0; index < typeOfConfig.NumField(); index++ {
 		field := typeOfConfig.Field(index)
@@ -482,7 +493,7 @@ func defaultValue(value string, valueType reflect.Type, duration bool) any {
 }
 
 func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
-	mappings := projectconfig.TypeScriptKeyMappings()
+	mappings := clientproject.TypeScriptKeyMappings()
 	for index := 0; index < valueType.NumField(); index++ {
 		field := valueType.Field(index)
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")

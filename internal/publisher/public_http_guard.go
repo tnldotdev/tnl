@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // one admitted request owns its guard, including after an HTTP/1 upgrade.
@@ -62,7 +62,7 @@ func (g *publicHTTPGuard) run(ctx context.Context, original *http.Request, acces
 		if ctx.Err() != nil {
 			return
 		}
-		if errors.Is(err, controlclient.ErrUnavailable) {
+		if errors.Is(err, clientcontrol.ErrUnavailable) {
 			nextCheck = time.Now().Add(visitorDecisionRetry)
 			continue
 		}

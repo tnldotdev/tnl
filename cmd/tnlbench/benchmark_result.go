@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type benchmarkResult struct {

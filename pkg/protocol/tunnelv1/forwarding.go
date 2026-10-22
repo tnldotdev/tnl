@@ -9,10 +9,10 @@ import (
 
 // ReadForwardingHeader dispatches one bounded frame without consuming any
 // following visitor bytes. private and public selectors cannot be combined.
-func ReadForwardingHeader(reader io.Reader) (InternalForwardingHeader, *PrivateForwardingHeader, error) {
+func ReadForwardingHeader(reader io.Reader) (InternalForwardingHeader, *ServiceForwardingHeader, error) {
 	// preserve the complete frame length, including JSON whitespace. decoding
 	// into RawMessage first would hide bytes from the selected kind's cap.
-	raw, err := readFramePayload(reader, max(MaxHeaderBytes, MaxPrivateHeaderBytes))
+	raw, err := readFramePayload(reader, max(MaxHeaderBytes, MaxServiceHeaderBytes))
 	if err != nil {
 		return InternalForwardingHeader{}, nil, err
 	}
@@ -24,11 +24,11 @@ func ReadForwardingHeader(reader io.Reader) (InternalForwardingHeader, *PrivateF
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if kind.Kind == PrivateForwardingStream {
-		if len(raw) > MaxPrivateHeaderBytes {
+	if kind.Kind == ServiceForwardingStream {
+		if len(raw) > MaxServiceHeaderBytes {
 			return InternalForwardingHeader{}, nil, errors.New("tunnelv1: private forwarding header too large")
 		}
-		var header PrivateForwardingHeader
+		var header ServiceForwardingHeader
 		if err := decoder.Decode(&header); err != nil {
 			return InternalForwardingHeader{}, nil, err
 		}

@@ -9,14 +9,14 @@ import (
 
 	"github.com/oapi-codegen/runtime/types"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/ingressapi"
+	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func TestDirectStaleLeaseClearsController(t *testing.T) {
-	client, err := ingressapi.NewDirectClient(ingressapi.DirectConfig{Store: staleLeaseStore{}, LeaseDuration: time.Minute})
+	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: staleLeaseStore{}, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestDirectStaleLeaseClearsController(t *testing.T) {
 	}
 }
 
-type staleLeaseStore struct{ ingressapi.Store }
+type staleLeaseStore struct{ controlingress.Store }
 
 func TestRunUntilEitherStopsJoinsSibling(t *testing.T) {
 	failure := errors.New("renewal stopped")

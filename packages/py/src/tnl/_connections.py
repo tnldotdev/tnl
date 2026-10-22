@@ -198,11 +198,11 @@ def _snapshot(value: object) -> Connection:
 
 
 def _prepared(value: object, service: str) -> Connection:
-    obj = _object(value, {"schema", "public_runtime", "connection", "verification"})
+    obj = _object(value, {"schema", "project_runtime", "connection", "verification"})
     if type(obj.get("schema")) is not int or obj["schema"] != 1:
         raise _error("invalid")
     project = _object(
-        obj.get("public_runtime"),
+        obj.get("project_runtime"),
         {"dev", "namespace", "services", "worktree", "oauth", "webhooks", "aliases"},
     )
     services = project.get("services")
@@ -389,14 +389,14 @@ class _Session:
                             "state",
                             "pid",
                             "expires_at",
-                            "public_runtime",
-                            "private_handle",
+                            "project_runtime",
+                            "connection_handle",
                             "executable",
                             "kubeconfig",
                             "reason",
                         },
                     )
-                    handle = _text(status.get("private_handle"))
+                    handle = _text(status.get("connection_handle"))
                     if (
                         type(status.get("schema")) is not int
                         or status["schema"] != 1
@@ -405,7 +405,7 @@ class _Session:
                         or cast(int, status["pid"]) <= 0
                         or not Path(handle).is_absolute()
                         or status.get("executable") != str(self.binary)
-                        or not isinstance(status.get("public_runtime"), dict)
+                        or not isinstance(status.get("project_runtime"), dict)
                     ):
                         raise _error("invalid")
                     self.expires_at = _expiry(status.get("expires_at"))

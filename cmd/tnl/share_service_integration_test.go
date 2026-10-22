@@ -18,15 +18,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/authorityapi"
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/controlapi"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
+	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
 )
 
@@ -64,11 +64,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	var lostInvitationID atomic.Value
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	control, err := controlapi.NewHandler(controlapi.Config{ControlURL: server.URL, OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d, d, nil)
+	control, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority, err := authorityapi.NewHandler(authorityapi.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d)
+	authority, err := controlauthority.NewHandler(controlauthority.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/invitations") && loseInvitationResponse.CompareAndSwap(true, false) {
 				recorded := httptest.NewRecorder()
 				control.ServeHTTP(recorded, r)
-				var invitation controlv1.PrivateServiceInvitation
+				var invitation controlv1.ServiceInvitation
 				if recorded.Code != http.StatusCreated || json.Unmarshal(recorded.Body.Bytes(), &invitation) != nil || invitation.Secret == nil {
 					t.Error("lost-response fixture did not commit an invitation")
 				}
@@ -99,11 +99,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	original := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = original })
-	ownerAuthority, err := authorityclient.New(server.URL, server.Client(), owner.AccessToken)
+	ownerAuthority, err := clientauthority.New(server.URL, server.Client(), owner.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminAuthority, err := authorityclient.New(server.URL, server.Client(), admin.AccessToken)
+	adminAuthority, err := clientauthority.New(server.URL, server.Client(), admin.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,11 +119,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerControl, err := controlclient.New(server.URL, server.Client(), owner.AccessToken)
+	ownerControl, err := clientcontrol.New(server.URL, server.Client(), owner.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminControl, err := controlclient.New(server.URL, server.Client(), admin.AccessToken)
+	adminControl, err := clientcontrol.New(server.URL, server.Client(), admin.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 	}
 	configFile, state := filepath.Join(root, "tnl.json"), filepath.Join(root, "state")
-	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publishers":{"production":{}},"services":{"remote":{"publisher":"production","target":{"type":"address","address":"http://app.internal:3000"}},"localdb":{"target":{"type":"app"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(configFile, []byte(`{"version":1,"tnl":{"publisher_groups":{"production":{}},"services":{"remote":{"publisher_group":"production","target":{"type":"address","address":"http://app.internal:3000"}},"localdb":{"target":{"type":"app"}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	call := func(token, command string, args ...string) ([]byte, error) {
@@ -178,13 +178,13 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, err := ownerControl.GetProjectPrivateService(ctx, source.Key, "remote", controlv1.GetProjectPrivateServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint})
+	remote, err := ownerControl.GetProjectService(ctx, source.Key, "remote", controlv1.GetProjectServiceParams{TeamId: team.Id, SourceFingerprint: source.Fingerprint})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertNoVisit := func() {
 		t.Helper()
-		services, err := adminControl.ListAvailablePrivateServices(ctx)
+		services, err := adminControl.ListAvailableServices(ctx)
 		if err != nil || len(services) != 0 {
 			t.Fatalf("service management added visit permission: %+v %v", services, err)
 		}
@@ -192,7 +192,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	assertNoVisit()
 	for _, item := range []struct{ key, id string }{{"localdb", local.ServiceId}, {"remote", remote.Id}} {
 		t.Run(item.key, func(t *testing.T) {
-			before, err := ownerControl.ListPrivateServiceGrants(ctx, item.id)
+			before, err := ownerControl.ListServiceGrants(ctx, item.id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -202,8 +202,8 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("manager without a visit grant could not invite using %s: %v", selector, err)
 				}
-				var invite controlv1.PrivateServiceInvitation
-				if err := json.Unmarshal(data, &invite); err != nil || invite.PrivateServiceId != item.id || !invite.ExpiresAt.Equal(deadline) || invite.Secret == nil {
+				var invite controlv1.ServiceInvitation
+				if err := json.Unmarshal(data, &invite); err != nil || invite.ServiceId != item.id || !invite.ExpiresAt.Equal(deadline) || invite.Secret == nil {
 					t.Fatalf("invitation lost its exact resource or lifetime: %+v %v", invite, err)
 				}
 				if _, err := call(admin.AccessToken.String(), "list", selector); err != nil {
@@ -213,7 +213,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 					t.Fatal("manager could not revoke the invitation", err)
 				}
 			}
-			after, err := ownerControl.ListPrivateServiceGrants(ctx, item.id)
+			after, err := ownerControl.ListServiceGrants(ctx, item.id)
 			if err != nil || !reflect.DeepEqual(before, after) {
 				t.Fatal("selection changed service grants to authorize its own lookup", err)
 			}
@@ -227,11 +227,11 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 		defer conn.Close(ctx)
 		for _, query := range []string{
-			`INSERT INTO control.private_service_grants(id,private_service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,revoked_at)
-			 SELECT 'psgr_'||lpad(n::text,22,'0'),$1,$2,'identity',$3,$3,'cli-page-grant/'||n,sha256(convert_to('grant/'||n,'UTF8')),$4::timestamptz,
+			`INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,revoked_at)
+			 SELECT 'sgr_'||lpad(n::text,22,'0'),$1,$2,'identity',$3,$3,'cli-page-grant/'||n,sha256(convert_to('grant/'||n,'UTF8')),$4::timestamptz,
 			 CASE WHEN n<=120 THEN $4::timestamptz END FROM generate_series(1,205) n`,
-			`INSERT INTO control.private_service_invitations(id,private_service_id,team_id,normalized_email,token_digest,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)
-			 SELECT 'psivt_'||lpad(n::text,22,'0'),$1,$2,'owner@example.test',sha256(convert_to('token/'||n,'UTF8')),$3,'cli-page-invite/'||n,sha256(convert_to('request/'||n,'UTF8')),$4::timestamptz,$4::timestamptz+interval '1 hour',
+			`INSERT INTO control.service_invitations(id,service_id,team_id,normalized_email,token_digest,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)
+			 SELECT 'sivt_'||lpad(n::text,22,'0'),$1,$2,'owner@example.test',sha256(convert_to('token/'||n,'UTF8')),$3,'cli-page-invite/'||n,sha256(convert_to('request/'||n,'UTF8')),$4::timestamptz,$4::timestamptz+interval '1 hour',
 			 CASE WHEN n<=120 THEN $4::timestamptz END FROM generate_series(1,205) n`,
 		} {
 			if _, err := conn.Exec(ctx, query, remote.Id, team.Id, owner.Identity.Identity.ID, now); err != nil {
@@ -243,13 +243,13 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 			t.Fatal(err)
 		}
 		var listed struct {
-			Grants      []controlv1.PrivateServiceGrant      `json:"grants"`
-			Invitations []controlv1.PrivateServiceInvitation `json:"invitations"`
+			Grants      []controlv1.ServiceGrant      `json:"grants"`
+			Invitations []controlv1.ServiceInvitation `json:"invitations"`
 		}
 		if err := json.Unmarshal(data, &listed); err != nil || len(listed.Grants) < 205 || len(listed.Invitations) != 207 || bytes.Contains(data, []byte(`"secret"`)) {
 			t.Fatal("CLI did not list all secretless access history", err)
 		}
-		for _, id := range []string{fmt.Sprintf("psgr_%022d", 205), fmt.Sprintf("psivt_%022d", 205)} {
+		for _, id := range []string{fmt.Sprintf("sgr_%022d", 205), fmt.Sprintf("sivt_%022d", 205)} {
 			if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, id); err != nil {
 				t.Fatal("CLI could not revoke access beyond the first page", err)
 			}
@@ -263,7 +263,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		data, firstErr := call(admin.AccessToken.String(), "invite", args...)
 		// net/http may itself retry an idempotent POST on a reused connection.
 		if firstErr == nil {
-			var recovered controlv1.PrivateServiceInvitation
+			var recovered controlv1.ServiceInvitation
 			if err := json.Unmarshal(data, &recovered); err != nil || recovered.Secret != nil {
 				t.Fatal("automatic retry returned a new secret", err)
 			}
@@ -272,13 +272,13 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		if err != nil {
 			t.Fatal("lost committed invitation did not recover", err)
 		}
-		var recovered controlv1.PrivateServiceInvitation
-		if err := json.Unmarshal(data, &recovered); err != nil || recovered.Id != lostInvitationID.Load() || recovered.Secret != nil || recovered.PrivateServiceId != remote.Id || !recovered.ExpiresAt.Equal(deadline) {
+		var recovered controlv1.ServiceInvitation
+		if err := json.Unmarshal(data, &recovered); err != nil || recovered.Id != lostInvitationID.Load() || recovered.Secret != nil || recovered.ServiceId != remote.Id || !recovered.ExpiresAt.Equal(deadline) {
 			t.Fatal("retry lost the original exact-service ID", err)
 		}
 		changed := append([]string(nil), args...)
 		changed[2] = "--email=other@example.test"
-		if _, err := call(admin.AccessToken.String(), "invite", changed...); !errors.Is(err, controlclient.ErrStatusConflict) {
+		if _, err := call(admin.AccessToken.String(), "invite", changed...); !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			t.Fatal("changed retry did not conflict", err)
 		}
 		if _, err := call(admin.AccessToken.String(), "revoke", remote.Id, recovered.Id); err != nil {
@@ -289,7 +289,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var reissued controlv1.PrivateServiceInvitation
+		var reissued controlv1.ServiceInvitation
 		if err := json.Unmarshal(data, &reissued); err != nil || reissued.Secret == nil || reissued.Id == recovered.Id {
 			t.Fatal("explicit reissue did not create a deliverable invitation", err)
 		}
@@ -299,7 +299,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, selector := range []string{"localdb", "remote", local.ServiceId, remote.Id} {
-		if _, err := call(admin.AccessToken.String(), "list", selector); !errors.Is(err, controlclient.ErrNotFound) {
+		if _, err := call(admin.AccessToken.String(), "list", selector); !errors.Is(err, clientcontrol.ErrNotFound) {
 			t.Fatalf("demoted manager retained access to %s: %v", selector, err)
 		}
 	}

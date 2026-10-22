@@ -12,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/tnldotdev/tnl/internal/readiness"
+	"github.com/tnldotdev/tnl/internal/policy/readiness"
 	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -78,7 +78,7 @@ type Metrics struct {
 	certificateDuration         *histogram
 	certificateMilestone        *histogram
 	controlOperations           *histogram
-	publisherRuntime            *histogram
+	publisherruntime            *histogram
 	ingressOperations           *histogram
 	relayOperations             *histogram
 	databaseQueryDuration       *histogram
@@ -169,7 +169,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.certificateDuration = newHistogram(m, "tnl_control_certificate_work_duration_seconds", "Certificate worker advance and save duration; count is the number of claimed iterations.", DurationBucketsSeconds(), CertificateKind, Operation, OutcomeKey)
 	metrics.certificateMilestone = newHistogram(m, "tnl_control_certificate_milestone_age_seconds", "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.", []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600}, CertificateKind, Event)
 	metrics.controlOperations = newHistogram(m, "tnl_control_operation_duration_seconds", "Completed control state operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
-	metrics.publisherRuntime = newHistogram(m, "tnl_control_publisher_runtime_duration_seconds", "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.", DurationBucketsSeconds(), Operation, OutcomeKey, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey)
+	metrics.publisherruntime = newHistogram(m, "tnl_control_publisher_runtime_duration_seconds", "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.", DurationBucketsSeconds(), Operation, OutcomeKey, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey)
 	metrics.ingressOperations = newHistogram(m, "tnl_ingress_operation_duration_seconds", "Completed ingress operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.relayOperations = newHistogram(m, "tnl_relay_operation_duration_seconds", "Completed relay operation duration by fixed operation and outcome.", DurationBucketsSeconds(), Operation, OutcomeKey)
 	metrics.relayBytes = newCounter(m, "tnl_relay_forwarded_bytes_total", "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.", ServiceKindKey, Direction)
@@ -421,7 +421,7 @@ func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome Certif
 }
 
 func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
-	if m == nil || kind != "public_url" && kind != "relay" && kind != "managed_service" {
+	if m == nil || kind != "public_url" && kind != "relay" && kind != "service" {
 		return
 	}
 	switch stage {
@@ -441,7 +441,7 @@ func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, 
 }
 
 func (m *Metrics) ObserveCertificateMilestone(kind, milestone string, age time.Duration) {
-	if m == nil || kind != "public_url" && kind != "managed_service" || milestone != "ready" && milestone != "cleanup" || age < 0 {
+	if m == nil || kind != "public_url" && kind != "service" || milestone != "ready" && milestone != "cleanup" || age < 0 {
 		return
 	}
 	m.certificateMilestone.With(CertificateKind.Dimension(kind), eventDimension(milestone)).Observe(age.Seconds())

@@ -4,7 +4,7 @@ export type TnlErrorCode =
   | "sdk.registration_stale"
   | "sdk.authentication_required"
   | "sdk.publisher_setup_required"
-  | "sdk.publisher_file_invalid"
+  | "sdk.publisher_credential_file_invalid"
   | "sdk.configuration_invalid"
   | "sdk.service_unprepared"
   | "sdk.connection_unavailable"
@@ -61,7 +61,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     message:
       "no namespace publisher is set up; run tnl publisher setup --namespace, then try again",
   },
-  "sdk.publisher_file_invalid": {
+  "sdk.publisher_credential_file_invalid": {
     class: "invalid",
     retry: "after_change",
     message: "the selected publisher file is invalid; check the file and its permissions",

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
 func TestResolveServerPrefersExplicitValue(t *testing.T) {

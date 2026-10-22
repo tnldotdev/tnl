@@ -1,8 +1,12 @@
-import { serviceHostnames, serializeRuntimePayload } from "./internal/runtime.js";
-import { canonicalLoopbackTarget, parseListenerPort } from "./internal/target.js";
+import { serviceHostnames, serializeRuntimePayload } from "./internal/project/runtime.js";
+import { canonicalLoopbackTarget, parseListenerPort } from "./internal/publisher/target.js";
 import type { NextConfig } from "next";
 import { TnlError } from "./errors.js";
-import { prepareService, reportFrameworkTarget, type PrepareOptions } from "./internal/app.js";
+import {
+  prepareService,
+  reportFrameworkTarget,
+  type PrepareOptions,
+} from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
 
 const developmentServerPhase = "phase-development-server";

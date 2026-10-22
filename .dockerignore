@@ -8,6 +8,9 @@
 bench-results
 coverage
 deploy
+development
+tests
+tasks
 dist
 IMPLEMENTATION_PLAN.md
 node_modules

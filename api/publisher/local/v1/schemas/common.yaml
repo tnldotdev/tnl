@@ -1,0 +1,22 @@
+responses:
+  Problem:
+    description: Authored local failure. 400 invalid request; 401 invalid capability or authentication required; 403 wrong capability scope; 409 conflicting or stale registration; 410 expired event cursor.
+    content:
+      application/json:
+        schema: { $ref: "../openapi.yaml#/components/schemas/Problem" }
+securitySchemes:
+  capability: { type: http, scheme: bearer }
+requestBodies:
+  Registration:
+    required: true
+    content:
+      application/json:
+        schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
+schemas:
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [code, message]
+    properties:
+      code: { type: string }
+      message: { type: string }

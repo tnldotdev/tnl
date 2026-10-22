@@ -1,0 +1,51 @@
+version: "3"
+
+tasks:
+  package:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build a local release snapshot
+    cmds:
+      - task: :js:pack
+      - task: :release:snapshot
+      - task: :release:npm-package
+      - task: :py:build
+
+  release:check:plan:
+    dir: "{{.ROOT_DIR}}"
+    desc: Preview three functional checks against an explicit server
+    requires:
+      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
+    cmds:
+      - node scripts/release/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
+
+  release:check:run:
+    dir: "{{.ROOT_DIR}}"
+    desc: Publish test-owned public URLs on an explicit server
+    requires:
+      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
+    cmds:
+      - node scripts/release/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
+
+  installer:test:
+    dir: "{{.ROOT_DIR}}"
+    desc: Test the shell installer without accessing GitHub or client state
+    cmds:
+      - pnpm exec vitest run scripts/installer/install.test.ts
+
+  release:snapshot:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build release archives, checksums, and SBOMs without publishing or signing
+    cmds:
+      - goreleaser release --snapshot --clean --skip=sign
+
+  release:npm-package:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build and check npm release tarballs in installed npm and pnpm consumers
+    preconditions:
+      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
+        msg: Run task release:snapshot before packaging npm release artifacts
+    cmds:
+      - task: :js:test:packaging
+      - task: :js:build
+      - node scripts/package/pack-tnl.ts dist/npm
+      - node scripts/package/verify-tnl-install.ts dist/npm

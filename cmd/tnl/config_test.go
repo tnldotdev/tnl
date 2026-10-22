@@ -10,14 +10,13 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
@@ -39,7 +38,7 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 				if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 					t.Fatal(err)
 				}
-				_, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: path}, root, [32]byte{})
+				_, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: path}, root, [32]byte{})
 				if (err != nil) != (extra != "") {
 					t.Fatalf("application auth must fail strict project loading: %v", err)
 				}
@@ -51,8 +50,8 @@ func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
 		out  any
 	}{
 		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
-		{`{"target":"https://api.example","target_auth":{}}`, new(publisherjob.Job)},
-		{`{"secrets":[]}`, new(publisherjob.GroupBinding)},
+		{`{"target":"https://api.example","target_auth":{}}`, new(supervisor.Job)},
+		{`{"secrets":[]}`, new(supervisor.GroupBinding)},
 	} {
 		if err := httpjson.Decode(json.NewDecoder(strings.NewReader(input.body)), input.out); err == nil {
 			t.Fatal("retired settings were silently ignored", input.body)
@@ -171,11 +170,11 @@ func TestEnrolledPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	access := &config.Access{Mode: "anonymous"}
 	ephemeral := true
 	limit := 20
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Tunnel:   &config.Tunnel{Access: access, Ephemeral: &ephemeral, Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &limit}}},
 		Services: config.Services{"api": {}, "web": {Name: &name, Tunnel: &config.Tunnel{}}},
 	}}}
-	flags := publishCommand{PublisherID: "pub_0123456789abcdefghijkl", Protocol: "http"}
+	flags := publishCommand{PublisherIdentityID: "pub_0123456789abcdefghijkl", Protocol: "http"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +199,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	projectName := "project"
 	access := &config.Access{Mode: "anonymous"}
 	target := config.Target("3000")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Server:   &projectServer,
 		Tunnel:   &config.Tunnel{Access: access},
 		Services: config.Services{"web": {Name: &projectName, Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
@@ -219,7 +218,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 	rootMode, serviceMode := config.InspectionNone, config.InspectionSummary
 	target := config.Target("3000")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
 			Inspection: &config.Inspection{Mode: &serviceMode}, Target: &config.ServiceTarget{Type: "address", Address: &target},
 		}},
@@ -257,7 +256,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 	serviceTeam := "frontend-team"
 	target := config.Target("4173")
 	project := projectConfiguration{
-		Project: projectconfig.Project{
+		Project: clientproject.Project{
 			Root:     root,
 			Worktree: worktree,
 			Config: config.TNL{
@@ -273,7 +272,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 		t.Fatal(err)
 	}
 	if flags.Service != "web" || flags.Target != "4173" || flags.ServerURL != rootServer ||
-		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Name != projectconfig.ServiceWorktreeLabel("web", worktree) {
+		flags.selectedTeam != serviceTeam || flags.projectRoot != root || flags.Name != clientproject.ServiceWorktreeLabel("web", worktree) {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 }
@@ -282,7 +281,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	root := t.TempDir()
 	worktree := namedTestWorktree(root, "project")
 	project := projectConfiguration{
-		Project: projectconfig.Project{
+		Project: clientproject.Project{
 			Root:     root,
 			Worktree: worktree,
 			Config: config.TNL{Services: map[string]config.Service{
@@ -300,7 +299,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 }
 
 func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: map[string]config.Service{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: map[string]config.Service{
 		"api": {}, "web": {},
 	}}}}
 	if err := project.applyPublish(&publishCommand{}); err == nil || err.Error() != "service is required; configured services: api, web" {
@@ -319,7 +318,7 @@ func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
 func TestPrivateTCPProjectPublishDoesNotSelectAPublicURL(t *testing.T) {
 	protocol := "tcp"
 	target := config.Target("127.0.0.1:5432")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
 		"orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
 	}}}}
 	for _, install := range []bool{false, true} {
@@ -336,47 +335,10 @@ func TestPrivateTCPProjectPublishDoesNotSelectAPublicURL(t *testing.T) {
 	}
 }
 
-func TestConfiguredProjectHostnameFixture(t *testing.T) {
-	worktree := namedTestWorktree(t.TempDir(), "tnl")
-	current := teamContext{
-		team: authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"},
-		membership: authorityv1.Membership{
-			Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember,
-			ManagedLabel: "ecstatic-penguin", MemberSlug: "chase",
-		},
-		domains: []authorityv1.Domain{{
-			Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady,
-		}},
-	}
-	service, err := configuredProjectService(
-		"api", worktree, config.TNL{}, current,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := projectconfig.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
-	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want ||
-		service.URL != "https://"+want {
-		t.Fatalf("service metadata = %#v", service)
-	}
-	claimed := "studio.example.test"
-	current.domains = append(current.domains, authorityv1.Domain{
-		Id: "domain_2", Kind: authorityv1.Custom, CanonicalDomain: claimed, State: authorityv1.DomainStateReady,
-	})
-	service, err = configuredProjectService("api", worktree, config.TNL{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want = projectconfig.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
-	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
-		t.Fatalf("custom-domain metadata = %#v", service)
-	}
-}
-
 func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T) {
 	rootDomain, serviceDomain, name := "root.example.test", "service.example.test", "preview"
 	configuredOpen, cliOpen := true, false
-	project := projectConfiguration{Project: projectconfig.Project{
+	project := projectConfiguration{Project: clientproject.Project{
 		Worktree: namedTestWorktree(t.TempDir(), "shop"),
 		Config: config.TNL{
 			Tunnel: &config.Tunnel{Domain: &rootDomain},
@@ -393,7 +355,7 @@ func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T
 		service, wantDomain, wantName string
 	}{
 		{"web", serviceDomain, name},
-		{"api", rootDomain, projectconfig.ServiceWorktreeLabel("api", project.Worktree)},
+		{"api", rootDomain, clientproject.ServiceWorktreeLabel("api", project.Worktree)},
 	} {
 		flags := publishCommand{Target: test.service, openOptions: openOptions{Open: cliOpen}}
 		if err := project.applyPublish(&flags); err != nil {
@@ -423,19 +385,19 @@ func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T
 
 func TestEphemeralTunnelDoesNotReceiveWorktreeSubdomain(t *testing.T) {
 	flags := tunnelFlags{Ephemeral: true}
-	applyBuiltInHostname(&flags, "api", projectconfig.Worktree{Label: projectconfig.WorktreeLabel{Project: "tnl", ID: "bb4eff12", FullLabel: "tnl-bb4eff12"}})
+	applyBuiltInHostname(&flags, "api", clientproject.Worktree{Label: clientproject.WorktreeLabel{Project: "tnl", ID: "bb4eff12", FullLabel: "tnl-bb4eff12"}})
 	if flags.PublicURL != "" || flags.Name != "" {
 		t.Fatalf("ephemeral hostname flags = %#v", flags)
 	}
 }
 
-func namedTestWorktree(root, name string) projectconfig.Worktree {
-	return projectconfig.ApplyWorktreeHashSalt(projectconfig.Worktree{Root: root, Name: name}, root, [32]byte{1})
+func namedTestWorktree(root, name string) clientproject.Worktree {
+	return clientproject.ApplyWorktreeHashSalt(clientproject.Worktree{Root: root, Name: name}, root, [32]byte{1})
 }
 
 func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 	server, team := "https://project.example", "project-team"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server, Team: &team}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Server: &server, Team: &team}}}
 	flags := cli{}
 	if err := applyProjectCommandContext("url list", project, &flags); err != nil {
 		t.Fatal(err)
@@ -481,7 +443,7 @@ func TestProjectCommandContextUsesRootAndPreservesExplicitServer(t *testing.T) {
 
 func TestCrossServerTeamPrecedence(t *testing.T) {
 	projectServer, projectTeam := "https://control.staging.example", "staging-team"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Server: &projectServer, Team: &projectTeam,
 	}}}
 	flags := cli{}
@@ -504,7 +466,7 @@ func TestServicesInheritProjectServerAndTeam(t *testing.T) {
 	rootServer, otherServer := "https://root.example", "https://other.example"
 	rootTeam := "root-team"
 	target := config.Target("3000")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Server: &rootServer, Team: &rootTeam,
 		Services: config.Services{
 			"api": {Target: &config.ServiceTarget{Type: "address", Address: &target}},
@@ -525,35 +487,9 @@ func TestServicesInheritProjectServerAndTeam(t *testing.T) {
 	}
 }
 
-func TestProjectServerSelection(t *testing.T) {
-	projectServer := "https://project.example"
-	for _, selected := range []string{"", "https://invocation.example"} {
-		for _, project := range []*string{nil, &projectServer} {
-			for _, token := range []string{"", "explicit-token"} {
-				server, fromProject, err := resolveProjectServer(selected, project, token)
-				wantProject := selected == "" && project != nil
-				wantError := wantProject && token != ""
-				if (err != nil) != wantError {
-					t.Fatalf("selected=%q, project=%v, token=%q: %v", selected, project, token, err)
-				}
-				if wantError {
-					continue
-				}
-				want := selected
-				if wantProject {
-					want = projectServer
-				}
-				if server != want || fromProject != wantProject {
-					t.Fatalf("selection = %q, %v; want %q, %v", server, fromProject, want, wantProject)
-				}
-			}
-		}
-	}
-}
-
 func TestPublishRejectsProjectSelectedExplicitToken(t *testing.T) {
 	server := "https://project.example"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Server: &server}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Server: &server}}}
 	for _, selected := range []string{"", "https://explicit.example"} {
 		remote := remoteFlags{ServerURL: selected, AccessToken: "explicit-token"}
 		publish := publishCommand{Target: "3000", remoteFlags: remote}
@@ -566,7 +502,7 @@ func TestPublishRejectsProjectSelectedExplicitToken(t *testing.T) {
 func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	target := config.Target("https://api.internal:443")
 	caFile := "certs/target-ca.pem"
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Services: config.Services{"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CAFile: &caFile}}}},
 	}}}
 	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
@@ -579,10 +515,10 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	}
 }
 
-func TestProjectPrivateServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
+func TestProjectServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
 	protocol, name, tlsName := "postgres", "orders", "db.internal"
 	target := config.Target("db.internal:5432")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
 		"web": {}, "orders": {Name: &name,
 			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{ServerName: &tlsName}}},
 	}}}}
@@ -597,16 +533,16 @@ func TestProjectPrivateServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
 	if err := validateTCPPublishOptions(flags, "postgres"); err != nil {
 		t.Fatal(err)
 	}
-	fileBacked := publishCommand{Target: "orders", PublisherFile: "publisher.json", remoteFlags: remoteFlags{ServerURL: "https://control.example"}}
+	fileBacked := publishCommand{Target: "orders", PublisherCredentialFile: "publisher.json", remoteFlags: remoteFlags{ServerURL: "https://control.example"}}
 	if err := project.applyPublish(&fileBacked); err != nil || fileBacked.Service != "orders" || fileBacked.Target != string(target) || fileBacked.Protocol != "postgres" || fileBacked.Name != "" {
-		t.Fatalf("file-backed configured private service = %+v, %v", fileBacked, err)
+		t.Fatalf("file-backed configured service = %+v, %v", fileBacked, err)
 	}
 }
 
 func TestNamedTargetTrustContradictionsFailBeforePublisherSetup(t *testing.T) {
 	protocol, hostname, ca := "postgres", "db.internal", "certs/root.pem"
 	address := config.Target("127.0.0.1:5432")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{
 		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &hostname, CAFile: &ca}}},
 	}}}}
 	disabled := false

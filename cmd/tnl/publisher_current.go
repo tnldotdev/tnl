@@ -7,14 +7,14 @@ import (
 	"io"
 	"os"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type publisherCurrentCommand struct {
@@ -25,17 +25,17 @@ type publisherCurrentCommand struct {
 }
 
 type publisherCurrentResult struct {
-	Source      string `json:"source"`
-	ControlURL  string `json:"control_url"`
-	PublisherID string `json:"publisher_id"`
-	GrantID     string `json:"grant_id"`
-	Scope       string `json:"scope"`
-	Checked     bool   `json:"checked"`
+	Source              string `json:"source"`
+	ControlURL          string `json:"control_url"`
+	PublisherIdentityID string `json:"publisher_identity_id"`
+	GrantID             string `json:"grant_id"`
+	Scope               string `json:"scope"`
+	Checked             bool   `json:"checked"`
 }
 
 func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, output io.Writer) error {
 	result := publisherCurrentResult{}
-	if path, present := os.LookupEnv("TNL_PUBLISHER_FILE"); present {
+	if path, present := os.LookupEnv("TNL_PUBLISHER_CREDENTIAL_FILE"); present {
 		if path == "" {
 			return credentialfile.ErrInvalid
 		}
@@ -46,24 +46,24 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 		if flags.ServerURL != "" && flags.ServerURL != file.ControlURL {
 			return credentialfile.ErrInvalid
 		}
-		result = publisherCurrentResult{Source: "publisher file", ControlURL: file.ControlURL, PublisherID: file.PublisherID, GrantID: file.GrantID, Scope: file.Kind}
+		result = publisherCurrentResult{Source: "publisher file", ControlURL: file.ControlURL, PublisherIdentityID: file.PublisherIdentityID, GrantID: file.GrantID, Scope: file.Kind}
 		if file.Namespace != nil {
 			result.Scope = *file.Namespace
 		} else if file.PublicURLID != nil {
 			result.Scope = *file.PublicURLID
-		} else if file.PrivateServiceID != nil {
-			result.Scope = *file.PrivateServiceID
+		} else if file.ServiceID != nil {
+			result.Scope = *file.ServiceID
 		}
 		if flags.Check {
-			control, err := controlclient.New(file.ControlURL, nil, "")
+			control, err := clientcontrol.New(file.ControlURL, nil, "")
 			if err != nil {
 				return err
 			}
-			authority, err := authorityclient.New(file.ControlURL, nil, "")
+			authority, err := clientauthority.New(file.ControlURL, nil, "")
 			if err != nil {
 				return err
 			}
-			selected, err := nativeauth.LoadFile(path, file.ControlURL, control, authority)
+			selected, err := publisheridentity.LoadFile(path, file.ControlURL, control, authority)
 			if err != nil {
 				return err
 			}
@@ -95,29 +95,29 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 			return err
 		}
 		if !found {
-			return nativeauth.ErrSetupRequired
+			return publisheridentity.ErrSetupRequired
 		}
 		var identity authorityv1.PublisherEnrollmentResult
 		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId == "" || saved.ID != identity.ClientId || identity.Namespace == nil || identity.Kind != "namespace" {
-			return nativeauth.ErrScope
+			return publisheridentity.ErrScope
 		}
-		result = publisherCurrentResult{Source: "local profile", ControlURL: server, PublisherID: identity.ClientId, GrantID: identity.GrantId, Scope: *identity.Namespace}
+		result = publisherCurrentResult{Source: "local profile", ControlURL: server, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Scope: *identity.Namespace}
 		if flags.Check {
-			control, err := controlclient.New(server, nil, "")
+			control, err := clientcontrol.New(server, nil, "")
 			if err != nil {
 				return err
 			}
-			authority, err := authorityclient.New(server, nil, "")
+			authority, err := clientauthority.New(server, nil, "")
 			if err != nil {
 				return err
 			}
-			if _, err := nativeauth.LoadDefaultNamespace(ctx, profile, control, authority); err != nil {
+			if _, err := publisheridentity.LoadDefaultNamespace(ctx, profile, control, authority); err != nil {
 				return err
 			}
 			result.Checked = true
 		}
 	}
-	if result.PublisherID == "" || result.GrantID == "" || result.Scope == "" {
+	if result.PublisherIdentityID == "" || result.GrantID == "" || result.Scope == "" {
 		return errors.New("selected publisher has no grant scope")
 	}
 	if flags.Output == statusOutputJSON {
@@ -130,7 +130,7 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 	return writeHumanFrame(output, "tnl publisher current", state, "", clioutput.Fields(
 		clioutput.Field{Label: "source", Value: result.Source},
 		clioutput.Field{Label: "control URL", Value: result.ControlURL},
-		clioutput.Field{Label: "publisher", Value: result.PublisherID},
+		clioutput.Field{Label: "publisher", Value: result.PublisherIdentityID},
 		clioutput.Field{Label: "grant", Value: result.GrantID},
 		clioutput.Field{Label: "scope", Value: result.Scope},
 	))

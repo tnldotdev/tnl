@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/serviceapi"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 // HTTPControlClient adapts the generated private API client to relay control operations.

@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/httpsubject"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const browserAccessCookieName = "__Host-tnl-browser"
@@ -207,9 +207,9 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		if request.URL.Query().Get("switch") == "1" {
 			query.Set("switch_account", "true")
 		}
-		if a.subject.Kind == httpsubject.ManagedService {
-			endpoint.Path = "/v1/browser/managed-login"
-			query.Set("private_service_id", a.subject.ID)
+		if a.subject.Kind == httpsubject.Service {
+			endpoint.Path = "/v1/browser/service-login"
+			query.Set("service_id", a.subject.ID)
 		} else {
 			query.Set("public_url_id", a.publicURLID)
 		}
@@ -260,7 +260,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		result, err := a.checkCurrent(request)
 		if err != nil {
 			status := http.StatusServiceUnavailable
-			if errors.Is(err, controlclient.ErrUnauthenticated) {
+			if errors.Is(err, clientcontrol.ErrUnauthenticated) {
 				status = http.StatusUnauthorized
 			}
 			http.Error(response, "could not check browser sign-in; retry", status)

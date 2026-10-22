@@ -1,0 +1,62 @@
+paths:
+  /internal/v1/relays/register:
+    post:
+      operationId: registerRelay
+      summary: Register one relay process run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/RelayRegistration"
+      responses:
+        "200":
+          description: Relay lease created or renewed when the same registration is repeated
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/RelayLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/relays/{relay_id}/renew:
+    post:
+      operationId: renewRelay
+      summary: Renew a matching relay lease
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/RelayRenewal"
+      responses:
+        "200":
+          description: Relay lease renewed
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/RelayLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/relays/{relay_id}/drain:
+    post:
+      operationId: drainRelay
+      summary: Stop a matching relay process from accepting new work
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/RelayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/RelayDrainRequest"
+      responses:
+        "200":
+          description: Relay drain recorded
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/RelayLease"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

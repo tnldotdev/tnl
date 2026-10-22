@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
@@ -28,10 +28,10 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team, control := session.identity.PersonalTeamId, session.authenticated.Control
+	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "detached replica") }))
 	defer target.Close()
-	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Publishers: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Publisher: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
+	applied, err := control.ApplyProjectConfiguration(t.Context(), "detached", controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{PublisherGroups: map[string]controlv1.ProjectPublisherGroup{"production": {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: new("production"), Target: target.URL, Access: &controlv1.ProjectServiceAccess{Team: true}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 			status, err := control.GetProjectConfiguration(t.Context(), team, "detached")
 			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live"
 		})
-		service, err := control.GetPrivateService(t.Context(), *applied.Services[0].ServiceId)
+		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		_ = listener.Close()
 		ctx, cancel := context.WithCancel(t.Context())
 		_, joined := f.command(t, ctx, cancel, []string{"--no-config", "connect", service.Id, "--team", team, "--server", f.url, "--state-dir", person, "--listen", address})
-		client := workflowNativeHTTPClient(t, f, service.ManagedTls.Hostname)
+		client := workflowNativeHTTPClient(t, f, service.Endpoint.Hostname)
 		workflowWait(t, 10*time.Second, func() bool {
 			response, err := client.Get("https://" + address + "/detached")
 			if err != nil {

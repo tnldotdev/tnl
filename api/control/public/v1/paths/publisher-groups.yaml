@@ -1,0 +1,201 @@
+paths:
+  /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
+    post:
+      operationId: renamePublisherNamespace
+      security: [{ bearerAuth: [] }]
+      description: Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RenamePublisherNamespaceRequest" }
+      responses:
+        "200":
+          description: Applied descriptors with the new service hostnames
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
+    post:
+      operationId: renamePublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RenamePublisherGroupRequest" }
+      responses:
+        "200":
+          description: Renamed desired configuration and unchanged endpoint identities
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}:
+    delete:
+      operationId: revokePublisherGroupMember
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+        - { name: publisher_identity_id, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "204":
+          { description: Exact group member identity revoked and its public/private runs closed }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments:
+    post:
+      operationId: createPublisherGroupEnrollment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "../openapi.yaml#/components/schemas/CreatePublisherGroupEnrollmentRequest",
+                    },
+                },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Bounded project/group bootstrap credential,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/PublisherGroupEnrollment" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-groups/enroll:
+    post:
+      operationId: redeemPublisherGroupEnrollment
+      security: []
+      description: Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      $ref: "../openapi.yaml#/components/schemas/RedeemPublisherGroupEnrollmentRequest",
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: One signed publisher identity scoped to one group,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMember" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-groups/verify:
+    post:
+      operationId: verifyPublisherGroupIdentity
+      security: []
+      description: Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLeaseRequest" }
+      responses:
+        "200":
+          description: Verified membership without a lease or service targets
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupVerification" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-groups/lease:
+    post:
+      operationId: acquirePublisherGroupLease
+      security: []
+      description: Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLeaseRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Current group lease,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupLease" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-groups/assignments:
+    get:
+      operationId: getPublisherGroupAssignments
+      security: [{ publisherAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Exact assigned services and native publisher grants for this replica,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "../openapi.yaml#/components/schemas/PublisherGroupAssignments" },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/publisher-groups/ack:
+    post:
+      operationId: acknowledgePublisherGroupConfiguration
+      security: [{ publisherAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "../openapi.yaml#/components/schemas/PublisherGroupAcknowledgement" },
+                },
+            },
+        }
+      responses:
+        "204": { description: Exact current configuration revision acknowledged }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

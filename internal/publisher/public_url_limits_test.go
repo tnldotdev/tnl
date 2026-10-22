@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
 
 func newInlineTestRequest() *http.Request {

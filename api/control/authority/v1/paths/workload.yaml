@@ -1,0 +1,73 @@
+paths:
+  /v1/workload-sessions/identity:
+    post:
+      operationId: identifyWorkload
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadIdentityRequest" }
+      responses:
+        "200":
+          description: Control-verified execution and policy binding, without creating a session or granting visitor access
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadIdentity" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}/assertions:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: attachWorkloadAssertion
+      security: [{ workloadAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadAssertion" }
+      responses:
+        "200":
+          description: Same key-bound session after verifying a rotating assertion against its immutable execution identity and current saved policy; never extends its deadline or service snapshot
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/workload-sessions/exchange:
+    post:
+      operationId: exchangeWorkload
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadExchange" }
+      responses:
+        "200":
+          description: Retry-stable visitor-only key-bound session; 90 second lease, renew after 30 seconds, fixed absolute deadline
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}/renew:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: renewWorkloadSession
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Renewed lease within the original execution window
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: revokeWorkloadSession
+      security: [{ workloadAuth: [] }]
+      responses:
+        "204": { description: Workload access revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

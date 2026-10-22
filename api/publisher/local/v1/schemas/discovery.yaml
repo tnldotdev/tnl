@@ -1,0 +1,21 @@
+schemas:
+  Endpoint:
+    type: object
+    additionalProperties: false
+    required: [version, url, capability, owner_id, scope]
+    properties:
+      version: { type: integer, enum: [1] }
+      url: { type: string, maxLength: 128 }
+      capability: { type: string, minLength: 64, maxLength: 64 }
+      owner_id: { type: string, minLength: 32, maxLength: 32 }
+      scope: { type: string, enum: [owner, app, invocation] }
+      service: { type: string, maxLength: 63 }
+      invocation_id: { type: string, maxLength: 128 }
+  CapabilityRequest:
+    type: object
+    additionalProperties: false
+    required: [scope]
+    properties:
+      scope: { type: string, enum: [app, invocation] }
+      service: { type: string, maxLength: 63 }
+      invocation_id: { type: string, maxLength: 128 }

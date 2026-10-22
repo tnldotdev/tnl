@@ -1,4 +1,4 @@
-// Package serviceapi provides HTTP helpers for the private service APIs.
+// Package serviceapi provides HTTP helpers for the service APIs.
 package serviceapi
 
 import (
@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"strings"
 
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/problemtype"
 )
 
 const MaximumRequestBytes = 64 << 10
 
-// ProblemError describes a private service API failure without HTTP client or
+// ProblemError describes a service API failure without HTTP client or
 // server details.
 type ProblemError struct {
 	Status    int
@@ -37,7 +37,7 @@ func (e *ProblemError) Error() string {
 
 func NewProblemError(status int, problemType, detail string) *ProblemError {
 	return &ProblemError{
-		Status: status, Type: problemtype.URL(problemType), Code: problemType,
+		Status: status, Type: failureproblem.URL(problemType), Code: problemType,
 		Title: strings.ReplaceAll(problemType, "_", " "), Detail: detail,
 	}
 }
@@ -98,7 +98,7 @@ func WriteProblem(response http.ResponseWriter, status int, problemType, detail 
 }
 
 func WriteProblemError(response http.ResponseWriter, problem *ProblemError) {
-	problem.RequestID = problemtype.Write(response, problem.Status, problem.Code, problem.Title, problem.Detail, problem.CaseID)
+	problem.RequestID = failureproblem.Write(response, problem.Status, problem.Code, problem.Title, problem.Detail, problem.CaseID)
 }
 
 // AuthenticateClusterRequest applies the private API's cache and authentication

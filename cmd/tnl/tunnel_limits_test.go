@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
@@ -22,7 +22,7 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 	requests, rateRequests, concurrency := 20, 2, 7
 	period := config.Duration(time.Minute)
 	target := config.Target("3000")
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
 		Tunnel:   &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}}}},
 		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &concurrency}}}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
 	}}}
@@ -71,11 +71,11 @@ func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 func TestEnrolledPublishNeverInheritsRootPublicURLLimits(t *testing.T) {
 	httpTotal, tcpTotal, burst := 80, 5, 3
 	count, period := 2, config.Duration(time.Second)
-	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Tunnel: &config.Tunnel{Limits: &config.Limits{
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Tunnel: &config.Tunnel{Limits: &config.Limits{
 		HTTP: &config.WorkLimits{Total: &httpTotal},
 		TCP:  &config.WorkLimits{Total: &tcpTotal, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst}},
 	}}}}}
-	flags := publishCommand{PublisherID: "pub_example"}
+	flags := publishCommand{PublisherIdentityID: "pub_example"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}

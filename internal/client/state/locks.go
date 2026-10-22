@@ -1,0 +1,276 @@
+package state
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/tnldotdev/tnl/internal/client/filelock"
+	"github.com/tnldotdev/tnl/internal/failure"
+)
+
+var ErrLocked = errors.New("clientstate: state is locked by another process")
+
+// Lock owns a local state lock. Store methods choose its scope and path.
+type Lock = filelock.Lock
+
+func (s *Store) LockHostname(hostname string) (*Lock, error) {
+	if strings.TrimSpace(hostname) == "" {
+		return nil, errors.New("clientstate: hostname is required")
+	}
+	digest := sha256.Sum256([]byte(hostname))
+	return openLock(filepath.Join(s.locksDir, hex.EncodeToString(digest[:])+".lock"), "hostname")
+}
+
+func (s *Store) LockControlSession() (*Lock, error) {
+	return openLock(filepath.Join(s.locksDir, "control-session.lock"), "control session")
+}
+
+// LockPublisherSigningIdentity serializes key creation and registration for one
+// server-scoped publisher identity. callers hold it across read, create, save.
+func (s *Store) LockPublisherSigningIdentity(ctx context.Context, scope string) (*Lock, error) {
+	if !validOpaqueValue(scope, 1024) {
+		return nil, errors.New("clientstate: invalid publisher identity scope")
+	}
+	digest := sha256.Sum256([]byte(scope))
+	return openLockContext(ctx, filepath.Join(s.locksDir, fmt.Sprintf("publisher-identity-%x.lock", digest)), "publisher identity")
+}
+
+func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error) {
+	if store == nil {
+		return nil, errors.New("clientstate: state store is required")
+	}
+	return openLockContext(ctx, filepath.Join(store.locksDir, "control-session.lock"), "control session")
+}
+
+// LockGuestSessionContext serializes guest credential issuance for one selected server.
+func LockGuestSessionContext(ctx context.Context, store *Store) (*Lock, error) {
+	if store == nil {
+		return nil, failure.Wrap("lock guest demo state", failure.ClientStateUnavailable,
+			errors.New("clientstate: state store is required"))
+	}
+	lock, err := openLockContext(ctx, filepath.Join(store.locksDir, "guest-session.lock"), "guest session")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	if errors.Is(err, ErrLocked) {
+		return nil, failure.Wrap("lock guest demo state", failure.ClientStateLocked, err)
+	}
+	return lock, failure.Wrap("lock guest demo state", failure.ClientStateUnavailable, err)
+}
+
+// PrepareRoot creates or validates an owner-only canonical state root. local
+// HTTP API descriptors use the same trust boundary as the database.
+func PrepareRoot(root string) (string, error) { return prepareRoot(root) }
+
+// ValidatePrivateFile validates descriptor metadata without changing permissions.
+func ValidatePrivateFile(info os.FileInfo, directory bool) error {
+	return validatePrivateFile(info, directory)
+}
+
+// OpenPrivateFile validates both the path and opened descriptor and rejects
+// symlinks, public permissions, wrong owners, and a replaced path.
+// do not use it for sqlite database or sidecar files: closing an extra descriptor
+// can release locks held by live sqlite connections in this process.
+func OpenPrivateFile(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePrivateFile(info, false); err != nil {
+		return nil, err
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	opened, err := file.Stat()
+	if err == nil {
+		err = validatePrivateFile(opened, false)
+	}
+	if err == nil && !os.SameFile(info, opened) {
+		err = errors.New("clientstate: private file changed while opening")
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func prepareRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", errors.New("clientstate: state directory is required")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("clientstate: resolve state directory: %w", err)
+	}
+	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("clientstate: state directory must not be a symlink")
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("clientstate: inspect state directory: %w", statErr)
+	}
+	root, err = canonicalPath(root)
+	if err != nil {
+		return "", err
+	}
+	if err := validateTrustedAncestors(filepath.Dir(root)); err != nil {
+		return "", err
+	}
+	if err := ensurePrivateDir(root); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	cursor := filepath.Clean(path)
+	var missing []string
+	for {
+		if _, err := os.Lstat(cursor); err == nil {
+			resolved, err := filepath.EvalSymlinks(cursor)
+			if err != nil {
+				return "", fmt.Errorf("clientstate: resolve state directory: %w", err)
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return resolved, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("clientstate: inspect state directory: %w", err)
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return "", errors.New("clientstate: no existing state directory ancestor")
+		}
+		missing = append(missing, filepath.Base(cursor))
+		cursor = parent
+	}
+}
+
+func validateTrustedAncestors(path string) error {
+	cursor := filepath.Clean(path)
+	for {
+		info, err := os.Lstat(cursor)
+		if errors.Is(err, os.ErrNotExist) {
+			parent := filepath.Dir(cursor)
+			if parent == cursor {
+				return errors.New("clientstate: no existing state directory ancestor")
+			}
+			cursor = parent
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("clientstate: inspect state directory ancestor: %w", err)
+		}
+		writable := info.Mode().Perm()&0o022 != 0
+		sticky := info.Mode()&os.ModeSticky != 0
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || writable && !sticky {
+			return errors.New("clientstate: state directory has an untrusted writable ancestor")
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
+			return errors.New("clientstate: state directory has an untrusted owner")
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return nil
+		}
+		cursor = parent
+	}
+}
+
+func openLock(path, kind string) (*Lock, error) {
+	lock, err := filelock.Acquire(path, filelock.Nonblocking, os.Geteuid())
+	return lockResult(lock, err, kind)
+}
+
+func openLockContext(ctx context.Context, path, kind string) (*Lock, error) {
+	lock, err := filelock.AcquireContext(ctx, path, os.Geteuid())
+	return lockResult(lock, err, kind)
+}
+
+func lockResult(lock *Lock, err error, kind string) (*Lock, error) {
+	if errors.Is(err, filelock.ErrLocked) {
+		return nil, ErrLocked
+	}
+	if err != nil {
+		return nil, fmt.Errorf("clientstate: lock %s state: %w", kind, err)
+	}
+	return lock, nil
+}
+
+func ensurePrivateDir(path string) error {
+	if info, err := os.Lstat(path); err == nil {
+		if err := validatePrivateFile(info, true); err != nil {
+			return fmt.Errorf("clientstate: state directory: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clientstate: inspect state directory: %w", err)
+	} else if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("clientstate: create state directory: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("clientstate: inspect state directory: %w", err)
+	}
+	return validatePrivateFile(info, true)
+}
+
+func privateSubdir(parent, name string) (string, error) {
+	path := filepath.Join(parent, name)
+	if info, err := os.Lstat(path); err == nil {
+		if err := validatePrivateFile(info, true); err != nil {
+			return "", fmt.Errorf("clientstate: state path: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("clientstate: inspect state path: %w", err)
+	} else if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("clientstate: create state path: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("clientstate: inspect state path: %w", err)
+	}
+	if err := validatePrivateFile(info, true); err != nil {
+		return "", fmt.Errorf("clientstate: state path: %w", err)
+	}
+	return path, nil
+}
+
+func validatePrivateFile(info os.FileInfo, directory bool) error {
+	wantMode := os.FileMode(0o600)
+	if directory {
+		wantMode = 0o700
+	}
+	if info.Mode()&os.ModeSymlink != 0 || directory != info.IsDir() || !directory && !info.Mode().IsRegular() {
+		return errors.New("not a real private file")
+	}
+	if info.Mode().Perm() != wantMode {
+		return fmt.Errorf("permissions are %04o, want %04o", info.Mode().Perm(), wantMode)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("not owned by the current user")
+	}
+	return nil
+}
+
+func LockHostnameContext(ctx context.Context, store *Store, hostname string) (*Lock, error) {
+	if store == nil {
+		return nil, errors.New("clientstate: state store is required")
+	}
+	if strings.TrimSpace(hostname) == "" {
+		return nil, errors.New("clientstate: hostname is required")
+	}
+	digest := sha256.Sum256([]byte(hostname))
+	return openLockContext(ctx, filepath.Join(store.locksDir, hex.EncodeToString(digest[:])+".lock"), "hostname")
+}

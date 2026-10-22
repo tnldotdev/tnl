@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/muxsession"
-	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 

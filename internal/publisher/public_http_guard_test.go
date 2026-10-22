@@ -14,9 +14,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/net/websocket"
 )
 
@@ -136,7 +136,7 @@ func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 				t.Error("lost trusted visitor source")
 			}
 			if input.BrowserCookieSecret != nil && *input.BrowserCookieSecret == liveBrowserCookie && revoked {
-				return controlv1.HTTPVisitorResponse{}, controlclient.ErrUnauthenticated
+				return controlv1.HTTPVisitorResponse{}, clientcontrol.ErrUnauthenticated
 			}
 			return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 		}}
@@ -230,10 +230,10 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 				var unavailable bool
 				control := &liveHTTPControl{check: func(input controlv1.HTTPVisitorRequest) (controlv1.HTTPVisitorResponse, error) {
 					if unavailable && mode == "outage" {
-						return controlv1.HTTPVisitorResponse{}, controlclient.ErrUnavailable
+						return controlv1.HTTPVisitorResponse{}, clientcontrol.ErrUnavailable
 					}
 					if unavailable && mode == "share revoked" {
-						return controlv1.HTTPVisitorResponse{}, &controlclient.ProblemError{Status: 403}
+						return controlv1.HTTPVisitorResponse{}, &clientcontrol.ProblemError{Status: 403}
 					}
 					return liveHTTPAllowed(deadline)
 				}}
@@ -356,7 +356,7 @@ func TestPublicHTTPGuardRetainsCachedDecisionAge(t *testing.T) {
 		var revoked bool
 		control := &liveHTTPControl{check: func(controlv1.HTTPVisitorRequest) (controlv1.HTTPVisitorResponse, error) {
 			if revoked {
-				return controlv1.HTTPVisitorResponse{}, controlclient.ErrUnauthenticated
+				return controlv1.HTTPVisitorResponse{}, clientcontrol.ErrUnauthenticated
 			}
 			return liveHTTPAllowed(time.Now().Add(visitorDecisionLifetime))
 		}}
@@ -408,7 +408,7 @@ func TestPublicHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 				t.Error("upgrade lost its original credential")
 			}
 			if revoked {
-				return controlv1.HTTPVisitorResponse{}, &controlclient.ProblemError{Status: 403}
+				return controlv1.HTTPVisitorResponse{}, &clientcontrol.ProblemError{Status: 403}
 			}
 			return liveHTTPAllowed(time.Now().Add(2 * time.Minute))
 		}}

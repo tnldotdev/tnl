@@ -128,7 +128,7 @@ var (
 	publicURLPurpose       = metricStringKey{keyName{"tnl.public_url_purpose"}}
 	domainKind             = metricStringKey{keyName{"tnl.domain_kind"}}
 	certificatePlan        = metricStringKey{keyName{"tnl.certificate_plan"}}
-	ingressPool            = metricStringKey{keyName{"tnl.ingress_pool"}}
+	ingresspool            = metricStringKey{keyName{"tnl.ingress_pool"}}
 	databasePurpose        = metricStringKey{keyName{"tnl.database_purpose"}}
 	signalKey              = metricStringKey{keyName{"tnl.signal"}}
 )

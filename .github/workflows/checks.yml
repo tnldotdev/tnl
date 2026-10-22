@@ -199,7 +199,7 @@ jobs:
       - name: Test integration
         env:
           FRAMEWORK: ${{ matrix.framework }}
-        run: pnpm exec vitest run "packages/ts/$FRAMEWORK.test.ts"
+        run: pnpm exec vitest run "packages/ts/test/frameworks/$FRAMEWORK.test.ts"
 
   go-linux:
     name: Go (Linux)
@@ -225,6 +225,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             tools/staticcheck/go.sum
+            tools/testharness/go.sum
             mise.toml
 
       - name: Set up pnpm and Node
@@ -315,6 +316,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             Taskfile.yml
+            tasks/*.yml
 
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -467,8 +469,8 @@ jobs:
         env:
           TNL_ENV_FILE: .env.example
         run: |
-          for file in deploy/compose.yaml deploy/compose.split.yaml; do
-            docker compose --env-file deploy/.env.example --file "$file" config --format json |
+          for directory in deploy/server/standalone deploy/server/split; do
+            docker compose --env-file "$directory/.env.example" --file "$directory/compose.yaml" config --format json |
               jq -e '
                 .services as $services |
                 [$services | to_entries[] | select(.key != "control-proxy") | .value] as $daemons |
@@ -478,11 +480,11 @@ jobs:
                   .image == "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d" and
                   .entrypoint == null and
                   any(.volumes[];
-                    .type == "bind" and (.source | endswith("/deploy/Caddyfile")) and
+                    .type == "bind" and (.source | test("/deploy/server/(standalone|split)/Caddyfile$")) and
                     .target == "/etc/caddy/Caddyfile" and .read_only == true))
               ' > /dev/null
           done
-          docker compose --file deploy/local/compose.yaml config --format json |
+          docker compose --file development/local/compose.yaml config --format json |
             jq -e '.services.migrate.command == ["migrate"] and ([.services.migrate, .services.tnld] | all(.entrypoint == ["/usr/local/bin/tnld"]))' > /dev/null
 
   github-actions:

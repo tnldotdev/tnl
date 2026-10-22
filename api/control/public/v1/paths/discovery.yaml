@@ -1,0 +1,138 @@
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Confirm that the control HTTP server is serving
+      security: []
+      responses:
+        "200":
+          description: Control HTTP server is serving
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/HealthResponse"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/ready:
+    get:
+      operationId: getReadiness
+      summary: Confirm that the tnld role is ready to serve
+      security: []
+      responses:
+        "200":
+          description: The tnld role is ready
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ReadinessResponse"
+        "503":
+          description: The tnld role is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ReadinessResponse"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/client-ip:
+    get:
+      operationId: getClientIP
+      summary: Return the requesting client's public IP address
+      security: []
+      responses:
+        "200":
+          description: Client IP address
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ClientIPResponse"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/discovery:
+    get:
+      operationId: getControlDiscovery
+      summary: Describe control and its authentication methods
+      security: []
+      responses:
+        "200":
+          description: Control discovery
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/ControlDiscovery"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/webhook-providers/{provider}/source:
+    get:
+      operationId: getWebhookProviderSource
+      summary: Read one webhook provider source policy
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/WebhookProvider"
+      responses:
+        "200":
+          description: Webhook provider source policy
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/WebhookProviderSourceResponse"
+        "304":
+          description: Source policy matches If-None-Match
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/guest-demo:
+    post:
+      operationId: createGuestDemo
+      summary: Create a restricted guest credential for the built-in demo
+      security: []
+      responses:
+        "201":
+          description: Guest credential and managed namespace
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/GuestDemoSession"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/guest-demo/number:
+    post:
+      operationId: allocateGuestDemoNumber
+      summary: Allocate a new hostname number for this guest trial
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Next demo number
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/GuestDemoNumber"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/certificate-issuances/{issuance_id}:
+    get:
+      operationId: getCertificateIssuance
+      summary: Read one publish-run certificate issuance
+      security:
+        - publishRunAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IssuanceID"
+      responses:
+        "200":
+          description: Certificate issuance
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/CertificateIssuance"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

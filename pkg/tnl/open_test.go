@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/native/publishingtest"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/publishingtest"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T) {
@@ -25,15 +25,15 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "state")
-	prepared, err := PreparePublisher(t.Context(), Options{EnrollmentKey: secret, ServerURL: f.URL, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP})
+	prepared, err := PreparePublisherIdentity(t.Context(), Options{EnrollmentKey: secret, ServerURL: f.URL, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for attempt := range 2 {
 		ctx, cancel := context.WithCancel(t.Context())
-		options := Options{Publisher: prepared, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP}
+		options := Options{PublisherIdentity: prepared, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP}
 		if attempt == 1 {
-			options.Publisher, options.PublisherID, options.ServerURL = nil, prepared.PublisherID(), f.URL
+			options.PublisherIdentity, options.PublisherIdentityID, options.ServerURL = nil, prepared.value.PublisherIdentityID(), f.URL
 		}
 		tunnel, err := Open(ctx, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), options)
 		if err != nil {
@@ -119,12 +119,12 @@ func TestOpenCancellationBeforeReadyStillCleansExactAllocation(t *testing.T) {
 }
 
 func TestOpenRequiresExplicitPublisherSetup(t *testing.T) {
-	t.Setenv("TNL_PUBLISHER_FILE", "")
-	if err := os.Unsetenv("TNL_PUBLISHER_FILE"); err != nil {
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
+	if err := os.Unsetenv("TNL_PUBLISHER_CREDENTIAL_FILE"); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Open(t.Context(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Options{ServerURL: "https://control.example", StateDir: filepath.Join(t.TempDir(), "state"), StateProtection: ProtectionFile})
-	if !errors.Is(err, nativeauth.ErrSetupRequired) {
+	if !errors.Is(err, publisheridentity.ErrSetupRequired) {
 		t.Fatalf("missing setup did not identify the explicit setup step: %v", err)
 	}
 }

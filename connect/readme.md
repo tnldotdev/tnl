@@ -119,7 +119,7 @@ native stdout/stderr and request size are bounded. child output is never
 forwarded to Actions logs, including error output that could echo stdin. only
 the browser-safe public metadata shape is exported. no application command,
 environment mapping language, job definition, or URL rewrite input is provided.
-see the [native lifecycle contract](../docs/maintainers/connection-runtime.md)
+see the [native lifecycle contract](../docs/maintainers/connector/connection-runtime.md)
 for wire fields and the native trust boundary.
 
 action failures have stable `TNL_ACTION_*` codes and catalog-authored messages.

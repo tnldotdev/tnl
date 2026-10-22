@@ -7,9 +7,9 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 )
 
 type pingCommand struct {
@@ -19,11 +19,11 @@ type pingCommand struct {
 }
 
 func runPing(ctx context.Context, flags pingCommand, output io.Writer) error {
-	address, protocol, err := clientruntime.PingAddress(flags.URL, flags.Protocol)
+	address, protocol, err := publisherapp.PingAddress(flags.URL, flags.Protocol)
 	if err != nil {
 		return failure.Wrap("select visitor address", failure.InvalidCommand, err)
 	}
-	result := clientruntime.Ping(ctx, address, protocol)
+	result := publisherapp.Ping(ctx, address, protocol)
 	if flags.Output == statusOutputJSON {
 		if err := json.NewEncoder(output).Encode(result); err != nil {
 			return err

@@ -14,10 +14,10 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/daemon"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tnldconfig"
-	"github.com/tnldotdev/tnl/internal/tnldruntime"
 )
 
 func main() {
@@ -93,11 +93,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 		return controlstate.Migrate(ctx, directURL)
 	case "serve":
 		reason = failure.ServerStartupFailed
-		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, tnldconfig.Config(flags.Serve.Values), parsed)
+		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, daemonconfig.Config(flags.Serve.Values), parsed)
 		if err != nil {
 			return err
 		}
-		return tnldruntime.Serve(ctx, cfg)
+		return daemon.Serve(ctx, cfg)
 	case "config check":
 		reason = failure.ServerConfigInvalid
 		if flags.Config.Check.ConfigPath == "" {
@@ -127,7 +127,7 @@ type tnldServeCommand struct {
 	Values     tnldValues `embed:""`
 }
 
-type tnldValues tnldconfig.Config
+type tnldValues daemonconfig.Config
 
 type tnldConfigCheckCommand struct {
 	ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON process configuration."`
@@ -144,9 +144,9 @@ type tnldCLI struct {
 	Version struct{}          `cmd:"" help:"Print release version information."`
 }
 
-func resolveServeCommand(path string, base tnldconfig.Config, parsed *kong.Context) (tnldconfig.Config, error) {
+func resolveServeCommand(path string, base daemonconfig.Config, parsed *kong.Context) (daemonconfig.Config, error) {
 	if path == "" {
-		return tnldconfig.Resolve(base)
+		return daemonconfig.Resolve(base)
 	}
 	commandLine := make(map[string]bool)
 	for _, element := range parsed.Path {
@@ -157,17 +157,17 @@ func resolveServeCommand(path string, base tnldconfig.Config, parsed *kong.Conte
 	return resolveConfigFile(path, base, commandLine)
 }
 
-func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[string]bool) (tnldconfig.Config, error) {
+func resolveConfigFile(path string, base daemonconfig.Config, commandLine map[string]bool) (daemonconfig.Config, error) {
 	if strings.EqualFold(filepath.Ext(path), ".ts") {
-		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
+		return daemonconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
 			errors.New("tnld configuration must use .yml, .yaml, or .json"))
 	}
 	document, err := config.LoadDocument(path)
 	if err != nil {
-		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid, err)
+		return daemonconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid, err)
 	}
 	if document.TNLD == nil {
-		return tnldconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
+		return daemonconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
 			errors.New("tnld configuration section is required"))
 	}
 	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
@@ -183,17 +183,17 @@ func resolveConfigFile(path string, base tnldconfig.Config, commandLine map[stri
 			*target = filepath.Join(directory, *target)
 		}
 	}
-	return tnldconfig.Resolve(base)
+	return daemonconfig.Resolve(base)
 }
 
-func parseDefaultsAndEnvironment() (tnldconfig.Config, error) {
+func parseDefaultsAndEnvironment() (daemonconfig.Config, error) {
 	var value tnldValues
 	parser, err := kong.New(&value, kong.Name("tnld"))
 	if err != nil {
-		return tnldconfig.Config{}, err
+		return daemonconfig.Config{}, err
 	}
 	if _, err := parser.Parse(nil); err != nil {
-		return tnldconfig.Config{}, err
+		return daemonconfig.Config{}, err
 	}
-	return tnldconfig.Config(value), nil
+	return daemonconfig.Config(value), nil
 }

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/projectmeta"
-	"github.com/tnldotdev/tnl/internal/sourcestate"
+	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 )
 
 func initIgnoreGit(t *testing.T, root string, args ...string) string {
@@ -69,7 +70,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(output.String(), tnlLocalIgnoreRule) || strings.Contains(output.String(), "Narrow custom") {
+				if !strings.Contains(output.String(), projectinit.LocalIgnoreRule) || strings.Contains(output.String(), "Narrow custom") {
 					t.Fatal(output.String())
 				}
 				after, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -82,7 +83,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 			// Git configuration does not inherit the user's keys.
 			initIgnoreGit(t, root, "add", ".")
 			initIgnoreGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture")
-			if err := projectmeta.Write(t.Context(), root, projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}); err != nil {
+			if err := meta.Write(t.Context(), root, meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}); err != nil {
 				t.Fatal(err)
 			}
 			for _, path := range []string{".tnl/local/project.json", ".tnl/local/project.lock", ".tnl/local/.project-interrupted"} {
@@ -155,28 +156,13 @@ func TestInitGitignoreNestedProjectRoot(t *testing.T) {
 	}
 	// an ancestor's custom broad rule still wins over the nested rule.
 	writeInitIgnoreFixture(t, root, ".gitignore", "**/.tnl/\n")
-	actions := projectGitignoreActions(t.Context(), project)
-	if len(actions) == 0 || !strings.Contains(strings.Join(actions, "\n"), ".gitignore:1") {
-		t.Fatalf("ancestor conflict not diagnosed: %v", actions)
-	}
-}
-
-func TestInitGitignoreWithoutRepositoryAndWithNegations(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	writeInitIgnoreFixture(t, root, ".gitignore", ".tnl/*\n!.tnl/*\n")
-	if _, err := ensureTnlGitignore(root); err != nil {
+	var output bytes.Buffer
+	if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if actions := projectGitignoreActions(t.Context(), root); len(actions) != 0 {
-		t.Fatalf("trackable files diagnosed as ignored: %v", actions)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("created project Git state: %v", err)
-	}
-	writeInitIgnoreFixture(t, root, ".gitignore", "/.tnl/local/\n!/.tnl/local/\n")
-	if actions := projectGitignoreActions(t.Context(), root); len(actions) == 0 || !strings.Contains(actions[0], "not ignored") {
-		t.Fatalf("local negation not diagnosed: %v", actions)
+	// the renderer can wrap the filename and line number independently.
+	unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(output.String())
+	if !strings.Contains(unwrapped, ".gitignore:1") {
+		t.Fatalf("ancestor conflict not diagnosed: %s", output.String())
 	}
 }

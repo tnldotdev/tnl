@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"go.opentelemetry.io/otel/trace"
 )
 

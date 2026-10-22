@@ -8,10 +8,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/muxsession"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/relayv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -32,7 +32,7 @@ type PublisherAcceptorConfig struct {
 	CapacityRejected      func()
 	Report                func(error)
 	Observer              OperationObserver
-	Private               *PrivatePublisherAcceptor
+	Private               *ServicePublisherAcceptor
 }
 
 // PublisherAcceptor authenticates and owns publisher connections.
@@ -45,7 +45,7 @@ type PublisherAcceptor struct {
 	capacity         func()
 	report           func(error)
 	observer         OperationObserver
-	private          *PrivatePublisherAcceptor
+	private          *ServicePublisherAcceptor
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -82,7 +82,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	control, registry := a.control, a.registry
 	var private *privateClaim
 	session, hello, err := tunnel.Accept(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) error {
-		if message.PrivateConnection != nil {
+		if message.ServiceConnection != nil {
 			var err error
 			private, err = a.private.claim(authCtx, message)
 			var protocol *tunnel.ProtocolError

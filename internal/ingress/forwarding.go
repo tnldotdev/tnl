@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/ippolicy"
-	"github.com/tnldotdev/tnl/internal/muxsession"
+	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/routebackend"
-	"github.com/tnldotdev/tnl/internal/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -75,14 +75,14 @@ func newForwarderContext(owner context.Context, connector relayConnector) *Forwa
 // Backends preserves control's publisher-connection order. every returned
 // backend is bound to the publish run number, assignment, and concrete relay lease
 // represented by entry.
-func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routebackend.Backend, error) {
+func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]ingressbackend.Backend, error) {
 	if f == nil || f.connector == nil {
 		return nil, errors.New("ingress: forwarding connector is required")
 	}
 	if entry.PublishRunNumber <= 0 {
 		return nil, errors.New("ingress: forwarding publish run number is invalid")
 	}
-	backends := make([]routebackend.Backend, 0, len(entry.PublisherConnections))
+	backends := make([]ingressbackend.Backend, 0, len(entry.PublisherConnections))
 	for _, connection := range entry.PublisherConnections {
 		if connection.ConnectionSlot < 0 || connection.ConnectionSlot > 1 ||
 			connection.ConnectionAssignmentRevision <= 0 || connection.RelayLeaseRevision <= 0 ||
@@ -120,7 +120,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	if err != nil {
 		return PublicURL{}, err
 	}
-	backends := make([]routebackend.Backend, 0, len(all))
+	backends := make([]ingressbackend.Backend, 0, len(all))
 	assignments := make([]tunnelv1.AdmissionHeader, 0, len(all))
 	for index, backend := range all {
 		assignments = append(assignments, backend.(forwardingBackend).header.Admission())

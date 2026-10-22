@@ -1,0 +1,377 @@
+x-runtime: &runtime
+  image: tnl-runtime-load:local
+  build:
+    context: ../../../..
+    dockerfile: tests/integration/fixtures/separated-stack/runtime-load.Dockerfile
+  init: true
+  stop_grace_period: 15s
+  volumes:
+    - artifacts:/artifacts:ro
+    - coordination:/load
+    - ${RESULTS:?results directory required}:/results
+  environment: &environment
+    PATH: /artifacts:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  command:
+    - sh
+    - -ec
+    - |
+      if [ "$${SEPARATED_COMPONENT}" = coordinator ]; then
+        test_name='^TestLoadSeparatedRuntime$$'
+      else
+        test_name='^TestSeparatedRuntimeComponent$$'
+      fi
+      exec /artifacts/runtime.test \
+        -test.v \
+        -test.run="$$test_name" \
+        -test.timeout=30m \
+        -tnl-test-tier=runtime-load \
+        -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
+        -tnl-separated-component="$${SEPARATED_COMPONENT}" \
+        -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
+        -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
+        -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
+        -tnl-runtime-load-public-url-certificate-workers='${PUBLIC_URL_CERTIFICATE_WORKERS:-8}' \
+        -tnl-runtime-load-rps='${RPS:-16}' \
+        -tnl-runtime-load-workers='${WORKERS:-128}' \
+        -tnl-runtime-load-queue='${QUEUE:-8}' \
+        -tnl-runtime-load-held-streams='${HELD_STREAMS:-8}' \
+        -tnl-runtime-load-held-warmup='${HELD_WARMUP:-0s}' \
+        -tnl-runtime-load-held-measure='${HELD_MEASURE:-0s}' \
+        -tnl-runtime-load-heap-profile='${HEAP_PROFILE:-0}' \
+        -tnl-runtime-load-cpu-profile='${CPU_PROFILE:-0}' \
+        -tnl-runtime-load-capacity-only='${CAPACITY_ONLY:-0}' \
+        -tnl-runtime-load-combined='${COMBINED:-0}' \
+        -tnl-runtime-load-ha-topology='${HA_TOPOLOGY:-1}' \
+        -tnl-runtime-load-direct-path='${DIRECT_PATH:-0}' \
+        -tnl-runtime-load-bandwidth-direction='${BANDWIDTH_DIRECTION:-}' \
+        -tnl-runtime-load-bandwidth-mbits-per-second='${BANDWIDTH_MBITS_PER_SECOND:-100}' \
+        -tnl-runtime-load-bandwidth-streams='${BANDWIDTH_STREAMS:-64}' \
+        -tnl-runtime-load-bandwidth-measure='${BANDWIDTH_MEASURE:-0s}' \
+        -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:--1}' \
+        -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:--1}' \
+        -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:--1}' \
+        -tnl-runtime-load-publisher-concurrency='${PUBLISHER_CONCURRENCY:-500}' \
+        -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:--1}' \
+        -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
+        -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
+        -tnl-runtime-load-network-path='${NETWORK_PATH:-forwarding}' \
+        -tnl-runtime-load-rtt='${RTT:-20ms}' \
+        -tnl-runtime-load-loss='${LOSS:-0.1}' \
+        -tnl-runtime-load-trace='${TRACE:-0}' \
+        -tnl-runtime-load-duration='${DURATION:-10s}'
+
+x-visitor: &visitor
+  <<: *runtime
+  cpus: "${VISITOR_CPUS:-1}"
+  mem_limit: "${VISITOR_MEMORY:-128m}"
+  memswap_limit: "${VISITOR_MEMORY:-128m}"
+
+services:
+  build:
+    image: mirror.gcr.io/library/golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110
+    working_dir: /workspace
+    environment:
+      GOBIN: /artifacts
+      RACE: "${RACE:-0}"
+    volumes:
+      - ../../../..:/workspace:ro
+      - artifacts:/artifacts
+      - go-cache:/root/.cache/go-build
+      - go-modules:/go/pkg/mod
+    command:
+      - sh
+      - -ec
+      - |
+        go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+        go build -buildvcs=false -o /artifacts/dnsdev ./internal/development/dns/cmd/dnsdev
+        if [ "$${RACE}" = 1 ]; then
+          go test -buildvcs=false -race -c -o /artifacts/runtime.test ./internal/daemon
+        else
+          go test -buildvcs=false -c -o /artifacts/runtime.test ./internal/daemon
+        fi
+
+  postgres:
+    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    cpus: "${DATABASE_CPUS:-1}"
+    mem_limit: "${DATABASE_MEMORY:-512m}"
+    memswap_limit: "${DATABASE_MEMORY:-512m}"
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: [CMD-SHELL, pg_isready --username postgres --dbname postgres]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  setup:
+    <<: *runtime
+    command:
+      - /artifacts/runtime.test
+      - -test.v
+      - -test.run=^TestSeparatedRuntimeSetup$$
+      - -test.timeout=1m
+      - -tnl-test-tier=runtime-load
+      - -tnl-test-postgres-url=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      - -tnl-separated-component=setup
+
+  control-a:
+    <<: *runtime
+    cpus: "${CONTROL_CPUS:-1}"
+    mem_limit: "${CONTROL_MEMORY:-2g}"
+    memswap_limit: "${CONTROL_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: control-a
+      AWS_ENDPOINT_URL_ROUTE_53: http://dns:8080
+      AWS_ACCESS_KEY_ID: tnl-local-only
+      AWS_SECRET_ACCESS_KEY: tnl-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on: [dns]
+    networks:
+      default:
+        aliases: [control, control.split.integration.test]
+
+  control-b:
+    <<: *runtime
+    profiles: [ha]
+    cpus: "${CONTROL_CPUS:-1}"
+    mem_limit: "${CONTROL_MEMORY:-2g}"
+    memswap_limit: "${CONTROL_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: control-b
+      AWS_ENDPOINT_URL_ROUTE_53: http://dns:8080
+      AWS_ACCESS_KEY_ID: tnl-local-only
+      AWS_SECRET_ACCESS_KEY: tnl-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on: [dns]
+    networks:
+      default:
+        aliases: [control, control.split.integration.test]
+
+  ingress-a:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${INGRESS_CPUS:-1}"
+    mem_limit: "${INGRESS_MEMORY:-2g}"
+    memswap_limit: "${INGRESS_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: ingress-a
+    networks:
+      default:
+        aliases: [ingress]
+
+  ingress-b:
+    <<: *runtime
+    profiles: [ha]
+    cap_add: [NET_ADMIN]
+    cpus: "${INGRESS_CPUS:-1}"
+    mem_limit: "${INGRESS_MEMORY:-2g}"
+    memswap_limit: "${INGRESS_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: ingress-b
+    networks:
+      default:
+        aliases: [ingress]
+
+  relay-a:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_A_CPUS:-1}"
+    mem_limit: "${RELAY_A_MEMORY:-2g}"
+    memswap_limit: "${RELAY_A_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-a
+    networks:
+      default:
+        aliases: [relay-a.split.integration.test]
+
+  relay-b:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_B_CPUS:-1}"
+    mem_limit: "${RELAY_B_MEMORY:-2g}"
+    memswap_limit: "${RELAY_B_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-b
+    networks:
+      default:
+        aliases: [relay-b.split.integration.test]
+
+  relay-a-2:
+    <<: *runtime
+    profiles: [replicated-relays]
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_A_CPUS:-1}"
+    mem_limit: "${RELAY_A_MEMORY:-2g}"
+    memswap_limit: "${RELAY_A_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-a-2
+    networks:
+      default:
+        aliases: [relay-a.split.integration.test]
+
+  relay-b-2:
+    <<: *runtime
+    profiles: [replicated-relays]
+    cap_add: [NET_ADMIN]
+    cpus: "${RELAY_B_CPUS:-1}"
+    mem_limit: "${RELAY_B_MEMORY:-2g}"
+    memswap_limit: "${RELAY_B_MEMORY:-2g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: relay-b-2
+    networks:
+      default:
+        aliases: [relay-b.split.integration.test]
+
+  publishers:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers
+
+  publishers-2:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-2
+
+  publishers-3:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-3
+
+  publishers-4:
+    <<: *runtime
+    cap_add: [NET_ADMIN]
+    cpus: "${PUBLISHER_CPUS:-4}"
+    mem_limit: "${PUBLISHER_MEMORY:-4g}"
+    memswap_limit: "${PUBLISHER_MEMORY:-4g}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: publishers-4
+
+  visitor-1:
+    <<: *visitor
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: visitor-1
+  visitor-2:
+    <<: *visitor
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: visitor-2
+  visitor-3:
+    <<: *visitor
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: visitor-3
+  visitor-4:
+    <<: *visitor
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: visitor-4
+
+  app:
+    <<: *runtime
+    network_mode: service:publishers
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app
+
+  app-2:
+    <<: *runtime
+    network_mode: service:publishers-2
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-2
+
+  app-3:
+    <<: *runtime
+    network_mode: service:publishers-3
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-3
+
+  app-4:
+    <<: *runtime
+    network_mode: service:publishers-4
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: app-4
+
+  dns:
+    <<: *runtime
+    cpus: "0.25"
+    mem_limit: 64m
+    memswap_limit: 64m
+    command: [sh, -ec, 'export DNS_ADDRESS="$$(hostname -i)"; exec /artifacts/dnsdev']
+    environment:
+      DNS_DOMAIN: routes.split.integration.test
+
+  pebble:
+    <<: *runtime
+    cpus: "${PEBBLE_CPUS:-1}"
+    mem_limit: "${PEBBLE_MEMORY:-128m}"
+    memswap_limit: "${PEBBLE_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: pebble
+    depends_on: [dns]
+
+  coordinator:
+    <<: *runtime
+    ports: ["127.0.0.1::8080"]
+    cpus: "${COORDINATOR_CPUS:-0.5}"
+    mem_limit: "${COORDINATOR_MEMORY:-128m}"
+    memswap_limit: "${COORDINATOR_MEMORY:-128m}"
+    environment:
+      <<: *environment
+      SEPARATED_COMPONENT: coordinator
+    volumes:
+      - artifacts:/artifacts:ro
+      - coordination:/load
+      - ${RESULTS:?results directory required}:/results
+
+volumes:
+  artifacts:
+  coordination:
+  go-cache:
+    external: true
+    name: tnl-load-go-build
+  go-modules:
+    external: true
+    name: tnl-load-go-modules

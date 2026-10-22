@@ -1,0 +1,265 @@
+version: "3"
+
+tasks:
+  lint:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - go vet ./...
+      - task: :go:lint:harness
+      - go run -mod=readonly -modfile=tools/staticcheck/go.mod honnef.co/go/tools/cmd/staticcheck ./...
+
+  lint:harness:
+    dir: "{{.ROOT_DIR}}"
+    desc: Vet the separate disposable test harness module
+    cmds:
+      - go -C tools/testharness vet ./...
+
+  vulncheck:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - govulncheck ./...
+
+  test:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - go test ./...
+      - task: :go:test:public-api
+
+  test:public-api:
+    dir: "{{.ROOT_DIR}}"
+    desc: Compile an application using the public Go SDK
+    cmds:
+      - go test ./pkg/tnl/testdata/publicapi
+
+  test:focused:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run selected Go packages and assertions without changing their test tier
+    requires:
+      vars: [PACKAGES]
+    vars:
+      RUN: '{{default "." .RUN}}'
+      FLAGS: '{{default "" .FLAGS}}'
+    cmds:
+      - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
+
+  test:auth:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check OIDC verification, control sessions, and durable CLI authentication
+    cmds:
+      - go test -race ./internal/control/oidc ./internal/control/api/authority ./internal/client/authority ./internal/client/auth ./internal/client/state ./internal/security/credentials ./internal/daemon/config
+
+  test:team-usage:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check signed website usage authorization and safe failure classification
+    cmds:
+      - go test -race -v ./internal/control/api/authority -run='^TestWebsiteTeamUsage' -count=1
+
+  test:config-contracts:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check config serialization, evaluated owner snapshots, target trust, references and local status protocols
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/config/... ./internal/client/project ./internal/client/project/meta ./internal/naming ./internal/publisher/localapi -count=1
+      - go test {{.CLI_ARGS}} ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='^TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink$' -count=1
+
+  test:live-authorization:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check public HTTP decision caching and live request authorization
+    vars:
+      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ServiceHTTPGuard)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
+
+  test:http-streaming:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check native HTTP streaming, upload bounds, trailers and inspection over local wires
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/transport/httpstream ./internal/publisher/proxy ./internal/publisher -count=1 -timeout=3m
+
+  test:database-native:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check managed native TLS negotiation, authentication, and setup cancellation
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='^TestManaged' -count=1 -timeout=3m
+
+  test:aws-bootstrap:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
+    cmds:
+      - go test -race ./internal/publisher/deployment/aws ./internal/publisher/setup ./internal/client/state ./cmd/tnl -run='Test(Prepare|Bootstrap|ExternalContainer|CustomerDeployment|PublisherProvision)' -count=1
+
+  test:target-discovery:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check bounded publisher discovery, signed local AWS HTTPS, regional roots and target TLS without cloud access
+    cmds:
+      - go test ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/supervisor ./internal/publisher/target ./internal/publisher/service ./internal/transport/targettransport ./internal/observability
+      - go test ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
+
+  test:target-discovery:race:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check publisher discovery and target preparation with the race detector
+    cmds:
+      - go test -race ./internal/publisher/target/discovery ./internal/publisher/target/discovery/rdsroots ./internal/publisher/group ./internal/client/supervisor ./internal/publisher/target ./internal/publisher/service ./internal/transport/targettransport ./internal/observability
+      - go test -race ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
+
+  test:kubernetes:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries
+    cmds:
+      - go test -race ./internal/connector/kubeconfig ./internal/publisher/target/kubernetes ./internal/publisher ./internal/transport/targettransport ./internal/connector/... ./internal/publisher/service ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
+
+  test:connections:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check private owner IPC, verified connector HTTPS, Kubernetes, and connection lifetimes
+    deps: [":js:build"]
+    cmds:
+      - go test -race ./internal/connector/runtime ./internal/connector/workload ./internal/control/oidc -count=1 -timeout=3m
+      - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionNativeOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  test:connections:budget:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure verified cold/warm native control work and prepared-only sibling reads with local TLS fixtures
+    cmds:
+      - go test -race -v ./internal/connector -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
+
+  test:owner-lifecycle:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
+    vars:
+      RUN: '{{default "Test(Connection|Listener|DeviceIssued|ConnectorAssignmentConflict|AssignmentCleanup)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} -v ./internal/connector/... ./internal/client/auth ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
+
+  test:invocations:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check ad-hoc registration, real SQLite workers, limits and allocation cleanup locally
+    cmds:
+      - go test -race -v ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='^Test(Invocation|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|StatusSnapshot|WaitDoesNotTreatOldSnapshotAsFreshOwnerCheck)' -count=1 -timeout=2m
+      - go test -race ./internal/publisher/app ./internal/publisher/target ./internal/publisher/localapi ./internal/publisher/localapi/protocol -count=1 -timeout=2m
+
+  test:app-workflows:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check configured app owners, local identity, readiness, mounts, enrollment and installation locally
+    vars:
+      RUN: '{{default "^Test(AppWorkflow|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|Status|Wait|Background|Configured|ConnectConfigured|ServiceShareSelection|Invocation|Enrolled|Install|SystemInstall|PrivateInstallation|ScopedPrivateInstall|ExplicitPublisherCannotInstall|InvalidConfiguredCA)" .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} -race ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='{{.RUN}}' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -race ./internal/publisher/app ./internal/publisher/target ./internal/publisher/localapi ./internal/publisher/localapi/protocol ./internal/client/project -count=1 -timeout=3m
+
+  test:client-tracing:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
+    cmds:
+      - go test -race ./internal/observability ./internal/connector/runtime ./internal/publisher/localapi/protocol ./internal/publisher/localapi ./internal/publisher/app ./internal/publisher/group ./internal/client/supervisor ./internal/connector/... -count=1 -timeout=3m
+      - go test -race ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='^Test(Observability|VersionBypasses|ClientTracing|Connection|PublisherGroupDiscovery)' -count=1 -timeout=3m
+
+  test:publisher-provenance:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check signed publisher deployment metadata without external infrastructure
+    cmds:
+      - go test -race ./internal/policy/publisherprovenance ./internal/publisher/runtime ./internal/security/publisherproof ./internal/publisher/group
+      - go test -race ./cmd/tnl -run='^TestPublisherDeployment' -count=1
+
+  test:coverage:
+    dir: "{{.ROOT_DIR}}"
+    desc: Produce a diagnostic Go coverage report
+    cmds:
+      - mkdir -p coverage/go
+      - go test ./... -coverprofile=coverage/go/coverage-with-generated.out
+      - go run scripts/development/filter-go-coverage.go coverage/go/coverage-with-generated.out coverage/go/coverage.out
+      - go tool cover -html=coverage/go/coverage.out -o=coverage/go/index.html
+
+  test:race:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run routine Go tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  test:server:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check control state, APIs, background workers, and server runtime with races
+    cmds:
+      - go test -race ./internal/control/state/... ./internal/control/api/public ./internal/control/api/authority ./internal/control/certificates ./internal/control/dns ./internal/control/maintenance ./internal/daemon ./internal/workerloop ./internal/observability
+
+  test:observability:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check vocabulary, identity isolation, local HTTPS export, and correlation without cloud access
+    cmds:
+      - go test -race ./internal/observability ./internal/observability/operatorlog ./internal/observability/serviceaudit ./internal/control/maintenance
+
+  test:publisher-observability:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check publisher measurements, readiness, wire traces, and native data-path invariants with races
+    cmds:
+      - go test -race ./internal/observability ./internal/publisher ./internal/publisher/service ./internal/publisher/runtime ./internal/publisher/group ./internal/transport/httpstream ./internal/publisher/proxy ./internal/transport/targettransport ./internal/transport/tunnel ./internal/ingress/... ./internal/relay ./internal/connector/... ./pkg/protocol/tunnelv1
+
+  test:harness:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check disposable test orchestration and complete, stable shard selection
+    cmds:
+      - go -C tools/testharness test -race ./...
+
+  test:relay:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check routine relay behavior with races
+    cmds:
+      - go test -race ./internal/relay
+
+  test:ingress:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check ingress selection, lifetime budgets, promotion, private fallback and production wiring
+    vars:
+      RUN: '{{default "." .RUN}}'
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/ingress/... ./internal/daemon ./internal/daemon/config ./cmd/tnld -run='{{.RUN}}' -count=1 -timeout=5m
+
+  test:publisher-identity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check owned native identities, enrollment retries and portable group credentials
+    cmds:
+      - go test -race ./internal/publisher/identity ./internal/publisher/identity/credentialfile ./internal/security/publisherproof -count=1
+
+  test:publisher-groups:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check scoped group dependencies, ownership, retries, and joined shutdown
+    cmds:
+      - go test -race ./internal/client/supervisor ./internal/publisher/identity/credentialfile ./internal/publisher/group -count=1
+      - go test -race ./cmd/tnl -run='^Test(FixedGroups|PublisherGroupDiscovery|GroupIdentity)' -count=1
+
+  test:publisher-state:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
+    cmds:
+      - go test -race ./internal/client/state -run='^Test(Certificate|Publisher|PendingPublisher|InstallPublisher|PromotePublisher|DurablePublisher|PrivateDirectory)' -count=1
+      - go test -race ./internal/publisher/identity/credentialfile -count=1
+      - go test -race ./internal/client/supervisor -run='^TestInstalledGroup' -count=1
+
+  test:fuzz:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz all Go parser and policy boundaries
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./internal/ingress/clienthello -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
+      - go test ./internal/transport/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - task: :go:test:fuzz:publisher-observability
+        vars:
+          TIME: "{{.TIME}}"
+      - go test ./internal/policy/target -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
+      - go test ./internal/publisher/inspection -run='^$' -fuzz='^FuzzSummaryFrames$' -fuzztime='{{.TIME}}'
+      - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
+      - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
+      - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
+
+  test:fuzz:publisher-observability:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz bounded public and private infrastructure trace-context frames
+    vars:
+      TIME: '{{default "10s" .TIME}}'
+    cmds:
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzWireTraceContext$' -fuzztime='{{.TIME}}' -parallel=2
+
+  build:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - go build ./...

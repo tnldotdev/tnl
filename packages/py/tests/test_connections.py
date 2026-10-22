@@ -37,7 +37,7 @@ def prepared(**changes: object) -> dict[str, object]:
     connection = snapshot(**changes)
     return {
         "schema": 1,
-        "public_runtime": {
+        "project_runtime": {
             "dev": False,
             "namespace": "example.test",
             "services": {
@@ -224,9 +224,9 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
                 "state": "ready",
                 "pid": 123,
                 "expires_at": snapshot()["expires_at"],
-                "private_handle": mounted,
+                "connection_handle": mounted,
                 "executable": str(binary),
-                "public_runtime": {},
+                "project_runtime": {},
             }
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
@@ -310,9 +310,9 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
                 "state": "ready",
                 "pid": 123,
                 "expires_at": snapshot()["expires_at"],
-                "private_handle": str(tmp_path / "handle"),
+                "connection_handle": str(tmp_path / "handle"),
                 "executable": str(binary),
-                "public_runtime": {},
+                "project_runtime": {},
             }
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
@@ -335,9 +335,9 @@ def ready(binary: Path, handle: Path, deadline: datetime) -> dict[str, object]:
         "state": "ready",
         "pid": 123,
         "expires_at": deadline.isoformat(),
-        "private_handle": str(handle),
+        "connection_handle": str(handle),
         "executable": str(binary),
-        "public_runtime": {},
+        "project_runtime": {},
     }
 
 
@@ -611,7 +611,7 @@ def test_http_keeps_managed_origin_and_project_protocol_drift_is_rejected(
         snapshot(),
         {**prepared(), "schema": True},
         {**prepared(), "private_key": "secret"},
-        {**prepared(), "public_runtime": {}},
+        {**prepared(), "project_runtime": {}},
         {**prepared(), "connection": snapshot(protocol="mysql")},
         {
             **prepared(),

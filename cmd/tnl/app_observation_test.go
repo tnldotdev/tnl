@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
 func TestWaitDoesNotTreatOldSnapshotAsFreshOwnerCheck(t *testing.T) {
-	project := projectConfiguration{Project: projectconfig.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}}
 	var output bytes.Buffer
 	err := runAppWait(t.Context(), project, filepath.Join(t.TempDir(), "state"), waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output)
 	if err == nil {

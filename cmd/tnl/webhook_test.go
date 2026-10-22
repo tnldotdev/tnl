@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/integrationurls"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 )
 
 func TestWebhookCommandRequiresProjectConfiguration(t *testing.T) {
@@ -54,15 +54,15 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	definition := config.Webhook{Service: "api", Path: "/hooks/stripe", Provider: "slack", Delivery: "selected", SourceIPs: []string{"192.0.2.0/24"}}
-	encoded, _, err := integrationurls.DefinitionBytes(definition)
+	encoded, _, err := integrations.DefinitionBytes(definition)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "stripe", encoded); err != nil {
 		t.Fatal(err)
 	}
-	project := projectConfiguration{Project: projectconfig.Project{
-		Root: projectRoot, Selection: projectconfig.Selection{Path: filepath.Join(projectRoot, "tnl.json")},
+	project := projectConfiguration{Project: clientproject.Project{
+		Root: projectRoot, Selection: clientproject.Selection{Path: filepath.Join(projectRoot, "tnl.json")},
 		Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}}}, Webhooks: map[string]config.Webhook{"stripe": definition}},
 	}}
 	command := webhookChoiceCommand{remoteFlags: remoteFlags{ServerURL: server, StateDir: stateRoot}, Endpoint: "stripe"}
@@ -92,8 +92,8 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	if err := other.RegisterWebhookEndpoint(t.Context(), "stripe", encoded); err != nil {
 		t.Fatal(err)
 	}
-	otherProject := projectConfiguration{Project: projectconfig.Project{
-		Root: otherRoot, Selection: projectconfig.Selection{Path: filepath.Join(otherRoot, "tnl.json")}, Config: project.Config,
+	otherProject := projectConfiguration{Project: clientproject.Project{
+		Root: otherRoot, Selection: clientproject.Selection{Path: filepath.Join(otherRoot, "tnl.json")}, Config: project.Config,
 	}}
 	if err := runWebhookChoice(t.Context(), command, otherProject, true, false, &output); err == nil {
 		t.Fatal("ordinary selection displaced another running tunnel")

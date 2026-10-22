@@ -1,111 +1,92 @@
 version: "3"
 
+# public aliases below keep mixed-owner task names stable. implementations use
+# absolute task references across includes and always run at the repository root.
+includes:
+  local:
+    taskfile: ./tasks/local.yml
+    dir: "{{.ROOT_DIR}}"
+  generation:
+    taskfile: ./tasks/generate.yml
+    dir: "{{.ROOT_DIR}}"
+    internal: true
+  go:
+    taskfile: ./tasks/go.yml
+    dir: "{{.ROOT_DIR}}"
+  js:
+    taskfile: ./tasks/javascript.yml
+    dir: "{{.ROOT_DIR}}"
+  py:
+    taskfile: ./tasks/python.yml
+    dir: "{{.ROOT_DIR}}"
+  go:test:integration:
+    taskfile: ./tasks/integration.yml
+    dir: "{{.ROOT_DIR}}"
+  workloads:
+    taskfile: ./tasks/load.yml
+    dir: "{{.ROOT_DIR}}"
+    internal: true
+  packaging:
+    taskfile: ./tasks/packaging.yml
+    dir: "{{.ROOT_DIR}}"
+    internal: true
+  deploy:
+    taskfile: ./tasks/deployment.yml
+    dir: "{{.ROOT_DIR}}"
+
 tasks:
   dev:
+    dir: "{{.ROOT_DIR}}"
     desc: Run the local development stack
-    deps: [local:certificates]
     cmds:
-      - docker compose --file deploy/local/compose.yaml up --build
-
-  local:certificates:
-    internal: true
-    status:
-      - test -s .local/certs/local.crt
-      - test -s .local/certs/local.key
-      - test -s .local/certs/local-root.pem
-    cmds:
-      - install -d -m 0700 .local/certs
-      - openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=tnl-local-root -keyout .local/certs/local-root.key -out .local/certs/local-root.pem
-      - openssl req -newkey rsa:2048 -nodes -subj /CN=localhost -keyout .local/certs/local.key -out .local/certs/local.csr
-      - printf 'subjectAltName=DNS:*.127.0.0.1.nip.io\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' | openssl x509 -req -sha256 -days 825 -in .local/certs/local.csr -CA .local/certs/local-root.pem -CAkey .local/certs/local-root.key -CAcreateserial -extfile /dev/stdin -out .local/certs/local.crt
-      - chmod 0600 .local/certs/local-root.key .local/certs/local.key
-
-  local:up:
-    desc: Start the local services in the background
-    deps: [local:certificates]
-    cmds:
-      - docker compose --file deploy/local/compose.yaml up --build --detach
-      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert deploy/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
-      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io:8445/v1/ready
-
-  local:trust:
-    desc: Trust the local control and Pebble issuance roots on macOS
-    preconditions:
-      - sh: test -s .local/certs/local-root.pem
-        msg: Run task local:up first
-      - sh: test -s .local/certs/pebble-root.pem
-        msg: Run task local:up first
-      - sh: test "$(uname -s)" = Darwin
-        msg: Automatic local CA trust is currently supported only on macOS
-    cmds:
-      - |
-        set -eu
-        keychain="$HOME/Library/Keychains/login.keychain-db"
-        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
-          fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
-          security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
-          security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root"
-        done
-
-  local:untrust:
-    desc: Remove the local control and Pebble issuance roots from the macOS keychain
-    cmds:
-      - |
-        set -eu
-        if [ "$(uname -s)" != Darwin ]; then
-          exit 0
-        fi
-        keychain="$HOME/Library/Keychains/login.keychain-db"
-        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
-          if [ -s "$root" ]; then
-            fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
-            security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
-          fi
-        done
-
-  local:login:
-    desc: Authenticate the isolated local client through local OIDC browser approval
-    cmds:
-      - |
-        TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state \
-          go run ./cmd/tnl auth login --team local --open
-
-  local:tnl:
-    desc: Run the isolated local client; pass arguments after --
-    requires:
-      vars: [CLI_ARGS]
-    cmds:
-      - TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
-
-  local:down:
-    desc: Stop the local services without removing state
-    cmds:
-      - docker compose --file deploy/local/compose.yaml stop
-
-  local:reset:
-    desc: Remove local services, trust, and persistent state
-    cmds:
-      - task: local:untrust
-      - docker compose --file deploy/local/compose.yaml down --volumes --remove-orphans
-      - rm -rf .local
+      - task: local:dev
 
   generate:
+    dir: "{{.ROOT_DIR}}"
     desc: Regenerate all committed artifacts
-    deps: [go:generate]
+    cmds:
+      - task: generation:generate
 
   generate-check:
+    dir: "{{.ROOT_DIR}}"
     desc: Check generated files for drift
-    deps: [go:generate-check]
+    cmds:
+      - task: generation:generate-check
 
   format:
+    dir: "{{.ROOT_DIR}}"
     desc: Format all source files
-    deps: [go:format, js:format, py:format]
+    cmds:
+      - task: generation:format
 
   format-check:
+    dir: "{{.ROOT_DIR}}"
     desc: Check formatting without changing files
-    deps: [go:format-check, js:format-check, py:format-check]
+    cmds:
+      - task: generation:format-check
+
+  go:generate:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: generation:go:generate
+
+  go:generate-check:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: generation:go:generate-check
+
+  go:format:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: generation:go:format
+
+  go:format-check:
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: generation:go:format-check
 
   lint:
+    dir: "{{.ROOT_DIR}}"
     desc: Run static analysis
     cmds:
       - task: go:lint
@@ -117,6 +98,7 @@ tasks:
       - task: workflows:lint
 
   test:
+    dir: "{{.ROOT_DIR}}"
     desc: Run routine Go, JavaScript, and Python tests
     cmds:
       - task: go:test
@@ -124,870 +106,123 @@ tasks:
       - task: py:test
 
   coverage:
+    dir: "{{.ROOT_DIR}}"
     desc: Produce diagnostic Go and TypeScript coverage reports
     cmds:
       - task: go:test:coverage
       - task: js:test:coverage
 
   build:
+    dir: "{{.ROOT_DIR}}"
     desc: Build all packages and commands
     cmds:
       - task: go:build
       - task: js:build
 
-  py:format:
-    desc: Format the Python SDK
-    cmds:
-      - uv run --frozen --project packages/py ruff format packages/py/src packages/py/tests
-
-  py:format-check:
-    desc: Check Python SDK formatting
-    cmds:
-      - uv run --frozen --project packages/py ruff format --check packages/py/src packages/py/tests
-
-  py:lint:
-    desc: Lint the Python SDK
-    cmds:
-      - uv run --frozen --project packages/py ruff check packages/py/src packages/py/tests
-
-  py:typecheck:
-    desc: Typecheck the Python SDK
-    cmds:
-      - uv run --frozen --project packages/py mypy packages/py/src packages/py/tests
-
-  py:test:
-    desc: Run Python tests with the real native CLI and local owners
-    cmds:
-      - |
-        set -eu
-        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnl-python-native.XXXXXXXX")"
-        trap 'rm -rf "$build_dir"' EXIT
-        go build -race -o "$build_dir/tnl" ./cmd/tnl
-        go build -race -o "$build_dir/owner" ./packages/py/tests/testdata/connection_owner
-        go build -race -o "$build_dir/app-owner" ./packages/py/tests/testdata/app_owner
-        uv run --frozen --project packages/py pytest -q packages/py/tests --tnl-binary="$build_dir/tnl" --tnl-connection-owner="$build_dir/owner" --tnl-app-owner="$build_dir/app-owner" {{.CLI_ARGS}}
-
-  py:build:
-    desc: Build and verify four platform Python wheels from a GoReleaser snapshot
-    preconditions:
-      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
-        msg: Run task release:snapshot before building Python wheels
-    cmds:
-      - node scripts/pack-python-wheels.ts dist/py
-      - node scripts/verify-python-wheels.ts dist/py
-
-  py:check:
-    desc: Run all Python SDK checks
-    cmds:
-      - task: py:format-check
-      - task: py:lint
-      - task: py:typecheck
-      - task: py:test
-      - task: py:package-check
-
-  py:package-check:
-    desc: Check Python wheel source and type-marker packaging without release artifacts
-    cmds:
-      - pnpm exec vitest run scripts/python-package.test.ts
-
-  package:
-    desc: Build a local release snapshot
-    cmds:
-      - task: js:pack
-      - task: release:snapshot
-      - task: release:npm-package
-      - task: py:build
-
-  go:generate:
-    cmds:
-      # internal generators compile the committed API models.
-      - go generate ./pkg/api/...
-      - go generate ./...
-
-  go:generate-check:
-    cmds:
-      - task: go:generate
-      - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh
-      - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh)"
-      - git diff --exit-code HEAD -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json deploy/publishers/fargate.storage-policy.json
-      - test -z "$(git ls-files --others --exclude-standard -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json deploy/publishers/fargate.storage-policy.json)"
-      - git diff --exit-code HEAD -- api/observability/v1/vocabulary.json
-      - test -z "$(git ls-files --others --exclude-standard -- api/observability/v1/vocabulary.json)"
-
-  go:format:
-    cmds:
-      - goimports -w .
-
-  go:format-check:
-    cmds:
-      - test -z "$(goimports -l .)"
-
-  go:lint:
-    cmds:
-      - go vet ./...
-      - go run -mod=readonly -modfile=tools/staticcheck/go.mod honnef.co/go/tools/cmd/staticcheck ./...
-
-  go:vulncheck:
-    cmds:
-      - govulncheck ./...
-
-  go:test:
-    cmds:
-      - go test ./...
-      - task: go:test:public-api
-
-  go:test:public-api:
-    desc: Compile an external consumer against the existing public Go API
-    cmds:
-      - go test ./pkg/tnl/testdata/publicapi
-
-  go:test:focused:
-    desc: Run selected Go packages and assertions without changing their test tier
-    requires:
-      vars: [PACKAGES]
-    vars:
-      RUN: '{{default "." .RUN}}'
-      FLAGS: '{{default "" .FLAGS}}'
-    cmds:
-      - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
-
-  go:test:auth:
-    desc: Check OIDC verification, control sessions, and durable CLI authentication
-    cmds:
-      - go test -race ./internal/oidcauth ./internal/authorityapi ./internal/authorityclient ./internal/clientauth ./internal/clientstate ./internal/credentials ./internal/tnldconfig
-
-  go:test:team-usage:
-    desc: Check signed website usage authorization and safe failure classification
-    cmds:
-      - go test -race -v ./internal/authorityapi -run='^TestWebsiteTeamUsage' -count=1
-
-  go:test:config-contracts:
-    desc: Check config serialization, evaluated owner snapshots, target trust, references and local status protocols
-    cmds:
-      - go test {{.CLI_ARGS}} ./internal/config/... ./internal/projectconfig ./internal/projectmeta ./internal/naming ./internal/localpublisher -count=1
-      - go test {{.CLI_ARGS}} ./cmd/tnl -run='^TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink$' -count=1
-
-  go:test:live-authorization:
-    desc: Check public HTTP decision caching and live request authorization
-    vars:
-      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ManagedHTTPGuard)" .RUN}}'
-    cmds:
-      - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
-
-  go:test:http-streaming:
-    desc: Check native HTTP streaming, upload bounds, trailers and inspection over local wires
-    cmds:
-      - go test {{.CLI_ARGS}} ./internal/httpstream ./internal/localproxy ./internal/publisher -count=1 -timeout=3m
-
-  go:test:database-native:
-    desc: Check managed native TLS negotiation, authentication, and setup cancellation
-    cmds:
-      - go test {{.CLI_ARGS}} ./internal/publisher -run='^TestManaged' -count=1 -timeout=3m
-
-  go:test:integration:live-authorization:
-    desc: Check browser and alias authorization in disposable PostgreSQL
-    vars:
-      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser)" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:auth:
-    desc: Check control-owned OIDC browser approval and device polling in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi -run='^TestIntegrationControlOwnedDeviceLogin$' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:integration:workload:
-    desc: Check provider workload sessions, saved policy races, and visitor admission with signed local issuer fixtures
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:workload-runtime:
-    desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadTransport' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:integration:workload-http:
-    desc: Check key-bound workload HTTP certificates, streaming and replacement subject isolation with disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/tnldruntime -run='^TestIntegrationWorkloadHTTP' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:provider-http:
-    desc: Check shared native workload SDK/IPC and real workload HTTP certificate boundaries locally
-    cmds:
-      - task: js:test:connections
-      - task: go:test:connections
-      - task: go:test:integration:workload-http
-
-  go:test:aws-bootstrap:
-    desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
-    cmds:
-      - go test -race ./internal/awsbootstrap ./internal/publisherprovision ./internal/clientstate ./cmd/tnl -run='Test(Prepare|Bootstrap|ExternalContainer|CustomerDeployment|PublisherProvision)' -count=1
-
-  go:test:target-discovery:
-    desc: Check bounded publisher discovery, signed local AWS HTTPS, regional roots and target TLS without cloud access
-    cmds:
-      - go test ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/publisherjob ./internal/privatepublisher ./internal/targettransport ./internal/observability
-      - go test ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
-
-  go:test:integration:http-services:
-    desc: Check applied HTTP settings, visitor admission, and managed HTTP streams with disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/tnldruntime -run='^TestIntegration(AppliedProjectHTTPContracts|ManagedHTTPAuthentication)' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:target-discovery:race:
-    desc: Check publisher discovery and target preparation with the race detector
-    cmds:
-      - go test -race ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/publisherjob ./internal/privatepublisher ./internal/targettransport ./internal/observability
-      - go test -race ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
-
-  go:test:kubernetes:
-    desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries
-    cmds:
-      - go test -race ./internal/kubeconfig ./internal/kubernetes ./internal/publisher ./internal/targettransport ./internal/tcpconnect ./internal/privatepublisher ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
-
-  go:test:connections:
-    desc: Check private owner IPC, verified connector HTTPS, Kubernetes, and connection lifetimes
-    deps: [js:build]
-    cmds:
-      - go test -race ./internal/connectionruntime ./internal/workloadclient ./internal/oidcauth -count=1 -timeout=3m
-      - go test -race ./cmd/tnl -run='^Test(Connection|IntegrationConnectionNativeOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:connections:budget:
-    desc: Measure verified cold/warm native control work and prepared-only sibling reads with local TLS fixtures
-    cmds:
-      - go test -race -v ./cmd/tnl -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
-
-  go:test:owner-lifecycle:
-    desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
-    vars:
-      RUN: '{{default "Test(Connection|Listener|DeviceIssued|ConnectorAssignmentConflict|AssignmentCleanup)" .RUN}}'
-    cmds:
-      - go test {{.CLI_ARGS}} -v ./internal/connectionruntime ./internal/tcpconnect ./internal/clientauth ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
-
-  go:test:integration:owner-lifecycle:
-    desc: Check a real shared HTTP/PostgreSQL owner while a sibling stalls, using disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectionSharedOwnerStalledSibling$' -count=1 -timeout=2m -args -tnl-test-tier=integration
-
-  go:test:invocations:
-    desc: Check ad-hoc registration, real SQLite workers, limits and allocation cleanup locally
-    cmds:
-      - go test -race -v ./cmd/tnl -run='^Test(Invocation|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|StatusSnapshot|WaitDoesNotTreatOldSnapshotAsFreshOwnerCheck)' -count=1 -timeout=2m
-      - go test -race ./internal/projectpublisher ./internal/localpublisher ./internal/privateprotocol ./internal/clientruntime -count=1 -timeout=2m
-
-  go:test:app-workflows:
-    desc: Check configured app owners, local identity, readiness, mounts, enrollment and installation locally
-    vars:
-      RUN: '{{default "^Test(AppWorkflow|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|Status|Wait|Background|Configured|ConnectConfigured|ServiceShareSelection|Invocation|Enrolled|Install|SystemInstall|PrivateInstallation|ScopedPrivateInstall|ExplicitPublisherCannotInstall|InvalidConfiguredCA)" .RUN}}'
-    cmds:
-      - go test {{.CLI_ARGS}} -race ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=3m
-      - go test {{.CLI_ARGS}} -race ./internal/clientruntime ./internal/projectpublisher ./internal/localpublisher ./internal/privateprotocol ./internal/projectconfig -count=1 -timeout=3m
-
-  go:test:integration:app-workflows:
-    desc: Check built CLI named publication and local identity against disposable PostgreSQL on Linux
-    vars:
-      RUN: '{{default "^TestIntegration(CLINamed|ServiceShareManagerLookup)" .RUN}}'
-    preconditions:
-      - sh: test "$(uname -s)" = Linux
-        msg: App workflow CLI integration requires isolated Linux client-state protection
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:client-tracing:
-    desc: Check native trace carriers, finite lifecycle observations and bounded export without external services
-    cmds:
-      - go test -race ./internal/observability ./internal/connectionruntime ./internal/privateprotocol ./internal/localpublisher ./internal/clientruntime ./internal/grouppublisher ./internal/publisherjob ./internal/tcpconnect -count=1 -timeout=3m
-      - go test -race ./cmd/tnl -run='^Test(Observability|VersionBypasses|ClientTracing|Connection|PublisherGroupDiscovery)' -count=1 -timeout=3m
-
-  js:test:client-tracing:
-    desc: Check SDK and framework tracing, native carriers and lifecycle cleanup
-    deps: [js:build]
-    cmds:
-      - pnpm exec vitest run packages/ts/tracing.test.ts packages/ts/app-runtime.test.ts packages/ts/connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/adhoc-open.test.ts packages/ts/adhoc-fetch.test.ts packages/ts/vite.test.ts packages/ts/next.test.ts
-
-  go:test:integration:connections:
-    desc: Migrate disposable PostgreSQL with real Drizzle Kit and prepared connector options
-    deps: [js:build]
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectionDrizzleKit$' -count=1 -timeout=6m -args -tnl-test-tier=integration
-
-  go:test:integration:vercel:
-    desc: Qualify workload-owned Vercel Node 24 artifacts against real local server roles and disposable PostgreSQL
-    deps: [js:build]
-    preconditions:
-      - sh: |
-          node -e 'process.exit(process.versions.node === "24.20.0" ? 0 : 1)'
-        msg: "Put pinned Node 24.20.0 on PATH (locally use mise exec node@24.20.0 -- task go:test:integration:vercel)"
-    vars:
-      ARTIFACTS: '{{default (printf "%s/.local/vercel-function-check" .ROOT_DIR) .ARTIFACTS}}'
-      LINUX_NODE_IMAGE: '{{default "" .LINUX_NODE_IMAGE}}'
-    cmds:
-      - pnpm --dir tools/vercel-function-check install --frozen-lockfile
-      - pnpm --dir tools/vercel-function-check typecheck
-      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives tools/vercel-function-check/*.ts
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadVercelFunction$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-vercel-artifacts='{{.ARTIFACTS}}' -tnl-vercel-linux-node-image='{{.LINUX_NODE_IMAGE}}'
-
-  go:test:integration:kubernetes:
-    desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)
-    vars:
-      KIND: '{{default "kind" .KIND}}'
-    cmds:
-      - go test -v ./internal/publisher -run='^TestIntegrationKubernetesKubectl$' -count=1 -timeout=8m -args -tnl-test-tier=integration -tnl-kind-binary={{.KIND}}
-
-  go:test:publisher-provenance:
-    desc: Check signed publisher deployment metadata without external infrastructure
-    cmds:
-      - go test -race ./internal/publisherprovenance ./internal/publisherruntime ./internal/publisheridentity ./internal/grouppublisher
-      - go test -race ./cmd/tnl -run='^TestPublisherDeployment' -count=1
-
-  go:test:integration:aws-bootstrap:
-    desc: Check applied publisher identity bootstrap with disposable PostgreSQL and local AWS HTTPS
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/awsbootstrap ./cmd/tnl -run='^TestIntegrationAWSBootstrap' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:coverage:
-    desc: Produce a diagnostic Go coverage report
-    cmds:
-      - mkdir -p coverage/go
-      - go test ./... -coverprofile=coverage/go/coverage-with-generated.out
-      - go run scripts/filter-go-coverage.go coverage/go/coverage-with-generated.out coverage/go/coverage.out
-      - go tool cover -html=coverage/go/coverage.out -o=coverage/go/index.html
-
-  go:test:race:
-    desc: Run routine Go tests with the race detector
-    cmds:
-      - go test -race ./...
-
-  go:test:server:
-    desc: Check control state, APIs, background workers, and server runtime with races
-    cmds:
-      - go test -race ./internal/controlstate/... ./internal/controlapi ./internal/authorityapi ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/workerloop ./internal/observability
-
-  go:test:observability:
-    desc: Check vocabulary, identity isolation, local HTTPS export, and correlation without cloud access
-    cmds:
-      - go test -race ./internal/observability ./internal/operatorlog ./internal/serviceaudit
-
-  go:test:publisher-observability:
-    desc: Check publisher measurements, readiness, wire traces, and native data-path invariants with races
-    cmds:
-      - go test -race ./internal/observability ./internal/publisher ./internal/privatepublisher ./internal/publisherruntime ./internal/grouppublisher ./internal/httpstream ./internal/localproxy ./internal/targettransport ./internal/tunnel ./internal/ingress ./internal/relay ./internal/tcpconnect ./pkg/protocol/tunnelv1
-
-  go:test:integration:
-    desc: Run PostgreSQL-backed Go integration tests
-    vars:
-      RUN: '{{default "^TestIntegration" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
-
-  go:test:harness:
-    desc: Check disposable test orchestration and complete, stable shard selection
-    cmds:
-      - go -C tools/testharness test -race ./...
-
-  go:test:integration:api:
-    desc: Check API, generated database, certificate and DNS boundaries with disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi ./internal/controlapi ./internal/controlstate/controlstatedb ./internal/certificates ./internal/dnscontroller -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:integration:state:shard:
-    desc: Run one complete control-state integration shard (SHARD=1/4 through 4/4)
-    requires:
-      vars: [SHARD]
-    cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/controlstate -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:integration:runtime:shard:
-    desc: Run one runtime integration shard, with real-clock lease proofs in separate targets
-    requires:
-      vars: [SHARD]
-    cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegration' -skip='^TestIntegration(WorkloadTransportLifecycle|PrivateDefaultLeaseCycles)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:integration:runtime:leases:
-    desc: Cross production private visitor lease cycles and outage deadlines on real sockets
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationPrivateDefaultLeaseCycles$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:runtime:workload:
-    desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
-
-  go:test:integration:private-services:
-    desc: Check private services, applied publisher groups, and audit in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:state-locks:
-    desc: Check control-state lock ordering with disposable PostgreSQL
-    vars:
-      RUN: '{{.RUN | default "^TestIntegrationStateLockOrder"}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:state-boundaries:
-    desc: Check durable secret, retention, admission, and inventory boundaries in disposable PostgreSQL
-    vars:
-      RUN: '{{default "^TestIntegration(StorageRotation|WorkloadRetention|CompanyAdmission|PrivateInventory|AuthorityProjectManaged)" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi ./internal/authorityapi -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:company:
-    desc: Check company activation replay, disabled-subject offboarding and admission boundaries on disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/authorityapi -run='^TestIntegrationCompany' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:service-access:
-    desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./cmd/tnl -run='^TestIntegration(ServiceActor|PrivateServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:management:
-    desc: Check publisher claims, manager lookup, AWS bootstrap and connector lifecycle
-    cmds:
-      - task: go:test:integration:private-claims
-      - task: go:test:integration:service-access
-      - task: go:test:integration:aws-bootstrap
-      - task: go:test:integration:tcp-lifecycle
-      - task: go:test:integration:private-sshd
-
-  go:test:integration:publisher-egress:
-    desc: Check signed publisher runtime egress and trusted proxy evidence in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate -run='^TestIntegrationPublisherRuntime' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:private-topology:
-    desc: Verify private visitor lifecycle through separated and standalone roles
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|ManagedTLSProductionPath|ManagedHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:publisher-observability:
-    desc: Check exported parent chains across separated public and private publisher transports
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationPublisherObservability' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:runtime:
-    desc: Verify split and standalone runtime boundaries with disposable PostgreSQL and Pebble
-    vars:
-      RUN: '{{default "^TestIntegration" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
-
-  go:test:integration:tcp-clients:
-    desc: Verify database client TLS, cancellation boundaries, and selected lifetimes with disposable providers
-    deps: [js:build]
-    cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:tcp-lifecycle:
-    desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tcpconnect -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:private-claims:
-    desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/relay -run='^TestIntegrationPrivate(ClaimCommittedResponseLoss|ClaimExpiredResponseRecovery|MixedProcessClaimCapacity|VisitorCertificateDeadline)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:relay:
-    desc: Check routine relay behavior with races
-    cmds:
-      - go test -race ./internal/relay
-
-  go:test:ingress:
-    desc: Check ingress selection, lifetime budgets, promotion, private fallback and production wiring
-    vars:
-      RUN: '{{default "." .RUN}}'
-    cmds:
-      - go test {{.CLI_ARGS}} ./internal/ingress ./internal/tnldruntime ./internal/tnldconfig ./cmd/tnld -run='{{.RUN}}' -count=1 -timeout=5m
-
-  go:test:integration:ingress:
-    desc: Check ingress terminal retirement and production role forwarding with disposable PostgreSQL
-    vars:
-      RUN: '{{default "^TestIntegration(IngressTerminalRetirementProof|PublicURLRecovery|RouteRoutingTableLifecycle|ExpiredIngressRestartsAndRecoversVisitors|StandalonePublish|SplitPublish)" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:local-oidc:
-    desc: Check the real nonroot local OIDC container with a private host TLS key
-    cmds:
-      - go test -v ./internal/devoidc -run='^TestIntegrationLocalOIDCPrivateKeyMount$' -count=1 -timeout=6m -args -tnl-test-tier=integration
-
-  go:test:integration:cli:
-    desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
-    vars:
-      RUN: '{{default "^TestIntegrationCLI" .RUN}}'
-      SHARD: '{{default "1/1" .SHARD}}'
-      SKIP: '{{default "^$" .SKIP}}'
-    preconditions:
-      - sh: test "$(uname -s)" = Linux
-        msg: CLI integration tests require Linux for isolated credential protection
-    cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
-
-  go:test:integration:cli:shard:
-    desc: Run one ordinary CLI shard, with real-clock Git identity continuity in its own target
-    requires:
-      vars: [SHARD]
-    cmds:
-      - task: go:test:integration:cli
-        vars:
-          SHARD: "{{.SHARD}}"
-          SKIP: ^TestIntegrationCLINamedLocalIdentityContinuity$
-
-  go:test:integration:cli:identity:
-    desc: Verify stable local service identity through three complete owner and Git transitions
-    cmds:
-      - task: go:test:integration:cli
-        vars:
-          RUN: ^TestIntegrationCLINamedLocalIdentityContinuity$
-          SHARD: 1/1
-
-  go:test:integration:binary:
-    desc: Run Linux binary integration tests
-    deps: [js:build]
-    vars:
-      RUN: '{{default "^TestBinaryIntegration" .RUN}}'
-      COMPOSE_HOST_ADDRESS: '{{default "host-gateway" .COMPOSE_HOST_ADDRESS}}'
-    preconditions:
-      - sh: test "$(uname -s)" = Linux
-        msg: Binary integration tests require Linux
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=binary -tnl-test-compose-host-address='{{.COMPOSE_HOST_ADDRESS}}'
-
-  go:test:integration:private-sshd:
-    desc: Verify an existing OpenSSH daemon through private QUIC and TLS/TCP streams
-    cmds:
-      - go test -race -v ./internal/tcpconnect -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:integration:compose:
-    desc: Check disposable host-side Compose HTTP and TCP targets
-    cmds:
-      - go test -race -v ./internal/publishertarget -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
-
-  go:test:integration:publisher-install:
-    desc: Verify installation, reboot, and Compose enrollment in disposable Ubuntu/systemd with disposable PostgreSQL (Docker opt-in)
-    cmds:
-      - go -C tools/testharness run . publisher-install
-
-  deploy:publishers:check:
-    desc: Validate publisher templates, TypeScript contracts, and CloudFormation schemas without AWS
-    cmds:
-      - go test ./internal/publisherdeployment ./cmd/tnl -run='^Test(Storage|GoldenAndReplicaStability|ReadValidateAndReadOnlyCheck|ManifestRejectsUnsafeAndUnboundedInputs|OutputOwnershipAndSymlinks|ParameterContract|GenerateOfflineAcrossWorktreesAndReadOnlyCheck|ApplyIgnoresPublisherInfrastructure)' -count=1
-      - pnpm exec vitest run deploy/publishers/fargate.test.ts
-      - pnpm exec tsc --project deploy/publishers/tsconfig.json
-      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives deploy/publishers/*.ts
-      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml
-      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml --parameters VpcId=vpc-0123456789abcdef0 MountSubnet1=subnet-0123456789abcdef0 MountSubnet2=subnet-0123456789abcdef1 ResourcePrefix=tnl-test FileSystemKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 LogsKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 Replica1IdentityKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 Replica2IdentityKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
-      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml --parameters VpcId=vpc-0123456789abcdef0 MountSubnet1=subnet-0123456789abcdef0 MountSubnet2=subnet-0123456789abcdef1 ExistingClusterArn=arn:aws:ecs:us-east-1:123456789012:cluster/existing ExistingPublisherSecurityGroupId=sg-0123456789abcdef0 Replica1ExistingLogGroupName=/customer/replica-1 Replica2ExistingLogGroupName=/customer/replica-2 Replica1ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-1 Replica2ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-2 Replica1ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-1 Replica2ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-2
-
-  go:test:publisher-identity:
-    desc: Check owned native identities, enrollment retries and portable group credentials
-    cmds:
-      - go test -race ./internal/publisheridentity/native ./internal/publisheridentity/credentialfile -count=1
-
-  deploy:publishers:storage-check:
-    desc: Reject immutable publisher storage changes using resolved parameter files, without AWS
-    requires:
-      vars: [PREVIOUS, NEXT]
-    cmds:
-      - go run ./internal/publisherdeployment/cmd/storage-check -previous '{{.PREVIOUS}}' -next '{{.NEXT}}'
-
-  go:test:publisher-groups:
-    desc: Check scoped group dependencies, ownership, retries, and joined shutdown
-    cmds:
-      - go test -race ./internal/publisherjob ./internal/publisheridentity/credentialfile ./internal/grouppublisher -count=1
-      - go test -race ./cmd/tnl -run='^Test(FixedGroups|PublisherGroupDiscovery|GroupIdentity)' -count=1
-
-  go:test:integration:publisher-groups:
-    desc: Verify one CLI process serving independent cross-team groups with disposable PostgreSQL
-    preconditions:
-      - sh: test "$(uname -s)" = Linux
-        msg: Group CLI integration requires Linux for isolated credential protection
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationFixedGroupsCrossTeamIsolation$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:publisher-state:
-    desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
-    cmds:
-      - go test -race ./internal/clientstate -run='^Test(Certificate|Publisher|PendingPublisher|InstallPublisher|PromotePublisher|DurablePublisher|PrivateDirectory)' -count=1
-      - go test -race ./internal/publisheridentity/credentialfile -count=1
-      - go test -race ./internal/publisherjob -run='^TestInstalledGroup' -count=1
-
-  go:test:integration:publisher-replacement:
-    desc: Restore one publisher identity after deleting task-local SQLite, using disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./deploy/publishers -run='^TestIntegrationPublisherIdentitySurvivesTaskStateDeletion$' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:integration:publisher-recovery:
-    desc: Check fresh publisher plan checkpoints and order retention in disposable PostgreSQL
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate -run='^TestIntegration(ManagedCertificateRunAuthority|PublisherFreshBaseline|PostgresMigrationAndOpen)' -count=1 -timeout=3m -args -tnl-test-tier=integration
-
-  go:test:integration:dns:
-    desc: Run the authoritative DNS integration test in disposable Linux containers
-    cmds:
-      - go -C tools/testharness run . dns
-
-  go:test:integration:route53:
-    desc: Issue one staging ACME certificate using real Route 53 TXT propagation in the staging zone
-    requires:
-      vars: [ZONE_ID]
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'
-
-  go:test:load:database:
-    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
-    vars:
-      DELAY: '{{default "0ms" .DELAY}}'
-      PUBLIC_URLS: '{{default "1000" .PUBLIC_URLS}}'
-      HISTORY: '{{default "1" .HISTORY}}'
-      DURATION: '{{default "0s" .DURATION}}'
-      RETENTION: '{{default "0s" .RETENTION}}'
-      RUN: '{{default "^TestLoad" .RUN}}'
-    cmds:
-      - go -C tools/testharness run . postgres -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
-
-  go:test:load:runtime:
-    desc: Run per-component constrained real visitor/recovery/shutdown load
-    vars:
-      PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
-      HELD_MEASURE: '{{default "0s" .HELD_MEASURE}}'
-      HA_TOPOLOGY: '{{default "1" .HA_TOPOLOGY}}'
-      SCENARIO: '{{default "relay-restart" .SCENARIO}}'
-      NETWORK_PATH: '{{default "forwarding" .NETWORK_PATH}}'
-      RTT: '{{default "20ms" .RTT}}'
-      LOSS: '{{default "0.1" .LOSS}}'
-      SEED: '{{default "0" .SEED}}'
-      RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
-    env:
-      PUBLIC_URLS: "{{.PUBLIC_URLS}}"
-      START_PARALLEL: '{{default "" .START_PARALLEL}}'
-      READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
-      PUBLIC_URL_CERTIFICATE_WORKERS: '{{default "" .PUBLIC_URL_CERTIFICATE_WORKERS}}'
-      RPS: '{{default "" .RPS}}'
-      DURATION: '{{default "" .DURATION}}'
-      WORKERS: '{{default "" .WORKERS}}'
-      QUEUE: '{{default "" .QUEUE}}'
-      HELD_STREAMS: '{{default "" .HELD_STREAMS}}'
-      HELD_WARMUP: '{{default "" .HELD_WARMUP}}'
-      HELD_MEASURE: "{{.HELD_MEASURE}}"
-      HEAP_PROFILE: '{{default "" .HEAP_PROFILE}}'
-      CPU_PROFILE: '{{default "" .CPU_PROFILE}}'
-      CAPACITY_ONLY: '{{default "" .CAPACITY_ONLY}}'
-      COMBINED: '{{default "" .COMBINED}}'
-      HA_TOPOLOGY: "{{.HA_TOPOLOGY}}"
-      DIRECT_PATH: '{{default "" .DIRECT_PATH}}'
-      BANDWIDTH_DIRECTION: '{{default "" .BANDWIDTH_DIRECTION}}'
-      BANDWIDTH_MBITS_PER_SECOND: '{{default "" .BANDWIDTH_MBITS_PER_SECOND}}'
-      BANDWIDTH_STREAMS: '{{default "" .BANDWIDTH_STREAMS}}'
-      BANDWIDTH_MEASURE: '{{default "" .BANDWIDTH_MEASURE}}'
-      CLIENT_HELLO_CONNECTION_LIMIT: '{{default "" .CLIENT_HELLO_CONNECTION_LIMIT}}'
-      VISITOR_CONNECTION_LIMIT: '{{default "" .VISITOR_CONNECTION_LIMIT}}'
-      PUBLISHER_CONNECTION_LIMIT: '{{default "" .PUBLISHER_CONNECTION_LIMIT}}'
-      PUBLISHER_CONCURRENCY: '{{default "" .PUBLISHER_CONCURRENCY}}'
-      RELAY_STREAM_CAPACITY: '{{default "" .RELAY_STREAM_CAPACITY}}'
-      QUIC_MAX_INCOMING_STREAMS: '{{default "" .QUIC_MAX_INCOMING_STREAMS}}'
-      SCENARIO: "{{.SCENARIO}}"
-      NETWORK_PATH: "{{.NETWORK_PATH}}"
-      RTT: "{{.RTT}}"
-      LOSS: "{{.LOSS}}"
-      SEED: "{{.SEED}}"
-      TRACE: '{{default "" .TRACE}}'
-      RACE: '{{default "" .RACE}}'
-      RESULTS: "{{.RESULTS}}"
-    cmds:
-      - go -C tools/testharness run . runtime
-
-  go:test:fuzz:
-    desc: Fuzz all Go parser and policy boundaries
-    vars:
-      TIME: '{{default "15s" .TIME}}'
-    cmds:
-      - go test ./internal/router -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
-      - go test ./internal/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
-      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
-      - task: go:test:fuzz:publisher-observability
-        vars:
-          TIME: "{{.TIME}}"
-      - go test ./internal/policy/target -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
-      - go test ./internal/protocolinspection -run='^$' -fuzz='^FuzzSummaryFrames$' -fuzztime='{{.TIME}}'
-      - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
-      - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
-      - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
-
-  go:test:fuzz:publisher-observability:
-    desc: Fuzz bounded public and private infrastructure trace-context frames
-    vars:
-      TIME: '{{default "10s" .TIME}}'
-    cmds:
-      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzWireTraceContext$' -fuzztime='{{.TIME}}' -parallel=2
-
-  go:bench:plan:
-    desc: Describe a local workload against an explicit tnl server without creating resources
-    cmds:
-      - go run ./cmd/tnlbench plan
-
-  go:bench:run:
-    desc: Run an explicitly approved benchmark against the selected tnl server
-    cmds:
-      - |
-        set -eu
-        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnlbench.XXXXXXXX")"
-        trap 'rm -rf "$build_dir"' EXIT
-        go build -o "$build_dir/tnlbench" ./cmd/tnlbench
-        "$build_dir/tnlbench" run
-
-  go:bench:report:
-    desc: Display results from a deployed benchmark
-    cmds:
-      - go run ./cmd/tnlbench report
-
-  release:check:plan:
-    desc: Preview three functional checks against an explicit server
-    requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
-    cmds:
-      - node scripts/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
-
-  release:check:run:
-    desc: Publish test-owned public URLs on an explicit server
-    requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
-    cmds:
-      - node scripts/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
-
-  go:build:
-    cmds:
-      - go build ./...
-
-  js:format:
-    cmds:
-      - pnpm format
-
-  js:format-check:
-    cmds:
-      - pnpm format:check
-
-  js:lint:
-    cmds:
-      - pnpm lint
-
-  js:typecheck:
-    cmds:
-      - pnpm typecheck
-
-  js:test:
-    cmds:
-      - pnpm test
-
-  js:test:connections:
-    desc: Check native connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
-    deps: [js:build]
-    cmds:
-      - pnpm exec vitest run packages/ts/connection.test.ts packages/ts/awaitable-connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-ipc.test.ts packages/ts/connection-installed.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/workload-native.test.ts packages/ts/workload-provider.test.ts packages/ts/workload-contract.test.ts packages/ts/service-metadata.test.ts
-
-  js:test:frameworks:
-    desc: Check app preparation and real Node, Bun, Vite and Next framework lifetimes
-    deps: [js:build]
-    cmds:
-      - pnpm exec vitest run packages/ts/app-runtime.test.ts packages/ts/bun.test.ts packages/ts/vite.test.ts packages/ts/next.test.ts packages/ts/runtime.test.ts
-
-  installer:test:
-    desc: Test the shell installer without accessing GitHub or client state
-    cmds:
-      - pnpm exec vitest run scripts/install.test.ts
-
   connect:check:
+    dir: "{{.ROOT_DIR}}"
     desc: Build and check the GitHub connection action without cloud access
     cmds:
-      - pnpm --filter @tnldotdev/connect-action build
-      - pnpm --filter @tnldotdev/connect-action typecheck:run
-      - pnpm --filter @tnldotdev/connect-action test:run
-      - pnpm exec oxlint --deny-warnings connect/src connect/test connect/scripts
-      - pnpm exec oxfmt --check connect
-      - actionlint connect/test/workflow.yml
-      - zizmor connect/action.yml connect/test/workflow.yml
+      - task: js:connect:check
 
   connect:generate-check:
+    dir: "{{.ROOT_DIR}}"
     desc: Regenerate and compare the committed action bundles
     cmds:
-      - pnpm --filter @tnldotdev/connect-action build
-      - git diff --exit-code HEAD -- connect/dist
-      - test -z "$(git ls-files --others --exclude-standard -- connect/dist)"
+      - task: js:connect:generate-check
 
   connect:fixture:prepare:
+    dir: "{{.ROOT_DIR}}"
     desc: Prepare the local action workflow fixture
     cmds:
-      - node connect/test/workflow.ts prepare
+      - task: js:connect:fixture:prepare
 
   connect:fixture:observe:
+    dir: "{{.ROOT_DIR}}"
     desc: Verify a prepared action owner from a later workflow step
     cmds:
-      - node connect/test/workflow.ts observe
+      - task: js:connect:fixture:observe
 
   connect:fixture:remove-original:
+    dir: "{{.ROOT_DIR}}"
     desc: Remove the fixture's original CLI to qualify action-owned cleanup
     cmds:
-      - node connect/test/workflow.ts remove-original
+      - task: js:connect:fixture:remove-original
 
   connect:fixture:stop-oidc:
+    dir: "{{.ROOT_DIR}}"
     desc: Stop the local action workflow issuer
     cmds:
-      - node connect/test/workflow.ts stop-oidc
+      - task: js:connect:fixture:stop-oidc
 
-  js:test:coverage:
-    desc: Produce a diagnostic TypeScript coverage report
+  go:test:load:database:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
     cmds:
-      - pnpm test:coverage
+      - task: workloads:go:test:load:database
 
-  js:test:browser:
-    desc: Test the embedded feedback toolbar in Chromium
+  go:test:load:runtime:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run per-component constrained real visitor/recovery/shutdown load
     cmds:
-      - pnpm exec vitest run --config vitest.browser.config.ts
+      - task: workloads:go:test:load:runtime
 
-  js:build:
+  go:bench:plan:
+    dir: "{{.ROOT_DIR}}"
+    desc: Describe a local workload against an explicit tnl server without creating resources
     cmds:
-      - pnpm build
+      - task: workloads:go:bench:plan
 
-  js:check:
-    desc: Build once and run JavaScript checks
+  go:bench:run:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run an explicitly approved benchmark against the selected tnl server
     cmds:
-      - task: js:build
-      - pnpm typecheck:run
-      - pnpm test:run
-      - task: js:lint
-      - task: js:format-check
-      - task: js:pack
+      - task: workloads:go:bench:run
 
-  js:pack:
+  go:bench:report:
+    dir: "{{.ROOT_DIR}}"
+    desc: Display results from a deployed benchmark
     cmds:
-      - pnpm run pack
+      - task: workloads:go:bench:report
 
-  js:test:packaging:
-    desc: Check manifest-driven npm export targets
+  package:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build a local release snapshot
     cmds:
-      - pnpm exec vitest run scripts/npm-artifacts.test.ts
+      - task: packaging:package
+
+  installer:test:
+    dir: "{{.ROOT_DIR}}"
+    desc: Test the shell installer without accessing GitHub or client state
+    cmds:
+      - task: packaging:installer:test
+
+  release:check:plan:
+    dir: "{{.ROOT_DIR}}"
+    desc: Preview three functional checks against an explicit server
+    cmds:
+      - task: packaging:release:check:plan
+
+  release:check:run:
+    dir: "{{.ROOT_DIR}}"
+    desc: Publish test-owned public URLs on an explicit server
+    cmds:
+      - task: packaging:release:check:run
 
   release:snapshot:
+    dir: "{{.ROOT_DIR}}"
     desc: Build release archives, checksums, and SBOMs without publishing or signing
     cmds:
-      - goreleaser release --snapshot --clean --skip=sign
+      - task: packaging:release:snapshot
 
   release:npm-package:
+    dir: "{{.ROOT_DIR}}"
     desc: Build and check npm release tarballs in installed npm and pnpm consumers
-    preconditions:
-      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
-        msg: Run task release:snapshot before packaging npm release artifacts
     cmds:
-      - task: js:test:packaging
-      - task: js:build
-      - node scripts/pack-tnl.ts dist/npm
-      - node scripts/verify-tnl-install.ts dist/npm
+      - task: packaging:release:npm-package
 
   workflows:lint:
+    dir: "{{.ROOT_DIR}}"
     cmds:
       - actionlint
       - zizmor .github

@@ -1,0 +1,108 @@
+schemas:
+  Snapshot:
+    type: object
+    additionalProperties: false
+    required: [schema_version, project, cursor, observed_at, services]
+    properties:
+      schema_version: { type: integer, enum: [1] }
+      project: { type: string }
+      cursor: { type: string, maxLength: 128 }
+      observed_at: { type: string, format: date-time }
+      services: { type: array, items: { $ref: "../openapi.yaml#/components/schemas/Service" } }
+      publications:
+        { type: array, items: { $ref: "../openapi.yaml#/components/schemas/Publication" } }
+  Service:
+    type: object
+    additionalProperties: false
+    required: [service, directory, registered, routable, ready, readiness]
+    properties:
+      project: { type: string }
+      service: { type: string }
+      service_protocol:
+        { $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ServiceProtocol" }
+      directory: { type: string }
+      tunnel_id: { type: string }
+      public_url: { type: string }
+      registration_id: { type: string }
+      target: { type: string }
+      framework: { type: string }
+      registered: { type: boolean }
+      routable: { type: boolean }
+      ready: { type: boolean }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      provisioning_stage: { type: string }
+      readiness: { $ref: "../openapi.yaml#/components/schemas/Readiness" }
+      observation: { $ref: "../openapi.yaml#/components/schemas/Observation" }
+      failure: { type: string }
+  Readiness:
+    type: object
+    additionalProperties: false
+    required: [path]
+    properties:
+      path: { type: string }
+  Observation:
+    type: object
+    additionalProperties: false
+    required: [registration_id, run_number, checked_at, ready, readiness]
+    properties:
+      registration_id: { type: string }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      checked_at: { type: string, format: date-time }
+      status: { type: integer, minimum: 100, maximum: 599 }
+      ready: { type: boolean }
+      reason: { type: string }
+      readiness: { $ref: "../openapi.yaml#/components/schemas/Readiness" }
+  Publication:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        tunnel_id,
+        command,
+        state,
+        process_id,
+        server,
+        project,
+        started_at,
+        updated_at,
+        heartbeat_at,
+        lease_expires_at,
+      ]
+    properties:
+      tunnel_id: { type: string }
+      command: { type: string, enum: [publish, dev] }
+      state:
+        { type: string, enum: [starting, provisioning, ready, draining, stopped, failed, stale] }
+      process_id: { type: integer }
+      server: { type: string }
+      project: { type: string }
+      service: { type: string }
+      service_protocol:
+        { $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ServiceProtocol" }
+      public_url_id: { type: string }
+      publish_run_number: { type: integer, format: int64, minimum: 1 }
+      hostname: { type: string }
+      public_url: { type: string }
+      target: { type: string }
+      framework: { type: string }
+      started_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+      heartbeat_at: { type: string, format: date-time }
+      lease_expires_at: { type: string, format: date-time }
+      failure: { type: string }
+  Event:
+    type: object
+    additionalProperties: false
+    required: [cursor, type, at]
+    properties:
+      cursor: { type: string, maxLength: 128 }
+      type: { type: string }
+      at: { type: string, format: date-time }
+      service: { $ref: "../openapi.yaml#/components/schemas/Service" }
+      snapshot: { $ref: "../openapi.yaml#/components/schemas/Snapshot" }
+      publication: { $ref: "../openapi.yaml#/components/schemas/Publication" }
+  Check:
+    type: object
+    additionalProperties: false
+    properties:
+      services: { type: array, maxItems: 32, items: { type: string, maxLength: 63 } }

@@ -1,0 +1,171 @@
+schemas:
+  WebhookProviderSourceResponse:
+    type: object
+    additionalProperties: false
+    required: [source]
+    properties:
+      source:
+        oneOf:
+          - type: object
+            additionalProperties: false
+            required: [kind, ranges]
+            properties:
+              kind:
+                type: string
+                const: ip_ranges
+              ranges:
+                type: array
+                minItems: 1
+                maxItems: 512
+                uniqueItems: true
+                items:
+                  type: string
+          - type: object
+            additionalProperties: false
+            required: [kind]
+            properties:
+              kind:
+                type: string
+                const: "*"
+  HealthResponse:
+    type: object
+    additionalProperties: false
+    required: [status]
+    properties:
+      status:
+        type: string
+        const: ok
+  ReadinessResponse:
+    type: object
+    additionalProperties: false
+    required: [status, checks]
+    properties:
+      status:
+        type: string
+        enum: [ready, not_ready]
+      checks:
+        type: object
+        additionalProperties: false
+        required: [database, control]
+        properties:
+          database:
+            type: string
+            enum: [ok, failed]
+          control:
+            type: string
+            description: Control listeners and public control certificate are ready.
+            enum: [ok, failed]
+          ingress:
+            type: string
+            description: Present in standalone; checks the ingress lease, routing table, and listener.
+            enum: [ok, failed]
+          relay:
+            type: string
+            description: Present in standalone; checks both relay services and their listeners.
+            enum: [ok, failed]
+          route53_credentials:
+            type: string
+            description: Present when control uses Route 53; checks that its AWS credentials can be obtained.
+            enum: [ok, failed]
+  ClientIPResponse:
+    type: object
+    additionalProperties: false
+    required: [ip]
+    properties:
+      ip:
+        type: string
+        minLength: 2
+        maxLength: 45
+  ControlDiscovery:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        managed_domain,
+        managed_url_mode,
+        managed_domain_max_member_child_labels,
+        custom_domains_enabled,
+        dns_automation,
+        guest_demo,
+        authentication,
+      ]
+    properties:
+      managed_domain:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      managed_url_mode:
+        type: string
+        enum: [simple, generated]
+        description: Default public URL naming on the server's managed domain.
+      managed_domain_max_member_child_labels:
+        type: integer
+        minimum: 0
+        description: Maximum labels beneath a member namespace on the managed domain. Zero imposes no limit beyond DNS hostname bounds; custom domains are not subject to this setting.
+      custom_domains_enabled:
+        type: boolean
+        description: Whether teams may add new custom domains. Existing custom domains remain usable when disabled.
+      dns_automation:
+        type: boolean
+      guest_demo:
+        type: boolean
+        description: Whether this server accepts limited anonymous demo publishers.
+      browser_login_available:
+        type: boolean
+        description: Whether visitors can sign in through a browser OIDC client.
+        pattern: "^https://"
+      authentication:
+        $ref: "../openapi.yaml#/components/schemas/AuthenticationFacts"
+  GuestDemoSession:
+    type: object
+    additionalProperties: false
+    required: [access_token, guest_id, team_id, membership_id, domain_id, namespace, expires_at]
+    properties:
+      access_token:
+        type: string
+        minLength: 1
+      guest_id:
+        $ref: "../openapi.yaml#/components/schemas/ResourceID"
+      team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      membership_id:
+        $ref: "../openapi.yaml#/components/schemas/MembershipID"
+      domain_id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      namespace:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      expires_at:
+        type: string
+        format: date-time
+  GuestDemoNumber:
+    type: object
+    additionalProperties: false
+    required: [number]
+    properties:
+      number:
+        type: integer
+        format: int64
+        minimum: 1
+  AuthenticationFacts:
+    type: object
+    additionalProperties: false
+    required: [methods]
+    properties:
+      methods:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+          enum: [oidc]
+      oidc:
+        $ref: "../openapi.yaml#/components/schemas/OIDCAuthenticationFacts"
+  OIDCAuthenticationFacts:
+    type: object
+    additionalProperties: false
+    required: [issuer, login_flow]
+    properties:
+      issuer:
+        type: string
+        format: uri
+      login_flow:
+        type: string
+        enum: [device_code]

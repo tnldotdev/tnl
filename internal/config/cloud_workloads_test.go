@@ -8,9 +8,9 @@ import (
 
 func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	text := func(value string) *string { return &value }
-	configuration := TNL{Publishers: map[string]Publisher{"production": {}}, Services: Services{
-		"cluster": {Publisher: text("production"), Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
-		"db":      {Publisher: text("production"), Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
+	configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: Services{
+		"cluster": {PublisherGroup: text("production"), Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
+		"db":      {PublisherGroup: text("production"), Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
 	}, Workloads: map[string]Workload{"deploy": {Provider: "github", GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"cluster", "db"}}}}
 	if err := ValidateTNL(configuration); err != nil {
 		t.Fatal(err)

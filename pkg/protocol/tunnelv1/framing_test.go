@@ -224,7 +224,7 @@ func TestStreamWritersAcceptSupportedIdentifierBounds(t *testing.T) {
 }
 
 func TestFrameWriterRejectsOversizeBeforeWriting(t *testing.T) {
-	for _, limit := range []int{MaxHeaderBytes, MaxPrivateHeaderBytes} {
+	for _, limit := range []int{MaxHeaderBytes, MaxServiceHeaderBytes} {
 		var out bytes.Buffer
 		// JSON's two quotes make this one byte larger than the frame cap.
 		if err := writeJSONFrame(&out, strings.Repeat("x", limit-1), limit); err == nil || out.Len() != 0 {

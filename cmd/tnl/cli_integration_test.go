@@ -11,13 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
@@ -44,7 +45,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	root := filepath.Join(t.TempDir(), "state")
-	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
+	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PublisherSelectionInvalid {
 		t.Fatalf("mixed enrollment selection = %v", err)
 	}
@@ -58,7 +59,7 @@ func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 
 func TestConfiguredAppPublicationDoesNotRequireAnAddress(t *testing.T) {
 	root := t.TempDir()
-	project := projectConfiguration{Project: projectconfig.Project{Root: root, Worktree: namedTestWorktree(root, "shop"), Config: config.TNL{Services: config.Services{"web": {Target: &config.ServiceTarget{Type: "app"}}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Root: root, Worktree: namedTestWorktree(root, "shop"), Config: config.TNL{Services: config.Services{"web": {Target: &config.ServiceTarget{Type: "app"}}}}}}
 	flags := publishCommand{Target: "web"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
@@ -161,16 +162,16 @@ func TestSummaryRecorderKeepsHTTPAndDatabaseResults(t *testing.T) {
 	}
 	defer tunnel.Finish(context.Background(), nil)
 	retention, budget := config.Duration(time.Hour), config.ByteSize(1<<20)
-	recorder, err := newInspectionRecorder(t.Context(), tunnel, root, "", config.InspectionSummary, &config.Inspection{Retention: &retention, MaxBytes: &budget})
+	recorder, err := invocation.NewInspectionRecorder(t.Context(), tunnel, root, "", config.InspectionSummary, &config.Inspection{Retention: &retention, MaxBytes: &budget})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observe := summaryObservation(recorder)
+	observe := invocation.SummaryObservation(recorder)
 	now := time.Now()
 	observe(inspection.Summary{Protocol: "http", ReceivedAt: now, Method: "GET", Path: "/orders", Status: 503, Result: inspection.ResultError, Duration: 2 * time.Millisecond, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: "mysql", ReceivedAt: now.Add(time.Millisecond), Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "HY000", MySQLErrorCode: 1045, Rows: 1, ResultSets: 2, Duration: 3 * time.Millisecond, Origin: "tnl"})
 	recorder.Close()
-	_, shared, err := inspectionRoots(t.Context(), root)
+	_, shared, err := invocation.InspectionRoots(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

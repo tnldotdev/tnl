@@ -154,7 +154,7 @@ func ValidateWorkloads(c TNL) error {
 			if !ok || seen[s] {
 				return bad()
 			}
-			if PublisherName(service) == "local" {
+			if PublisherGroupName(service) == "local" {
 				return fmt.Errorf("workloads.%s: service %q must use a named publisher group", name, s)
 			}
 			seen[s] = true

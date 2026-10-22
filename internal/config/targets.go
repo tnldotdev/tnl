@@ -12,7 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 )
 
 var composeProject = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -43,9 +43,9 @@ func ValidProtocol(protocol string) bool {
 	return false
 }
 
-// PrivateProtocol identifies non-HTTP labels. HTTP services can also be private;
+// NonHTTPProtocol identifies non-HTTP labels. HTTP services can also be private;
 // use IsPublicService to decide whether a declaration enables public HTTPS.
-func PrivateProtocol(protocol string) bool {
+func NonHTTPProtocol(protocol string) bool {
 	return protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 

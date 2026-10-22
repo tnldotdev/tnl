@@ -8,19 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type measuredHTTPAuthority struct {
-	ManagedHTTPControl
+	ServiceHTTPControl
 	decisions []controlv1.ServiceClientCertificateDecision
 	cause     error
 	calls     int
 }
 
-func (c *measuredHTTPAuthority) AuthorizeManagedHTTPVisitor(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *measuredHTTPAuthority) AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	c.calls++
 	if c.cause != nil {
 		return controlv1.ServiceClientCertificateDecision{}, c.cause
@@ -29,7 +29,7 @@ func (c *measuredHTTPAuthority) AuthorizeManagedHTTPVisitor(context.Context, str
 	return decision, nil
 }
 
-func TestManagedHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *testing.T) {
+func TestServiceHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *testing.T) {
 	for _, scenario := range []string{"pending", "denied", "infrastructure"} {
 		t.Run(scenario, func(t *testing.T) {
 			m := observability.New("publisher")
@@ -43,7 +43,7 @@ func TestManagedHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *tes
 			case "infrastructure":
 				control.cause = cause
 			}
-			decision, err := (ManagedHTTP{Control: control}).authorize(ctx, controlv1.ManagedHTTPCredential{Kind: "none"})
+			decision, err := (ServiceHTTP{Control: control}).authorize(ctx, controlv1.ServiceHTTPCredential{Kind: "none"})
 			if scenario == "infrastructure" && !errors.Is(err, cause) {
 				t.Fatal("lost infrastructure cause", err)
 			}
@@ -87,7 +87,7 @@ func TestManagedHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *tes
 				}
 			}
 			if measured != 1 {
-				t.Fatal("managed HTTP authorization timing lost its result or protocol", outcome, measured)
+				t.Fatal("service HTTP authorization timing lost its result or protocol", outcome, measured)
 			}
 		})
 	}

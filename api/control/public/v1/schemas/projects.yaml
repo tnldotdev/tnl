@@ -1,0 +1,325 @@
+schemas:
+  ProjectPublicMetadata:
+    type: object
+    additionalProperties: false
+    required: [source_fingerprint, services]
+    properties:
+      source_fingerprint: { type: string }
+      services:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [service, hostname, port]
+          properties:
+            service: { type: string }
+            public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+            service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+            port: { type: integer, minimum: 1, maximum: 65535 }
+            hostname: { type: string }
+  RealizeLocalProjectServiceRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, source_fingerprint, worktree_key, configuration]
+    properties:
+      team_id: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      worktree_key: { type: string, minLength: 1, maxLength: 128 }
+      worktree_label: { type: string, minLength: 1, maxLength: 63 }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
+  LocalProjectService:
+    type: object
+    additionalProperties: false
+    required: [service, worktree_key, service_kind, service_id]
+    properties:
+      service: { type: string }
+      worktree_key: { type: string }
+      service_kind: { type: string, enum: [service, public_url] }
+      service_id: { type: string }
+      hostname: { type: string }
+      metadata: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
+  ApplyProjectConfigurationRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, source_fingerprint, expected_revision, configuration]
+    properties:
+      team_id: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      project_label:
+        { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+      expected_revision: { type: integer, format: int64, minimum: 0 }
+      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
+  ProjectConfiguration:
+    type: object
+    description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+    additionalProperties: false
+    required: [publisher_groups, services, oauth, webhooks]
+    properties:
+      workloads:
+        type: object
+        maxProperties: 32
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWorkload" }
+      oauth:
+        type: boolean
+        default: false
+        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a named publisher group.
+      webhooks:
+        type: object
+        maxProperties: 32
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
+        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+      publisher_groups:
+        {
+          type: object,
+          maxProperties: 32,
+          additionalProperties:
+            { $ref: "../openapi.yaml#/components/schemas/ProjectPublisherGroup" },
+        }
+      services:
+        {
+          type: object,
+          maxProperties: 128,
+          additionalProperties:
+            { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" },
+        }
+  ProjectPublisherGroup:
+    type: object
+    additionalProperties: false
+    properties:
+      description: { type: string, maxLength: 1024 }
+      domain_id: { type: string }
+      public: { type: boolean, default: false }
+  ProjectWorkload:
+    type: object
+    additionalProperties: false
+    required: [provider, trust, services, max_duration_seconds]
+    properties:
+      provider: { $ref: "../openapi.yaml#/components/schemas/WorkloadProvider" }
+      trust: { $ref: "../openapi.yaml#/components/schemas/WorkloadTrust" }
+      github: { $ref: "../openapi.yaml#/components/schemas/ProjectWorkloadGitHub" }
+      services:
+        type: array
+        minItems: 1
+        maxItems: 32
+        uniqueItems: true
+        items: { type: string }
+      max_duration_seconds: { type: integer, minimum: 1, maximum: 21600, default: 3600 }
+  ProjectWorkloadGitHub:
+    type: object
+    additionalProperties: false
+    description: Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+    required: [repository, repository_id, repository_owner_id, workflow_ref, ref, events]
+    properties:
+      repository: { type: string, maxLength: 256 }
+      repository_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+      repository_owner_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+      workflow_ref: { type: string, maxLength: 1024 }
+      ref: { type: string, maxLength: 512 }
+      events: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string } }
+      environment: { type: string, maxLength: 256 }
+      job_workflow_ref: { type: string, maxLength: 1024 }
+  ProjectTargetDiscovery:
+    type: object
+    additionalProperties: false
+    required: [type, region]
+    properties:
+      type: { type: string, enum: [eks, rds] }
+      region: { type: string, maxLength: 64 }
+      cluster: { type: string, maxLength: 100 }
+      instance: { type: string, maxLength: 100 }
+      endpoint: { type: string, enum: [writer, reader] }
+    description: Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
+  ProjectWebhook:
+    type: object
+    additionalProperties: false
+    required: [service, path, provider]
+    properties:
+      service: { type: string, minLength: 1, maxLength: 32 }
+      path: { type: string, minLength: 1, maxLength: 2048 }
+      provider: { $ref: "../openapi.yaml#/components/schemas/WebhookProvider" }
+      delivery: { type: string, pattern: "^(fanout|selected)$" }
+      methods:
+        type: array
+        maxItems: 7
+        uniqueItems: true
+        items: { type: string, pattern: "^(POST|GET|PUT|PATCH|DELETE|HEAD|OPTIONS)$" }
+      source_ips:
+        type: array
+        minItems: 1
+        maxItems: 256
+        uniqueItems: true
+        items: { type: string, minLength: 1, maxLength: 64 }
+  ProjectServiceConfiguration:
+    type: object
+    additionalProperties: false
+    required: [target]
+    properties:
+      publisher_group: { type: string, default: local }
+      name: { type: string, maxLength: 32 }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target:
+        type: string
+        maxLength: 8192
+        description: Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. Only local declarations may use deferred app, compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control does not discover targets.
+      target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
+      public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
+      http: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceHTTP" }
+  ProjectServiceHTTP:
+    type: object
+    additionalProperties: false
+    description: Local readiness and path mounts, or named-group restricted HTTP access and request limits. A group owns its endpoint and reachability.
+    properties:
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
+      readiness:
+        type: object
+        additionalProperties: false
+        required: [path]
+        properties:
+          path: { type: string, minLength: 1, maxLength: 2048 }
+      paths:
+        type: object
+        maxProperties: 32
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [service]
+          properties:
+            service: { type: string }
+            strip_prefix: { type: boolean }
+      open: { type: boolean }
+  ProjectServicePublicURL:
+    type: object
+    additionalProperties: false
+    properties:
+      domain_id: { type: string }
+      hostname: { type: string, maxLength: 253 }
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicLimits" }
+      ephemeral:
+        type: boolean
+        default: false
+        description: Local declarations may request an ephemeral worktree URL.
+    description: Enables a local service's public URL. Named publisher groups use http settings and reject this block.
+  ProjectPublicAccess:
+    type: object
+    additionalProperties: false
+    properties:
+      mode: { $ref: "../openapi.yaml#/components/schemas/VisitorAccessMode" }
+      ip:
+        type: array
+        minItems: 1
+        maxItems: 256
+        uniqueItems: true
+        items: { type: string, maxLength: 64 }
+  ProjectPublicLimits:
+    type: object
+    additionalProperties: false
+    properties:
+      http: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
+      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficSelection" }
+  ProjectHTTPApplicationLimits:
+    type: object
+    additionalProperties: false
+    properties:
+      total: { type: integer, minimum: 1, maximum: 9007199254740991 }
+      concurrency: { type: integer, minimum: 1, maximum: 9007199254740991 }
+      rate: { $ref: "../openapi.yaml#/components/schemas/ProjectApplicationRate" }
+  ProjectApplicationRate:
+    type: object
+    additionalProperties: false
+    required: [count, per]
+    properties:
+      count: { type: integer, minimum: 1, maximum: 9007199254740991 }
+      per: { type: string, minLength: 1, maxLength: 64 }
+      burst: { type: integer, minimum: 1, maximum: 9007199254740991 }
+  ProjectTargetTLS:
+    type: object
+    additionalProperties: false
+    required: [hostname, digest]
+    description: Publisher-to-target TLS trust, independent of visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem.
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      ca_pem: { type: string, maxLength: 1048576 }
+      digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+  ProjectServiceAccess:
+    type: object
+    additionalProperties: false
+    required: [team]
+    properties:
+      team: { type: boolean, enum: [true] }
+  AppliedProjectConfiguration:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        team_id,
+        project_key,
+        source_fingerprint,
+        revision,
+        configuration_hash,
+        configuration,
+        services,
+        members,
+      ]
+    properties:
+      team_id: { type: string }
+      project_key: { type: string }
+      source_fingerprint: { type: string }
+      revision: { type: integer, format: int64 }
+      configuration_hash: { type: string }
+      configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
+      services:
+        {
+          type: array,
+          items: { $ref: "../openapi.yaml#/components/schemas/AppliedProjectService" },
+        }
+      members:
+        {
+          type: array,
+          items: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupMemberStatus" },
+        }
+      groups:
+        {
+          type: array,
+          items: { $ref: "../openapi.yaml#/components/schemas/AppliedPublisherGroup" },
+        }
+  AppliedPublisherGroup:
+    type: object
+    required: [id, name, group_names, namespace, domain_id, public]
+    properties:
+      id: { type: string }
+      name: { type: string }
+      group_names:
+        type: array
+        description: Authoritative current and historical selectors permanently bound to this group ID.
+        items: { type: string }
+      namespace: { type: string }
+      domain_id: { type: string }
+      public: { type: boolean }
+  AppliedProjectService:
+    type: object
+    required: [service, publisher_group, service_kind, desired_revision, trust_revision]
+    properties:
+      service: { type: string }
+      publisher_group: { type: string }
+      service_kind: { type: string, enum: [public_url, service, local] }
+      service_id: { type: string }
+      hostname: { type: string }
+      desired_revision: { type: integer, format: int64 }
+      trust_revision: { type: integer, format: int64 }
+      port: { type: integer, minimum: 1024, maximum: 65535 }
+      public: { type: boolean }
+  LocalServiceSource:
+    type: object
+    additionalProperties: false
+    required: [project_key, source_fingerprint, service, worktree_key]
+    properties:
+      project_key: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      service: { type: string }
+      worktree_key: { type: string }

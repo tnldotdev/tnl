@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -103,10 +105,46 @@ func TestShardRejectsMissingTestsAndInvalidSelection(t *testing.T) {
 		{"TestIgnored", "^Test", "^TestIgnored$"},
 		{"TestAlpha", "[", ""},
 		{"TestAlpha", "^Test", "["},
-		{"TestAlpha", "^Test", "Test/subtest"},
 	} {
 		if _, _, _, err := shardTestPattern(input.output, input.run, input.skip, testShard{1, 1}); err == nil {
 			t.Fatalf("accepted invalid or empty selection %+v", input)
+		}
+	}
+}
+
+func TestSingleShardAccountsForSelectionWithoutRewritingSubtests(t *testing.T) {
+	for _, shard := range []string{"", "1/1"} {
+		for _, command := range [][]string{
+			{"go", "test", "./testdata/shards", "-run=^TestAlpha$/child", "-args", "-tnl-probe=kept"},
+			{"go", "test", "./testdata/shards", "-run=^Test(Alpha|[/])$/child", "-skip=^TestAlpha$/other", "-args", "-tnl-probe=kept"},
+			{"go", "test", "./testdata/shards", "-run=^Test[[:alpha:]/]+$/child", "-args", "-tnl-probe=kept"},
+			{"go", "test", "./testdata/shards", "-args", "-tnl-probe=kept"},
+		} {
+			selected, err := shardGoTestCommand(t.Context(), ".", command, shard)
+			if err != nil || !reflect.DeepEqual(selected, command) {
+				t.Fatalf("single shard %q changed selection %v: %v, %v", shard, command, selected, err)
+			}
+		}
+		command := []string{"go", "test", "./testdata/shards", "-run=^TestMissing$", "-args", "-tnl-probe=kept"}
+		if _, err := shardGoTestCommand(t.Context(), ".", command, shard); err == nil {
+			t.Fatalf("single shard %q accepted an empty selector", shard)
+		}
+	}
+	if _, _, _, err := shardTestPattern("TestAlpha", "^Test", "Test/subtest", testShard{1, 4}); err == nil {
+		t.Fatal("multiple shards accepted a subtest exclusion")
+	}
+}
+
+func TestShardDiscoveryPreservesGoTestDiagnostics(t *testing.T) {
+	command := []string{"go", "test", "./testdata/shards", "-run=^TestAlpha$", "-args", "-tnl-unregistered-tier=integration"}
+	_, err := shardGoTestCommand(t.Context(), ".", command, "")
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) {
+		t.Fatalf("discovery failure lost its process exit: %v", err)
+	}
+	for _, want := range []string{"discover tests for shard", "flag provided but not defined: -tnl-unregistered-tier", "Usage of"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("discovery failure lost %q: %v", want, err)
 		}
 	}
 }

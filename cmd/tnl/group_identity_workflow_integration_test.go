@@ -18,11 +18,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
@@ -43,7 +44,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	team, control := session.identity.PersonalTeamId, session.authenticated.Control
+	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/cli/portable.git"}} {
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
@@ -56,8 +57,8 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publishers": map[string]any{"production": map[string]any{}}, "services": map[string]any{
-		"api": map[string]any{"publisher": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": "target.pem"}}, "access": map[string]any{"team": true}},
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "publisher_groups": map[string]any{"production": map[string]any{}}, "services": map[string]any{
+		"api": map[string]any{"publisher_group": "production", "target": map[string]any{"type": "address", "address": target.URL, "tls": map[string]any{"server_name": "example.com", "ca_file": "target.pem"}}, "access": map[string]any{"team": true}},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -127,13 +128,13 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	connectCtx, stopConnect := context.WithCancel(t.Context())
 	defer stopConnect()
 	if len(applied.Services) != 1 || applied.Services[0].ServiceId == nil {
-		t.Fatal("missing private service binding")
+		t.Fatal("missing service binding")
 	}
-	service, err := control.GetPrivateService(t.Context(), *applied.Services[0].ServiceId)
-	if err != nil || service.ManagedTls == nil {
-		t.Fatal("missing managed service endpoint", err)
+	service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
+	if err != nil || service.Endpoint == nil {
+		t.Fatal("missing service endpoint", err)
 	}
-	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: service.ManagedTls.Hostname}}, Timeout: 2 * time.Second}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: service.Endpoint.Hostname}}, Timeout: 2 * time.Second}
 	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -160,12 +161,12 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		ready, joined := f.command(t, ctx, stop, args)
 		if replacement == 0 {
 			workflowWait(t, 15*time.Second, func() bool {
-				return inspect.QueryRow(t.Context(), `SELECT issuance.id FROM control.acme_orders issuance JOIN control.private_service_runs run ON run.id=issuance.private_run_id WHERE run.publisher_identity_id=$1 ORDER BY issuance.created_revision LIMIT 1`, value.Member.PublisherIdentityId).Scan(&firstIssuance) == nil
+				return inspect.QueryRow(t.Context(), `SELECT issuance.id FROM control.acme_orders issuance JOIN control.service_runs run ON run.id=issuance.service_run_id WHERE run.publisher_identity_id=$1 ORDER BY issuance.created_revision LIMIT 1`, value.Member.PublisherIdentityId).Scan(&firstIssuance) == nil
 			})
 			runtime := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true)
 			var oldRun string
 			var oldLease []byte
-			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.private_service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&oldRun); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&oldRun); err != nil {
 				t.Fatal(err)
 			}
 			// an OLD task keeps polling while a manager renames and re-exports its
@@ -192,7 +193,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			})
 			var keptRun string
 			var keptLease []byte
-			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.private_service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&keptRun); err != nil || keptRun != oldRun {
+			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&keptRun); err != nil || keptRun != oldRun {
 				t.Fatal("selector rename restarted publication", err)
 			}
 			if err := inspect.QueryRow(t.Context(), `SELECT token_digest FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, value.Member.PublisherIdentityId).Scan(&keptLease); err != nil || !bytes.Equal(oldLease, keptLease) {
@@ -228,7 +229,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		if replacement == 1 {
 			workflowWait(t, 15*time.Second, func() bool {
 				var requests int
-				err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.private_certificate_requests request JOIN control.private_service_runs run ON run.id=request.private_run_id WHERE request.issuance_id=$1 AND run.publisher_identity_id=$2`, firstIssuance, value.Member.PublisherIdentityId).Scan(&requests)
+				err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.service_certificate_requests request JOIN control.service_runs run ON run.id=request.service_run_id WHERE request.issuance_id=$1 AND run.publisher_identity_id=$2`, firstIssuance, value.Member.PublisherIdentityId).Scan(&requests)
 				return err == nil && requests >= 2
 			})
 			f.certificateWorkPaused.Store(false)
@@ -282,7 +283,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal("group import created a person session", err)
 		}
 		var installed string
-		if err := inspect.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.private_service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL ORDER BY run_number DESC LIMIT 1`, value.Member.PublisherIdentityId).Scan(&installed); err != nil || installed != firstIssuance {
+		if err := inspect.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL ORDER BY run_number DESC LIMIT 1`, value.Member.PublisherIdentityId).Scan(&installed); err != nil || installed != firstIssuance {
 			t.Fatal("task-local state deletion changed the installed certificate issuance", err)
 		}
 		if err := state.Close(); err != nil {
@@ -292,21 +293,20 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal("replacement attempted enrollment")
 		}
 		if replacement == 3 {
-			oldHostname := service.ManagedTls.Hostname
+			oldHostname := service.Endpoint.Hostname
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "namespace", "rename", "production", "new-dns", "--expected-revision", strconv.FormatInt(applied.Revision, 10), "--request-id", "dns-move", "--state-dir", person})
 			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, err := selectConnectService(t.Context(), control, project, "api", team)
+			selected, err := connector.Select(t.Context(), control, project.Project, "api", team)
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, err := serviceConnectionProfile(selected, "127.0.0.1:25443")
-			if err != nil || native.Hostname == oldHostname || native.ServiceID != service.Id {
-				t.Fatal("source-bound native profile kept old hostname or changed identity", err)
+			if selected.Endpoint == nil || selected.Endpoint.Hostname == oldHostname || selected.Id != service.Id {
+				t.Fatal("source-bound service kept old hostname or changed identity")
 			}
-			newClient := workflowNativeHTTPClient(t, f, native.Hostname)
+			newClient := workflowNativeHTTPClient(t, f, selected.Endpoint.Hostname)
 			workflowWait(t, 25*time.Second, func() bool {
 				response, err := newClient.Get("https://" + address + "/renamed-dns")
 				if err != nil {
@@ -320,8 +320,8 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				_ = response.Body.Close()
 				t.Fatal("old hostname still authenticated the new namespace")
 			}
-			updated, err := control.GetPrivateService(t.Context(), service.Id)
-			if err != nil || updated.ManagedTls.Hostname != native.Hostname || updated.ManagedTls.Port != service.ManagedTls.Port {
+			updated, err := control.GetService(t.Context(), service.Id)
+			if err != nil || updated.Endpoint.Hostname != selected.Endpoint.Hostname || updated.Endpoint.Port != service.Endpoint.Port {
 				t.Fatal("namespace change lost port or service", err)
 			}
 		}
@@ -339,7 +339,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	// installed jobs keep immutable membership even when their captured selector
 	// predates a rename. run the actual user supervisor against its saved job.
 	supervisorRoot := filepath.Join(t.TempDir(), "supervisor")
-	registry, err := publisherjob.Open(t.Context(), publisherjob.OpenOptions{Root: supervisorRoot, User: true})
+	registry, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: supervisorRoot, User: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := publisherjob.Job{Kind: publisherjob.KindGroup, ID: publisherjob.JobKey(f.url, "group", value.Member.GroupId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
+	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(f.url, "group", value.Member.GroupId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, GroupMember: &value.Member, GroupInstance: "replica-1", IdentityDir: identityDir}
 	if err := registry.InstallGroup(t.Context(), job, value.Member, private); err != nil {
 		t.Fatal(err)
 	}

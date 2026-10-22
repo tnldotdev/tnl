@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
 type gatedRelayConnector struct {

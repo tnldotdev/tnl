@@ -10,11 +10,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestCreateOrLoadRouteReusesDurablePublicURL(t *testing.T) {
@@ -73,17 +73,17 @@ func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *tes
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", AllowedIPPrefixes: allowed, PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", AllowedIPPrefixes: allowed, PreserveSavedPublicURLTarget: true,
 	})
 	if err != nil || created || got.Target != "" || control.updated != nil {
 		t.Fatalf("credential-backed URL changed: route = %#v, created = %t, update = %#v, err = %v", got, created, control.updated, err)
 	}
 	control.allowed = append(control.allowed, "update")
-	control.updateErr = controlclient.ErrStatusConflict
+	control.updateErr = clientcontrol.ErrStatusConflict
 	_, _, err = createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", AccessMode: controlv1.Anonymous, PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", AccessMode: controlv1.Anonymous, PreserveSavedPublicURLTarget: true,
 	})
 	if err == nil || control.updated != nil {
 		t.Fatalf("changed visitor policy was accepted: update = %#v, err = %v", control.updated, err)
@@ -111,15 +111,15 @@ func TestCreateOrLoadRouteNeverReusesEphemeralPublicURL(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"create"}, routes: []controlv1.PublicURL{{
 		Id: "public_url_existing", CanonicalHostname: "demo.example", Ephemeral: true,
 	}}}
-	route, created, err := createOrLoadPublicURL(t.Context(), Config{
+	publicURL, created, err := createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", Ephemeral: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created || route.Id != "public_url_created" || control.lookupCalls != 0 || control.created == nil {
-		t.Fatalf("route = %#v, created = %t, lookup calls = %d", route, created, control.lookupCalls)
+	if !created || publicURL.Id != "public_url_created" || control.lookupCalls != 0 || control.created == nil {
+		t.Fatalf("route = %#v, created = %t, lookup calls = %d", publicURL, created, control.lookupCalls)
 	}
 }
 
@@ -152,35 +152,35 @@ func TestCreateOrLoadRouteFindsSuspendedRouteWithoutRecreating(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteClassifiesHostnameConflict(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"create"}, createErr: controlclient.ErrNameUnavailable}
+	control := &publisherControlStub{allowed: []string{"create"}, createErr: clientcontrol.ErrNameUnavailable}
 	_, _, err := createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", Ephemeral: true,
 	})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLConflict ||
-		!errors.Is(err, controlclient.ErrNameUnavailable) {
+		!errors.Is(err, clientcontrol.ErrNameUnavailable) {
 		t.Fatalf("create route error = %v, diagnostic = %q", err, code)
 	}
 }
 
 func TestReconcileRouteClassifiesUpdateConflict(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"update"}, updateErr: controlclient.ErrStatusConflict}
+	control := &publisherControlStub{allowed: []string{"update"}, updateErr: clientcontrol.ErrStatusConflict}
 	_, err := reconcilePublicURL(t.Context(), Config{
 		Control: control, Target: "http://127.0.0.1:4000",
 	}, controlv1.PublicURL{
 		Id: "public_url_existing", LifecycleState: controlv1.Enabled, Target: "http://127.0.0.1:3000",
 	})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLConflict ||
-		!errors.Is(err, controlclient.ErrStatusConflict) {
+		!errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatalf("update route error = %v, diagnostic = %q", err, code)
 	}
 }
 
 func TestCreatePublishRunClassifiesLifecycleConflict(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"create_session"}, publishRunErr: controlclient.ErrStatusConflict}
+	control := &publisherControlStub{allowed: []string{"create_session"}, publishRunErr: clientcontrol.ErrStatusConflict}
 	_, err := createPublishRun(t.Context(), Config{Control: control}, controlv1.PublicURL{Id: "public_url_1"})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLConflict ||
-		!errors.Is(err, controlclient.ErrStatusConflict) {
+		!errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatalf("create publish run error = %v, diagnostic = %q", err, code)
 	}
 }
@@ -207,7 +207,7 @@ func TestCreateOrLoadRouteCreatesTeamScopedPublicURL(t *testing.T) {
 }
 
 func TestCreateOrLoadRouteLookupErrorsDoNotCreate(t *testing.T) {
-	for _, failure := range []error{controlclient.ErrUnavailable, controlclient.ErrUnauthenticated, errors.New("invalid filtered response")} {
+	for _, failure := range []error{clientcontrol.ErrUnavailable, clientcontrol.ErrUnauthenticated, errors.New("invalid filtered response")} {
 		control := &publisherControlStub{allowed: []string{"lookup"}, lookupErr: failure}
 		_, created, err := createOrLoadPublicURL(t.Context(), Config{Control: control, TeamID: "team_1", Hostname: "demo.example", Purpose: controlv1.App})
 		if !errors.Is(err, failure) || created || control.lookupCalls != 1 || control.created != nil {
@@ -217,11 +217,11 @@ func TestCreateOrLoadRouteLookupErrorsDoNotCreate(t *testing.T) {
 }
 
 func TestCreateOrLoadRoutePreservesConcurrentCreationConflict(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"lookup", "create"}, createErr: controlclient.ErrNameUnavailable}
+	control := &publisherControlStub{allowed: []string{"lookup", "create"}, createErr: clientcontrol.ErrNameUnavailable}
 	_, created, err := createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", PublicURLScope: controlv1.Shared, Purpose: controlv1.App,
 	})
-	if created || !errors.Is(err, controlclient.ErrNameUnavailable) || control.lookupCalls != 1 || control.created == nil {
+	if created || !errors.Is(err, clientcontrol.ErrNameUnavailable) || control.lookupCalls != 1 || control.created == nil {
 		t.Fatalf("concurrent create result = %t, %v", created, err)
 	}
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLConflict {
@@ -231,7 +231,7 @@ func TestCreateOrLoadRoutePreservesConcurrentCreationConflict(t *testing.T) {
 
 func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-		return controlv1.PublishRunHeartbeat{}, controlclient.ErrUnavailable
+		return controlv1.PublishRunHeartbeat{}, clientcontrol.ErrUnavailable
 	}}
 	response, observed, err := heartbeatResponseOnce(
 		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(time.Minute),
@@ -255,7 +255,7 @@ func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
 		t.Fatal(observed, err)
 	}
 	control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed.Add(time.Hour)}}, controlclient.ErrUnavailable
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed.Add(time.Hour)}}, clientcontrol.ErrUnavailable
 	}
 	if _, observed, err := heartbeatResponseOnce(ctx, heartbeatTestAuthority(control, "run-secret", "token-secret"), confirmed); err != nil || observed {
 		t.Fatal(observed, err)
@@ -294,7 +294,7 @@ func TestHeartbeatCallDeadlineUsesConfirmedSessionUntilExpiry(t *testing.T) {
 		wantErr error
 	}{
 		{name: "valid session", expires: 2 * heartbeatCallTimeout},
-		{name: "expired session", expires: heartbeatCallTimeout / 2, wantErr: controlclient.ErrStatusConflict},
+		{name: "expired session", expires: heartbeatCallTimeout / 2, wantErr: clientcontrol.ErrStatusConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -324,12 +324,12 @@ func TestHeartbeatDoesNotHideUnrelatedDeadline(t *testing.T) {
 
 func TestExpiredHeartbeatLeavesStaleSessionConflictUnclassified(t *testing.T) {
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-		return controlv1.PublishRunHeartbeat{}, controlclient.ErrUnavailable
+		return controlv1.PublishRunHeartbeat{}, clientcontrol.ErrUnavailable
 	}}
 	_, _, err := heartbeatResponseOnce(
 		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(-time.Second),
 	)
-	if !errors.Is(err, controlclient.ErrStatusConflict) {
+	if !errors.Is(err, clientcontrol.ErrStatusConflict) {
 		t.Fatalf("heartbeat error = %v", err)
 	}
 	if code, ok := diagnostic.CodeOf(err); ok {
@@ -501,7 +501,7 @@ type publisherControlStub struct {
 	publishRunErr error
 }
 
-func (*publisherControlStub) PublisherID() string { return "pub_0123456789abcdefghijkl" }
+func (*publisherControlStub) PublisherIdentityID() string { return "pub_0123456789abcdefghijkl" }
 
 func (s *publisherControlStub) record(operation string) {
 	if !slices.Contains(s.allowed, operation) {
@@ -516,7 +516,7 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	if s.createErr != nil {
 		return controlv1.PublicURL{}, s.createErr
 	}
-	route := controlv1.PublicURL{
+	publicURL := controlv1.PublicURL{
 		Id: "public_url_created", TeamId: body.TeamId, DomainId: body.DomainId, MembershipId: body.MembershipId,
 		CanonicalHostname: body.CanonicalHostname, PublicUrlScope: body.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(body.Purpose), Target: body.Target, NextPublishRunNumber: 1,
 		Ephemeral: body.Ephemeral != nil && *body.Ephemeral, LifecycleState: controlv1.Enabled,
@@ -525,9 +525,9 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	if body.ServiceProtocol != nil {
 		protocol = *body.ServiceProtocol
 	}
-	route.ServiceProtocol = protocol
-	s.routes = append(s.routes, route)
-	return route, nil
+	publicURL.ServiceProtocol = protocol
+	s.routes = append(s.routes, publicURL)
+	return publicURL, nil
 }
 
 func (s *publisherControlStub) GetPublicURLByHostname(_ context.Context, teamID, hostname string) (controlv1.PublicURL, error) {
@@ -537,12 +537,12 @@ func (s *publisherControlStub) GetPublicURLByHostname(_ context.Context, teamID,
 	if s.lookupErr != nil {
 		return controlv1.PublicURL{}, s.lookupErr
 	}
-	for _, route := range s.routes {
-		if route.CanonicalHostname == hostname {
-			return route, nil
+	for _, publicURL := range s.routes {
+		if publicURL.CanonicalHostname == hostname {
+			return publicURL, nil
 		}
 	}
-	return controlv1.PublicURL{}, controlclient.ErrNotFound
+	return controlv1.PublicURL{}, clientcontrol.ErrNotFound
 }
 
 func (s *publisherControlStub) UpdatePublicURL(_ context.Context, id string, body controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error) {

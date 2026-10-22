@@ -1,0 +1,118 @@
+paths:
+  /v1/service/invitations/preview:
+    post:
+      operationId: previewServiceInvitation
+      summary: Preview an invitation for the signed-in website identity
+      security:
+        - webServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ServiceInvitationRequest"
+      responses:
+        "200":
+          description: Invitation details
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/InvitationPreview"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/service/invitations/accept:
+    post:
+      operationId: acceptServiceInvitation
+      summary: Accept an invitation for the signed-in website identity
+      security:
+        - webServiceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ServiceInvitationRequest"
+      responses:
+        "200":
+          description: Accepted membership
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Membership"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}/invitations:
+    get:
+      operationId: listTeamInvitations
+      summary: List team invitations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Invitation page
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/InvitationPage"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+    post:
+      operationId: createTeamInvitation
+      summary: Create an expiring invitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/CreateInvitationRequest"
+      responses:
+        "201":
+          description: Invitation and one-time secret
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/InvitationSecret"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/teams/{team_id}/invitations/{invitation_id}:
+    delete:
+      operationId: revokeTeamInvitation
+      summary: Revoke one pending invitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/InvitationID"
+      responses:
+        "204":
+          description: Invitation revoked
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/invitations/accept:
+    post:
+      operationId: acceptInvitation
+      summary: Accept an invitation with its secret
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200":
+          description: Membership created
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Membership"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

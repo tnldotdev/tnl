@@ -1,0 +1,281 @@
+paths:
+  /v1/projects/{project_key}/services/{service}:
+    get:
+      operationId: getProjectService
+      security: [{ bearerAuth: [] }]
+      description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - {
+            name: service,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceName" },
+          }
+        - {
+            name: team_id,
+            in: query,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/TeamID" },
+          }
+        - {
+            name: source_fingerprint,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
+          }
+      responses:
+        "200":
+          description: Exact saved service from the applied configuration, including offline services
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services:
+    get:
+      operationId: listServices
+      description: Team-owned saved services; never return target addresses or stream keys.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" },
+          { $ref: "../openapi.yaml#/components/parameters/ServiceCursor" },
+        ]
+      responses:
+        "200":
+          {
+            description: Team inventory,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServicePage" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: createService
+      description: Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Saved service,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/Service" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}:
+    put:
+      operationId: configureService
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
+      responses:
+        "200":
+          description: Approved protocol, publisher pool and immutable TLS trust snapshot
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    get:
+      operationId: getService
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      responses:
+        "200":
+          {
+            description: Saved service for an authorized team administrator,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/Service" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    delete:
+      operationId: deleteService
+      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      responses:
+        "204": { description: Service deleted }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/grants:
+    get:
+      operationId: listServiceGrants
+      description: Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: cursor
+          in: query
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" }
+      responses:
+        "200":
+          {
+            description: Exact service grants,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantPage" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: createServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceGrantRequest" },
+                },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Revocable team or identity grant,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrant" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/grants/{grant_id}:
+    delete:
+      operationId: revokeServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
+          {
+            name: grant_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" },
+          },
+        ]
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/invitations:
+    get:
+      operationId: listServiceInvitations
+      description: Current managers may read up to 100 records ordered by ID, including accepted, expired and revoked history. Follow next_cursor until absent. Never returns secrets.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: cursor
+          in: query
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
+      responses:
+        "200":
+          description: Invitations for service administrators
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: inviteServiceVisitor
+      description: A new key creates one exact-service invitation. An exact retry by the same actor returns HTTP 200 with the original ID and current state, without a secret, after current management checks. If delivery was lost, revoke that ID and create with a new key and explicit deadline. Changed service, email or deadline with a used key returns conflict. No secret is retained for recovery.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "../openapi.yaml#/components/parameters/ServiceID" },
+          { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "../openapi.yaml#/components/schemas/CreateServiceInvitationRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          description: Existing invitation without its secret; explicitly revoke and reissue if delivery was lost
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }
+        "201":
+          {
+            description: One-use verified-email invitation,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/invitations/{invitation_id}:
+    delete:
+      operationId: revokeServiceInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: invitation_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
+      responses:
+        "204": { description: Invitation and accepted identity grant revoked }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service-invitations/accept:
+    post:
+      operationId: acceptServiceInvitation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationCredential" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Exact identity grant,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceGrant" } },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

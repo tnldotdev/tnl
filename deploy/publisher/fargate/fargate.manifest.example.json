@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "project_key": "project-example",
+  "source_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "documentation_path": "readme.md",
+  "documentation_sha256": "f4b5ca97f065fb4dca0e6db0f1eaf9ec76af4efa1e54cfe2ea1a583382f97362",
+  "publisher_groups": [
+    {
+      "name": "production",
+      "provider": "aws",
+      "configuration_fingerprint": "73493ae667fcea6cecdf581aa3a848302a449b9950cc9a99570bbbfe08cb2d01",
+      "template_path": "aws/production.yaml",
+      "template_sha256": "b8aa28b211af4a3cdcd36eeba92419dd7c4fe520953d61c5b1c85fb319127337",
+      "parameters_example_path": "aws/production.parameters.example.json",
+      "parameters_example_sha256": "7b2eaaacf9d0cb35a66628ba5adbfa36e8112dc8d8403619495229d07935d473",
+      "storage_policy_path": "aws/production.storage-policy.json",
+      "storage_policy_sha256": "384ccbcc1df8a2a44a74461bdbe13b2381fc138fbb173b6edb73050e5553d17f",
+      "replicas": [
+        {
+          "key": "replica-1",
+          "identity_secret_arn_parameter": "Replica1IdentitySecretArn",
+          "identity_secret_version_parameter": "Replica1IdentitySecretVersion",
+          "instance_parameter": "Replica1Instance",
+          "publisher_identity_id_parameter": "Replica1PublisherIdentityID"
+        },
+        {
+          "key": "replica-2",
+          "identity_secret_arn_parameter": "Replica2IdentitySecretArn",
+          "identity_secret_version_parameter": "Replica2IdentitySecretVersion",
+          "instance_parameter": "Replica2Instance",
+          "publisher_identity_id_parameter": "Replica2PublisherIdentityID"
+        }
+      ]
+    }
+  ]
+}

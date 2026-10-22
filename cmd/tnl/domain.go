@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
+	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 type domainCommand struct {
@@ -56,7 +56,7 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	current, err := session.currentWithDomains(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
@@ -64,25 +64,15 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil {
 		return err
 	}
-	claimed, timedOut, err := claimAndWaitForDomainRecords(ctx, session.api, current.team.Id, domain, key, command.Default, defaultDomainClaimWait())
+	claimed, timedOut, err := clientteam.ClaimAndWaitForDomainRecords(ctx, session.Authenticated().Authority, current.Team().Id, domain, key, command.Default, defaultDomainClaimWait())
 	if err != nil {
 		return err
 	}
-	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, session.authenticated.ServerEndpoint, current.team.Id)
+	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, session.Authenticated().ServerEndpoint, current.Team().Id)
 }
 
-type domainClaimAPI interface {
-	ClaimTeamDomain(context.Context, string, string, string, bool) (authorityv1.Domain, error)
-	ListTeamDomains(context.Context, string) (authorityv1.DomainPage, error)
-}
-
-type domainClaimWait struct {
-	timeout time.Duration
-	poll    func(context.Context) error
-}
-
-func defaultDomainClaimWait() domainClaimWait {
-	return domainClaimWait{timeout: 3 * time.Minute, poll: func(ctx context.Context) error {
+func defaultDomainClaimWait() clientteam.DomainClaimWait {
+	return clientteam.DomainClaimWait{Timeout: 3 * time.Minute, Poll: func(ctx context.Context) error {
 		timer := time.NewTimer(2 * time.Second)
 		defer timer.Stop()
 		select {
@@ -92,51 +82,6 @@ func defaultDomainClaimWait() domainClaimWait {
 			return nil
 		}
 	}}
-}
-
-func claimAndWaitForDomainRecords(ctx context.Context, api domainClaimAPI, teamID, name, key string, makeDefault bool, wait domainClaimWait) (authorityv1.Domain, bool, error) {
-	claimed, err := api.ClaimTeamDomain(ctx, teamID, name, key, makeDefault)
-	if err != nil || claimed.State != authorityv1.DomainStatePending || len(claimed.RequiredRecords) != 0 {
-		return claimed, false, err
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, wait.timeout)
-	defer cancel()
-	for {
-		if err := wait.poll(waitCtx); err != nil {
-			if ctx.Err() != nil {
-				return claimed, false, ctx.Err()
-			}
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return claimed, true, nil
-			}
-			return claimed, false, err
-		}
-		if err := waitCtx.Err(); err != nil {
-			if ctx.Err() != nil {
-				return claimed, false, ctx.Err()
-			}
-			return claimed, true, nil
-		}
-		page, err := api.ListTeamDomains(waitCtx, teamID)
-		if err != nil {
-			if ctx.Err() != nil {
-				return claimed, false, ctx.Err()
-			}
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return claimed, true, nil
-			}
-			return claimed, false, err
-		}
-		if err := ctx.Err(); err != nil {
-			return claimed, false, err
-		}
-		if domain, ok := teamDomain(page.Domains, claimed.Id); ok {
-			claimed = domain
-			if len(domain.RequiredRecords) != 0 || domain.State != authorityv1.DomainStatePending {
-				return domain, false, nil
-			}
-		}
-	}
 }
 
 func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool) error {
@@ -176,17 +121,17 @@ func runDomainList(ctx context.Context, command domainListCommand, output, diagn
 		return err
 	}
 	defer session.Close()
-	current, err := session.currentWithDomains(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
 	blocks := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
-		clioutput.Field{Label: "team", Value: current.team.DisplayName},
+		clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
+		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
 	)}
-	for _, domain := range current.domains {
+	for _, domain := range current.Domains() {
 		title := domain.CanonicalDomain
-		if domain.Id == current.team.DefaultDomainId {
+		if domain.Id == current.Team().DefaultDomainId {
 			title = "* " + title
 		}
 		details := []clioutput.Block{clioutput.Fields(
@@ -197,7 +142,7 @@ func runDomainList(ctx context.Context, command domainListCommand, output, diagn
 		details = append(details, domainDNSRecordBlocks(domain.RequiredRecords)...)
 		blocks = append(blocks, clioutput.Section(title, details...))
 	}
-	return writeHumanFrame(output, "tnl domain list", countState(len(current.domains), "domain", "domains"), "* default", blocks...)
+	return writeHumanFrame(output, "tnl domain list", countState(len(current.Domains()), "domain", "domains"), "* default", blocks...)
 }
 
 func runDomainStatus(ctx context.Context, command domainStatusCommand, output, diagnostics io.Writer) error {
@@ -206,16 +151,15 @@ func runDomainStatus(ctx context.Context, command domainStatusCommand, output, d
 		return err
 	}
 	defer session.Close()
-	current, err := session.currentWithDomains(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
-	domain, ok := teamDomain(current.domains, command.Domain)
-	if !ok {
-		return failure.Wrap("select team domain", failure.DomainNotAvailable,
-			fmt.Errorf("domain %q is not available to the selected team", command.Domain))
+	domain, err := current.Domain(command.Domain)
+	if err != nil {
+		return err
 	}
-	return writeDomainStatus(output, domain, domain.Id == current.team.DefaultDomainId)
+	return writeDomainStatus(output, domain, domain.Id == current.Team().DefaultDomainId)
 }
 
 func writeDomainStatus(output io.Writer, domain authorityv1.Domain, isDefault bool) error {
@@ -286,8 +230,8 @@ func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (strin
 }
 
 func runDomainDefault(ctx context.Context, command domainDefaultCommand, output, diagnostics io.Writer) error {
-	return mutateDomain(ctx, command.selection(), "tnl domain default", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
-		team, err := session.api.SetTeamDefaultDomain(ctx, current.team.Id, domain.Id)
+	return mutateDomain(ctx, command.selection(), "tnl domain default", command.Domain, output, diagnostics, func(session *clientteam.Session, current clientteam.Context, domain authorityv1.Domain) error {
+		team, err := session.Authenticated().Authority.SetTeamDefaultDomain(ctx, current.Team().Id, domain.Id)
 		if err != nil {
 			return err
 		}
@@ -297,8 +241,8 @@ func runDomainDefault(ctx context.Context, command domainDefaultCommand, output,
 }
 
 func runDomainRelease(ctx context.Context, command domainReleaseCommand, output, diagnostics io.Writer) error {
-	return mutateDomain(ctx, command.selection(), "tnl domain release", command.Domain, output, diagnostics, func(session *teamSession, current teamContext, domain authorityv1.Domain) error {
-		if err := session.api.ReleaseTeamDomain(ctx, current.team.Id, domain.Id); err != nil {
+	return mutateDomain(ctx, command.selection(), "tnl domain release", command.Domain, output, diagnostics, func(session *clientteam.Session, current clientteam.Context, domain authorityv1.Domain) error {
+		if err := session.Authenticated().Authority.ReleaseTeamDomain(ctx, current.Team().Id, domain.Id); err != nil {
 			return err
 		}
 		return writeHumanTransition(output, "tnl domain release", "released", domain.CanonicalDomain, "", "domain released", "",
@@ -306,29 +250,19 @@ func runDomainRelease(ctx context.Context, command domainReleaseCommand, output,
 	})
 }
 
-func mutateDomain(ctx context.Context, flags remoteFlags, command, value string, output, diagnostics io.Writer, mutate func(*teamSession, teamContext, authorityv1.Domain) error) error {
+func mutateDomain(ctx context.Context, flags remoteFlags, command, value string, output, diagnostics io.Writer, mutate func(*clientteam.Session, clientteam.Context, authorityv1.Domain) error) error {
 	session, err := openTeamSession(ctx, flags, command, diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.currentWithDomains(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
-	domain, ok := teamDomain(current.domains, value)
-	if ok {
-		return mutate(session, current, domain)
+	domain, err := current.Domain(value)
+	if err != nil {
+		return err
 	}
-	return failure.Wrap("select team domain", failure.DomainNotAvailable,
-		fmt.Errorf("domain %q is not available to the selected team", value))
-}
-
-func teamDomain(domains []authorityv1.Domain, value string) (authorityv1.Domain, bool) {
-	for _, domain := range domains {
-		if domain.Id == value || domain.CanonicalDomain == value {
-			return domain, true
-		}
-	}
-	return authorityv1.Domain{}, false
+	return mutate(session, current, domain)
 }

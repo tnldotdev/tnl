@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/clientauth"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/zalando/go-keyring"
 )
 
@@ -101,7 +101,7 @@ func TestAuthStatusLocalJSONDoesNotExposeSavedCredentials(t *testing.T) {
 	if stderr.Len() != 0 || strings.Contains(stdout.String(), access.String()) || strings.Contains(stdout.String(), refresh.String()) {
 		t.Fatal("status emitted credential or diagnostic")
 	}
-	var status clientauth.StatusResult
+	var status auth.StatusResult
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}

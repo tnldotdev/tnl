@@ -1,0 +1,201 @@
+schemas:
+  IngressRegistration:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        ingress_id,
+        ingress_run_id,
+        protocol_version,
+        connection_capacity,
+        ingress_pool_id,
+        service_ports,
+      ]
+    properties:
+      ingress_pool_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      service_ports:
+        type: array
+        maxItems: 256
+        uniqueItems: true
+        description: Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+        items:
+          type: integer
+          minimum: 1024
+          maximum: 65535
+      connector_address:
+        type: string
+        maxLength: 512
+        description: Direct reachable endpoint for this ingress process; required for private visitor placement.
+      connector_tls_server_name:
+        type: string
+        maxLength: 253
+        description: Infrastructure TLS identity presented on the direct connector endpoint.
+      ingress_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      protocol_version:
+        type: integer
+        format: int64
+        minimum: 1
+      connection_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+  IngressLeaseIdentity:
+    type: object
+    additionalProperties: false
+    required: [ingress_id, ingress_run_id, ingress_lease_revision]
+    properties:
+      ingress_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+  IngressRenewal:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/IngressLeaseIdentity"
+      - type: object
+        required: [reported_connections, routing_table_revision]
+        properties:
+          reported_connections:
+            type: integer
+            format: int64
+            minimum: 0
+          routing_table_revision:
+            type: integer
+            format: int64
+            minimum: 0
+  IngressDrainRequest:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/IngressLeaseIdentity"
+      - type: object
+        required: [deadline]
+        properties:
+          deadline:
+            type: string
+            format: date-time
+  IngressLease:
+    type: object
+    additionalProperties: false
+    required:
+      - ingress_id
+      - ingress_run_id
+      - ingress_lease_revision
+      - protocol_version
+      - connection_capacity
+      - reported_connections
+      - routing_table_revision
+      - visitor_network_hash_keys
+      - draining
+      - registered_at
+      - renewed_at
+      - lease_expires_at
+    properties:
+      ingress_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      protocol_version:
+        type: integer
+        format: int64
+        minimum: 1
+      connection_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      reported_connections:
+        type: integer
+        format: int64
+        minimum: 0
+      routing_table_revision:
+        type: integer
+        format: int64
+        minimum: 0
+      visitor_network_hash_keys:
+        type: array
+        minItems: 2
+        maxItems: 2
+        description: Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one public URL.
+        items:
+          $ref: "../openapi.yaml#/components/schemas/VisitorNetworkHashKey"
+      draining:
+        type: boolean
+      drain_deadline:
+        type: string
+        format: date-time
+      registered_at:
+        type: string
+        format: date-time
+      renewed_at:
+        type: string
+        format: date-time
+      lease_expires_at:
+        type: string
+        format: date-time
+  IngressTrafficLimits:
+    type: object
+    additionalProperties: false
+    description: Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+    required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+    properties:
+      connections:
+        type: integer
+        minimum: 1
+        maximum: 1048576
+      rate:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      rate_per_ns:
+        type: integer
+        format: int64
+        minimum: 1000000
+        maximum: 86400000000000
+      burst:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      upload_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      download_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      total_connections:
+        type: integer
+        format: int64
+        minimum: 1
+      total_upload_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+      total_download_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+  VisitorNetworkHashKey:
+    type: object
+    additionalProperties: false
+    required: [utc_date, key]
+    properties:
+      utc_date:
+        type: string
+        format: date
+      key:
+        type: string
+        format: byte

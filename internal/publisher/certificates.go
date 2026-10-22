@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var (
@@ -68,7 +68,7 @@ func issueInitialCertificate(
 		var terminal *terminalCertificateIssuanceError
 		if errors.As(err, &terminal) && !retriedTerminal {
 			retriedTerminal = true
-		} else if !errors.Is(err, controlclient.ErrUnavailable) && !errors.Is(err, controlclient.ErrRateLimited) {
+		} else if !errors.Is(err, clientcontrol.ErrUnavailable) && !errors.Is(err, clientcontrol.ErrRateLimited) {
 			return material, err
 		}
 		if err := waitCertificateRetry(ctx, certificateRetryDelay(err)); err != nil {
@@ -255,7 +255,7 @@ func (*pendingCertificateIssuanceError) Error() string {
 	return "publisher: certificate issuance is pending"
 }
 
-func (*pendingCertificateIssuanceError) Unwrap() error { return controlclient.ErrUnavailable }
+func (*pendingCertificateIssuanceError) Unwrap() error { return clientcontrol.ErrUnavailable }
 
 func certificatePendingRetryDelay(err error) (time.Duration, bool) {
 	var pending *pendingCertificateIssuanceError
@@ -283,7 +283,7 @@ func certificateRetryDelay(err error) time.Duration {
 	if delay, ok := certificatePendingRetryDelay(err); ok {
 		return delay
 	}
-	var limited *controlclient.RateLimitError
+	var limited *clientcontrol.RateLimitError
 	if errors.As(err, &limited) && limited.RetryAfter > 0 {
 		return limited.RetryAfter
 	}
@@ -295,7 +295,7 @@ func certificateRenewalRetryDelay(err error, notAfter time.Time) time.Duration {
 	if pendingDelay, ok := certificatePendingRetryDelay(err); ok {
 		delay = pendingDelay
 	} else {
-		var limited *controlclient.RateLimitError
+		var limited *clientcontrol.RateLimitError
 		if errors.As(err, &limited) && limited.RetryAfter > 0 {
 			delay = limited.RetryAfter
 		}

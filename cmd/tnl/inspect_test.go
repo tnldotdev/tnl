@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/inspection"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
 
 func TestInspectProtocolAdapterGoldenJSON(t *testing.T) {
@@ -98,7 +99,7 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	primary, shared, err := inspectionRoots(t.Context(), project)
+	primary, shared, err := invocation.InspectionRoots(t.Context(), project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	primary, shared, err := inspectionRoots(t.Context(), project)
+	primary, shared, err := invocation.InspectionRoots(t.Context(), project)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,88 @@
+schemas:
+  VerifiedOIDCTeamContext:
+    description: The configured issuer signs this value in the tnl_team_contexts ID-token claim. Control binds it to the identity and newly created session after verifying the token and consuming its assertion. This schema is documentation, never a client authentication input.
+    type: object
+    additionalProperties: false
+    required:
+      [team_id, identity_connection_id, connection_revision, source_id, subject, authenticated_at]
+    properties:
+      team_id: { type: string }
+      identity_connection_id: { type: string }
+      connection_revision: { type: integer, format: int64, minimum: 1 }
+      subject: { type: string }
+      source_id: { type: string }
+      authenticated_at:
+        {
+          type: integer,
+          format: int64,
+          description: Unix seconds of actual company authentication; not token refresh time,
+        }
+  TeamFeedbackPolicy:
+    type: object
+    additionalProperties: false
+    required: [authors]
+    properties:
+      authors: { type: string, enum: [anyone, signed_in, team_members], default: anyone }
+  TeamID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  TeamRole:
+    type: string
+    enum: [member, admin, owner]
+  TeamKind:
+    type: string
+    enum: [personal, organization]
+  Team:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        id,
+        kind,
+        display_name,
+        managed_label,
+        default_domain_id,
+        policy_revision,
+        created_at,
+        updated_at,
+      ]
+    properties:
+      id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      kind:
+        $ref: "../openapi.yaml#/components/schemas/TeamKind"
+      display_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      managed_label:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      default_domain_id:
+        $ref: "../openapi.yaml#/components/schemas/DomainID"
+      policy_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+  TeamPage:
+    type: object
+    additionalProperties: false
+    required: [teams]
+    properties:
+      teams:
+        type: array
+        items:
+          $ref: "../openapi.yaml#/components/schemas/Team"
+      next_cursor:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+  CreateTeamRequest:
+    type: object
+    additionalProperties: false
+    required: [display_name]
+    properties:
+      display_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"
+      member_slug:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalLabel"

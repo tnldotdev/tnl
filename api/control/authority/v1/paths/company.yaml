@@ -1,0 +1,300 @@
+paths:
+  /v1/service/teams/{team_id}/identity-connections:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    get:
+      operationId: readCompanyConnections
+      summary: Read active and pending connections with current owner proof
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Current nonretired connection
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/CompanyConnections" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    post:
+      operationId: beginIdentityConnectionSetup
+      summary: Begin consent setup without changing current enforcement
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateIdentityConnectionRequest" }
+      responses:
+        "201":
+          description: Immutable team-bound connection and scoped provisioning credential
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IdentityConnectionSetup" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    delete:
+      operationId: disconnectIdentityConnection
+      summary: Abort pending consent or retire an active connection
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties:
+                expected_revision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "204": { description: Connection revision advanced and old source work fenced }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: activateIdentityConnection
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision, setup_token, provisioning_token]
+              properties:
+                expected_revision: { type: integer, format: int64, minimum: 1 }
+                setup_token: { type: string }
+                provisioning_token:
+                  type: string
+                  minLength: 43
+                  maxLength: 43
+                  pattern: "^[A-Za-z0-9_-]{43}$"
+                  description: Random 256-bit credential durably chosen by the owner before activation. Exact retries return this credential only while its digest remains current; they never rotate it. Requires the same setup capability and fresh current owner/source authorization.
+      responses:
+        "200":
+          description: Consent verified; source revision advanced and provisioning token issued
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IdentityConnectionSecret" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: rotateCompanyProvisioningToken
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties:
+                expected_revision: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Old provisioning credential revoked
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/IdentityConnectionSecret" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/company-eligibility:
+    post:
+      operationId: provisionCompanyEligibility
+      summary: Apply one revision-fenced eligibility delta without granting roles
+      description: Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+      security: [{ webServiceAuth: [] }]
+      parameters:
+        - { name: X-Tnl-Provisioning-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CompanyEligibilityRequest" }
+      responses:
+        "204": { description: Eligibility recorded; managed admission creates only member access }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: membership_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    put:
+      operationId: setCompanyMembershipDecision
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [suspended, personal_account_exception]
+              properties:
+                suspended: { type: boolean }
+                personal_account_exception: { type: boolean }
+      responses:
+        "204": { description: Independent owner decision recorded and audited }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: invitation_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    put:
+      operationId: setCompanyInvitationException
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [personal_account_exception]
+              properties:
+                personal_account_exception: { type: boolean }
+      responses:
+        "204": { description: Pending invitation owner exception recorded }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/company-admissions:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    get:
+      operationId: listCompanyAdmissions
+      security: [{ webServiceAuth: [] }]
+      description: Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
+      parameters:
+        - name: cursor
+          in: query
+          description: The previous page's next_cursor, scoped to this team. Omit for the first page.
+          schema: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
+      responses:
+        "200":
+          description: At most 100 control-owned admission requests and a cursor when more remain
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/CompanyAdmissionPage" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/company-admissions/{request_id}:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: request_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "../openapi.yaml#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: decideCompanyAdmission
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [connection_revision, decision]
+              properties:
+                connection_revision: { type: integer, format: int64 }
+                decision:
+                  {
+                    type: string,
+                    enum: [approved, denied],
+                    x-enum-varnames: [AdmissionApproved, AdmissionDenied],
+                  }
+      responses:
+        "204": { description: Current owner decision applied without role escalation }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/auth/company-admissions:
+    post:
+      operationId: requestCompanyAdmission
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id, identity_connection_id, connection_revision, member_slug]
+              properties:
+                team_id: { type: string }
+                identity_connection_id: { type: string }
+                connection_revision: { type: integer, format: int64 }
+                member_slug: { type: string }
+      responses:
+        "200":
+          description: Eligible user request; managed admission may complete immediately
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/CompanyAdmissionRequest" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/auth/company-intents:
+    post:
+      operationId: createCompanyLoginIntent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id]
+              properties:
+                team_id: { type: string }
+      responses:
+        "201":
+          description: Exact current company selection and control-owned OIDC callback binding
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/CompanyLoginIntent" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/auth/company-intents/{intent_id}/resolve:
+    parameters:
+      - { name: intent_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: resolveCompanyLoginIntent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CompanyIntentCredential" }
+      responses:
+        "200":
+          description: Bound selection for the issuer or control browser handler
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/CompanyLoginIntent" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/company-access/recovery:
+    post:
+      operationId: recoverCompanyOwner
+      summary: Explicit audited recovery grants a personal-account exception to a nonremoved owner
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id, membership_id]
+              properties:
+                team_id: { type: string }
+                membership_id: { type: string }
+      responses:
+        "204":
+          { description: Current owner or server administrator explicitly recovered this owner }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

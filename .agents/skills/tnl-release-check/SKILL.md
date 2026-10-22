@@ -8,7 +8,7 @@ compatibility: opencode
 
 Use the same `release:check:plan` and `release:check:run` tasks for every server.
 They run a small functional check with the released `tnl` binary, not a load
-benchmark. Follow [deployed release checks](../../../docs/maintainers/release-checks.md).
+benchmark. Follow [deployed release checks](../../../docs/maintainers/releases/release-checks.md).
 
 1. Confirm the signed release version and deployed image digest. Use that
    release's `tnl` binary with an explicit `--server` and `--state-dir`. Run

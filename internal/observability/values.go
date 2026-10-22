@@ -5,19 +5,19 @@ import "slices"
 type ServiceKind uint8
 
 const (
-	ManagedService ServiceKind = iota + 1
+	Service ServiceKind = iota + 1
 	PublicURL
 )
 
 func (v ServiceKind) String() string {
-	return enumString([]string{"", "managed_service", "public_url"}, int(v))
+	return enumString([]string{"", "service", "public_url"}, int(v))
 }
 
-// NormalizeServiceKind translates the private_service wire value at the boundary.
+// NormalizeServiceKind translates the service wire value at the boundary.
 func NormalizeServiceKind(value string) ServiceKind {
 	switch value {
-	case "private_service", "managed_service":
-		return ManagedService
+	case "service":
+		return Service
 	case "public_url":
 		return PublicURL
 	default:

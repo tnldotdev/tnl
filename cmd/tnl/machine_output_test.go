@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -36,7 +36,7 @@ func TestMachineCommandFailureBeforeParsing(t *testing.T) {
 }
 
 func TestCommandDiagnosticPreservesOwnedRetryDecision(t *testing.T) {
-	err := failure.Wrap("recovery", failure.ServerResponseInvalid, controlclient.ErrUnavailable)
+	err := failure.Wrap("recovery", failure.ServerResponseInvalid, clientcontrol.ErrUnavailable)
 	result := commandDiagnosticFor(err)
 	if result.Reason != string(failure.ServerResponseInvalid) || result.Retryable {
 		t.Fatalf("cause replaced owned failure meaning: %+v", result)

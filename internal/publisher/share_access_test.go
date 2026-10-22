@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type shareDeadlineConn struct {

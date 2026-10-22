@@ -6,7 +6,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publisherGroupRenameCommand struct {
@@ -28,18 +28,18 @@ func runPublisherGroupRename(ctx context.Context, flags publisherGroupRenameComm
 		return err
 	}
 	defer session.Close()
-	current, err := session.currentWithDomains(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
-	applied, err := session.authenticated.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	applied, err := session.Authenticated().Control.GetProjectConfiguration(ctx, current.Team().Id, source.Key)
 	if err != nil {
 		return err
 	}
 	if applied.SourceFingerprint != source.Fingerprint {
 		return publisherCLIError("applied project belongs to another configuration source")
 	}
-	_, err = session.authenticated.Control.RenamePublisherGroup(ctx, source.Key, flags.Group, controlv1.RenamePublisherGroupRequest{TeamId: current.team.Id, Name: flags.Name, ExpectedRevision: applied.Revision})
+	_, err = session.Authenticated().Control.RenamePublisherGroup(ctx, source.Key, flags.Group, controlv1.RenamePublisherGroupRequest{TeamId: current.Team().Id, Name: flags.Name, ExpectedRevision: applied.Revision})
 	if err != nil {
 		return err
 	}

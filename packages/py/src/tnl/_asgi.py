@@ -150,8 +150,8 @@ class Tunnel:
         serve_task: asyncio.Task[None],
         listener: socket.socket,
         directory: str,
-        publisher_file: str | None,
-        publisher_id: str | None,
+        publisher_credential_file: str | None,
+        publisher_identity_id: str | None,
         server_url: str | None,
         state_dir: str | None,
         access_mode: str | None,
@@ -175,10 +175,10 @@ class Tunnel:
             "pid": os.getpid(),
             "target": self._target,
         }
-        if publisher_file is not None:
-            self._payload["publisher_file"] = publisher_file
-        if publisher_id is not None:
-            self._payload["publisher_id"] = publisher_id
+        if publisher_credential_file is not None:
+            self._payload["publisher_credential_file"] = publisher_credential_file
+        if publisher_identity_id is not None:
+            self._payload["publisher_identity_id"] = publisher_identity_id
         if server_url is not None:
             self._payload["server_url"] = server_url
         self._registration: dict[str, object] | None = None
@@ -432,8 +432,8 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
 async def open(
     app: ASGIApp,
     *,
-    publisher_file: str | Path | None = None,
-    publisher_id: str | None = None,
+    publisher_credential_file: str | Path | None = None,
+    publisher_identity_id: str | None = None,
     server: str | None = None,
     directory: str | Path | None = None,
     state_dir: str | Path | None = None,
@@ -443,22 +443,24 @@ async def open(
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
-    if publisher_file is not None and publisher_id is not None:
+    if publisher_credential_file is not None and publisher_identity_id is not None:
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running native owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
-    if publisher_file is None and publisher_id is None:
-        publisher_file = os.getenv("TNL_PUBLISHER_FILE")
-    if publisher_file is not None and (
-        not isinstance(publisher_file, str | Path)
-        or not Path(publisher_file).is_absolute()
-        or not 0 < len(str(publisher_file)) <= 4096
-        or "\0" in str(publisher_file)
+    if publisher_credential_file is None and publisher_identity_id is None:
+        publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
+    if publisher_credential_file is not None and (
+        not isinstance(publisher_credential_file, str | Path)
+        or not Path(publisher_credential_file).is_absolute()
+        or not 0 < len(str(publisher_credential_file)) <= 4096
+        or "\0" in str(publisher_credential_file)
     ):
-        raise TnlError("sdk.configuration_invalid", "publisher_file must be an absolute path")
-    if publisher_id is not None and (
-        not isinstance(publisher_id, str)
-        or re.fullmatch(r"pub_[A-Za-z0-9]{22}", publisher_id) is None
+        raise TnlError(
+            "sdk.configuration_invalid", "publisher_credential_file must be an absolute path"
+        )
+    if publisher_identity_id is not None and (
+        not isinstance(publisher_identity_id, str)
+        or re.fullmatch(r"pub_[A-Za-z0-9]{22}", publisher_identity_id) is None
     ):
         raise TnlError("sdk.configuration_invalid", "pass a stored publisher ID")
     if server is not None:
@@ -484,8 +486,8 @@ async def open(
         task,
         listener,
         root,
-        None if publisher_file is None else str(publisher_file),
-        publisher_id,
+        None if publisher_credential_file is None else str(publisher_credential_file),
+        publisher_identity_id,
         server,
         None if state_dir is None else str(state_dir),
         access_mode,

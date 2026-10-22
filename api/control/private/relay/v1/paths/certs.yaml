@@ -1,0 +1,39 @@
+paths:
+  /internal/v1/relay-services/{relay_service_id}/certificate:
+    get:
+      operationId: getRelayTransportCertificate
+      summary: Retrieve the current relay transport certificate and private key
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/RelayServiceID"
+        - name: relay_id
+          in: query
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/Identifier"
+        - name: relay_run_id
+          in: query
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/Identifier"
+        - name: relay_lease_revision
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Current relay transport certificate and private key
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/RelayTransportCertificate"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

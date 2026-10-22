@@ -8,7 +8,7 @@ import (
 	"crypto/rand"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlstate"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 )
 
 func Session(ctx context.Context, d *controlstate.Database, domain string, access, refresh time.Duration, now time.Time) (controlstate.ControlSession, error) {

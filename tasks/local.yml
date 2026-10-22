@@ -1,0 +1,100 @@
+version: "3"
+
+tasks:
+  dev:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Run the local development stack
+    deps: [":local:certificates"]
+    cmds:
+      - docker compose --file development/local/compose.yaml up --build
+
+  certificates:
+    dir: "{{.ROOT_DIR}}"
+    internal: true
+    status:
+      - test -s .local/certs/local.crt
+      - test -s .local/certs/local.key
+      - test -s .local/certs/local-root.pem
+    cmds:
+      - install -d -m 0700 .local/certs
+      - openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=tnl-local-root -keyout .local/certs/local-root.key -out .local/certs/local-root.pem
+      - openssl req -newkey rsa:2048 -nodes -subj /CN=localhost -keyout .local/certs/local.key -out .local/certs/local.csr
+      - printf 'subjectAltName=DNS:*.127.0.0.1.nip.io\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' | openssl x509 -req -sha256 -days 825 -in .local/certs/local.csr -CA .local/certs/local-root.pem -CAkey .local/certs/local-root.key -CAcreateserial -extfile /dev/stdin -out .local/certs/local.crt
+      - chmod 0600 .local/certs/local-root.key .local/certs/local.key
+
+  up:
+    dir: "{{.ROOT_DIR}}"
+    desc: Start the local services in the background
+    deps: [":local:certificates"]
+    cmds:
+      - docker compose --file development/local/compose.yaml up --build --detach
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert development/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io:8445/v1/ready
+
+  trust:
+    dir: "{{.ROOT_DIR}}"
+    desc: Trust the local control and Pebble issuance roots on macOS
+    preconditions:
+      - sh: test -s .local/certs/local-root.pem
+        msg: Run task local:up first
+      - sh: test -s .local/certs/pebble-root.pem
+        msg: Run task local:up first
+      - sh: test "$(uname -s)" = Darwin
+        msg: Automatic local CA trust is currently supported only on macOS
+    cmds:
+      - |
+        set -eu
+        keychain="$HOME/Library/Keychains/login.keychain-db"
+        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
+          fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+          security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+          security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root"
+        done
+
+  untrust:
+    dir: "{{.ROOT_DIR}}"
+    desc: Remove the local control and Pebble issuance roots from the macOS keychain
+    cmds:
+      - |
+        set -eu
+        if [ "$(uname -s)" != Darwin ]; then
+          exit 0
+        fi
+        keychain="$HOME/Library/Keychains/login.keychain-db"
+        for root in .local/certs/local-root.pem .local/certs/pebble-root.pem; do
+          if [ -s "$root" ]; then
+            fingerprint="$(openssl x509 -in "$root" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+            security delete-certificate -Z "$fingerprint" "$keychain" >/dev/null 2>&1 || true
+          fi
+        done
+
+  login:
+    dir: "{{.ROOT_DIR}}"
+    desc: Authenticate the isolated local client through local OIDC browser approval
+    cmds:
+      - |
+        TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state \
+          go run ./cmd/tnl auth login --team local --open
+
+  tnl:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run the isolated local client; pass arguments after --
+    requires:
+      vars: [CLI_ARGS]
+    cmds:
+      - TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
+
+  down:
+    dir: "{{.ROOT_DIR}}"
+    desc: Stop the local services without removing state
+    cmds:
+      - docker compose --file development/local/compose.yaml stop
+
+  reset:
+    dir: "{{.ROOT_DIR}}"
+    desc: Remove local services, trust, and persistent state
+    cmds:
+      - task: :local:untrust
+      - docker compose --file development/local/compose.yaml down --volumes --remove-orphans
+      - rm -rf .local

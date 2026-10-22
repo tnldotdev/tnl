@@ -1,0 +1,166 @@
+schemas:
+  RelayRegistration:
+    type: object
+    additionalProperties: false
+    required:
+      - relay_service_id
+      - relay_id
+      - relay_run_id
+      - protocol_version
+      - relay_address
+      - tls_server_name
+      - internal_relay_address
+      - internal_networks
+      - connection_capacity
+      - stream_capacity
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      protocol_version:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      internal_relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      internal_networks:
+        type: array
+        maxItems: 64
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 3
+          maxLength: 43
+      connection_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      stream_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+  RelayLeaseIdentity:
+    type: object
+    additionalProperties: false
+    required: [relay_service_id, relay_id, relay_run_id, relay_lease_revision]
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+  RelayRenewal:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/RelayLeaseIdentity"
+      - type: object
+        required: [reported_connections, reported_streams]
+        properties:
+          reported_connections:
+            type: integer
+            format: int64
+            minimum: 0
+          reported_streams:
+            type: integer
+            format: int64
+            minimum: 0
+  RelayDrainRequest:
+    unevaluatedProperties: false
+    allOf:
+      - $ref: "../openapi.yaml#/components/schemas/RelayLeaseIdentity"
+      - type: object
+        required: [deadline]
+        properties:
+          deadline:
+            type: string
+            format: date-time
+  RelayLease:
+    type: object
+    additionalProperties: false
+    required:
+      - relay_service_id
+      - relay_id
+      - relay_run_id
+      - relay_lease_revision
+      - protocol_version
+      - relay_address
+      - tls_server_name
+      - internal_relay_address
+      - internal_networks
+      - connection_capacity
+      - stream_capacity
+      - reported_connections
+      - reported_streams
+      - draining
+      - registered_at
+      - renewed_at
+      - lease_expires_at
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      relay_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      protocol_version:
+        type: integer
+        format: int64
+        minimum: 1
+      relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      internal_relay_address:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      observed_address:
+        type: string
+      internal_networks:
+        type: array
+        items:
+          type: string
+      connection_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      stream_capacity:
+        type: integer
+        format: int64
+        minimum: 1
+      reported_connections:
+        type: integer
+        format: int64
+        minimum: 0
+      reported_streams:
+        type: integer
+        format: int64
+        minimum: 0
+      draining:
+        type: boolean
+      drain_deadline:
+        type: string
+        format: date-time
+      registered_at:
+        type: string
+        format: date-time
+      renewed_at:
+        type: string
+        format: date-time
+      lease_expires_at:
+        type: string
+        format: date-time

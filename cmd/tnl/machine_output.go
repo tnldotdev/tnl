@@ -6,10 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorityclient"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 )
 
 // commandDiagnostic is shared by finite command failures and publish events.
@@ -32,8 +32,8 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 	if reason, definition, ok := failure.Describe(err); ok && string(reason) == result.Reason {
 		result.Retryable = definition.Retry == failure.RetryLater
 	} else {
-		result.Retryable = errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) ||
-			errors.Is(err, authorityclient.ErrUnavailable) || errors.Is(err, authorityclient.ErrRateLimited)
+		result.Retryable = errors.Is(err, clientcontrol.ErrUnavailable) || errors.Is(err, clientcontrol.ErrRateLimited) ||
+			errors.Is(err, clientauthority.ErrUnavailable) || errors.Is(err, clientauthority.ErrRateLimited)
 	}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		result.Code, result.HelpURL = string(code), diagnostic.HelpURLForError(err)
@@ -44,8 +44,8 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 		result.Action = "run tnl auth login explicitly, then retry this command"
 		result.Command = []string{"tnl", "auth", "login", "start", "--output", "json"}
 	}
-	var limited *controlclient.RateLimitError
-	var authorityLimited *authorityclient.RateLimitError
+	var limited *clientcontrol.RateLimitError
+	var authorityLimited *clientauthority.RateLimitError
 	delay := time.Duration(0)
 	if errors.As(err, &limited) {
 		delay = limited.RetryAfter

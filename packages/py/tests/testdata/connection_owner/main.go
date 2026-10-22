@@ -24,8 +24,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgproto3"
 
-	"github.com/tnldotdev/tnl/internal/connectionruntime"
-	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 )
 
 type backend struct {
@@ -36,25 +36,25 @@ type backend struct {
 	listeners  []net.Listener
 }
 
-func (b *backend) Start(context.Context) (projectmeta.PublicMetadata, time.Time, error) {
-	service, err := projectmeta.NewEndpoint("example.test", "database.example.test", "postgres", 15443, false)
-	stream, streamErr := projectmeta.NewEndpoint("example.test", "stream.example.test", "tcp", 15444, false)
+func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
+	service, err := meta.NewEndpoint("example.test", "database.example.test", "postgres", 15443, false)
+	stream, streamErr := meta.NewEndpoint("example.test", "stream.example.test", "tcp", 15444, false)
 	if err == nil {
 		err = streamErr
 	}
-	return projectmeta.PublicMetadata{Namespace: "example.test", Services: map[string]projectmeta.Service{"database": service, "stream": stream}}, b.expires, err
+	return meta.PublicMetadata{Namespace: "example.test", Services: map[string]meta.Service{"database": service, "stream": stream}}, b.expires, err
 }
-func (b *backend) Connect(_ context.Context, service string) (connectionruntime.Connection, error) {
+func (b *backend) Connect(_ context.Context, service string) (connectorruntime.Connection, error) {
 	if service == "stream" {
-		return connectionruntime.Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: b.streamPort, ExpiresAt: b.expires}, nil
+		return connectorruntime.Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: b.streamPort, ExpiresAt: b.expires}, nil
 	}
 	if service != "database" {
-		return connectionruntime.Connection{}, connectionruntime.ErrInvalid
+		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
 	}
-	return connectionruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: b.port, SSL: &connectionruntime.TLSOptions{ServerName: "database.example.test", RejectUnauthorized: true, CA: b.ca}, ExpiresAt: b.expires}, nil
+	return connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: b.port, SSL: &connectorruntime.TLSOptions{ServerName: "database.example.test", RejectUnauthorized: true, CA: b.ca}, ExpiresAt: b.expires}, nil
 }
 func (b *backend) Renew(context.Context) (time.Time, error) { return b.expires, nil }
-func (b *backend) Prepared(service string) (connectionruntime.Connection, error) {
+func (b *backend) Prepared(service string) (connectorruntime.Connection, error) {
 	return b.Connect(context.Background(), service)
 }
 func (b *backend) Close(context.Context) error {
@@ -90,7 +90,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	directory, err := connectionruntime.NewDirectory(parent)
+	directory, err := connectorruntime.NewDirectory(parent)
 	if err != nil {
 		return err
 	}
@@ -117,9 +117,9 @@ func run() error {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	go echo(stream, nil, false)
 	go echo(listener, tlsConfig, *postgresAuth)
-	scope := connectionruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "project", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
+	scope := connectorruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "project", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
 	b := &backend{expires: expires, ca: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), port: listener.Addr().(*net.TCPAddr).Port, streamPort: stream.Addr().(*net.TCPAddr).Port, listeners: []net.Listener{listener, stream}}
-	return connectionruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
+	return connectorruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
 }
 
 func echo(listener net.Listener, tlsConfig *tls.Config, postgresAuth bool) {

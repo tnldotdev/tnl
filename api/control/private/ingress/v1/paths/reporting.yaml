@@ -1,0 +1,88 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/service-observations:
+    post:
+      operationId: reportIngressServiceObservations
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
+        - { $ref: "../openapi.yaml#/components/parameters/IngressRunID" }
+        - { $ref: "../openapi.yaml#/components/parameters/IngressLeaseRevision" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [events]
+              properties:
+                events:
+                  {
+                    type: array,
+                    minItems: 1,
+                    maxItems: 256,
+                    items:
+                      {
+                        $ref: "../../../../public/v1/openapi.yaml#/components/schemas/ServiceObservation",
+                      },
+                  }
+      responses:
+        "200":
+          {
+            description: Accepted and duplicate observation counters,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        $ref: "../../../../public/v1/openapi.yaml#/components/schemas/ServiceObservationResult",
+                      },
+                  },
+              },
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/usage-reports:
+    post:
+      operationId: reportIngressUsage
+      summary: Store cumulative public URL usage from one ingress process run
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/IngressUsageReportBatch"
+      responses:
+        "204":
+          description: Usage reports committed or replayed
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
+  /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
+    post:
+      operationId: observePublicURLRecovery
+      summary: Record the first publisher byte after public URL recovery
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IngressID"
+        - name: recovery_episode_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/PublicURLRecoveryObservationRequest"
+      responses:
+        "200":
+          description: Recovery observation committed or replayed
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/PublicURLRecoveryObservation"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

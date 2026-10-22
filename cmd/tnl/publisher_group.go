@@ -12,17 +12,18 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
-	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
-	"github.com/tnldotdev/tnl/internal/publisherjob"
-	"github.com/tnldotdev/tnl/internal/publisherprovenance"
-	"github.com/tnldotdev/tnl/internal/targetdiscovery"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
+	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type publisherServeCommand struct {
@@ -66,7 +67,7 @@ func validatePublisherServe(flags publisherServeCommand) error {
 }
 
 func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollCommand, project projectConfiguration, output, diagnostics io.Writer) error {
-	if flags.Group == "local" || !naming.ValidServiceName(flags.Group) || flags.PublicURLID != "" || flags.PrivateServiceID != "" || flags.Namespace || flags.Domain != "" || flags.Automation {
+	if flags.Group == "local" || !naming.ValidServiceName(flags.Group) || flags.PublicURLID != "" || flags.ServiceID != "" || flags.Namespace || flags.Domain != "" || flags.Automation {
 		return publisherCLIError("select --group NAME for a one-use configured-group bootstrap")
 	}
 	members, expires, err := publisherGroupEnrollmentBounds(flags)
@@ -80,7 +81,7 @@ func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollComma
 			return err
 		}
 		key = source.Key
-		if _, ok := project.Config.Publishers[flags.Group]; !ok {
+		if _, ok := project.Config.PublisherGroups[flags.Group]; !ok {
 			return publisherCLIError("publisher group is not configured in this project")
 		}
 	}
@@ -89,16 +90,16 @@ func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollComma
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	enrollment, err := session.authenticated.Control.CreatePublisherGroupEnrollment(ctx, key, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.team.Id, MaxMembers: members, ExpiresIn: expires})
+	enrollment, err := session.Authenticated().Control.CreatePublisherGroupEnrollment(ctx, key, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.Team().Id, MaxMembers: members, ExpiresIn: expires})
 	if err != nil {
 		return err
 	}
 	if enrollment.EnrollmentKey == "" || enrollment.MaxMembers != members || !enrollment.ExpiresAt.After(time.Now()) {
-		return grouppublisher.ErrAssignment
+		return publishergroup.ErrAssignment
 	}
 	_, err = fmt.Fprintln(output, enrollment.EnrollmentKey)
 	return err
@@ -123,7 +124,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err := validatePublisherServe(flags); err != nil {
 		return err
 	}
-	var options publisherjob.ServiceOptions
+	var options supervisor.ServiceOptions
 	var err error
 	if flags.Install {
 		options, err = (systemStateFlags{SystemStateDir: flags.SystemStateDir}).options()
@@ -164,7 +165,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 			return err
 		}
 	}
-	groupClient, err := grouppublisher.NewClient(server, nil)
+	groupClient, err := publishergroup.NewClient(server, nil)
 	if err != nil {
 		return err
 	}
@@ -201,7 +202,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	var private ed25519.PrivateKey
 	if found {
 		if json.Unmarshal(saved.PublicDocument, &member) != nil || member.PublisherIdentityId == "" {
-			return grouppublisher.ErrAssignment
+			return publishergroup.ErrAssignment
 		}
 		// a restarted task keeps proving its existing key. an enrollment secret
 		// left in the deployment environment is neither needed nor redeemed again.
@@ -226,12 +227,12 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 			}
 		}
 		if len(pending.SigningKey) != ed25519.PrivateKeySize {
-			return nativeauth.ErrScope
+			return publisheridentity.ErrScope
 		}
 		if len(pending.ResultJSON) == 0 && (len(pending.EnrollmentSecret) == 0 || flags.EnrollmentKey != "") {
 			secret := ""
 			if flags.EnrollmentKey != "" {
-				secret, err = enrollmentKeyInput(flags.EnrollmentKey, os.Stdin)
+				secret, err = invocation.EnrollmentKeyInput(flags.EnrollmentKey, os.Stdin)
 			} else {
 				remote := flags.selection()
 				remote.ServerURL = server
@@ -240,11 +241,11 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 					return err
 				}
 				defer session.Close()
-				current, err := session.current(ctx)
+				current, err := session.Current(ctx)
 				if err != nil {
 					return err
 				}
-				enrollment, err := session.authenticated.Control.CreatePublisherGroupEnrollment(ctx, flags.ProjectKey, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.team.Id, MaxMembers: 1, ExpiresIn: 600})
+				enrollment, err := session.Authenticated().Control.CreatePublisherGroupEnrollment(ctx, flags.ProjectKey, flags.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.Team().Id, MaxMembers: 1, ExpiresIn: 600})
 				if err != nil {
 					return err
 				}
@@ -263,7 +264,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		private = ed25519.PrivateKey(pending.SigningKey)
 		if len(pending.ResultJSON) != 0 {
 			if json.Unmarshal(pending.ResultJSON, &member) != nil {
-				return grouppublisher.ErrAssignment
+				return publishergroup.ErrAssignment
 			}
 		} else {
 			member, err = groupClient.Enroll(ctx, string(pending.EnrollmentSecret), private.Public().(ed25519.PublicKey))
@@ -272,7 +273,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 			}
 		}
 		if member.ProjectKey != flags.ProjectKey || member.GroupId == "" || member.PublisherIdentityId == "" || member.KeyId == "" {
-			return grouppublisher.ErrAssignment
+			return publishergroup.ErrAssignment
 		}
 		data, err := json.Marshal(member)
 		if err != nil {
@@ -286,7 +287,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		}
 	}
 	if member.ProjectKey != flags.ProjectKey || len(private) != ed25519.PrivateKeySize {
-		return grouppublisher.ErrAssignment
+		return publishergroup.ErrAssignment
 	}
 	value, err := credentialfile.NewGroup(server, flags.Instance, member, private)
 	if err != nil {
@@ -296,10 +297,10 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err != nil {
 		return err
 	}
-	job := publisherjob.Job{Kind: publisherjob.KindGroup, ID: publisherjob.JobKey(server, "group", member.GroupId+":"+flags.Instance), Name: flags.Group + "-" + flags.Instance, Server: server, PublisherID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: flags.Instance}
+	job := supervisor.Job{Kind: supervisor.KindGroup, ID: supervisor.JobKey(server, "group", member.GroupId+":"+flags.Instance), Name: flags.Group + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, GroupMember: &member, GroupInstance: flags.Instance}
 	job.IdentityDir = profile.IdentityDirectory()
 	if flags.Install {
-		registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: options.Root, User: true})
+		registry, err := supervisor.Open(ctx, supervisor.OpenOptions{Root: options.Root, User: true})
 		if err != nil {
 			return err
 		}
@@ -334,17 +335,17 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	})
 }
 
-func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) error {
+func servePublisherGroup(ctx context.Context, job supervisor.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) error {
 	return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, nil)
 }
 
-func servePublisherGroupWithDiscovery(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider targetdiscovery.Provider) error {
+func servePublisherGroupWithDiscovery(ctx context.Context, job supervisor.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider publisherdiscovery.Provider) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
 	if err != nil {
 		return err
 	}
 	if provider == nil {
-		provider = targetdiscovery.AWS{}
+		provider = publisherdiscovery.AWS{}
 	}
-	return (publisherjob.GroupRunner{Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
+	return (supervisor.GroupRunner{Discovery: provider, Deployment: deployment}).Serve(ctx, job, profile, private, observe)
 }

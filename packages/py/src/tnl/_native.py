@@ -200,7 +200,9 @@ class NativeRuntime:
                         "runtime.owner_conflict": "sdk.owner_conflict",
                         "runtime.authentication_required": "sdk.authentication_required",
                         "runtime.publisher_setup_required": "sdk.publisher_setup_required",
-                        "runtime.publisher_file_invalid": "sdk.publisher_file_invalid",
+                        "runtime.publisher_credential_file_invalid": (
+                            "sdk.publisher_credential_file_invalid"
+                        ),
                     }.get(value["code"], "sdk.request_rejected")
                     if response.status_code >= 500 and code == "sdk.request_rejected":
                         raise NativeUnavailable()
@@ -209,7 +211,7 @@ class NativeRuntime:
                             "no namespace publisher is set up; run tnl publisher setup"
                             " --namespace, then try again"
                         ),
-                        "sdk.publisher_file_invalid": (
+                        "sdk.publisher_credential_file_invalid": (
                             "the selected publisher file is invalid; check the file"
                             " and its permissions"
                         ),

@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 )
 

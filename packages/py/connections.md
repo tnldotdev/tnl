@@ -14,10 +14,10 @@ assert db.ssl.check_hostname
 
 The result is an immutable, non-awaitable Python object. `db.ssl` is a Python
 `ssl.SSLContext` with certificate verification and hostname checks enabled.
-`db.server_hostname` is the managed service hostname, while `db.host` and
+`db.server_hostname` is the service hostname, while `db.host` and
 `db.port` select the actual native loopback listener. `db.ca` is optional PEM
 trust data, not a path. Client certificates and private keys never enter Python.
-HTTP snapshots also have `url`, the managed HTTPS origin, independent of the
+HTTP snapshots also have `url`, the service HTTPS origin, independent of the
 loopback port. Kubernetes snapshots also have `kubeconfig` and `context` from
 the native owner; use that kubeconfig's native credential plugin.
 Opaque TCP snapshots have only `host`, `port`, `protocol`, and `expires_at`;
@@ -58,7 +58,7 @@ tnl --no-telemetry runtime connections read --handle FILE --service NAME
 tnl --no-telemetry runtime connections stop --handle FILE
 ```
 
-Startup returns `private_handle`, `executable`, and `public_runtime`. The SDK
+Startup returns `connection_handle`, `executable`, and `project_runtime`. The SDK
 keeps the handle private and uses its selected wheel binary for later calls.
 Native code owns handle-file permissions, configuration/credential binding,
 authorization, listener setup, renewal, and cleanup. Python passes no secrets in

@@ -1,0 +1,276 @@
+schemas:
+  ServiceInvitationCredential:
+    type: object
+    additionalProperties: false
+    required: [secret]
+    properties:
+      secret: { type: string, minLength: 32, maxLength: 128 }
+  ServiceSelection:
+    type: object
+    additionalProperties: false
+    required:
+      [service_id, service_run_id, run_number, subject, expires_at, protocol, trust_revision]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      expires_at: { type: string, format: date-time }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+  ServiceID:
+    type: string
+    pattern: "^svc_[A-Za-z0-9]{22}$"
+  ServiceInvitationID:
+    type: string
+    pattern: "^sivt_[A-Za-z0-9]{22}$"
+  ServiceGrantID:
+    type: string
+    pattern: "^sgr_[A-Za-z0-9]{22}$"
+  ServiceName:
+    type: string
+    pattern: "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+    maxLength: 32
+  CreateServiceRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, name]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
+      publisher_pool: { type: boolean, default: false }
+      placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
+  ServicePlacement:
+    type: object
+    additionalProperties: false
+    properties:
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      worktree_key: { type: string, minLength: 1, maxLength: 128 }
+      worktree_label: { type: string, minLength: 1, maxLength: 63 }
+  ServiceProtocol:
+    type: string
+    enum: [http, tcp, mysql, postgres, kubernetes]
+    x-enum-varnames: [ServiceProtocolHTTP, Tcp, Mysql, Postgres, Kubernetes]
+  ServiceTargetTLS:
+    type: object
+    additionalProperties: false
+    required: [hostname, system, digest]
+    description: Approved publisher-to-target trust. This never selects or disables visitor TLS.
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      system: { type: boolean }
+      pem: { type: string, maxLength: 1048576 }
+      digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+  ServiceMetadata:
+    type: object
+    additionalProperties: false
+    required: [protocol, publisher_pool, trust_revision]
+    properties:
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
+      publisher_pool: { type: boolean }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+  ServiceRunDeclaration:
+    type: object
+    additionalProperties: false
+    required: [protocol, trust_revision]
+    properties:
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+  Service:
+    type: object
+    additionalProperties: false
+    description: Saved service and its approved protocol/TLS trust. service_run_id and run_number are an optional ready-publisher hint; select a run before each new connection.
+    required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+    dependentRequired:
+      service_run_id: [run_number]
+      run_number: [service_run_id]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      placement: { $ref: "../openapi.yaml#/components/schemas/ServicePlacement" }
+      source: { $ref: "../openapi.yaml#/components/schemas/LocalServiceSource" }
+      name: { $ref: "../openapi.yaml#/components/schemas/ServiceName" }
+      enabled: { type: boolean }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      http_limits:
+        $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits"
+        description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
+      target_tls: { $ref: "../openapi.yaml#/components/schemas/ServiceTargetTLS" }
+      publisher_pool: { type: boolean }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      created_at: { type: string, format: date-time }
+      service_run_id:
+        {
+          $ref: "../openapi.yaml#/components/schemas/ServiceRunID",
+          description: Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.,
+        }
+      run_number:
+        {
+          type: integer,
+          format: int64,
+          minimum: 1,
+          description: Present only alongside service_run_id.,
+        }
+  ServicePage:
+    type: object
+    additionalProperties: false
+    description: At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
+    required: [services]
+    properties:
+      services:
+        {
+          type: array,
+          maxItems: 100,
+          items: { $ref: "../openapi.yaml#/components/schemas/Service" },
+        }
+      next_cursor: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+  CreateServiceGrantRequest:
+    type: object
+    additionalProperties: false
+    required: [kind]
+    properties:
+      kind: { type: string, enum: [team, identity] }
+      identity_id: { $ref: "../openapi.yaml#/components/schemas/IdentityID" }
+      expires_at: { type: string, format: date-time }
+  ServiceGrant:
+    type: object
+    additionalProperties: false
+    required: [id, service_id, kind, created_at]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      kind: { type: string, enum: [team, identity] }
+      identity_id: { $ref: "../openapi.yaml#/components/schemas/IdentityID" }
+      invitation_id: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
+      created_at: { type: string, format: date-time }
+      expires_at: { type: string, format: date-time }
+      revoked_at: { type: string, format: date-time }
+  ServiceGrantPage:
+    type: object
+    additionalProperties: false
+    required: [grants]
+    properties:
+      grants:
+        type: array
+        maxItems: 100
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceGrant" }
+      next_cursor: { $ref: "../openapi.yaml#/components/schemas/ServiceGrantID" }
+  CreateServiceInvitationRequest:
+    type: object
+    additionalProperties: false
+    required: [email, expires_at]
+    properties:
+      email: { type: string, format: email }
+      expires_at: { type: string, format: date-time }
+  ServiceInvitation:
+    type: object
+    additionalProperties: false
+    required: [id, service_id, email, expires_at]
+    properties:
+      id: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      email: { type: string, format: email }
+      expires_at: { type: string, format: date-time }
+      accepted_at: { type: string, format: date-time }
+      revoked_at: { type: string, format: date-time }
+      secret:
+        type: string
+        minLength: 32
+        maxLength: 128
+        description: Returned only for a new creation (HTTP 201). Exact creation retries (HTTP 200) and lists omit it. If delivery was lost, revoke the returned ID and create with a new key; secrets cannot be recovered.
+  ServiceInvitationPage:
+    type: object
+    additionalProperties: false
+    required: [invitations]
+    properties:
+      invitations:
+        type: array
+        maxItems: 100
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitation" }
+      next_cursor: { $ref: "../openapi.yaml#/components/schemas/ServiceInvitationID" }
+  ServiceRunPreparation:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        team_id,
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        publisher_grant_id,
+        publisher_key_id,
+        idempotency_key,
+        expires_at,
+        hostname,
+        service_port,
+        domain_id,
+      ]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      publisher_grant_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      publisher_key_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      expires_at: { type: string, format: date-time }
+      certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      service_port: { type: integer, minimum: 1024, maximum: 65535 }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+  ServiceRunSetup:
+    type: object
+    additionalProperties: false
+    required: [service_id, service_run_id, run_number, run_token, publisher_connections]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      run_token: { type: string, minLength: 1, maxLength: 4096 }
+      publisher_connections:
+        {
+          type: array,
+          minItems: 2,
+          maxItems: 2,
+          items: { $ref: "../openapi.yaml#/components/schemas/ConnectionAssignment" },
+        }
+  ServiceRunState:
+    type: object
+    additionalProperties: false
+    required:
+      [service_id, service_run_id, run_number, state, publisher_expires_at, publisher_connections]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      state: { type: string, enum: [starting, ready, closed] }
+      publisher_expires_at: { type: string, format: date-time }
+      healthy: { type: boolean }
+      stream_capacity: { type: integer, format: int32, minimum: 1, maximum: 1048576 }
+      active_streams: { type: integer, format: int32, minimum: 0 }
+      publisher_connections:
+        {
+          type: array,
+          minItems: 2,
+          maxItems: 2,
+          items: { $ref: "../openapi.yaml#/components/schemas/ConnectionAssignment" },
+        }
+  ServiceRunHeartbeat:
+    type: object
+    additionalProperties: false
+    required: [healthy, stream_capacity, active_streams]
+    properties:
+      healthy: { type: boolean }
+      stream_capacity: { type: integer, format: int32, minimum: 1, maximum: 1048576 }
+      active_streams: { type: integer, format: int32, minimum: 0 }
