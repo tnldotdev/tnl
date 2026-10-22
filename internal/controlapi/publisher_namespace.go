@@ -11,9 +11,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -136,7 +136,7 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid namespace allocation")
 		return
 	}
-	if _, err := localproxy.ParseCanonicalTarget(b.Target); err != nil {
+	if _, err := targetsyntax.ParseCanonicalTarget(b.Target); err != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "target must be an HTTP or HTTPS origin")
 		return
 	}

@@ -77,7 +77,7 @@ func (m Mode) Valid() bool { return m == "" || m == None || m == SummaryMode }
 // Summary is the only publisher observation contract. it cannot carry SQL,
 // arguments, headers, credentials, or reply bodies. callbacks must return quickly.
 type Summary struct {
-	Protocol       string
+	Protocol       Protocol
 	ReceivedAt     time.Time
 	Duration       time.Duration
 	Result         Result

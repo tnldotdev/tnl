@@ -19,7 +19,8 @@ type companyAccessStore interface {
 	RotateCompanyProvisioningToken(context.Context, controlstate.ControlPrincipal, string, string, int64, time.Time) (controlstate.IdentityConnectionSecret, error)
 	ResolveCompanyEligibilityAccount(context.Context, string, string, bool) (string, error)
 	ProvisionCompanyEligibility(context.Context, string, controlstate.ProvisionCompanyEligibilityRequest, time.Time) error
-	SetCompanyMembershipDecision(context.Context, controlstate.ControlPrincipal, string, string, bool, bool, bool, time.Time) error
+	UpdateCompanyMembershipDecision(context.Context, controlstate.ControlPrincipal, string, string, controlstate.CompanyMembershipDecision, time.Time) error
+	RecoverCompanyOwner(context.Context, controlstate.ControlPrincipal, string, string, time.Time) error
 	SetCompanyInvitationException(context.Context, controlstate.ControlPrincipal, string, string, bool, time.Time) error
 	RequestCompanyAdmission(context.Context, controlstate.ControlPrincipal, string, string, int64, string, time.Time) (controlstate.CompanyAdmissionRequest, error)
 	ListCompanyAdmissions(context.Context, controlstate.ControlPrincipal, string, string, time.Time) (controlstate.CompanyAdmissionPage, error)
@@ -177,7 +178,7 @@ func (h *handler) SetCompanyMembershipDecision(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	if err := s.SetCompanyMembershipDecision(r.Context(), controlstate.ControlPrincipal{}, team, member, body.Suspended, body.PersonalAccountException, false, time.Now()); err != nil {
+	if err := s.UpdateCompanyMembershipDecision(r.Context(), controlstate.ControlPrincipal{}, team, member, controlstate.CompanyMembershipDecision{Suspended: body.Suspended, PersonalAccountException: body.PersonalAccountException}, time.Now()); err != nil {
 		companyError(w, "company membership decision", err)
 		return
 	}
@@ -305,7 +306,7 @@ func (h *handler) RecoverCompanyOwner(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid recovery request")
 		return
 	}
-	if err := s.SetCompanyMembershipDecision(r.Context(), p, body.TeamId, body.MembershipId, false, true, true, time.Now()); err != nil {
+	if err := s.RecoverCompanyOwner(r.Context(), p, body.TeamId, body.MembershipId, time.Now()); err != nil {
 		companyError(w, "recover company owner", err)
 		return
 	}

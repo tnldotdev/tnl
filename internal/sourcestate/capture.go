@@ -233,13 +233,13 @@ func gitOutput(ctx context.Context, root string, arguments ...string) ([]byte, e
 	return runGit(ctx, root, nil, arguments...)
 }
 
-type boundedOutput struct{ bytes.Buffer }
+type boundedOutput struct{ buffer bytes.Buffer }
 
 func (output *boundedOutput) Write(value []byte) (int, error) {
-	if output.Len()+len(value) > maximumOutputBytes {
+	if len(value) > maximumOutputBytes-output.buffer.Len() {
 		return 0, errors.New("git output exceeds source state bound")
 	}
-	return output.Buffer.Write(value)
+	return output.buffer.Write(value)
 }
 
 func runGit(ctx context.Context, root string, input []byte, arguments ...string) ([]byte, error) {
@@ -252,5 +252,5 @@ func runGit(ctx context.Context, root string, input []byte, arguments ...string)
 	command.Stdout = &output
 	command.WaitDelay = time.Second
 	err := command.Run()
-	return output.Bytes(), err
+	return output.buffer.Bytes(), err
 }

@@ -2,6 +2,8 @@ package controlstate
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +11,38 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
+
+func assertDNSChallengeSubjectBinding(t *testing.T, database *Database, expected CertificateSubject, challenge DNSChallengeContext) {
+	t.Helper()
+	if challenge.Subject != expected {
+		t.Fatalf("DNS challenge subject = %#v, want %#v", challenge.Subject, expected)
+	}
+	typed, err := database.GetDNSChallengeContextForSubject(t.Context(), expected, challenge.AuthorizationID)
+	if err != nil || !reflect.DeepEqual(typed, challenge) {
+		t.Fatalf("typed DNS challenge lookup lost its stored subject: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*CertificateSubject)
+	}{
+		{"kind", func(s *CertificateSubject) {
+			if s.Kind == CertificateSubjectPublicURL {
+				s.Kind = CertificateSubjectManagedService
+			} else {
+				s.Kind = CertificateSubjectPublicURL
+			}
+		}},
+		{"owner", func(s *CertificateSubject) { s.ID += "-other" }},
+		{"run", func(s *CertificateSubject) { s.RunID += "-other" }},
+		{"run number", func(s *CertificateSubject) { s.RunNumber++ }},
+	} {
+		crossed := expected
+		tc.change(&crossed)
+		if _, err := database.GetDNSChallengeContextForSubject(t.Context(), crossed, challenge.AuthorizationID); !errors.Is(err, ErrDNSChallengeNotFound) {
+			t.Fatalf("crossed DNS challenge %s accepted: %v", tc.name, err)
+		}
+	}
+}
 
 func TestIntegrationDNSDedicatedWaitExcludedFromPoolActivity(t *testing.T) {
 	database, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "dns_activity")

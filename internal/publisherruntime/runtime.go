@@ -56,7 +56,7 @@ func New(control Control, server, id, key, scope string, private ed25519.Private
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
-	return &Owner{control: control, server: strings.TrimSuffix(server, "/"), id: id, key: key, scope: scope, private: private, run: hex.EncodeToString(nonce[:]), deployment: report}, nil
+	return &Owner{control: control, server: strings.TrimSuffix(server, "/"), id: id, key: key, scope: scope, private: append(ed25519.PrivateKey(nil), private...), run: hex.EncodeToString(nonce[:]), deployment: report}, nil
 }
 
 func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeRequestAction) (controlv1.PublisherRuntimeResponse, error) {

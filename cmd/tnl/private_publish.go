@@ -28,15 +28,15 @@ import (
 )
 
 func privateSigningIdentity(ctx context.Context, profile *clientstate.Store, id string) (authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, error) {
-	saved, found, err := profile.PublisherSigningIdentity(ctx, "publisher:"+id)
+	saved, found, err := profile.PublisherIdentity(ctx, id)
 	if err != nil {
 		return authorityv1.PublisherEnrollmentResult{}, nil, err
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if !found || json.Unmarshal(saved.PublicValue, &identity) != nil || identity.ClientId != id || saved.ID != id || len(saved.PrivateValue) != ed25519.PrivateKeySize {
+	if !found || json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != id || saved.ID != id || len(saved.SigningKey) != ed25519.PrivateKeySize {
 		return identity, nil, nativeauth.ErrScope
 	}
-	return identity, ed25519.PrivateKey(saved.PrivateValue), nil
+	return identity, ed25519.PrivateKey(saved.SigningKey), nil
 }
 
 // private publication never reserves a hostname or asks for a visitor certificate.
@@ -132,7 +132,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 		return publisherCLIError("system publications require an explicit server, target, and scoped publisher")
 	}
 	if selected == 0 || flags.Service != "" || flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
-		if err := publisherjob.PreflightPrivate(ctx, publisherjob.Job{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
+		if err := publisherjob.PreflightPrivate(ctx, publisherjob.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
 			return err
 		}
 	}
@@ -323,7 +323,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 		if protocol == controlv1.PrivateHttp && trust != nil && !strings.Contains(flags.Target, "://") {
 			target = "https://" + strings.TrimPrefix(target, "http://")
 		}
-		if err := publisherjob.PreflightPrivate(ctx, publisherjob.Job{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
+		if err := publisherjob.PreflightPrivate(ctx, publisherjob.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target, Trust: trust}); err != nil {
 			return err
 		}
 	}
@@ -370,7 +370,7 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 		}
 		defer stopRuntime()
 	}
-	err = publisherjob.PublishPrivate(ctx, job, privatepublisher.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: job.PrivateServiceID, Target: target, Metadata: nativeauth.PrivateServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
+	err = publisherjob.PublishPrivate(ctx, job.PrivateTargetPlan(), privatepublisher.RunConfig{Control: native.ManagedRunControl(), State: profile, Access: native.Access, Identity: identity, PrivateServiceID: job.PrivateServiceID, Target: target, Metadata: nativeauth.PrivateServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		Ready: func() error {
 			detachedPublicationReady(ctx)
 			return emit("ready")
@@ -399,7 +399,7 @@ func capturePrivateTargetTrust(ctx context.Context, flags publishCommand, protoc
 			root, setting.CA = filepath.Dir(setting.CA), filepath.Base(setting.CA)
 		}
 	}
-	address, close, err := publisherjob.PrivateTarget(ctx, publisherjob.Job{Protocol: config.ProtocolName(protocol), Target: target})
+	address, close, err := publisherjob.PrivateTarget(ctx, publisherjob.PrivateTargetPlan{Protocol: config.ProtocolName(protocol), Target: target})
 	if err != nil {
 		return nil, err
 	}

@@ -102,6 +102,52 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 	}
 }
 
+func TestCurrentRegistrationAndExactRunKeepLivenessAndReadinessSeparate(t *testing.T) {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	var alive atomic.Bool
+	alive.Store(true)
+	manager.Alive = func(int) bool { return alive.Load() }
+	id, err := manager.Reserve("web", "owner", 1, "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const target = "http://127.0.0.1:3000"
+	if err := manager.Register(id, "owner", target, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.CurrentRegistration("web", id, target) || manager.CurrentRun("web", id, target, 0) || manager.Current("web", id, target, 0) {
+		t.Fatal("registration ownership granted run-zero authority")
+	}
+	if err := manager.Published(id, 0, true); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("run zero became routable", err)
+	}
+	if err := manager.Published(id, 7, false); err != nil {
+		t.Fatal(err)
+	}
+	service, current := manager.ServiceForRun("web", id, target, 7)
+	if !current || !service.Registered || service.Routable || service.Ready || manager.CurrentRun("web", id, target, 8) {
+		t.Fatal("exact provisioning run was conflated with routability", service)
+	}
+	observation := Observation{RegistrationID: id, Target: target, PublishRunNumber: 7, Ready: true}
+	if manager.Observe(observation) {
+		t.Fatal("unroutable run accepted readiness")
+	}
+	if err := manager.Published(id, 7, true); err != nil || !manager.Observe(observation) {
+		t.Fatal("routable current run rejected readiness", err)
+	}
+	alive.Store(false)
+	if manager.CurrentRegistration("web", id, target) || manager.CurrentRun("web", id, target, 7) || manager.Observe(observation) {
+		t.Fatal("dead owner retained registration or run authority")
+	}
+}
+
 func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	blocked := make(chan struct{})
 	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {

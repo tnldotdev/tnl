@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 func TestNormalizeProjectConfiguration(t *testing.T) {
@@ -48,7 +48,7 @@ func TestNormalizeProjectConfiguration(t *testing.T) {
 func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
 	for _, target := range []string{"http://localhost:3000", "https://EXAMPLE.test:443", "3000", "http://example.test", "https://example.test", "http://example.test:80/", "http://example.test:80#", "http://example.test:80?", "http://[2001:db8::1]:80", "http://user:secret@example.test:80", "http://example.test:0"} {
 		t.Run(target, func(t *testing.T) {
-			want, runtimeErr := localproxy.NormalizeTarget(target)
+			want, runtimeErr := targetsyntax.NormalizeTarget(target)
 			c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: target, PublicURL: &ProjectServicePublicURL{}}}})
 			if (runtimeErr != nil) != (err != nil) || err == nil && c.Services["web"].Target != want {
 				t.Fatal("apply and runtime disagree about public origin", c, err, runtimeErr)

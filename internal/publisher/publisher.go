@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -171,7 +172,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName
 		}
-		config.Target, err = localproxy.NormalizeTarget(config.Target)
+		config.Target, err = targetsyntax.NormalizeTarget(config.Target)
 		if err != nil {
 			return err
 		}
@@ -253,7 +254,6 @@ func configuredPublisherID(config Config) (string, error) {
 func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
 	_, startup := observability.PublisherOperation(ctx, "startup")
 	defer func() { startup(result) }()
-	observability.PublisherLease(ctx, setup.PublishRun.ExpiresAt)
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

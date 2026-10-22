@@ -40,13 +40,13 @@ func EnsurePrivateServiceOwner(ctx context.Context, state *clientstate.Store, co
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	defer lock.Close()
-	saved, found, err := state.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "project", scope)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	if found {
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicValue, &identity) != nil {
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
 			return nil, identity, ErrScope
 		}
 		if identity.ClientId != "" {
@@ -55,7 +55,12 @@ func EnsurePrivateServiceOwner(ctx context.Context, state *clientstate.Store, co
 			}
 			return LoadNative(ctx, state, control, authority, identity.ClientId)
 		}
-	} else {
+	}
+	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
+	if err != nil {
+		return nil, authorityv1.PublisherEnrollmentResult{}, err
+	}
+	if !found {
 		enrollment, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, PrivateServiceId: &service.Id, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
@@ -63,31 +68,27 @@ func EnsurePrivateServiceOwner(ctx context.Context, state *clientstate.Store, co
 		if enrollment.Kind != "private_service" || enrollment.PrivateServiceId == nil || *enrollment.PrivateServiceId != service.Id || enrollment.TeamId != service.TeamId || !opaqueid.Valid(enrollment.Id, opaqueid.PublisherEnrollmentPrefix) || enrollment.EnrollmentKey == "" {
 			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: enrollment.Id, PublicValue: []byte("{}"), PrivateValue: []byte(enrollment.EnrollmentKey)}
-		if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		pending, err = savePendingEnrollment(ctx, state, "project", scope, enrollment.Id, enrollment.EnrollmentKey)
+		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 	}
-	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(saved.PrivateValue))
+	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
 	if err != nil {
 		return nil, identity, err
 	}
 	if identity.Kind != authorityv1.PrivateService || identity.PrivateServiceId == nil || *identity.PrivateServiceId != service.Id || identity.TeamId != service.TeamId {
 		return nil, identity, ErrScope
 	}
-	public, err := json.Marshal(identity)
-	if err != nil {
-		return nil, identity, err
-	}
-	if err := state.SavePublisherSigningIdentity(ctx, scope, clientstate.PublisherSigningIdentity{ID: identity.ClientId, PublicValue: public, PrivateValue: adapter.private}); err != nil {
-		return nil, identity, err
-	}
 	return adapter, identity, nil
 }
 
 func (n *Native) privateControl(serviceID string) (privateRunControl, error) {
-	if n == nil || n.identity.Kind != authorityv1.PrivateService || n.identity.PrivateServiceId == nil || *n.identity.PrivateServiceId != serviceID {
+	if n == nil || n.identity.kind != authorityv1.PrivateService || n.identity.privateServiceID != serviceID {
 		return nil, ErrScope
+	}
+	if control, ok := n.NativeControl.(managedControl); ok {
+		return legacyManagedControl{control}, nil
 	}
 	control, ok := n.NativeControl.(privateRunControl)
 	if !ok {
@@ -146,7 +147,7 @@ func (n *Native) ClosePrivateServiceRun(ctx context.Context, serviceID, runID st
 // SavedPrivateService reads only the exact service selected by this signing
 // identity. a public URL or namespace grant cannot discover private services.
 func (n *Native) SavedPrivateService(ctx context.Context) (controlv1.PrivateService, error) {
-	if n == nil || n.identity.Kind != authorityv1.PrivateService || n.identity.PrivateServiceId == nil {
+	if n == nil || n.identity.kind != authorityv1.PrivateService || n.identity.privateServiceID == "" {
 		return controlv1.PrivateService{}, ErrScope
 	}
 	access, err := n.Access(ctx)
@@ -157,7 +158,7 @@ func (n *Native) SavedPrivateService(ctx context.Context) (controlv1.PrivateServ
 }
 
 func (n *Native) GetPublisherPrivateService(ctx context.Context, access string) (controlv1.PrivateService, error) {
-	if n == nil || n.identity.Kind != authorityv1.PrivateService || n.identity.PrivateServiceId == nil || access == "" {
+	if n == nil || n.identity.kind != authorityv1.PrivateService || n.identity.privateServiceID == "" || access == "" {
 		return controlv1.PrivateService{}, ErrScope
 	}
 	control, ok := n.NativeControl.(privateServiceControl)
@@ -168,7 +169,7 @@ func (n *Native) GetPublisherPrivateService(ctx context.Context, access string) 
 	if err != nil {
 		return service, err
 	}
-	if service.Id != *n.identity.PrivateServiceId || service.TeamId != n.identity.TeamId || !service.Enabled {
+	if service.Id != n.identity.privateServiceID || service.TeamId != n.identity.teamID || !service.Enabled {
 		return controlv1.PrivateService{}, ErrScope
 	}
 	if _, err := PrivateServiceTrust(service); err != nil {

@@ -1,6 +1,7 @@
 package native
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -49,7 +50,7 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 		native, err := NewNative(control, authority, identity, installed.SigningKey)
 		return native, identity, err
 	}
-	saved, found, err := state.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := state.PendingPublisherEnrollment(ctx, p[0])
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
@@ -58,74 +59,52 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: p[0], PublicValue: []byte("{}"), PrivateValue: private}
-		if err := state.SavePendingPublisherEnrollment(ctx, clientstate.PendingPublisherEnrollment{
+		saved = clientstate.PendingPublisherEnrollment{
 			EnrollmentID: p[0], SelectionKind: "explicit", SelectionKey: p[0],
 			PublicKey: public, SigningKey: private, EnrollmentSecret: []byte(secret),
 			ExpiresAt: time.Now().Add(10 * time.Minute),
-		}); err != nil {
+		}
+		if err := state.SavePendingPublisherEnrollment(ctx, saved); err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 	}
-	if len(saved.PrivateValue) != ed25519.PrivateKeySize {
+	private := ed25519.PrivateKey(saved.SigningKey)
+	if !validSigningKey(private) || !bytes.Equal(private.Public().(ed25519.PublicKey), saved.PublicKey) || !saved.ExpiresAt.After(time.Now()) || len(saved.EnrollmentSecret) != 0 && !bytes.Equal(saved.EnrollmentSecret, []byte(secret)) {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if json.Unmarshal(saved.PublicValue, &identity) != nil {
-		return nil, identity, ErrScope
-	}
-	if identity.ClientId != "" {
-		current, found, err := state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
-		if err != nil {
-			return nil, identity, err
+	if len(saved.ResultJSON) != 0 {
+		if json.Unmarshal(saved.ResultJSON, &identity) != nil {
+			return nil, identity, ErrScope
 		}
-		if !found {
-			saved.ID = identity.ClientId
-			if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
-				return nil, identity, err
-			}
-			current, found, err = state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
-			if err != nil {
-				return nil, identity, err
-			}
-		}
-		if found {
-			if json.Unmarshal(current.PublicValue, &identity) != nil || identity.ClientId != current.ID {
-				return nil, identity, ErrScope
-			}
-			saved = current
-		}
-	}
-	private := ed25519.PrivateKey(saved.PrivateValue)
-	if identity.ClientId == "" {
+	} else {
 		identity, err = authority.RedeemPublisherEnrollment(ctx, secret, private.Public().(ed25519.PublicKey))
 		if err != nil {
 			return nil, identity, err
 		}
-		if _, err := NewNative(control, authority, identity, private); err != nil {
-			return nil, identity, err
-		}
-		saved.ID = identity.ClientId
-		saved.PublicValue, err = json.Marshal(identity)
+		saved.ResultJSON, err = json.Marshal(identity)
 		if err != nil {
 			return nil, identity, err
 		}
-		if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
-			return nil, identity, err
-		}
-	}
-	if err := state.SavePublisherSigningIdentity(ctx, "publisher:"+identity.ClientId, saved); err != nil {
-		return nil, identity, err
 	}
 	native, err := NewNative(control, authority, identity, private)
-	return native, identity, err
+	if err != nil {
+		return nil, identity, err
+	}
+	if err := state.RecordPublisherEnrollmentResult(ctx, saved.EnrollmentID, saved.ResultJSON); err != nil {
+		return nil, identity, err
+	}
+	if err := state.PromotePublisherEnrollment(ctx, saved.EnrollmentID, clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: saved.ResultJSON, SigningKey: private}); err != nil {
+		return nil, identity, err
+	}
+	return native, identity, nil
 }
 
 func LoadNative(ctx context.Context, state *clientstate.Store, control NativeControl, authority AssertionExchanger, publisherID string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
 	if !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	saved, found, err := state.PublisherSigningIdentity(ctx, "publisher:"+publisherID)
+	saved, found, err := state.PublisherIdentity(ctx, publisherID)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
@@ -133,9 +112,23 @@ func LoadNative(ctx context.Context, state *clientstate.Store, control NativeCon
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if json.Unmarshal(saved.PublicValue, &identity) != nil || identity.ClientId != publisherID || saved.ID != publisherID {
+	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != publisherID || saved.ID != publisherID {
 		return nil, identity, ErrScope
 	}
-	native, err := NewNative(control, authority, identity, saved.PrivateValue)
+	native, err := NewNative(control, authority, identity, saved.SigningKey)
 	return native, identity, err
+}
+
+// savePendingEnrollment gives a locally issued enrollment its own explicit
+// secret and signing-key fields before the first redemption can leave process.
+func savePendingEnrollment(ctx context.Context, state *clientstate.Store, kind, key string, enrollmentID, secret string) (clientstate.PendingPublisherEnrollment, error) {
+	if !opaqueid.Valid(enrollmentID, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(secret, enrollmentID+".") || len(secret) > 256 {
+		return clientstate.PendingPublisherEnrollment{}, ErrScope
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return clientstate.PendingPublisherEnrollment{}, err
+	}
+	pending := clientstate.PendingPublisherEnrollment{EnrollmentID: enrollmentID, SelectionKind: kind, SelectionKey: key, PublicKey: public, SigningKey: private, EnrollmentSecret: []byte(secret), ExpiresAt: time.Now().Add(10 * time.Minute)}
+	return pending, state.SavePendingPublisherEnrollment(ctx, pending)
 }

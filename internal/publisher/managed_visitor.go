@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"reflect"
 
 	"github.com/tnldotdev/tnl/internal/targettransport"
 )
@@ -29,7 +30,7 @@ type ManagedHTTPTarget struct {
 
 type PublicHTTPVisitor struct{ Frontend ManagedHTTPFrontend }
 
-func (v PublicHTTPVisitor) valid() bool { return v.Frontend != nil }
+func (v PublicHTTPVisitor) valid() bool { return !nilManagedValue(v.Frontend) }
 
 // TLS proves possession of an optional key. the HTTP authority verifies the
 // exact leaf, issuer, scope and current permission after credential selection.
@@ -64,3 +65,50 @@ func (v CertificateVisitor) authorize(ctx context.Context, state tls.ConnectionS
 	}
 	return v.Check(ctx, state.PeerCertificates[0])
 }
+
+// normalizeManagedVisitor closes the authentication variants before any method
+// call. pointer and value declarations have identical dispatch and observations.
+func normalizeManagedVisitor(visitor ManagedVisitorAuthentication) (ManagedVisitorAuthentication, bool) {
+	switch v := visitor.(type) {
+	case PublicHTTPVisitor:
+		return v, v.valid()
+	case *PublicHTTPVisitor:
+		if v != nil {
+			return *v, v.valid()
+		}
+	case ConnectorVisitor:
+		return v, v.valid()
+	case *ConnectorVisitor:
+		if v != nil {
+			return *v, v.valid()
+		}
+	case CertificateVisitor:
+		return v, v.valid()
+	case *CertificateVisitor:
+		if v != nil {
+			return *v, v.valid()
+		}
+	}
+	return nil, false
+}
+
+func nilManagedValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
+}
+
+var (
+	_ ManagedVisitorAuthentication = PublicHTTPVisitor{}
+	_ ManagedVisitorAuthentication = (*PublicHTTPVisitor)(nil)
+	_ ManagedVisitorAuthentication = ConnectorVisitor{}
+	_ ManagedVisitorAuthentication = (*ConnectorVisitor)(nil)
+	_ ManagedVisitorAuthentication = CertificateVisitor{}
+	_ ManagedVisitorAuthentication = (*CertificateVisitor)(nil)
+)

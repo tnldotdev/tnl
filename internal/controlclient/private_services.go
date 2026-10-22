@@ -150,17 +150,17 @@ func (c *Client) GetPublisherPrivateService(ctx context.Context, publisherAccess
 	})
 }
 
-func (c *Client) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, runID string, token credentials.PublishRunToken) (controlv1.PrivateServiceRunState, error) {
+func (c *Client) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, runID string, token credentials.ManagedRunToken) (controlv1.PrivateServiceRunState, error) {
 	return c.HeartbeatPrivateServiceRunHealth(ctx, serviceID, runID, token, controlv1.PrivateServiceRunHeartbeat{Healthy: true, StreamCapacity: 64})
 }
 
-func (c *Client) HeartbeatPrivateServiceRunHealth(ctx context.Context, serviceID, runID string, token credentials.PublishRunToken, health controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
+func (c *Client) HeartbeatPrivateServiceRunHealth(ctx context.Context, serviceID, runID string, token credentials.ManagedRunToken, health controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
 	return request[controlv1.PrivateServiceRunState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.HeartbeatPrivateServiceRun(ctx, serviceID, runID, health, editors...)
 	})
 }
 
-func (c *Client) ClosePrivateServiceRun(ctx context.Context, serviceID, runID string, token credentials.PublishRunToken) error {
+func (c *Client) ClosePrivateServiceRun(ctx context.Context, serviceID, runID string, token credentials.ManagedRunToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ClosePrivateServiceRun(ctx, serviceID, runID, editors...)
 	})

@@ -14,9 +14,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -130,7 +130,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	}
 	options.ServiceProtocol = protocol
 	if options.Target != "" {
-		options.Target, err = localproxy.NormalizeTarget(options.Target)
+		options.Target, err = targetsyntax.NormalizeTarget(options.Target)
 		if err != nil {
 			return nil, err
 		}
@@ -222,7 +222,7 @@ func (t *Tunnel) Context() context.Context { return t.ctx }
 func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
 
 func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) error {
-	target, err := localproxy.NormalizeTarget(target)
+	target, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
 		return err
 	}

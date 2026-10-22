@@ -29,8 +29,8 @@ type RunControl interface {
 	ManagedControl
 	GetPublisherPrivateService(context.Context, string) (controlv1.PrivateService, error)
 	PreparePrivateServiceRun(context.Context, string, string, string, ...controlv1.PrivateServiceRunDeclaration) (controlv1.PrivateServiceRunPreparation, error)
-	HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.PublishRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error)
-	ClosePrivateServiceRun(context.Context, string, string, credentials.PublishRunToken) error
+	HeartbeatPrivateServiceRunHealth(context.Context, string, string, credentials.ManagedRunToken, controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error)
+	ClosePrivateServiceRun(context.Context, string, string, credentials.ManagedRunToken) error
 }
 
 type SlotSession = tunnel.SlotSession
@@ -208,18 +208,20 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
-	bound, err := prepared.Activate(setup)
-	if err != nil {
-		return err
-	}
-	bound.streamCapacity = int(config.StreamCapacity)
-	runToken := credentials.PublishRunToken(setup.RunToken)
+	runToken := credentials.ManagedRunToken(setup.RunToken)
 	defer func() {
-		bound.Invalidate()
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		result = errors.Join(result, config.Control.ClosePrivateServiceRun(finish, config.PrivateServiceID, setup.PrivateRunId, runToken))
 	}()
+	// control owns the opaque token's encoding and authorization. Activate
+	// requires a nonempty value and binds the setup to this prepared run.
+	bound, err := prepared.Activate(setup)
+	if err != nil {
+		return err
+	}
+	defer bound.Invalidate()
+	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureManagedRun(ctx, config, prepared, setup, managedControl, config.State)

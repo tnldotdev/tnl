@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,42 @@ import (
 )
 
 var helperProfile = flag.String("tnl-kube-credential-profile", "", "private fixture exec profile")
+var credentialOutputBytes = flag.Int("tnl-kube-output-bytes", 0, "fixture credential output size")
+
+func TestCredentialOutputProcess(t *testing.T) {
+	if *credentialOutputBytes == 0 {
+		return
+	}
+	data := []byte(`{"kind":"ExecCredential","apiVersion":"client.authentication.k8s.io/v1","status":{"token":"bounded-token"}}`)
+	data = append(data, bytes.Repeat([]byte{' '}, *credentialOutputBytes-len(data))...)
+	_, _ = os.Stdout.Write(data)
+	os.Exit(0)
+}
+
+func TestCredentialOutputBoundThroughCopyAndSubprocess(t *testing.T) {
+	const limit = 1 << 20
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int{limit, limit + 1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			data := bytes.Repeat([]byte{'k'}, size)
+			var output limitedOutput
+			_, err := io.Copy(&output, struct{ io.Reader }{bytes.NewReader(data)})
+			if (err == nil) != (size == limit) || output.buffer.Len() > limit {
+				t.Fatalf("copy captured %d bytes, error %v", output.buffer.Len(), err)
+			}
+			if size == limit && !bytes.Equal(output.buffer.Bytes(), data) {
+				t.Fatal("copy changed exact-bound output")
+			}
+			token, err := execToken(t.Context(), binary, []string{"-test.run=^TestCredentialOutputProcess$", "-tnl-kube-output-bytes=" + strconv.Itoa(size)}, nil, "")
+			if size == limit && (err != nil || token.Value != "bounded-token") || size > limit && (err != ErrCredential || token.Value != "") {
+				t.Fatalf("credential subprocess error = %v", err)
+			}
+		})
+	}
+}
 
 // this is an actual noninteractive exec plugin subprocess for client-go, not a
 // mocked token callback. stdout must be exactly the exec credential wire shape.

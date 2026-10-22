@@ -32,13 +32,13 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	defer lock.Close()
-	saved, found, err := state.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "project", scope)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	if found {
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicValue, &identity) != nil {
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
 			return nil, identity, ErrScope
 		}
 		if identity.ClientId != "" {
@@ -55,6 +55,10 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 			return adapter, current, nil
 		}
 	}
+	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
+	if err != nil {
+		return nil, authorityv1.PublisherEnrollmentResult{}, err
+	}
 	if !found {
 		enrollment, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: route.TeamId, PublicUrlId: &route.Id, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 		if err != nil {
@@ -63,12 +67,12 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 		if enrollment.Kind != "saved_url" || enrollment.TeamId != route.TeamId || enrollment.PublicUrlId == nil || *enrollment.PublicUrlId != route.Id || enrollment.EnrollmentKey == "" || !opaqueid.Valid(enrollment.Id, opaqueid.PublisherEnrollmentPrefix) {
 			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: enrollment.Id, PublicValue: []byte("{}"), PrivateValue: []byte(enrollment.EnrollmentKey)}
-		if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		pending, err = savePendingEnrollment(ctx, state, "project", scope, enrollment.Id, enrollment.EnrollmentKey)
+		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 	}
-	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(saved.PrivateValue))
+	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
 	if err != nil {
 		return nil, identity, err
 	}
@@ -78,20 +82,13 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 	if err := adapter.SelectRoute(route); err != nil {
 		return nil, identity, err
 	}
-	public, err := json.Marshal(identity)
-	if err != nil {
-		return nil, identity, err
-	}
-	if err := state.SavePublisherSigningIdentity(ctx, scope, clientstate.PublisherSigningIdentity{ID: identity.ClientId, PublicValue: public, PrivateValue: adapter.private}); err != nil {
-		return nil, identity, err
-	}
 	return adapter, identity, nil
 }
 
 // NamespaceScope rejects saved URL and guest grants before an ad-hoc worker
 // allocates anything. one fork belongs to one invocation and exact cleanup.
 func (n *Native) NamespaceScope() error {
-	if n == nil || n.identity.Kind != "namespace" {
+	if n == nil || n.identity.kind != "namespace" {
 		return ErrScope
 	}
 	return nil
@@ -101,7 +98,7 @@ func (n *Native) Fork() (*Native, error) {
 	if n == nil {
 		return nil, ErrScope
 	}
-	copy, err := NewNative(n.NativeControl, n.authority, n.identity, n.private)
+	copy, err := NewNative(n.NativeControl, n.authority, n.identity.enrollment(), n.private)
 	if err != nil {
 		return nil, err
 	}

@@ -27,8 +27,8 @@ type ManagedControl interface {
 	publisher.ManagedCertificateControl
 	publisher.ManagedHTTPControl
 	StartManagedServiceRun(context.Context, string, string, string, int64) (controlv1.PrivateServiceRunSetup, error)
-	AuthorizeServiceConnector(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error)
-	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.PublishRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
+	AuthorizeServiceConnector(context.Context, string, string, credentials.ManagedRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error)
+	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ManagedRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
 }
 
 func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, approved controlv1.PrivateService, cfg RunConfig) (*Prepared, error) {
@@ -135,7 +135,7 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 		if header.Connector != nil && header.Direct == nil {
 			return publisher.ConnectorVisitor{Check: func(check context.Context) (publisher.ManagedVisitorDecision, error) {
 				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceConnector(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, Subject: visitorsubject.Wire(header.Connector.Subject), GrantRevision: int64(header.Connector.GrantRevision)})
+					return control.AuthorizeServiceConnector(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.ManagedRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, Subject: visitorsubject.Wire(header.Connector.Subject), GrantRevision: int64(header.Connector.GrantRevision)})
 				})
 			}}
 		}
@@ -143,14 +143,14 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				return publisher.PublicHTTPVisitor{Frontend: publisher.ManagedHTTP{
 					Control: control, Subject: httpsubject.Subject{Kind: httpsubject.ManagedService, ID: setup.PrivateServiceId},
-					RunID: setup.PrivateRunId, Number: setup.RunNumber, Token: credentials.PublishRunToken(setup.RunToken),
+					RunID: setup.PrivateRunId, Number: setup.RunNumber, Token: credentials.ManagedRunToken(setup.RunToken),
 					Hostname: prepared.managedHostname, Port: prepared.managedPort, Header: header,
 					Requests: prepared.managedHTTPRequests,
 				}}
 			}
 			return publisher.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (publisher.ManagedVisitorDecision, error) {
 				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceClientCertificate(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
+					return control.AuthorizeServiceClientCertificate(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.ManagedRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
 				})
 			}}
 		}
@@ -160,7 +160,7 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if err != nil {
 		return nil, nil, err
 	}
-	certificates := publisher.ManagedCertificates{Control: control, Cache: cache, ServiceID: setup.PrivateServiceId, RunID: setup.PrivateRunId, PublisherID: config.Identity.ClientId, RunNumber: setup.RunNumber, Token: credentials.PublishRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
+	certificates := publisher.ManagedCertificates{Control: control, Cache: cache, ServiceID: setup.PrivateServiceId, RunID: setup.PrivateRunId, PublisherID: config.Identity.ClientId, RunNumber: setup.RunNumber, Token: credentials.ManagedRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
 	certificateCtx, cancel := context.WithCancel(ctx)
 	return func() error { return certificates.Maintain(certificateCtx) }, cancel, nil
 }

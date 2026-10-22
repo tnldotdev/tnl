@@ -22,7 +22,7 @@ func (w *Workers) runPrivate(ctx context.Context, service clientruntime.Service,
 		}
 	}()
 	return configuration.RunPrivate(ctx, func(run uint64, routable bool) error {
-		if run == 0 || ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, 0) {
+		if run == 0 || ctx.Err() != nil || !w.Manager.CurrentRegistration(service.Name, service.RegistrationID, service.Target) {
 			return clientruntime.ErrRegistrationStale
 		}
 		if err := observe(run, routable); err != nil {

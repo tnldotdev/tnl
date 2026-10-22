@@ -21,7 +21,7 @@ type protocolParser interface {
 type Observer struct {
 	mu        sync.Mutex
 	parser    protocolParser
-	protocol  string
+	protocol  inspection.Protocol
 	observe   inspection.Observer
 	stopped   bool
 	completed []inspection.Summary
@@ -31,13 +31,17 @@ func New(protocol string, observe inspection.Observer) *Observer {
 	if observe == nil {
 		return nil
 	}
-	m := &Observer{protocol: protocol, observe: observe}
-	switch protocol {
-	case "postgres":
+	selected, valid := inspection.ParseProtocol(protocol)
+	if !valid || !selected.IsTCP() {
+		return nil
+	}
+	m := &Observer{protocol: selected, observe: observe}
+	switch selected {
+	case inspection.Postgres:
 		m.parser = &postgresSummaryParser{client: pgSummaryFrame{startup: true}, group: 1}
-	case "mysql":
+	case inspection.MySQL:
 		m.parser = &mysqlSummaryParser{}
-	case "redis":
+	case inspection.Redis:
 		m.parser = &redisSummaryParser{}
 	default:
 		return nil

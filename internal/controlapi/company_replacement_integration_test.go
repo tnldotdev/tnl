@@ -100,10 +100,10 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	}
 	ownerPrincipal := f.principal(owner.company)
 	ownerCtx := controlstate.WithControlPrincipal(ctx, ownerPrincipal)
-	if err = d.SetCompanyMembershipDecision(ownerCtx, ownerPrincipal, team.ID, suspended.before.ID, true, false, false, time.Now().UTC()); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(ownerCtx, ownerPrincipal, team.ID, suspended.before.ID, controlstate.CompanyMembershipDecision{Suspended: true}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.SetCompanyMembershipDecision(ownerCtx, ownerPrincipal, team.ID, contractor.before.ID, false, true, false, time.Now().UTC()); err != nil {
+	if err = d.UpdateCompanyMembershipDecision(ownerCtx, ownerPrincipal, team.ID, contractor.before.ID, controlstate.CompanyMembershipDecision{PersonalAccountException: true}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.RemoveMembership(ownerCtx, ownerPrincipal.IdentityID, team.ID, removed.before.ID, time.Now().UTC()); err != nil {

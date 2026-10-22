@@ -148,7 +148,7 @@ type Config struct {
 
 	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
 	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
-	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" default:"20000-20015" help:"Managed TCP ports exposed by this ingress pool; direct ingress binds every port, proxied ingress requires destination metadata."`
+	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" default:"20000-20015" help:"Managed TCP ports exposed by this ingress pool: 1-128 non-overlapping declarations, at most 256 ports from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata."`
 	RelayServiceID       string         `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
 	RelayID              string         `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
 	RelayAddress         string         `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`

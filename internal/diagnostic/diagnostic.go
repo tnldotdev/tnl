@@ -102,9 +102,10 @@ func WrapMessage(code Code, message string, cause error) error {
 	return &Error{code: code, message: message, cause: cause, showDetail: true}
 }
 
+// CodeOf reports a diagnostic only when extraction yields a non-nil Error.
 func CodeOf(err error) (Code, bool) {
-	var diagnosticErr *Error
-	if !errors.As(err, &diagnosticErr) {
+	diagnosticErr, ok := errors.AsType[*Error](err)
+	if !ok || diagnosticErr == nil {
 		return "", false
 	}
 	return diagnosticErr.code, true
@@ -128,8 +129,8 @@ func HelpURLForError(err error) string {
 
 // KnownCase selects typed error context rather than reading error messages.
 func KnownCase(err error) string {
-	var classified *Error
-	if !errors.As(err, &classified) {
+	classified, ok := errors.AsType[*Error](err)
+	if !ok || classified == nil {
 		return ""
 	}
 	if classified.code == TargetUnavailable {
@@ -173,13 +174,12 @@ func TextForError(err error) (string, bool) {
 
 // TextForCommandError renders a classified error for one canonical command.
 func TextForCommandError(command string, err error) (string, bool) {
-	code, ok := CodeOf(err)
-	if !ok {
+	classified, ok := errors.AsType[*Error](err)
+	if !ok || classified == nil {
 		return "", false
 	}
+	code := classified.code
 	definition := definitionFor(code)
-	var classified *Error
-	_ = errors.As(err, &classified)
 	detail := ""
 	if classified.showDetail {
 		detail = classified.message

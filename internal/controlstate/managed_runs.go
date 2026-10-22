@@ -14,7 +14,7 @@ import (
 // publisher authentication authorizes the exact prepared run and captured
 // endpoint. the service's WebPKI certificate authenticates native visitor TLS.
 func (d *Database) StartManagedServiceRun(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, now time.Time) (result PrivateRunState, retErr error) {
-	if !privatePublisherMatches(publisher, service) || !opaqueid.Valid(id, opaqueid.PrivateRunPrefix) || number < 1 {
+	if _, err := checkedPrivateRunBinding(service, id, number); err != nil || !privatePublisherMatches(publisher, service) {
 		return result, ErrPrivateServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -51,11 +51,11 @@ func (d *Database) StartManagedServiceRun(ctx context.Context, service, id strin
 	if err != nil {
 		return result, err
 	}
-	token, digest, err := privateSecret()
+	token, digest, err := credentials.NewManagedRunToken()
 	if err != nil {
 		return result, err
 	}
-	if run.State == "prepared" {
+	if privateRunLifecycleState(run.State) == privateRunPrepared {
 		key, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: publisher.KeyID, PublisherIdentityID: publisher.ID})
 		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(now) {
 			return result, errors.Join(ErrPrivateServiceAccess, err)
@@ -67,31 +67,34 @@ func (d *Database) StartManagedServiceRun(ctx context.Context, service, id strin
 		if err = insertManagedRunSlots(ctx, q, seed, run, placements, now); err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.private_service_runs SET state='starting',started_at=$2,run_token_digest=$3,publisher_expires_at=$4 WHERE id=$1`, id, now, digest, now.Add(45*time.Second)); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE control.private_service_runs SET state='starting',started_at=$2,run_token_digest=$3,publisher_expires_at=$4 WHERE id=$1`, id, now, digest[:], now.Add(45*time.Second)); err != nil {
 			return result, err
 		}
-		run.State = "starting"
-	} else if run.State != "starting" && run.State != "ready" {
+		run.State = string(privateRunStarting)
+	} else if !privateRunLifecycleState(run.State).active() {
 		return result, ErrPrivateServiceAccess
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.private_service_runs SET run_token_digest=$2,publisher_expires_at=$3 WHERE id=$1`, id, digest, now.Add(45*time.Second)); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.private_service_runs SET run_token_digest=$2,publisher_expires_at=$3 WHERE id=$1`, id, digest[:], now.Add(45*time.Second)); err != nil {
 		return result, err
 	}
-	connections, err := privateAssignments(ctx, q, seed, id)
+	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
 	}
-	result = PrivateRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token, State: run.State, ExpiresAt: now.Add(45 * time.Second), Connections: connections}
+	result = PrivateRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), ManagedToken: token, State: run.State, ExpiresAt: now.Add(45 * time.Second), Connections: connections}
 	return result, tx.Commit(ctx)
 }
 
-func insertManagedRunSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.PublishRunToken, run controlstatedb.ControlPrivateServiceRun, placements [2]relayServicePlacement, now time.Time) error {
+func insertManagedRunSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlPrivateServiceRun, placements [2]relayServicePlacement, now time.Time) error {
+	if _, err := checkedPrivateRunBinding(run.PrivateServiceID, run.ID, run.RunNumber); err != nil {
+		return err
+	}
 	for index, placement := range placements {
 		id, err := opaqueid.New(opaqueid.PublisherConnectionPrefix)
 		if err != nil {
 			return err
 		}
-		_, digest, err := credentials.DerivePublisherConnectionCredential(seed, publisherConnectionCredentialContext(id, 1))
+		_, digest, err := credentials.DeriveAssignmentCredential(seed, publisherConnectionCredentialContext(id, 1))
 		if err != nil {
 			return err
 		}

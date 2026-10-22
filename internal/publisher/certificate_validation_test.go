@@ -140,7 +140,7 @@ func TestCertificateTransactionRejectsInvalidMaterialBeforeCommit(t *testing.T) 
 			control.change = test.change
 			acks := 0
 			control.installed = func(string, uint64, string, time.Time) error { acks++; return nil }
-			if _, err := attemptCertificateTransaction(t.Context(), control, route, state, control.setup, false); err == nil {
+			if _, err := attemptCertificateTransaction(t.Context(), testRunAuthority(t, control, control.setup), route, state, false); err == nil {
 				t.Error("invalid certificate material was accepted")
 			}
 			if _, found, err := state.Current(t.Context(), "route.example"); err != nil || found {

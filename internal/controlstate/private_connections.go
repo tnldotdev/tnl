@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 type PrivatePublisherConnection struct {
@@ -26,8 +25,8 @@ func privatePublisherConnection(row controlstatedb.ControlPrivateServiceConnecti
 
 func lockPrivateConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries,
 	connectionID, serviceID, runID string, runNumber, revision int64, now time.Time) (controlstatedb.ControlPrivateServiceRun, error) {
-	if !opaqueid.Valid(connectionID, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(runID, opaqueid.PrivateRunPrefix) ||
-		!opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) || runNumber <= 0 || revision <= 0 {
+	binding, err := checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision)
+	if err != nil {
 		return controlstatedb.ControlPrivateServiceRun{}, ErrPrivateServiceAccess
 	}
 	if err := lockPrivateAdmission(ctx, tx, serviceID); err != nil {
@@ -40,7 +39,7 @@ func lockPrivateConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.
 	if err != nil {
 		return run, err
 	}
-	if run.RunNumber != runNumber || run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || (run.State != "starting" && run.State != "ready") {
+	if !binding.privateRunBinding.matches(run) || run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !privateRunLifecycleState(run.State).active() {
 		return run, ErrPrivateServiceAccess
 	}
 	_, err = q.GetPrivateRunPublisherIdentity(ctx, controlstatedb.GetPrivateRunPublisherIdentityParams{
@@ -103,7 +102,8 @@ func (d *Database) ClaimPrivatePublisherConnection(ctx context.Context, connecti
 			break
 		}
 	}
-	if connection.PrivateServiceID != serviceID || connection.RunNumber != runNumber || connection.ConnectionAssignmentRevision != revision ||
+	binding, err := checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision)
+	if err != nil || !binding.matches(connection) ||
 		!connection.CredentialExpiresAt.Time.After(now) || subtle.ConstantTimeCompare(connection.CredentialDigest, digest[:]) != 1 {
 		return result, ErrPrivateServiceAccess
 	}
@@ -120,10 +120,14 @@ func (d *Database) ClaimPrivatePublisherConnection(ctx context.Context, connecti
 	// only the exact connected claim can recover a lost response. ready slots
 	// remain owned by their existing tunnel; local admission fences duplicates
 	// before control so a losing handshake cannot disconnect the winner.
-	sameClaim := connection.State == "connected" && connection.RelayID.String == lease.RelayID &&
+	state, err := privateAssignmentState(connection.State)
+	if err != nil {
+		return result, err
+	}
+	sameClaim := state == PublisherConnectionConnected && connection.RelayID.String == lease.RelayID &&
 		connection.RelayRunID.String == lease.RelayRunID && connection.RelayLeaseRevision.Valid &&
 		connection.RelayLeaseRevision.Int64 == int64(lease.RelayLeaseRevision)
-	if connection.State != "assigned" && !sameClaim {
+	if state != PublisherConnectionAssigned && !sameClaim {
 		return result, ErrPrivateServiceAccess
 	}
 	if !sameClaim {
@@ -206,7 +210,7 @@ func (d *Database) ReadyPrivatePublisherConnection(ctx context.Context, connecti
 	}
 	certificateReady := run.CertificateExpiresAt.Valid && run.CertificateExpiresAt.Time.After(now)
 	if run.Healthy && certificateReady && (count == 2 || run.ReadyAt.Valid && count >= 1) {
-		if run.State == "starting" {
+		if privateRunLifecycleState(run.State) == privateRunStarting {
 			run, err = q.ReadyPrivateServiceRun(ctx, controlstatedb.ReadyPrivateServiceRunParams{ID: runID, PrivateServiceID: serviceID, RunNumber: runNumber, Now: timestamptz(now)})
 			if err != nil {
 				return result, err
@@ -234,6 +238,9 @@ func (d *Database) DisconnectPrivatePublisherConnection(ctx context.Context, con
 	}
 	if storedRunID != runID {
 		return result, ErrPrivateServiceAccess
+	}
+	if _, err = checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision); err != nil {
+		return result, err
 	}
 	if err = lockPrivateAdmission(ctx, tx, serviceID); err != nil {
 		return result, err
@@ -266,7 +273,7 @@ func (d *Database) DisconnectPrivatePublisherConnection(ctx context.Context, con
 	if row.RelayServiceID != lease.RelayServiceID || row.PrivateServiceID != serviceID {
 		return result, ErrPrivateServiceAccess
 	}
-	if run.State == "ready" && !run.ClosedAt.Valid {
+	if privateRunLifecycleState(run.State) == privateRunReady && !run.ClosedAt.Valid {
 		var ready int
 		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.private_service_connection_slots slot
 			JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id AND lease.relay_run_id=slot.relay_run_id

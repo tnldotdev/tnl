@@ -12,6 +12,35 @@ import (
 	"github.com/tnldotdev/tnl/internal/inspection"
 )
 
+func TestInspectProtocolAdapterGoldenJSON(t *testing.T) {
+	for _, tc := range []struct {
+		record clientstate.InspectionRecord
+		want   string
+	}{
+		{clientstate.InspectionRecord{Protocol: inspection.HTTP, Method: "GET", Path: "/health", Status: 503, Origin: "local_service"}, `"result":"error","http":{"method":"GET","path":"/health","status":503,"origin":"local_service"}}`},
+		{clientstate.InspectionRecord{Protocol: inspection.Postgres, Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}, `"result":"error","postgres":{"operation":"execute","sql_state":"42703","rows":0}}`},
+		{clientstate.InspectionRecord{Protocol: inspection.MySQL, Operation: inspection.OperationQuery, Result: inspection.ResultError, SQLState: "42S22", MySQLErrorCode: 1054, ResultSets: 2}, `"result":"error","mysql":{"operation":"query","sql_state":"42S22","rows":0,"error_code":1054,"result_sets":2}}`},
+		{clientstate.InspectionRecord{Protocol: inspection.Redis, RedisCommand: "PING", Result: inspection.ResultOK}, `"result":"ok","redis":{"command":"PING"}}`},
+	} {
+		t.Run(string(tc.record.Protocol), func(t *testing.T) {
+			tc.record.Number, tc.record.TunnelID, tc.record.Project, tc.record.Service = 1, "tun_test", "/project", "service"
+			tc.record.ReceivedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+			record, err := inspectionFromRecord(tc.record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(record)
+			want := `{"number":1,"protocol":"` + string(tc.record.Protocol) + `","tunnel_id":"tun_test","project_root":"/project","service":"service","received_at":"2026-01-02T03:04:05Z","duration_ms":0,` + tc.want
+			if err != nil || string(data) != want {
+				t.Fatalf("inspection JSON = %s, %v; want %s", data, err, want)
+			}
+		})
+	}
+	if _, err := inspectionFromRecord(clientstate.InspectionRecord{Protocol: "tcp"}); err == nil {
+		t.Fatal("opaque TCP received an inspection adapter")
+	}
+}
+
 func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	project := t.TempDir()
 	t.Chdir(project)

@@ -323,7 +323,10 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	result.PrivateServiceID, result.IdentityID, result.DeviceID = serviceID, subject.IdentityID, subject.DeviceID
 	result.Subject = subject
 	result.ExpiresAt = minTime(result.ExpiresAt, until)
-	result.PrivateServiceMetadata = privateMetadata(service)
+	result.PrivateServiceMetadata, err = checkedPrivateMetadata(service)
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}

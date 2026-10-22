@@ -129,6 +129,7 @@ type Server struct {
 	active          sync.WaitGroup
 	nextBackend     atomic.Uint64
 	traffic         *trafficAdmission
+	servicePorts    tcpport.Inventory
 	pendingVisitors map[string]*visitorAdmission
 }
 
@@ -146,6 +147,15 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		return nil, err
 	}
 	var err error
+	var servicePorts tcpport.Inventory
+	if config.ServicePortRanges != nil {
+		servicePorts, err = tcpport.NewInventory(config.ServicePortRanges)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// retain no caller-owned inventory slices after construction.
+	config.ServicePortRanges = nil
 	config.Traffic, err = config.Traffic.Resolve()
 	if err != nil {
 		return nil, err
@@ -207,6 +217,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		byDenied:        make(map[string]int),
 		done:            make(chan struct{}),
 		traffic:         traffic,
+		servicePorts:    servicePorts,
 		pendingVisitors: make(map[string]*visitorAdmission),
 	}, nil
 }
@@ -310,8 +321,8 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.DirectOnly || tcpport.Contains(s.config.ServicePortRanges, int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
-		if s.config.DirectConnector == nil || !tcpport.Contains(s.config.ServicePortRanges, int(destination.Port())) {
+	if s.config.DirectOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+		if s.config.DirectConnector == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()

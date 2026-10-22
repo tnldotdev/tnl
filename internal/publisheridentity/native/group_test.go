@@ -49,8 +49,8 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	groupName := "production"
-	fake := &groupFixtureControl{member: controlv1.PublisherGroupMember{TeamId: native.identity.TeamId, ProjectKey: "example", GroupId: "pgrp_example", GroupName: groupName, PublisherIdentityId: native.identity.ClientId, KeyId: native.identity.KeyId}, public: public}
-	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: *native.identity.PrivateServiceId, ServiceKind: "private_service", GrantId: native.identity.GrantId, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Publisher: &groupName, Target: "db.internal:5432"}}
+	fake := &groupFixtureControl{member: controlv1.PublisherGroupMember{TeamId: native.identity.teamID, ProjectKey: "example", GroupId: "pgrp_example", GroupName: groupName, PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID}, public: public}
+	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.privateServiceID, ServiceKind: "private_service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{Publisher: &groupName, Target: "db.internal:5432"}}
 	group, err := NewGroup(control, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter, err := group.Service(assignments.Services[0])
-	if err != nil || adapter.identity.GrantId != native.identity.GrantId {
+	if err != nil || adapter.identity.grantID != native.identity.grantID {
 		t.Fatal("exact native grant not adapted", err)
 	}
 	assignments.Services[0].Configuration.Target = "other.internal:5432"

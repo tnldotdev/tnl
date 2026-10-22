@@ -54,12 +54,23 @@ type mysqlSummaryCall struct {
 	command byte
 }
 
+type mysqlSummaryPhase uint8
+
+const (
+	mysqlResponse mysqlSummaryPhase = iota
+	mysqlColumns
+	mysqlMetadataEOF
+	mysqlRows
+	mysqlPrepareMetadata
+	mysqlPrepareEOF
+)
+
 type mysqlSummaryParser struct {
 	client, server      mysqlSummaryFrame
 	deprecate           bool
 	pending             []mysqlSummaryCall
 	sequence            byte
-	phase               byte // 0 response, 1 columns, 2 metadata EOF, 3 rows, 4 prepare, 5 prepare EOF.
+	phase               mysqlSummaryPhase // zero waits for the first response packet.
 	columns, parameters int
 	metadataRemaining   int
 }
@@ -81,7 +92,7 @@ func (p *mysqlSummaryParser) capture(first byte) int {
 	if first == 0xff {
 		return 9
 	} // error number, marker, and SQLSTATE only.
-	if p.phase == 0 {
+	if p.phase == mysqlResponse {
 		if len(p.pending) > 0 && p.pending[0].command == 0x16 {
 			return 12
 		}
@@ -145,7 +156,7 @@ func (p *mysqlSummaryParser) response(seq byte, b []byte, size int, m *Observer)
 		return
 	}
 	switch p.phase {
-	case 0:
+	case mysqlResponse:
 		if call.command == 0x16 {
 			if size < 12 || b[0] != 0 {
 				m.stopped = true
@@ -188,38 +199,38 @@ func (p *mysqlSummaryParser) response(seq byte, b []byte, size int, m *Observer)
 			return
 		}
 		p.columns = int(columns)
-		p.phase = 1
+		p.phase = mysqlColumns
 		call.ResultSets = min(call.ResultSets+1, inspection.MaxCount)
-	case 1:
+	case mysqlColumns:
 		p.columns--
 		if p.columns == 0 {
-			p.phase = 3
+			p.phase = mysqlRows
 			if !p.deprecate {
-				p.phase = 2
+				p.phase = mysqlMetadataEOF
 			}
 		}
-	case 2:
+	case mysqlMetadataEOF:
 		if _, ok := mysqlSummaryEnd(b, size, false); !ok {
 			m.stopped = true
 			return
 		}
-		p.phase = 3
-	case 3:
+		p.phase = mysqlRows
+	case mysqlRows:
 		if status, ok := mysqlSummaryEnd(b, size, p.deprecate); ok {
 			p.endResult(status, m)
 		} else {
 			call.Rows = min(call.Rows+1, inspection.MaxCount)
 		}
-	case 4:
+	case mysqlPrepareMetadata:
 		p.metadataRemaining--
 		if p.metadataRemaining == 0 {
 			if !p.deprecate {
-				p.phase = 5
+				p.phase = mysqlPrepareEOF
 			} else {
 				p.prepareNext(m)
 			}
 		}
-	case 5:
+	case mysqlPrepareEOF:
 		if _, ok := mysqlSummaryEnd(b, size, false); !ok {
 			m.stopped = true
 			return
@@ -232,11 +243,11 @@ func (p *mysqlSummaryParser) prepareNext(m *Observer) {
 	if p.parameters > 0 {
 		p.metadataRemaining = p.parameters
 		p.parameters = 0
-		p.phase = 4
+		p.phase = mysqlPrepareMetadata
 	} else if p.columns > 0 {
 		p.metadataRemaining = p.columns
 		p.columns = 0
-		p.phase = 4
+		p.phase = mysqlPrepareMetadata
 	} else {
 		p.finish(inspection.ResultOK, m)
 	}
@@ -244,7 +255,7 @@ func (p *mysqlSummaryParser) prepareNext(m *Observer) {
 
 func (p *mysqlSummaryParser) endResult(status uint16, m *Observer) {
 	if status&8 != 0 {
-		p.phase = 0
+		p.phase = mysqlResponse
 	} else {
 		p.finish(inspection.ResultOK, m)
 	}
@@ -253,7 +264,7 @@ func (p *mysqlSummaryParser) endResult(status uint16, m *Observer) {
 func (p *mysqlSummaryParser) finish(result inspection.Result, m *Observer) {
 	call := p.pending[0]
 	p.pending = p.pending[1:]
-	p.phase = 0
+	p.phase = mysqlResponse
 	p.sequence = 1
 	if call.Operation != "" {
 		call.Result = result

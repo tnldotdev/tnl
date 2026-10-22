@@ -32,6 +32,37 @@ const (
 // ErrBandwidthLate identifies a complete transfer that missed its deadline.
 var ErrBandwidthLate = errors.New("bandwidth completed after its deadline")
 
+// a requested mode may create two directions; an individual HTTP stream cannot.
+type bandwidthMode string
+type bandwidthDirection string
+
+const (
+	bandwidthDownstream bandwidthDirection = BandwidthDownstream
+	bandwidthUpstream   bandwidthDirection = BandwidthUpstream
+)
+
+func (m bandwidthMode) valid() bool {
+	return m == BandwidthDownstream || m == BandwidthUpstream || m == BandwidthBidirectional
+}
+
+func (m bandwidthMode) directions() []bandwidthDirection {
+	switch m {
+	case BandwidthDownstream:
+		return []bandwidthDirection{bandwidthDownstream}
+	case BandwidthUpstream:
+		return []bandwidthDirection{bandwidthUpstream}
+	case BandwidthBidirectional:
+		return []bandwidthDirection{bandwidthDownstream, bandwidthUpstream}
+	default:
+		return nil
+	}
+}
+
+func parseBandwidthDirection(value string) (bandwidthDirection, bool) {
+	direction := bandwidthDirection(value)
+	return direction, direction == bandwidthDownstream || direction == bandwidthUpstream
+}
+
 const (
 	bandwidthDirectionHeader = "X-TNL-Bench-Direction"
 	bandwidthRateHeader      = "X-TNL-Bench-Bytes-Per-Second"
@@ -97,9 +128,9 @@ func newBandwidthBuckets(duration time.Duration) *bandwidthBuckets {
 	return &bandwidthBuckets{upload: make([]atomic.Int64, count), download: make([]atomic.Int64, count)}
 }
 
-func (b *bandwidthBuckets) observe(direction string, at time.Duration, bytes int) {
+func (b *bandwidthBuckets) observe(direction bandwidthDirection, at time.Duration, bytes int) {
 	index := min(max(int(at/time.Second), 0), len(b.upload)-1)
-	if direction == BandwidthUpstream {
+	if direction == bandwidthUpstream {
 		b.upload[index].Add(int64(bytes))
 	} else {
 		b.download[index].Add(int64(bytes))
@@ -117,7 +148,7 @@ func (b *bandwidthBuckets) snapshot(duration time.Duration) []BandwidthSecond {
 
 type bandwidthProgress struct {
 	start, first, last time.Time
-	direction          string
+	direction          bandwidthDirection
 	buckets            *bandwidthBuckets
 }
 
@@ -137,7 +168,7 @@ type bandwidthStream struct {
 	client    *http.Client
 	transport *http.Transport
 	url       string
-	direction string
+	direction bandwidthDirection
 	rate      int64
 }
 
@@ -145,7 +176,7 @@ type bandwidthStream struct {
 // prepare it before setting the measurement start time.
 type BandwidthSession struct {
 	streams        []bandwidthStream
-	direction      string
+	mode           bandwidthMode
 	perDirection   int
 	bytesPerSecond int64
 	setupDuration  time.Duration
@@ -165,11 +196,8 @@ func (v Visitor) PrepareBandwidth(ctx context.Context, direction string, streams
 		return nil, err
 	}
 	started := time.Now()
-	session := &BandwidthSession{direction: direction, perDirection: streams, bytesPerSecond: bytesPerSecond}
-	directions := []string{direction}
-	if direction == BandwidthBidirectional {
-		directions = []string{BandwidthDownstream, BandwidthUpstream}
-	}
+	session := &BandwidthSession{mode: bandwidthMode(direction), perDirection: streams, bytesPerSecond: bytesPerSecond}
+	directions := session.mode.directions()
 	session.streams = make([]bandwidthStream, len(directions)*streams)
 	errorsByStream := make([]error, len(session.streams))
 	var workers sync.WaitGroup
@@ -279,7 +307,7 @@ func (s *BandwidthSession) Run(ctx context.Context, start time.Time, duration ti
 }
 
 func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start time.Time, duration, segmentDuration time.Duration) (BandwidthResult, error) {
-	result := BandwidthResult{Direction: s.direction, StreamsPerDirection: s.perDirection, TargetBytesPerSecond: s.bytesPerSecond,
+	result := BandwidthResult{Direction: string(s.mode), StreamsPerDirection: s.perDirection, TargetBytesPerSecond: s.bytesPerSecond,
 		SetupDuration: s.setupDuration, TargetDuration: duration, StartedAt: start}
 	if start.IsZero() || duration <= 0 || duration > maxBandwidthDuration || segmentDuration <= 0 {
 		return result, errors.New("invalid bandwidth start or duration")
@@ -287,7 +315,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 	buckets := newBandwidthBuckets(duration)
 
 	type transferResult struct {
-		direction string
+		direction bandwidthDirection
 		expected  int64
 		bytes     int64
 		err       error
@@ -299,7 +327,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 		workers.Go(func() {
 			progress := &bandwidthProgress{start: start, direction: stream.direction, buckets: buckets}
 			expected, transferred, err := stream.run(ctx, start, duration, segmentDuration, progress)
-			observation := BandwidthStreamResult{Index: index, URL: stream.url, Direction: stream.direction, ExpectedBytes: expected, Bytes: transferred}
+			observation := BandwidthStreamResult{Index: index, URL: stream.url, Direction: string(stream.direction), ExpectedBytes: expected, Bytes: transferred}
 			if !progress.first.IsZero() {
 				observation.FirstByteDelay = progress.first.Sub(start)
 				observation.LastByteDelay = progress.last.Sub(start)
@@ -316,7 +344,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 	result.Streams = make([]BandwidthStreamResult, len(s.streams))
 	for transfer := range results {
 		result.Streams[transfer.stream.Index] = transfer.stream
-		if transfer.direction == BandwidthUpstream {
+		if transfer.direction == bandwidthUpstream {
 			result.ExpectedUploadBytes += transfer.expected
 			result.UploadBytes += transfer.bytes
 		} else {
@@ -339,7 +367,7 @@ func (s *BandwidthSession) runWithSegmentDuration(ctx context.Context, start tim
 }
 
 func validateBandwidthShape(direction string, streams int, bytesPerSecond int64, urls []string) error {
-	if direction != BandwidthDownstream && direction != BandwidthUpstream && direction != BandwidthBidirectional {
+	if !bandwidthMode(direction).valid() {
 		return errors.New("bandwidth direction must be downstream, upstream, or bidirectional")
 	}
 	if streams < 1 || streams > maxBandwidthStreams {
@@ -399,7 +427,7 @@ func (s bandwidthStream) request(ctx context.Context, duration time.Duration, ex
 	method := http.MethodGet
 	var body io.Reader
 	var paced *pacedPayloadReader
-	if s.direction == BandwidthUpstream {
+	if s.direction == bandwidthUpstream {
 		method = http.MethodPost
 		paced = newPacedPayloadReader(requestCtx, s.rate, expected)
 		paced.observe = progress.observe
@@ -409,7 +437,7 @@ func (s bandwidthStream) request(ctx context.Context, duration time.Duration, ex
 	if err != nil {
 		return 0, err
 	}
-	request.Header.Set(bandwidthDirectionHeader, s.direction)
+	request.Header.Set(bandwidthDirectionHeader, string(s.direction))
 	request.Header.Set(bandwidthRateHeader, strconv.FormatInt(s.rate, 10))
 	request.Header.Set(bandwidthDurationHeader, strconv.FormatInt(duration.Nanoseconds(), 10))
 	if paced != nil {
@@ -432,7 +460,7 @@ func (s bandwidthStream) request(ctx context.Context, duration time.Duration, ex
 	if response.Header.Get("X-TNL-Bench-Host") != expectedHost {
 		return 0, errors.New("bandwidth response host mismatch")
 	}
-	if s.direction == BandwidthUpstream {
+	if s.direction == bandwidthUpstream {
 		actual, err := strconv.ParseInt(response.Header.Get(bandwidthBytesHeader), 10, 64)
 		if err != nil || actual != expected {
 			return paced.Bytes(), errors.New("bandwidth upload acknowledgement mismatch")

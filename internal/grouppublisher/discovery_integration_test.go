@@ -191,7 +191,8 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 		}
 		// the fixture ends at the first heartbeat after successful native target
 		// TLS. the same resolver must allow the new declared selector its own pin.
-		if err := publication.Publish(t.Context(), current.Services[0], nil); err == nil {
+		publicationErr := publication.Publish(t.Context(), current.Services[0], nil)
+		if publicationErr == nil {
 			t.Fatal("fixture heartbeat did not bound the publication")
 		}
 		select {
@@ -200,7 +201,7 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 				t.Fatal("new assignment inherited the previous target's pin")
 			}
 		default:
-			t.Fatal("new assignment failed before target preflight")
+			t.Fatal("new assignment failed before target preflight", publicationErr)
 		}
 	}
 	if fixture.Requests.Load() != 2 || fixture.Closes.Load() != 2 {

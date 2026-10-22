@@ -23,9 +23,9 @@ import (
 )
 
 type ManagedCertificateControl interface {
-	CreatePrivateCertificateIssuance(context.Context, string, string, int64, credentials.PublishRunToken, []byte, string) (controlv1.PrivateCertificateIssuance, error)
-	GetPrivateCertificateIssuance(context.Context, string, string, string, credentials.PublishRunToken) (controlv1.PrivateCertificateIssuance, error)
-	MarkPrivateCertificateInstalled(context.Context, string, string, int64, string, time.Time, credentials.PublishRunToken) error
+	CreatePrivateCertificateIssuance(context.Context, string, string, int64, credentials.ManagedRunToken, []byte, string) (controlv1.PrivateCertificateIssuance, error)
+	GetPrivateCertificateIssuance(context.Context, string, string, string, credentials.ManagedRunToken) (controlv1.PrivateCertificateIssuance, error)
+	MarkPrivateCertificateInstalled(context.Context, string, string, int64, string, time.Time, credentials.ManagedRunToken) error
 }
 
 var errManagedIssuanceFailed = errors.New("managed certificate issuance failed")
@@ -40,7 +40,7 @@ type ManagedCertificates struct {
 	RunID       string
 	PublisherID string
 	RunNumber   int64
-	Token       credentials.PublishRunToken
+	Token       credentials.ManagedRunToken
 	Hostname    string
 	Plan        controlv1.CertificatePlan
 	Install     func(tls.Certificate) error

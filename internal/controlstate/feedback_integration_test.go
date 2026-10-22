@@ -2,6 +2,7 @@ package controlstate
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -10,6 +11,63 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
+
+func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T) {
+	f := newPublishRunFixture(t)
+	d, now := f.database, f.now
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "combined-feedback", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID, IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}, now); err != nil {
+		t.Fatal(err)
+	}
+	identity := "00000000-0000-4000-8000-000000000002"
+	insertAuthorityIdentity(t, d, identity, "", false, now)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET display_name='Verified reviewer' WHERE id=$1`, identity); err != nil {
+		t.Fatal(err)
+	}
+	session := browserTestControlSession(t, d, identity, now)
+	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/"}, BrowserAccessSession{IdentityID: identity, DisplayName: "Verified reviewer", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(), AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), f.authentication(), handoff.Token, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser, err := base64.RawURLEncoding.DecodeString(cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte(strings.Repeat("s", 32))
+	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID, IdempotencyKey: "combined-share", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: now.Add(time.Hour), PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: f.setup.PublicURLID, ExpectedMutationRevision: 2}}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := f.authentication()
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, BrowserCookieSecret: browser, ShareID: share.ID, ShareSecret: secret, IdentityID: "forged identity", DisplayName: "forged name", TeamMember: true, VisitAllowed: true}
+	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", AuthorDisplayName: "unverified supplied name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
+	if err != nil || thread.AuthorIdentityID != identity || thread.AuthorDisplayName != "Verified reviewer" || !thread.AuthorVerified {
+		t.Fatal("combined feedback trusted submitted author facts", thread, err)
+	}
+	event, err := d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "follow-up", IdempotencyKey: "combined-reply", Actor: actor}, now)
+	if err != nil || event.AuthorIdentityID != identity || event.AuthorDisplayName != "Verified reviewer" || !event.AuthorVerified || event.ActorReference != "identity:"+identity {
+		t.Fatal("combined feedback append lost verified author", event, err)
+	}
+	if _, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: cookie, ShareID: share.ID, ShareSecret: secret}, now); !errors.Is(err, ErrVisitorSignIn) {
+		t.Fatal("feedback's combined credentials crossed HTTP exclusive selection", err)
+	}
+	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "revoked", IdempotencyKey: "revoked-combined-reply", Actor: actor}, now); !errors.Is(err, ErrFeedbackAccess) {
+		t.Fatal("verified author replaced revoked URL-scoped access", err)
+	}
+}
 
 func feedbackTestSource(t *testing.T) json.RawMessage {
 	t.Helper()
@@ -62,7 +120,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := f.authentication()
-	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth}
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth, DisplayName: "forged verified author", TeamMember: true, VisitAllowed: true}
 	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
@@ -79,6 +137,9 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	firstPage, err := database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, 0)
 	if err != nil || len(firstPage.Events) != 1 || firstPage.Events[0].Type != FeedbackCreated || firstPage.Events[0].Cursor == 0 {
 		t.Fatalf("initial event = %+v, %v", firstPage, err)
+	}
+	if thread.AuthorVerified || thread.AuthorIdentityID != "" || firstPage.Events[0].AuthorDisplayName != "" || firstPage.Events[0].AuthorVerified || firstPage.Events[0].ActorReference != share.ID {
+		t.Fatal("submitted reviewer assertions reached persistence", thread, firstPage.Events[0])
 	}
 	retry, err := database.CreateFeedback(t.Context(), f.authentication(), request, now.Add(time.Second))
 	if err != nil || retry.ID != thread.ID {
@@ -98,7 +159,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	if err != nil || duplicate.Cursor != answered.Cursor {
 		t.Fatalf("retried reply = %+v, %v", duplicate, err)
 	}
-	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}
+	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2, DisplayName: "forged implementer name"}
 	wrongImplementer := AppendFeedbackRequest{
 		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the copy", SourceState: source,
 		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "implementer", IdentityID: "different-identity", PolicyRevision: 1, ExpectedMutationRevision: 2},
@@ -113,6 +174,9 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	updated, err := database.AppendFeedback(t.Context(), update, now.Add(3*time.Second))
 	if err != nil || len(updated.SourceState) == 0 {
 		t.Fatalf("source update = %+v, %v", updated, err)
+	}
+	if updated.AuthorDisplayName == implementer.DisplayName || updated.AuthorIdentityID != implementer.IdentityID || !updated.AuthorVerified || updated.ActorReference != implementer.IdentityID {
+		t.Fatal("implementer author was not derived from the transaction", updated)
 	}
 	resolve := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved, Text: "Looks good", IdempotencyKey: "reviewer-resolve", Actor: actor}
 	if _, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second)); err != nil {

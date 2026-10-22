@@ -76,7 +76,11 @@ func (d *Database) updateAppliedPrivateService(ctx context.Context, tx pgx.Tx, q
 		return err
 	}
 	metadata := PrivateServiceMetadata{Protocol: s.Protocol, TLS: trust, PublisherPool: s.Publisher != "local"}
-	changed := !privateMetadataMatches(privateMetadata(row), metadata) || row.PublisherPool != metadata.PublisherPool
+	saved, err := checkedPrivateMetadata(row)
+	if err != nil {
+		return err
+	}
+	changed := !privateMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
 	encoded, err := json.Marshal(trust)
 	if err != nil {
 		return err
@@ -371,10 +375,7 @@ func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *co
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	scope := PublisherScope{TeamID: s.TeamID, Kind: "saved_url", PublicURLID: s.PublicURLID.String}
-	if s.PrivateServiceID.Valid {
-		scope.Kind, scope.PublicURLID, scope.PrivateServiceID = "private_service", "", s.PrivateServiceID.String
-	}
+	scope := publisherScopeForAppliedService(s)
 	g, err := insertPublisherGrant(ctx, q, publisher, actor, scope, nil, now)
 	if err != nil {
 		return err

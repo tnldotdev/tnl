@@ -2,11 +2,40 @@ package publicurlusage
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
+	"math"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCheckpointMergeIsAtomicOnLateOverflow(t *testing.T) {
+	for _, index := range []int{0, 1, 2} {
+		for _, overflow := range []string{"sum", "count"} {
+			destination, err := ParseCheckpoint(checkpointGolden(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := destination
+			histogram := []*DurationHistogram{&destination.VisitorStreamOpenLatency, &destination.TimeToFirstPublisherByte, &destination.SuccessfulConnectionDuration}[index]
+			if overflow == "sum" {
+				histogram.sumNanoseconds = math.MaxInt64
+			} else {
+				histogram.counts[len(histogram.counts)-1] = math.MaxInt64
+			}
+			source.VisitorNetworks.registers[4095] = 5
+			before := destination
+			wire := destination.MarshalBinary()
+			if err := destination.Merge(source); err == nil {
+				t.Fatal("overflow accepted")
+			}
+			if destination != before || !bytes.Equal(wire, destination.MarshalBinary()) {
+				t.Fatalf("histogram %d %s overflow changed checkpoint", index, overflow)
+			}
+		}
+	}
+}
 
 // wire v1: TNLU/version, four uint16-sized sections. each histogram has a
 // uint64 nanosecond sum followed by 22 cumulative uint64 counts, big endian.
@@ -58,6 +87,10 @@ func TestCheckpointBinaryGolden(t *testing.T) {
 		}
 	}
 	golden := checkpointGolden(t)
+	digest := sha256.Sum256(golden)
+	if hex.EncodeToString(digest[:]) != "b1b86612de24e8ae7f13d345600ba1f2ca0ea66a130a3b0fbeaf6ec88a39151d" {
+		t.Fatal("v1 checkpoint golden hash changed")
+	}
 	if encoded := want.MarshalBinary(); !bytes.Equal(encoded, golden) {
 		t.Fatalf("encoding = %x, want %x", encoded, golden)
 	}

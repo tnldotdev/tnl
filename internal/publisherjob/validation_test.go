@@ -202,7 +202,7 @@ func TestInstallationRejectsCrossKindMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, found, err := profile.PublisherSigningIdentity(t.Context(), "job:"+base.ID); err != nil || found {
+			if _, found, err := profile.SelectedPublisherIdentity(t.Context(), "job", "job:"+base.ID); err != nil || found {
 				t.Fatalf("rejected installation wrote signing credentials: found=%v, %v", found, err)
 			}
 		})
@@ -264,22 +264,18 @@ func TestPublicConfigCannotConsumePrivateJobOrProtocol(t *testing.T) {
 func TestPrivatePublicationRejectsProtocolMismatchBeforeTargetCapture(t *testing.T) {
 	for _, test := range []struct {
 		name     string
-		kind     Kind
 		protocol config.ProtocolName
 		metadata controlv1.PrivateServiceProtocol
 	}{
-		{"missing metadata", KindPrivateService, config.ProtocolPostgres, ""},
-		{"different metadata", KindPrivateService, config.ProtocolPostgres, "http"},
-		{"unknown metadata", KindPrivateService, config.ProtocolPostgres, "unknown"},
-		{"unknown protocol", KindPrivateService, "unknown", "unknown"},
-		{"public kind", KindPublicURL, config.ProtocolPostgres, "postgres"},
-		{"connector kind", KindConnector, config.ProtocolPostgres, "postgres"},
-		{"group kind", KindGroup, config.ProtocolPostgres, "postgres"},
+		{"missing metadata", config.ProtocolPostgres, ""},
+		{"different metadata", config.ProtocolPostgres, "http"},
+		{"unknown metadata", config.ProtocolPostgres, "unknown"},
+		{"unknown protocol", "unknown", "unknown"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			job := Job{Kind: test.kind, Protocol: test.protocol, Target: "127.0.0.1:5432"}
+			plan := PrivateTargetPlan{Protocol: test.protocol, Target: "127.0.0.1:5432"}
 			captured := false
-			err := PublishPrivate(t.Context(), job, privatepublisher.RunConfig{Metadata: controlv1.PrivateServiceMetadata{Protocol: test.metadata}}, PrivateTargetHooks{
+			err := PublishPrivate(t.Context(), plan, privatepublisher.RunConfig{Metadata: controlv1.PrivateServiceMetadata{Protocol: test.metadata}}, PrivateTargetHooks{
 				Capture: func(projectpublisher.TargetSnapshot) error { captured = true; return nil },
 			})
 			requireScopeFailure(t, err)

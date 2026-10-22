@@ -107,6 +107,7 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 						len(challenge.Presentations) != 2 {
 						t.Fatalf("challenge context = %#v", challenge)
 					}
+					assertDNSChallengeSubjectBinding(t, database, CertificateSubject{Kind: CertificateSubjectPublicURL, ID: route.ID, RunID: authentication.PublishRunID, RunNumber: authentication.PublishRunNumber}, challenge)
 					for _, presentation := range challenge.Presentations {
 						if !presentation.Active {
 							t.Fatal("presenting authorization was not active")

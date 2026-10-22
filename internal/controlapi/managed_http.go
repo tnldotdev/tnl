@@ -38,7 +38,7 @@ func (h *handler) managedHTTP(w http.ResponseWriter, r *http.Request) (managedHT
 }
 
 func managedHTTPRun(service, run, token string, number int64) controlstate.ManagedHTTPRun {
-	return controlstate.ManagedHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.ManagedService, ID: service}, RunID: run, Number: number, Token: credentials.PublishRunToken(token)}
+	return controlstate.ManagedHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.ManagedService, ID: service}, RunID: run, Number: number, Token: credentials.ManagedRunToken(token)}
 }
 
 func (h *handler) AuthorizeManagedHTTPVisitor(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID, run controlv1.PrivateRunID) {

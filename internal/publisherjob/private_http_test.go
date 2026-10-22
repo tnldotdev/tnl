@@ -13,7 +13,7 @@ func TestPrivateHTTPSOriginDoesNotNegotiateTargetTLS(t *testing.T) {
 	// private bytes are owned by the connecting client.
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, r.Host+" "+r.URL.Path) }))
 	defer target.Close()
-	address, close, err := PrivateTarget(t.Context(), Job{Protocol: "http", Target: strings.Replace(target.URL, "http://", "https://", 1)})
+	address, close, err := PrivateTarget(t.Context(), PrivateTargetPlan{Protocol: "http", Target: strings.Replace(target.URL, "http://", "https://", 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestPrivateHTTPSOriginDoesNotNegotiateTargetTLS(t *testing.T) {
 func TestPrivateClientOwnsNativeHTTPS(t *testing.T) {
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "client TLS") }))
 	defer target.Close()
-	address, close, err := PrivateTarget(t.Context(), Job{Protocol: "http", Target: target.URL})
+	address, close, err := PrivateTarget(t.Context(), PrivateTargetPlan{Protocol: "http", Target: target.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,8 @@ func TestPrivateClientOwnsNativeHTTPS(t *testing.T) {
 	if err != nil || string(body) != "client TLS" {
 		t.Fatalf("client TLS was changed: %q %v", body, err)
 	}
-	if _, _, err := PrivateTarget(t.Context(), Job{Protocol: "http", Target: target.URL, TargetTLSName: "unexpected"}); err == nil {
+	job := Job{Kind: KindPrivateService, Protocol: "http", Target: target.URL, TargetTLSName: "unexpected"}
+	if err := validateTarget(&job); err == nil {
 		t.Fatal("private publication accepted publisher-side target TLS")
 	}
 }

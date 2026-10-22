@@ -214,8 +214,12 @@ func (d *Database) RevokePrivateServiceGrant(ctx context.Context, serviceID, act
 	return tx.Commit(ctx)
 }
 
-func privateServiceRecord(row controlstatedb.ControlPrivateService) PrivateServiceRecord {
-	return PrivateServiceRecord{PrivateServiceMetadata: privateMetadata(row), ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &PrivateServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}
+func checkedPrivateServiceRecord(row controlstatedb.ControlPrivateService) (PrivateServiceRecord, error) {
+	metadata, err := checkedPrivateMetadata(row)
+	if err != nil {
+		return PrivateServiceRecord{}, err
+	}
+	return PrivateServiceRecord{PrivateServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID.String, Name: row.Name, Enabled: row.Enabled, CreatedAt: row.CreatedAt.Time, Placement: &PrivateServicePlacement{DomainID: row.DomainID.String, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func privateServiceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
@@ -293,16 +297,24 @@ func (d *Database) CreatePrivateServiceAt(ctx context.Context, teamID, actorID, 
 		if err != nil {
 			return result, err
 		}
-		if row.DeletedAt.Valid || row.TeamID != teamID || row.Name != name || !privateMetadataMatches(privateMetadata(row), metadata) || row.PublisherPool != metadata.PublisherPool {
+		saved, err := checkedPrivateMetadata(row)
+		if err != nil {
+			return result, err
+		}
+		if row.DeletedAt.Valid || row.TeamID != teamID || row.Name != name || !privateMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool {
 			return result, ErrPrivateServiceConflict
 		}
 		if err = d.ensureLocalManagedEndpoint(ctx, tx, row.ID, actorID, name, placement, now); err != nil {
 			return result, err
 		}
+		result, err = checkedPrivateServiceRecord(row)
+		if err != nil {
+			return result, err
+		}
 		if err = tx.Commit(ctx); err != nil {
 			return result, err
 		}
-		return privateServiceRecord(row), nil
+		return result, nil
 	}
 	_, err = controlstatedb.New(tx).InsertPrivateService(ctx, controlstatedb.InsertPrivateServiceParams{
 		ID: id, TeamID: teamID, Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: actorID,
@@ -349,10 +361,14 @@ func (d *Database) CreatePrivateServiceAt(ctx context.Context, teamID, actorID, 
 	if err = auditPrivateMutation(ctx, tx, id, actorID, "grant.create", ownerGrantID, now); err != nil {
 		return result, err
 	}
+	result, err = checkedPrivateServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	return privateServiceRecord(row), nil
+	return result, nil
 }
 
 func (d *Database) ListPrivateServices(ctx context.Context, teamID, actorID, after string) ([]PrivateServiceRecord, string, error) {
@@ -378,7 +394,10 @@ func (d *Database) ListPrivateServices(ctx context.Context, teamID, actorID, aft
 			next = rows[index-1].ID
 			break
 		}
-		record := privateServiceRecord(row)
+		record, err := checkedPrivateServiceRecord(row)
+		if err != nil {
+			return nil, "", err
+		}
 		if err = privateServiceSource(ctx, controlstatedb.New(tx), &record); err != nil {
 			return nil, "", err
 		}
@@ -413,7 +432,10 @@ func (d *Database) GetPrivateService(ctx context.Context, serviceID, actorID str
 	} else if err != nil {
 		return PrivateServiceRecord{}, err
 	}
-	result = privateServiceRecord(row)
+	result, err = checkedPrivateServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
 	if err = privateServiceSource(ctx, controlstatedb.New(tx), &result); err != nil {
 		return result, err
 	}

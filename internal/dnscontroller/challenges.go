@@ -92,15 +92,66 @@ func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizati
 	return err
 }
 
+type subjectChallengeStore interface {
+	GetDNSChallengeContextForSubject(context.Context, controlstate.CertificateSubject, string) (controlstate.DNSChallengeContext, error)
+}
+
+func (m *ChallengeManager) PresentSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string) error {
+	_, err := m.reconcileSubject(ctx, subject, authorizationID, controlstate.ACMEAuthorizationPresenting)
+	return err
+}
+
+func (m *ChallengeManager) VerifySubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string) (bool, error) {
+	return m.reconcileSubject(ctx, subject, authorizationID, controlstate.ACMEAuthorizationPresented)
+}
+
+func (m *ChallengeManager) CleanupSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string) error {
+	_, err := m.reconcileSubject(ctx, subject, authorizationID, controlstate.ACMEAuthorizationCleaning)
+	return err
+}
+
+func (m *ChallengeManager) reconcileSubject(ctx context.Context, subject controlstate.CertificateSubject, authorizationID string, state controlstate.ACMEAuthorizationState) (bool, error) {
+	store, ok := m.store.(subjectChallengeStore)
+	if !ok || !subject.Valid() {
+		return false, controlstate.ErrDNSChallengeNotFound
+	}
+	started := time.Now()
+	verified, err := m.reconcileContext(ctx, func() (controlstate.DNSChallengeContext, error) {
+		challenge, err := store.GetDNSChallengeContextForSubject(ctx, subject, authorizationID)
+		if err == nil && challenge.Subject != subject {
+			return controlstate.DNSChallengeContext{}, controlstate.ErrDNSChallengeNotFound
+		}
+		return challenge, err
+	}, state)
+	stage := "provider"
+	if state == controlstate.ACMEAuthorizationPresented {
+		stage = "verify"
+	} else if state == controlstate.ACMEAuthorizationCleaning {
+		stage = "cleanup"
+	}
+	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), stage, started, state != controlstate.ACMEAuthorizationPresented || verified, err)
+	return verified, err
+}
+
 func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authorizationID string, state controlstate.ACMEAuthorizationState) (bool, error) {
-	initial, err := m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
+	return m.reconcileContext(ctx, func() (controlstate.DNSChallengeContext, error) {
+		return m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
+	}, state)
+}
+
+func (m *ChallengeManager) reconcileContext(ctx context.Context, load func() (controlstate.DNSChallengeContext, error), state controlstate.ACMEAuthorizationState) (bool, error) {
+	initial, err := load()
 	if err != nil {
 		return false, err
 	}
 	recordName := "_acme-challenge." + strings.TrimPrefix(initial.Identifier, "*.")
 	verified := false
 	err = m.store.WithDNSRecordLock(ctx, recordName, func() error {
-		challenge, record, expected, err := m.challengeRecord(ctx, publicURLID, authorizationID)
+		challenge, err := load()
+		if err != nil {
+			return err
+		}
+		record, expected, err := m.recordForChallenge(ctx, challenge)
 		if err != nil {
 			return err
 		}
@@ -199,14 +250,7 @@ func reconcileChallengeChange(
 	return false, nil
 }
 
-func (m *ChallengeManager) challengeRecord(
-	ctx context.Context,
-	publicURLID, authorizationID string,
-) (controlstate.DNSChallengeContext, ChallengeRecord, string, error) {
-	challenge, err := m.store.GetDNSChallengeContext(ctx, publicURLID, authorizationID)
-	if err != nil {
-		return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", err
-	}
+func (m *ChallengeManager) recordForChallenge(ctx context.Context, challenge controlstate.DNSChallengeContext) (ChallengeRecord, string, error) {
 	baseIdentifier := strings.TrimPrefix(challenge.Identifier, "*.")
 	record := ChallengeRecord{
 		ZoneDomain: challenge.CanonicalDomain, TeamID: challenge.TeamID, DomainID: challenge.DomainID,
@@ -218,24 +262,24 @@ func (m *ChallengeManager) challengeRecord(
 	} else {
 		authority, err := m.store.GetDNSAuthority(ctx, challenge.DNSAuthorityReference)
 		if errors.Is(err, controlstate.ErrDNSAuthorityInvalid) || errors.Is(err, controlstate.ErrDNSAuthorityNotFound) {
-			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", terminalf("DNS challenge authority is not available")
+			return ChallengeRecord{}, "", terminalf("DNS challenge authority is not available")
 		}
 		if err != nil {
-			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", err
+			return ChallengeRecord{}, "", err
 		}
 		if authority.State != controlstate.DNSAuthorityReady && !(authority.State == controlstate.DNSAuthorityReleasing && challenge.State == controlstate.ACMEAuthorizationCleaning) || authority.ProviderZoneID == "" ||
 			authority.Reference != challenge.DNSAuthorityReference ||
 			authority.TeamID != challenge.TeamID || authority.DomainID != challenge.DomainID ||
 			authority.CanonicalDomain != challenge.CanonicalDomain ||
 			baseIdentifier != authority.CanonicalDomain && !strings.HasSuffix(baseIdentifier, "."+authority.CanonicalDomain) {
-			return controlstate.DNSChallengeContext{}, ChallengeRecord{}, "", terminalf("DNS challenge authority is not available")
+			return ChallengeRecord{}, "", terminalf("DNS challenge authority is not available")
 		}
 		record.ZoneID, record.CustomZone = authority.ProviderZoneID, true
 		record.AuthorityReference = authority.Reference
 	}
 	record.DesiredOwnedValues, record.PreviouslyOwnedValues = challengeTXTValues(challenge.Presentations)
 	expected := challengeTXTValue(challenge.ChallengeDigest)
-	return challenge, record, expected, nil
+	return record, expected, nil
 }
 
 func challengeTXTValues(presentations []controlstate.DNSChallengePresentation) (desiredValues, ownedValues []string) {

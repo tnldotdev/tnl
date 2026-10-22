@@ -61,16 +61,18 @@ type Checkpoint struct {
 
 // Merge combines independent ingress-process checkpoints.
 func (c *Checkpoint) Merge(other Checkpoint) error {
+	staged := *c
 	for _, pair := range [][2]*DurationHistogram{
-		{&c.VisitorStreamOpenLatency, &other.VisitorStreamOpenLatency},
-		{&c.TimeToFirstPublisherByte, &other.TimeToFirstPublisherByte},
-		{&c.SuccessfulConnectionDuration, &other.SuccessfulConnectionDuration},
+		{&staged.VisitorStreamOpenLatency, &other.VisitorStreamOpenLatency},
+		{&staged.TimeToFirstPublisherByte, &other.TimeToFirstPublisherByte},
+		{&staged.SuccessfulConnectionDuration, &other.SuccessfulConnectionDuration},
 	} {
 		if err := pair[0].merge(*pair[1]); err != nil {
 			return err
 		}
 	}
-	c.VisitorNetworks.merge(other.VisitorNetworks)
+	staged.VisitorNetworks.merge(other.VisitorNetworks)
+	*c = staged
 	return nil
 }
 

@@ -2,6 +2,7 @@ package muxsession
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 )
@@ -25,6 +26,19 @@ type Session interface {
 	Done() <-chan struct{}
 	Err() error
 }
+
+// AcceptedPeer is the network identity capability of an accepted transport.
+// ordinary in-memory sessions need only implement Session.
+type AcceptedPeer interface {
+	LocalAddr() net.Addr
+	RemoteAddr() net.Addr
+	TLSConnectionState() tls.ConnectionState
+}
+
+var (
+	_ AcceptedPeer = (*quicSession)(nil)
+	_ AcceptedPeer = (*yamuxSession)(nil)
+)
 
 // Endpoint identifies where a transport connects without tunnel-specific behavior.
 type Endpoint struct {

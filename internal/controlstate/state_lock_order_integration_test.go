@@ -182,7 +182,7 @@ func TestIntegrationStateLockOrderCompanyDecision(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	workers.Go(func() {
-		done <- d.SetCompanyMembershipDecision(WithCompanyActorProof(ctx, identity, "decision"), ControlPrincipal{}, team.ID, member, false, false, false, now)
+		done <- d.UpdateCompanyMembershipDecision(WithCompanyActorProof(ctx, identity, "decision"), ControlPrincipal{}, team.ID, member, CompanyMembershipDecision{}, now)
 	})
 	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
 	if _, err = gate.Exec(ctx, `SET LOCAL lock_timeout='250ms'`); err != nil {

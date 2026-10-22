@@ -10,7 +10,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func inspectionRoots(ctx context.Context, project string) (string, string, error) {
@@ -47,13 +46,13 @@ func summaryObservation(recorder *clientstate.InspectionRecorder) inspection.Obs
 	}
 	return func(event inspection.Summary) {
 		record := clientstate.InspectionRecord{
-			Protocol:   controlv1.PublicURLServiceProtocol(event.Protocol),
+			Protocol:   event.Protocol,
 			ReceivedAt: event.ReceivedAt, Method: event.Method, Path: event.Path,
 			Status: event.Status, DurationMS: event.Duration.Milliseconds(), Origin: event.Origin,
 			Operation: event.Operation, Result: event.Result, RedisCommand: event.Command,
 			SQLState: event.SQLState, Rows: event.Rows, ResultSets: int64(event.ResultSets), MySQLErrorCode: int64(event.MySQLErrorCode),
 		}
-		if event.Protocol == "http" {
+		if event.Protocol == inspection.HTTP {
 			record.Result = ""
 		}
 		recorder.Observe(record)

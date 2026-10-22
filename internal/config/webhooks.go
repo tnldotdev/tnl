@@ -10,8 +10,8 @@ import (
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
@@ -76,7 +76,7 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 				return fmt.Errorf("webhooks.%s: service must be a local public HTTP service", name)
 			}
 		}
-		if !localproxy.ValidMountPrefix(endpoint.Path) {
+		if !targetsyntax.ValidMountPrefix(endpoint.Path) {
 			return fmt.Errorf("webhooks.%s: path must be an exact clean absolute path", name)
 		}
 		if previous := paths[endpoint.Path]; previous != "" {

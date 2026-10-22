@@ -128,6 +128,10 @@ func Wrap(operation Operation, reason Reason, cause error) error {
 	if cause == nil {
 		return nil
 	}
+	return newError(operation, reason, cause)
+}
+
+func newError(operation Operation, reason Reason, cause error) *Error {
 	if operation == "" {
 		panic("failure: operation is required")
 	}
@@ -146,7 +150,7 @@ func WrapSetting(operation Operation, reason Reason, setting Setting, cause erro
 	if !setting.valid() {
 		panic("failure: setting is not defined: " + string(setting))
 	}
-	err := Wrap(operation, reason, cause).(*Error)
+	err := newError(operation, reason, cause)
 	err.setting = setting
 	return err
 }
@@ -158,10 +162,11 @@ func (e *Error) Operation() Operation { return e.operation }
 func (e *Error) Reason() Reason       { return e.reason }
 func (e *Error) Setting() Setting     { return e.setting }
 
-// Of returns the outermost typed failure within an error chain.
+// Of returns the outermost typed failure within an error chain. ok is true only
+// when extraction produced a non-nil failure, including through a custom As.
 func Of(err error) (*Error, bool) {
-	var typed *Error
-	return typed, errors.As(err, &typed)
+	typed, ok := errors.AsType[*Error](err)
+	return typed, ok && typed != nil
 }
 
 // Describe returns authored text for the outermost typed failure.
@@ -193,11 +198,16 @@ func SafeMessage(err error, fallback Reason) string {
 // ReasonOf also accepts domain errors that carry a typed reason while retaining
 // their own error identities and retry behavior.
 func ReasonOf(err error) (Reason, bool) {
-	if typed, ok := Of(err); ok {
+	if typed, ok := errors.AsType[*Error](err); ok {
+		if typed == nil {
+			return "", false
+		}
 		return typed.reason, true
 	}
+	// retain the marker-only target for custom As implementations. AsType
+	// requires an error target, which would change that matching contract.
 	var reasoned interface{ FailureReason() Reason }
-	if errors.As(err, &reasoned) {
+	if errors.As(err, &reasoned) && reasoned != nil {
 		reason := reasoned.FailureReason()
 		_, ok := DefinitionFor(reason)
 		return reason, ok

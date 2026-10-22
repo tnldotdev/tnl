@@ -39,5 +39,9 @@ func (d *Database) GetProjectPrivateService(ctx context.Context, r GetProjectPri
 	if err != nil {
 		return result, publisherLookupError(err, ErrPrivateServiceAccess)
 	}
-	return privateServiceRecord(row), tx.Commit(ctx)
+	result, err = checkedPrivateServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
 }

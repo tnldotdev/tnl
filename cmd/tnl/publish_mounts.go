@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/projectpublisher"
 )
 
@@ -81,7 +82,7 @@ func configuredProjectMounts(project projectConfiguration, service string, appTa
 		normalized := ""
 		if target != "" {
 			var err error
-			normalized, err = localproxy.NormalizeTarget(target)
+			normalized, err = targetsyntax.NormalizeTarget(target)
 			if err != nil {
 				return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
 			}

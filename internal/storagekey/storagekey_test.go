@@ -107,6 +107,17 @@ func TestIPPolicyKeysArePurposeBoundAcrossStorageKeyRotation(t *testing.T) {
 	}
 }
 
+func TestUninitializedKeyringCannotDeriveIPPolicyKey(t *testing.T) {
+	for _, keyring := range []*Keyring{nil, {}} {
+		for _, id := range []string{"", "unavailable"} {
+			key, err := keyring.IPPolicyKey(id, "url:one")
+			if err == nil || key != [32]byte{} {
+				t.Fatal("uninitialized keyring derived a verifier", err)
+			}
+		}
+	}
+}
+
 func encodedKey(value byte) string {
 	return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{value}, keySize))
 }

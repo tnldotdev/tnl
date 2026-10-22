@@ -242,7 +242,7 @@ func (d *Database) CreateCompanyLoginIntent(ctx context.Context, team, issuer, c
 	if err != nil {
 		return result, publisherLookupError(err, ErrAuthorityAccess)
 	}
-	if c.State != "active" || c.Issuer != issuer {
+	if identityConnectionState(c.State) != identityConnectionActive || c.Issuer != issuer {
 		return result, ErrAuthorityAccess
 	}
 	id, err := opaqueid.New("cai_")
@@ -299,7 +299,7 @@ func (d *Database) ResolveCompanyLoginIntent(ctx context.Context, id, binding st
 	if err != nil {
 		return result, publisherLookupError(err, ErrControlAuthentication)
 	}
-	if c.ID != i.IdentityConnectionID || c.Revision != i.ConnectionRevision || c.State != "active" {
+	if c.ID != i.IdentityConnectionID || c.Revision != i.ConnectionRevision || identityConnectionState(c.State) != identityConnectionActive {
 		return result, ErrControlAuthentication
 	}
 	result = CompanyLoginIntent{ID: i.ID, TeamID: i.TeamID, IdentityConnectionID: c.ID, ConnectionRevision: c.Revision, SourceID: c.SourceID, Issuer: i.Issuer, ClientID: i.ClientID, RedirectURI: i.RedirectUri, Nonce: i.Nonce, ExpiresAt: i.ExpiresAt.Time}

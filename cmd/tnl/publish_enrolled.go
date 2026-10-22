@@ -339,6 +339,6 @@ func enrolledSummaryObservation(recorder *clientstate.InspectionRecorder) inspec
 		return nil
 	}
 	return func(s inspection.Summary) {
-		recorder.Observe(clientstate.InspectionRecord{Protocol: controlv1.PublicURLServiceProtocol(s.Protocol), ReceivedAt: s.ReceivedAt, Method: s.Method, Path: s.Path, Status: s.Status, DurationMS: s.Duration.Milliseconds(), Origin: s.Origin, Operation: s.Operation, Result: s.Result, RedisCommand: s.Command, SQLState: s.SQLState, Rows: s.Rows, ResultSets: int64(s.ResultSets), MySQLErrorCode: int64(s.MySQLErrorCode)})
+		recorder.Observe(clientstate.InspectionRecord{Protocol: s.Protocol, ReceivedAt: s.ReceivedAt, Method: s.Method, Path: s.Path, Status: s.Status, DurationMS: s.Duration.Milliseconds(), Origin: s.Origin, Operation: s.Operation, Result: s.Result, RedisCommand: s.Command, SQLState: s.SQLState, Rows: s.Rows, ResultSets: int64(s.ResultSets), MySQLErrorCode: int64(s.MySQLErrorCode)})
 	}
 }

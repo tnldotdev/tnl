@@ -166,16 +166,8 @@ func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error)
 	if err != nil {
 		return next, err
 	}
-	if err = validateSession(next); err != nil {
+	if err = validateSessionUpdate(r, next); err != nil {
 		return authorityv1.WorkloadSession{}, err
-	}
-	if next.Binding != r.Binding || next.Id != r.Id || next.Credential != r.Credential || next.ExpiresAt.After(r.ExpiresAt) || next.TeamId != r.TeamId || next.ProjectKey != r.ProjectKey || next.Workload != r.Workload || next.Provider != r.Provider || !reflect.DeepEqual(next.Github, r.Github) {
-		return authorityv1.WorkloadSession{}, invalidSession()
-	}
-	for _, id := range next.ServiceIds {
-		if !slices.Contains(r.ServiceIds, id) {
-			return authorityv1.WorkloadSession{}, invalidSession()
-		}
 	}
 	c.mu.Lock()
 	c.session = cloneSession(next)
@@ -228,19 +220,34 @@ func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.Work
 		}
 		return next, err
 	}
-	if validateSession(next) != nil || next.Binding != r.Binding || next.Id != r.Id || next.Credential != r.Credential || next.ExpiresAt.After(r.ExpiresAt) || next.TeamId != r.TeamId || next.ProjectKey != r.ProjectKey || next.Workload != r.Workload || next.Provider != r.Provider || !reflect.DeepEqual(next.Github, r.Github) {
-		return authorityv1.WorkloadSession{}, invalidSession()
-	}
-	for _, id := range next.ServiceIds {
-		if !slices.Contains(r.ServiceIds, id) {
-			return authorityv1.WorkloadSession{}, invalidSession()
-		}
+	if err = validateSessionUpdate(r, next); err != nil {
+		return authorityv1.WorkloadSession{}, err
 	}
 	c.mu.Lock()
 	c.session = cloneSession(next)
 	c.mu.Unlock()
 	return next, nil
 }
+
+// renewals and assertion attachments may shorten the execution and narrow its
+// services, but cannot change its binding or extend its original expiry.
+func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
+	if err := validateSession(next); err != nil {
+		return err
+	}
+	if next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
+		next.ExpiresAt.After(current.ExpiresAt) || next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
+		next.Workload != current.Workload || next.Provider != current.Provider || !reflect.DeepEqual(next.Github, current.Github) {
+		return invalidSession()
+	}
+	for _, id := range next.ServiceIds {
+		if !slices.Contains(current.ServiceIds, id) {
+			return invalidSession()
+		}
+	}
+	return nil
+}
+
 func (c *Client) Revoke(ctx context.Context) error {
 	r, err := c.Session()
 	if err != nil {

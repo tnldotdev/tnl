@@ -17,7 +17,7 @@ func TestPrivateTargetTrustMismatchFailsBeforeResolutionOrPublication(t *testing
 		t.Fatal(err)
 	}
 	called := false
-	err = PublishPrivate(t.Context(), Job{Kind: KindPrivateService, Protocol: config.ProtocolPostgres, Target: "127.0.0.1:1", Trust: &trust},
+	err = PublishPrivate(t.Context(), PrivateTargetPlan{Protocol: config.ProtocolPostgres, Target: "127.0.0.1:1", Trust: &trust},
 		privatepublisher.RunConfig{Metadata: controlv1.PrivateServiceMetadata{Protocol: controlv1.Postgres}},
 		PrivateTargetHooks{Capture: func(projectpublisher.TargetSnapshot) error { called = true; return nil }})
 	if !errors.Is(err, ErrScope) || called {

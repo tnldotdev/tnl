@@ -36,20 +36,15 @@ func (w *Workers) startReadiness(ctx context.Context, service clientruntime.Serv
 				case <-timer.C:
 				}
 			}
-			if ctx.Err() != nil || !w.Manager.Current(service.Name, service.RegistrationID, service.Target, run) {
+			if ctx.Err() != nil {
 				return
 			}
-			for _, current := range w.Manager.Snapshot().Services {
-				if current.Name != service.Name {
-					continue
-				}
-				if current.RegistrationID != service.RegistrationID || current.Target != service.Target || current.PublishRunNumber != run || !current.Registered || !current.Routable || current.Ready {
-					return
-				}
-				if w.checkService(ctx, current) {
-					return
-				}
-				break
+			current, ok := w.Manager.ServiceForRun(service.Name, service.RegistrationID, service.Target, run)
+			if !ok || !current.Routable || current.Ready {
+				return
+			}
+			if w.checkService(ctx, current) {
+				return
 			}
 		}
 	}()

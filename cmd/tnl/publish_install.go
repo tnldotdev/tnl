@@ -287,7 +287,7 @@ func registerPublication(ctx context.Context, options publisherjob.ServiceOption
 		if err := nativeauth.MatchPrivateServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
 			return err
 		}
-		if err := publisherjob.PreflightPrivate(ctx, job); err != nil {
+		if err := publisherjob.PreflightPrivate(ctx, job.PrivateTargetPlan()); err != nil {
 			return err
 		}
 	default:

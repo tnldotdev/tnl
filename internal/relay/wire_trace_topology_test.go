@@ -122,7 +122,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 					}
 					defer session.Close()
 					if private {
-						paths := &PublisherConnection{session: session, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
+						paths := newStreamLifetime(session)
 						if err := privateRegistry.insert(&privateConnection{ref: privateRef, lease: lease, paths: paths}); err != nil {
 							return err
 						}

@@ -1,6 +1,9 @@
 package benchworkload
 
-import "errors"
+import (
+	"errors"
+	"slices"
+)
 
 func (r *VisitorResult) Merge(other VisitorResult) error {
 	for _, count := range []int{other.Scheduled, other.Started, other.Completed, other.Successes, other.Failures, other.Timeouts, other.Missed, other.QueueExpired, other.Workers, other.QueueSlots, other.Rate} {
@@ -11,32 +14,39 @@ func (r *VisitorResult) Merge(other VisitorResult) error {
 	if other.Scheduled != other.Started+other.Missed+other.QueueExpired || other.Started != other.Completed || other.Completed != other.Successes+other.Failures || other.Timeouts > other.Failures {
 		return errors.New("inconsistent visitor accounting")
 	}
-	for _, pair := range [][2]*Histogram{{&r.QueueDelay, &other.QueueDelay}, {&r.DNS, &other.DNS}, {&r.Connect, &other.Connect}, {&r.TLS, &other.TLS}, {&r.FirstByte, &other.FirstByte}, {&r.Total, &other.Total}} {
+	staged := *r
+	for _, histogram := range []*Histogram{&staged.QueueDelay, &staged.DNS, &staged.Connect, &staged.TLS, &staged.FirstByte, &staged.Total} {
+		histogram.BoundsMilliseconds = slices.Clone(histogram.BoundsMilliseconds)
+		histogram.Counts = slices.Clone(histogram.Counts)
+	}
+	staged.FailuresSample = slices.Clone(staged.FailuresSample)
+	for _, pair := range [][2]*Histogram{{&staged.QueueDelay, &other.QueueDelay}, {&staged.DNS, &other.DNS}, {&staged.Connect, &other.Connect}, {&staged.TLS, &other.TLS}, {&staged.FirstByte, &other.FirstByte}, {&staged.Total, &other.Total}} {
 		if err := pair[0].Merge(*pair[1]); err != nil {
 			return err
 		}
 	}
-	if r.StartedAt.IsZero() || other.StartedAt.Before(r.StartedAt) {
-		r.StartedAt = other.StartedAt
+	if staged.StartedAt.IsZero() || other.StartedAt.Before(staged.StartedAt) {
+		staged.StartedAt = other.StartedAt
 	}
-	r.OfferDuration = max(r.OfferDuration, other.OfferDuration)
-	r.DrainDuration = max(r.DrainDuration, other.DrainDuration)
-	r.Workers += other.Workers
-	r.QueueSlots += other.QueueSlots
-	r.Rate += other.Rate
-	r.Scheduled += other.Scheduled
-	r.Started += other.Started
-	r.Completed += other.Completed
-	r.Successes += other.Successes
-	r.Failures += other.Failures
-	r.Timeouts += other.Timeouts
-	r.Missed += other.Missed
-	r.QueueExpired += other.QueueExpired
-	r.Bytes += other.Bytes
+	staged.OfferDuration = max(staged.OfferDuration, other.OfferDuration)
+	staged.DrainDuration = max(staged.DrainDuration, other.DrainDuration)
+	staged.Workers += other.Workers
+	staged.QueueSlots += other.QueueSlots
+	staged.Rate += other.Rate
+	staged.Scheduled += other.Scheduled
+	staged.Started += other.Started
+	staged.Completed += other.Completed
+	staged.Successes += other.Successes
+	staged.Failures += other.Failures
+	staged.Timeouts += other.Timeouts
+	staged.Missed += other.Missed
+	staged.QueueExpired += other.QueueExpired
+	staged.Bytes += other.Bytes
 	for _, sample := range other.FailuresSample {
-		if len(r.FailuresSample) < 8 {
-			r.FailuresSample = append(r.FailuresSample, sample)
+		if len(staged.FailuresSample) < 8 {
+			staged.FailuresSample = append(staged.FailuresSample, sample)
 		}
 	}
+	*r = staged
 	return nil
 }

@@ -136,7 +136,11 @@ func (d *Database) DirectServiceVisitorStatus(ctx context.Context, lease Ingress
 		return result, err
 	}
 	if httpCredential.HttpCredentialKind.Valid {
-		validity, err := d.recheckManagedHTTPVisitor(ctx, tx, service, run, number, visitor, source, httpCredential.DestinationPort, httpCredential.HttpCredentialKind.String, httpCredential.HttpCredentialDigest, now)
+		credential, err := storedManagedHTTPCredential(httpCredential.HttpCredentialKind.String, httpCredential.HttpCredentialDigest)
+		if err != nil {
+			return DirectVisitorStatus{State: DirectVisitorDenied, ValidUntil: now}, nil
+		}
+		validity, err := d.recheckManagedHTTPVisitor(ctx, tx, service, run, number, visitor, source, httpCredential.DestinationPort, credential, now)
 		if err != nil && !errors.Is(err, ErrPrivateServiceAccess) && !errors.Is(err, ErrVisitorSignIn) {
 			return result, err
 		}

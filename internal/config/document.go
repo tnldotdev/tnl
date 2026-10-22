@@ -475,6 +475,9 @@ func (s *TNLDSection) UnmarshalYAML(node *yaml.Node) error {
 		if !ok {
 			return fmt.Errorf("unknown tnld field %q", name)
 		}
+		if err := validateYAMLValueTypes(valueNode, field.typ, make(map[*yaml.Node]bool)); err != nil {
+			return fmt.Errorf("tnld.%s: %w", name, err)
+		}
 		value := reflect.ValueOf(&s.value).Elem().Field(field.index)
 		if field.duration {
 			if valueNode.Kind != yaml.ScalarNode || valueNode.Tag != "!!str" {
@@ -502,6 +505,7 @@ func (s *TNLDSection) markPresent(index int) {
 
 type tnldField struct {
 	index    int
+	typ      reflect.Type
 	duration bool
 }
 
@@ -521,7 +525,7 @@ func tnldFields() map[string]tnldField {
 			if name == "" || name == "database_direct_url" {
 				continue
 			}
-			tnldFieldMap[name] = tnldField{index: index, duration: field.Type == durationType}
+			tnldFieldMap[name] = tnldField{index: index, typ: field.Type, duration: field.Type == durationType}
 		}
 	})
 	return tnldFieldMap

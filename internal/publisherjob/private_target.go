@@ -19,14 +19,14 @@ type PrivateTargetHooks struct {
 	Capture  func(projectpublisher.TargetSnapshot) error
 }
 
-func PublishPrivate(ctx context.Context, job Job, config privatepublisher.RunConfig, hooks ...PrivateTargetHooks) error {
-	if len(hooks) > 1 || job.Kind != KindPrivateService || !job.Protocol.Valid() || string(config.Metadata.Protocol) != string(job.Protocol) {
+func PublishPrivate(ctx context.Context, plan PrivateTargetPlan, config privatepublisher.RunConfig, hooks ...PrivateTargetHooks) error {
+	if len(hooks) > 1 || !plan.Protocol.Valid() || string(config.Metadata.Protocol) != string(plan.Protocol) {
 		return ErrScope
 	}
-	if err := validateTarget(&job); err != nil {
+	if err := plan.normalize(); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(config.Metadata.TargetTls, nativeauth.PrivateServiceTLS(job.Trust)) {
+	if !reflect.DeepEqual(config.Metadata.TargetTls, nativeauth.PrivateServiceTLS(plan.Trust)) {
 		return ErrScope
 	}
 	var hook PrivateTargetHooks
@@ -38,28 +38,28 @@ func PublishPrivate(ctx context.Context, job Job, config privatepublisher.RunCon
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
-			return PreflightPrivate(ctx, job) == nil
+			return PreflightPrivate(ctx, plan) == nil
 		}
 	}
-	if job.Project == nil {
+	if plan.Project == nil {
 		if hook.Capture != nil {
-			if err := hook.Capture(projectpublisher.TargetSnapshot{Address: job.Target, Identity: job.Target}); err != nil {
+			if err := hook.Capture(projectpublisher.TargetSnapshot{Address: plan.Target, Identity: plan.Target}); err != nil {
 				return err
 			}
 		}
-		target, close, err := PrivateTarget(ctx, job)
+		target, close, err := PrivateTarget(ctx, plan)
 		if err != nil {
 			return err
 		}
 		defer close()
 		config.Target = target
-		if err := PreflightPrivate(ctx, job); err != nil {
+		if err := PreflightPrivate(ctx, plan); err != nil {
 			return err
 		}
 		return privatepublisher.Publish(ctx, config)
 	}
 	for ctx.Err() == nil {
-		initial, err := projectpublisher.ResolveTargetSnapshot(ctx, *job.Project, job.ProjectService, hook.Resolver)
+		initial, err := projectpublisher.ResolveTargetSnapshot(ctx, *plan.Project, plan.ProjectService, hook.Resolver)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func PublishPrivate(ctx context.Context, job Job, config privatepublisher.RunCon
 				case <-worker.Done():
 					return
 				case <-ticker.C:
-					next, err := projectpublisher.ResolveTargetSnapshot(worker, *job.Project, job.ProjectService, hook.Resolver)
+					next, err := projectpublisher.ResolveTargetSnapshot(worker, *plan.Project, plan.ProjectService, hook.Resolver)
 					if err != nil || next.Address != initial.Address || next.Identity != initial.Identity {
 						close(changed)
 						cancel()
@@ -89,15 +89,15 @@ func PublishPrivate(ctx context.Context, job Job, config privatepublisher.RunCon
 				}
 			}
 		}()
-		job.Target = initial.Address
-		target, close, err := PrivateTarget(worker, job)
+		plan.Target = initial.Address
+		target, close, err := PrivateTarget(worker, plan)
 		if err != nil {
 			cancel()
 			<-done
 			return err
 		}
 		config.Target = target
-		err = PreflightPrivate(worker, job)
+		err = PreflightPrivate(worker, plan)
 		if err == nil {
 			err = privatepublisher.Publish(worker, config)
 		}

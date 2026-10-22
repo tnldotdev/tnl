@@ -7,31 +7,32 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 // PrivateTarget selects the dial address. PrivateTransport independently selects
 // publisher-to-target negotiation from the approved target.tls snapshot.
-func PrivateTarget(ctx context.Context, job Job) (string, func(), error) {
+func PrivateTarget(ctx context.Context, plan PrivateTargetPlan) (string, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
-	if !job.Protocol.Valid() || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
+	if !plan.Protocol.Valid() {
 		return "", nil, ErrScope
 	}
-	if job.Protocol != config.ProtocolHTTP && job.Protocol != config.ProtocolKubernetes {
-		target, err := tcptarget.Normalize(job.Target)
+	if plan.Protocol != config.ProtocolHTTP && plan.Protocol != config.ProtocolKubernetes {
+		target, err := tcptarget.Normalize(plan.Target)
 		if err != nil {
 			return "", nil, ErrScope
 		}
 		return target, func() {}, nil
 	}
-	if !strings.Contains(job.Target, "://") {
-		address, err := tcptarget.Normalize(job.Target)
+	if !strings.Contains(plan.Target, "://") {
+		address, err := tcptarget.Normalize(plan.Target)
 		return address, func() {}, err
 	}
-	normalized, err := localproxy.NormalizeTarget(job.Target)
+	normalized, err := targetsyntax.NormalizeTarget(plan.Target)
 	if err != nil {
 		return "", nil, err
 	}
@@ -44,20 +45,20 @@ func PrivateTarget(ctx context.Context, job Job) (string, func(), error) {
 
 // PrivateTransport resolves only the publisher's approved target trust. visitor
 // certificates and service names cannot substitute for target identity.
-func PrivateTransport(job Job) (targettransport.Transport, error) {
-	return targettransport.FromTrust(job.Protocol, job.Trust)
+func PrivateTransport(plan PrivateTargetPlan) (targettransport.Transport, error) {
+	return targettransport.FromTrust(plan.Protocol, plan.Trust)
 }
 
-func PreflightPrivate(ctx context.Context, job Job) error {
-	if (job.Protocol == config.ProtocolHTTP || job.Protocol == config.ProtocolKubernetes) && (strings.HasPrefix(job.Target, "https://") && job.Trust == nil || strings.HasPrefix(job.Target, "http://") && job.Trust != nil) {
+func PreflightPrivate(ctx context.Context, plan PrivateTargetPlan) error {
+	if (plan.Protocol == config.ProtocolHTTP || plan.Protocol == config.ProtocolKubernetes) && (strings.HasPrefix(plan.Target, "https://") && plan.Trust == nil || strings.HasPrefix(plan.Target, "http://") && plan.Trust != nil) {
 		return ErrScope
 	}
-	address, close, err := PrivateTarget(ctx, job)
+	address, close, err := PrivateTarget(ctx, plan)
 	if err != nil {
 		return err
 	}
 	defer close()
-	transport, err := PrivateTransport(job)
+	transport, err := PrivateTransport(plan)
 	if err != nil {
 		return err
 	}

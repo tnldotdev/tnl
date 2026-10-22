@@ -84,7 +84,7 @@ func TestManagedHTTPGuardRotationDiscardsOldInFlightDeadline(t *testing.T) {
 	}
 }
 
-func (c httpGuardControl) AuthorizeManagedHTTPVisitor(ctx context.Context, _, _ string, _ credentials.PublishRunToken, _ controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c httpGuardControl) AuthorizeManagedHTTPVisitor(ctx context.Context, _, _ string, _ credentials.ManagedRunToken, _ controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return c.check(ctx)
 }
 

@@ -144,7 +144,7 @@ func (e Engine) Serve(ctx context.Context) error {
 		jobs, err := e.Registry.List(finish)
 		if err == nil {
 			for _, job := range jobs {
-				_ = e.Registry.status(finish, job.ID, job.Revision, Status{State: "stopped"})
+				_ = e.Registry.status(finish, job.ID, job.Revision, Status{State: JobStopped})
 			}
 		}
 	}()
@@ -187,8 +187,8 @@ func (e Engine) Serve(ctx context.Context) error {
 				continue
 			}
 			if !job.Enabled {
-				if job.Status.State != "stopped" {
-					if err := e.Registry.status(ctx, job.ID, job.Revision, Status{State: "stopped"}); err != nil {
+				if job.Status.State != JobStopped {
+					if err := e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobStopped}); err != nil {
 						return err
 					}
 				}
@@ -218,7 +218,7 @@ func (e Engine) run(ctx context.Context, job Job) {
 	var attempts uint64
 	for ctx.Err() == nil {
 		attempts++
-		if err := e.status(ctx, job, Status{State: "starting", Attempts: attempts}); err != nil {
+		if err := e.status(ctx, job, Status{State: JobStarting, Attempts: attempts}); err != nil {
 			return
 		}
 		ready, err := e.attempt(ctx, job, attempts, &runtime)
@@ -228,10 +228,10 @@ func (e Engine) run(ctx context.Context, job Job) {
 		if ready {
 			backoff = e.RetryMin
 		}
-		status := Status{State: "retrying", Failure: safeFailure(err), Attempts: attempts}
+		status := Status{State: JobRetrying, Failure: safeFailure(err), Attempts: attempts}
 		// bad grants and settings wait for local Start rather than hammering control.
 		if blockedFailure(err) {
-			status.State = "blocked"
+			status.State = JobBlocked
 			_ = e.status(ctx, job, status)
 			<-ctx.Done()
 			return
@@ -290,9 +290,9 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		var ready atomic.Bool
 		err := e.Group(ctx, job, func(revision int64, healthy bool) error {
 			ready.Store(healthy)
-			state := "reconciling"
+			state := JobReconciling
 			if healthy {
-				state = "ready"
+				state = JobReady
 			}
 			return e.status(ctx, job, Status{State: state, Attempts: attempts, ObservedRevision: revision})
 		})
@@ -305,7 +305,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		var ready atomic.Bool
 		err := e.Connect(ctx, job, func() error {
 			ready.Store(true)
-			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: "ready", Attempts: attempts})
+			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobReady, Attempts: attempts})
 		})
 		return ready.Load(), err
 	}
@@ -343,12 +343,12 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 			return false, ErrScope
 		}
 		var ready atomic.Bool
-		err = PublishPrivate(ctx, job, privatepublisher.RunConfig{
-			Control: native, State: profile, Access: native.Access, Identity: identity, Metadata: nativeauth.PrivateServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
+		err = PublishPrivate(ctx, job.PrivateTargetPlan(), privatepublisher.RunConfig{
+			Control: native.ManagedRunControl(), State: profile, Access: native.Access, Identity: identity, Metadata: nativeauth.PrivateServiceMetadata(service), StreamCapacity: int32(job.Limits.Concurrency),
 			PrivateServiceID: job.PrivateServiceID, Target: job.Target,
 			Ready: func() error {
 				ready.Store(true)
-				return e.Registry.status(ctx, job.ID, job.Revision, Status{State: "ready", Attempts: attempts})
+				return e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobReady, Attempts: attempts})
 			},
 		})
 		return ready.Load(), err
@@ -378,17 +378,17 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	var mu sync.Mutex
 	ready := false
 	cfg.Observe = func(event publisher.Event) error {
-		status := Status{State: "provisioning", Attempts: attempts, PublishRunNumber: event.PublishRunNumber, PublicURL: event.PublicURL}
+		status := Status{State: JobProvisioning, Attempts: attempts, PublishRunNumber: event.PublishRunNumber, PublicURL: event.PublicURL}
 		switch event.Type {
 		case publisher.EventReady:
 			mu.Lock()
 			ready = true
 			mu.Unlock()
-			status.State = "ready"
+			status.State = JobReady
 		case publisher.EventDraining:
-			status.State = "draining"
+			status.State = JobDraining
 		case publisher.EventTargetUnavailable:
-			status.State = "target unavailable"
+			status.State = JobTargetUnavailable
 		case publisher.EventProvisioning, publisher.EventPublicURLAssigned:
 		default:
 			return nil

@@ -10,8 +10,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -31,7 +31,7 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 			return nil
 		}
 		if len(query["state"]) != 1 || query.Get("state") == "" || len(query["state"][0]) > 8192 || len(query["redirect_uri"]) != 1 ||
-			callback.Scheme != "https" || callback.User != nil || callback.Fragment != "" || callback.RawPath != "" || !localproxy.ValidMountPrefix(callback.Path) {
+			callback.Scheme != "https" || callback.User != nil || callback.Fragment != "" || callback.RawPath != "" || !targetsyntax.ValidMountPrefix(callback.Path) {
 			return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("invalid OAuth authorization redirect"))
 		}
 		static, err := url.ParseQuery(callback.RawQuery)
@@ -52,7 +52,11 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 		if !ready {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
-		if err := state.SaveOAuthCallbackOrigin(ctx, server, hostname, group, query.Get("state"), tunnelID, callback.Path, callback.RawQuery, run.Hostname, run.PublicURLID, run.Number); err != nil {
+		if err := state.SaveOAuthCallback(ctx, clientstate.SaveOAuthCallbackInput{
+			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationGroup: group},
+			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number},
+			Destination: clientstate.OAuthCallbackDestination{TunnelID: tunnelID, Path: callback.Path, Query: callback.RawQuery}, State: query.Get("state"),
+		}); err != nil {
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, err)
 		}
 		return nil
@@ -70,7 +74,7 @@ func OAuthHandler(state *clientstate.Database, server, hostname string, onRedire
 			return
 		}
 		query, err := url.ParseQuery(request.URL.RawQuery)
-		if err != nil || request.Method != http.MethodGet || request.URL.RawPath != "" || !localproxy.ValidMountPrefix(request.URL.EscapedPath()) ||
+		if err != nil || request.Method != http.MethodGet || request.URL.RawPath != "" || !targetsyntax.ValidMountPrefix(request.URL.EscapedPath()) ||
 			len(query["state"]) != 1 || query.Get("state") == "" || len(query.Get("state")) > 8192 {
 			diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
 			return
@@ -86,7 +90,7 @@ func OAuthHandler(state *clientstate.Database, server, hostname string, onRedire
 		}
 		// providers already retain static redirect-URI query parameters. preserve
 		// their response exactly instead of appending the static query a second time.
-		http.Redirect(response, request, origin.PublicURL+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
+		http.Redirect(response, request, "https://"+origin.Hostname+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
 		if len(onRedirect) != 0 && onRedirect[0] != nil {
 			onRedirect[0]()
 		}

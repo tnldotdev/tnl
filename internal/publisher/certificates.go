@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -31,18 +30,17 @@ func logRenewalFailure(logf func(string, ...any), err error) {
 
 func issueInitialCertificate(
 	ctx context.Context,
-	server PublicURLControlClient,
+	authority publicRunAuthority,
 	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.PublishRunSetup,
 ) (clientstate.Material, error) {
-	hostname := setup.PublicUrl.CanonicalHostname
+	hostname := authority.identity.Hostname
 	current, found, err := state.Current(ctx, hostname)
 	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
 		return clientstate.Material{}, err
 	}
 	if err == nil && found {
-		if err := installCertificateMaterial(ctx, server, route, state, setup, current, false); err != nil {
+		if err := installCertificateMaterial(ctx, authority, route, state, current, false); err != nil {
 			return clientstate.Material{}, err
 		}
 		return current, nil
@@ -56,7 +54,7 @@ func issueInitialCertificate(
 	retriedTerminal := false
 	for {
 		attempted, err := attemptCertificateTransaction(
-			ctx, server, route, state, setup, false,
+			ctx, authority, route, state, false,
 		)
 		if attempted.Certificate.Leaf != nil {
 			material = attempted
@@ -85,16 +83,15 @@ func issueInitialCertificate(
 // the caller holds the cache lock while issuing or retrying the certificate.
 func attemptCertificateTransaction(
 	ctx context.Context,
-	server PublicURLControlClient,
+	authority publicRunAuthority,
 	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.PublishRunSetup,
 	renew bool,
 ) (_ clientstate.Material, result error) {
 	ctx, finish := observability.PublisherOperation(ctx, "certificate")
 	defer func() { finish(result) }()
-	publishRunID, publicURLID, hostname := setup.PublishRun.Id, setup.PublicUrl.Id, setup.PublicUrl.CanonicalHostname
-	version, publishRunToken := uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)
+	publishRunID, publicURLID, hostname := authority.identity.PublishRunID, authority.identity.PublicURLID, authority.identity.Hostname
+	version := authority.identity.Number
 	staged, found, err := state.Staged(ctx, hostname)
 	if errors.Is(err, clientstate.ErrCertificateExpired) {
 		if _, err := state.NewPending(ctx, hostname); err != nil {
@@ -103,7 +100,7 @@ func attemptCertificateTransaction(
 	} else if err != nil {
 		return clientstate.Material{}, err
 	} else if found {
-		if err := installCertificateMaterial(ctx, server, route, state, setup, staged, true); err != nil {
+		if err := installCertificateMaterial(ctx, authority, route, state, staged, true); err != nil {
 			return clientstate.Material{}, err
 		}
 		return staged, nil
@@ -113,7 +110,7 @@ func attemptCertificateTransaction(
 		return clientstate.Material{}, err
 	}
 	if err == nil && found && (!renew || time.Now().Before(current.RenewAt)) {
-		if err := installCertificateMaterial(ctx, server, route, state, setup, current, false); err != nil {
+		if err := installCertificateMaterial(ctx, authority, route, state, current, false); err != nil {
 			return clientstate.Material{}, err
 		}
 		return current, nil
@@ -123,12 +120,12 @@ func attemptCertificateTransaction(
 		return clientstate.Material{}, err
 	}
 	idempotencyKey := certificateIdempotencyKey(pending.CSRDER)
-	issuance, err := server.CreateCertificateIssuance(ctx, publishRunID, version, publishRunToken, pending.CSRDER, idempotencyKey)
+	issuance, err := authority.createCertificate(ctx, pending.CSRDER, idempotencyKey)
 	if err != nil {
 		return clientstate.Material{}, err
 	}
 	if err := validateCertificateAttempt(
-		ctx, state, issuance, publishRunID, publicURLID, version, hostname, setup.CertificatePlan,
+		ctx, state, issuance, publishRunID, publicURLID, version, hostname, authority.plan,
 	); err != nil {
 		return clientstate.Material{}, err
 	}
@@ -148,7 +145,7 @@ func attemptCertificateTransaction(
 	if err != nil {
 		return material, err
 	}
-	if err := installCertificateMaterial(ctx, server, route, state, setup, material, true); err != nil {
+	if err := installCertificateMaterial(ctx, authority, route, state, material, true); err != nil {
 		return clientstate.Material{}, err
 	}
 	return material, nil
@@ -156,22 +153,20 @@ func attemptCertificateTransaction(
 
 func installCertificateMaterial(
 	ctx context.Context,
-	server PublicURLControlClient,
+	authority publicRunAuthority,
 	route *PublicURLServer,
 	state *clientstate.CertificateCache,
-	setup controlv1.PublishRunSetup,
 	material clientstate.Material,
 	staged bool,
 ) error {
 	// a shared cache entry never authorizes this publish run to serve it.
-	if err := server.MarkPublishRunCertificateInstalled(
-		ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), material.IssuanceID,
-		material.Certificate.Leaf.NotAfter, credentials.PublishRunToken(setup.PublishRunToken),
+	if err := authority.certificateInstalled(
+		ctx, material.IssuanceID, material.Certificate.Leaf.NotAfter,
 	); err != nil {
 		return err
 	}
 	if staged {
-		if err := state.Promote(ctx, setup.PublicUrl.CanonicalHostname, material.IssuanceID); err != nil {
+		if err := state.Promote(ctx, authority.identity.Hostname, material.IssuanceID); err != nil {
 			return err
 		}
 	}

@@ -25,11 +25,12 @@ type ManagedHTTPRun struct {
 	Subject httpsubject.Subject
 	RunID   string
 	Number  int64
-	Token   credentials.PublishRunToken
+	Token   credentials.ManagedRunToken
 }
 
 func (a ManagedHTTPRun) valid() bool {
-	return a.Subject.Kind == httpsubject.ManagedService && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.PrivateRunPrefix) && a.Number > 0 && a.Token != ""
+	_, err := credentials.ParseManagedRunToken(a.Token)
+	return a.Subject.Kind == httpsubject.ManagedService && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.PrivateRunPrefix) && a.Number > 0 && err == nil
 }
 
 func (d *Database) lockManagedHTTPRun(ctx context.Context, tx pgx.Tx, auth ManagedHTTPRun, now time.Time) error {

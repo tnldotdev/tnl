@@ -179,7 +179,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	ref := tunnelv1.PrivatePublisherConnectionRef{PrivateServiceID: privateRelayID(opaqueid.PrivateServicePrefix), PrivateRunID: privateRelayID(opaqueid.PrivateRunPrefix), RunNumber: 3,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 2, RelayServiceID: "relay-a"}
 	publisher, relayPublisher := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "assigned-publisher", PrivateConnection: &ref})
-	paths := &PublisherConnection{session: relayPublisher, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
+	paths := newStreamLifetime(relayPublisher)
 	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 	registry := NewPrivateRegistry()
 	metrics := observability.New("relay")

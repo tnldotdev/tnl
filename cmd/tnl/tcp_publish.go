@@ -7,7 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -48,7 +48,7 @@ func normalizePrivatePublishTarget(target string, protocol controlv1.PrivateServ
 
 func normalizePublishTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
 	if protocol == controlv1.Http {
-		return localproxy.NormalizeTarget(target)
+		return targetsyntax.NormalizeTarget(target)
 	}
 	canonical, err := tcptarget.Normalize(target)
 	if err != nil {
@@ -74,7 +74,7 @@ func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) erro
 	}
 	if protocol == "http" {
 		if flags.TargetTLSName != "" || flags.TargetCAFile != "" || flags.TargetTLS != nil && *flags.TargetTLS {
-			target, err := localproxy.NormalizeTarget(flags.Target)
+			target, err := targetsyntax.NormalizeTarget(flags.Target)
 			if err != nil || !strings.HasPrefix(target, "https://") {
 				return failure.Wrap("validate HTTPS target", failure.InvalidTunnelFlags, errors.New("--target-tls-name requires an HTTPS target"))
 			}

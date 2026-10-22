@@ -20,8 +20,6 @@ import (
 
 var ErrSetupRequired = errors.New("no namespace publisher is set up; run tnl publisher setup --namespace")
 
-const defaultNamespaceScope = "default-namespace"
-
 func namespaceScope(team, domain string) string {
 	digest := sha256.Sum256([]byte(team + "\x00" + domain))
 	return "owner-namespace:" + hex.EncodeToString(digest[:])
@@ -37,7 +35,7 @@ func LoadLocalNamespace(ctx context.Context, state *clientstate.Store, control N
 	if state == nil || team == "" || domain == "" || namespace == "" {
 		return nil, ErrScope
 	}
-	saved, found, err := state.PublisherSigningIdentity(ctx, namespaceScope(team, domain))
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", namespaceScope(team, domain))
 	if err != nil {
 		return nil, err
 	}
@@ -45,14 +43,14 @@ func LoadLocalNamespace(ctx context.Context, state *clientstate.Store, control N
 		return nil, ErrSetupRequired
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if json.Unmarshal(saved.PublicValue, &identity) != nil || !matchesNamespace(identity, team, domain, namespace) || identity.ClientId != saved.ID {
+	if json.Unmarshal(saved.PublicDocument, &identity) != nil || !matchesNamespace(identity, team, domain, namespace) || identity.ClientId != saved.ID {
 		return nil, ErrScope
 	}
 	n, _, err := LoadNative(ctx, state, control, authority, identity.ClientId)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(n.private, saved.PrivateValue) {
+	if !bytes.Equal(n.private, saved.SigningKey) {
 		return nil, ErrScope
 	}
 	if _, err := n.Access(ctx); err != nil {
@@ -67,7 +65,7 @@ func LoadDefaultNamespace(ctx context.Context, state *clientstate.Store, control
 	if state == nil {
 		return nil, ErrScope
 	}
-	saved, found, err := state.PublisherSigningIdentity(ctx, defaultNamespaceScope)
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "default_namespace", "")
 	if err != nil {
 		return nil, err
 	}
@@ -75,14 +73,14 @@ func LoadDefaultNamespace(ctx context.Context, state *clientstate.Store, control
 		return nil, ErrSetupRequired
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if json.Unmarshal(saved.PublicValue, &identity) != nil || identity.ClientId != saved.ID || identity.DomainId == nil || identity.Namespace == nil || !matchesNamespace(identity, identity.TeamId, *identity.DomainId, *identity.Namespace) {
+	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.DomainId == nil || identity.Namespace == nil || !matchesNamespace(identity, identity.TeamId, *identity.DomainId, *identity.Namespace) {
 		return nil, ErrScope
 	}
 	n, _, err := LoadNative(ctx, state, control, authority, identity.ClientId)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(n.private, saved.PrivateValue) {
+	if !bytes.Equal(n.private, saved.SigningKey) {
 		return nil, ErrScope
 	}
 	if _, err := n.Access(ctx); err != nil {
@@ -92,14 +90,14 @@ func LoadDefaultNamespace(ctx context.Context, state *clientstate.Store, control
 }
 
 func saveDefaultNamespace(ctx context.Context, state *clientstate.Store, identity authorityv1.PublisherEnrollmentResult) error {
-	saved, found, err := state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
+	_, found, err := state.PublisherIdentity(ctx, identity.ClientId)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return ErrScope
 	}
-	return state.SavePublisherSigningIdentity(ctx, defaultNamespaceScope, saved)
+	return state.SelectPublisherIdentity(ctx, "default_namespace", "", identity.ClientId)
 }
 
 // EnsureNamespace is called only by explicit local setup. a pending enrollment
@@ -114,13 +112,13 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	defer lock.Close()
-	saved, found, err := state.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", scope)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	if found {
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicValue, &identity) != nil {
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
 			return nil, identity, ErrScope
 		}
 		if identity.ClientId != "" {
@@ -131,7 +129,7 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 			if err != nil {
 				return nil, identity, err
 			}
-			if !bytes.Equal(n.private, saved.PrivateValue) {
+			if !bytes.Equal(n.private, saved.SigningKey) {
 				return nil, identity, ErrScope
 			}
 			if _, err = n.Access(ctx); err != nil {
@@ -139,7 +137,12 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 			}
 			return n, identity, saveDefaultNamespace(ctx, state, identity)
 		}
-	} else {
+	}
+	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "namespace", scope)
+	if err != nil {
+		return nil, authorityv1.PublisherEnrollmentResult{}, err
+	}
+	if !found {
 		e, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: team, DomainId: &domain, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
@@ -147,12 +150,12 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 		if e.Kind != controlv1.PublisherEnrollmentKindNamespace || e.TeamId != team || e.DomainId == nil || *e.DomainId != domain || e.Namespace == nil || *e.Namespace != namespace || e.PublicUrlId != nil || !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || !e.ExpiresAt.After(time.Now()) {
 			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: e.Id, PublicValue: []byte("{}"), PrivateValue: []byte(e.EnrollmentKey)}
-		if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		pending, err = savePendingEnrollment(ctx, state, "namespace", scope, e.Id, e.EnrollmentKey)
+		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 	}
-	n, identity, err := EnrollNative(ctx, state, control, authority, string(saved.PrivateValue))
+	n, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
 	if err != nil {
 		return nil, identity, err
 	}
@@ -162,17 +165,7 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 	if _, err := n.Access(ctx); err != nil {
 		return nil, identity, err
 	}
-	current, found, err := state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
-	if err != nil {
-		return nil, identity, err
-	}
-	if !found {
-		return nil, identity, ErrScope
-	}
-	if err := state.SavePublisherSigningIdentity(ctx, scope, current); err != nil {
-		return nil, identity, err
-	}
-	if err := state.SavePublisherSigningIdentity(ctx, defaultNamespaceScope, current); err != nil {
+	if err := saveDefaultNamespace(ctx, state, identity); err != nil {
 		return nil, identity, err
 	}
 	return n, identity, nil

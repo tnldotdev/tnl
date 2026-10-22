@@ -25,56 +25,28 @@ type Request struct {
 	Account                                             string
 }
 
-var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
-var eksName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`)
-var rdsName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 var accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
 var resourcePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_:/.-]{0,255}$`)
 
 func (r Request) Normalize() (Request, error) {
-	if len(r.Region) > 32 || !regionPattern.MatchString(r.Region) || r.Account != "" && !accountPattern.MatchString(r.Account) {
+	if r.Account != "" && !accountPattern.MatchString(r.Account) {
 		return Request{}, discoveryError(Invalid, nil)
 	}
-	switch r.Type {
-	case "eks":
-		if !eksName.MatchString(r.Cluster) || r.Instance != "" || r.Endpoint != "" || r.Protocol != "kubernetes" {
-			return Request{}, discoveryError(Invalid, nil)
-		}
-	case "rds":
-		if (r.Cluster == "") == (r.Instance == "") || r.Protocol != "postgres" && r.Protocol != "mysql" {
-			return Request{}, discoveryError(Invalid, nil)
-		}
-		name := r.Cluster
-		if r.Instance != "" {
-			name = r.Instance
-		}
-		if !rdsName.MatchString(name) || strings.HasSuffix(name, "-") || strings.Contains(name, "--") {
-			return Request{}, discoveryError(Invalid, nil)
-		}
-		if r.Endpoint == "" {
-			r.Endpoint = "writer"
-		}
-		if r.Endpoint != "writer" && r.Endpoint != "reader" || r.Endpoint == "reader" && r.Instance != "" {
-			return Request{}, discoveryError(Invalid, nil)
-		}
-	default:
+	selector, err := (config.CloudTarget{Type: r.Type, Region: r.Region, Cluster: r.Cluster, Instance: r.Instance, Endpoint: config.RDSEndpoint(r.Endpoint)}).Normalize(r.Protocol)
+	if err != nil {
 		return Request{}, discoveryError(Invalid, nil)
 	}
+	r.Endpoint = string(selector.Endpoint)
 	return r, nil
 }
 
 // FromServiceTarget is the source-config adapter; it performs no AWS I/O.
 func FromServiceTarget(target config.ServiceTarget, protocol config.ProtocolName) (Request, error) {
-	if target.Address != nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil || target.TLS != nil {
+	selector, err := config.NormalizeCloudTarget(string(protocol), target)
+	if err != nil {
 		return Request{}, discoveryError(Invalid, nil)
 	}
-	value := func(p *string) string {
-		if p == nil {
-			return ""
-		}
-		return *p
-	}
-	return (Request{Type: target.Type, Region: value(target.Region), Cluster: value(target.Cluster), Instance: value(target.Instance), Endpoint: value(target.Endpoint), Protocol: string(protocol)}).Normalize()
+	return Request{Type: selector.Type, Region: selector.Region, Cluster: selector.Cluster, Instance: selector.Instance, Endpoint: string(selector.Endpoint), Protocol: string(protocol)}, nil
 }
 
 // ResolvedTarget is immutable bounded metadata, not a DNS answer or connection.

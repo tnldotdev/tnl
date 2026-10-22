@@ -44,7 +44,7 @@ func (d *daemon) startControlWorkers(
 	if err != nil {
 		return err
 	}
-	if err = database.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, ports); err != nil {
+	if err = database.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, ports.Ranges()); err != nil {
 		return fmt.Errorf("configure service port inventory: %w", err)
 	}
 	database.Instrument(metrics)

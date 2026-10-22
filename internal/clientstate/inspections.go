@@ -9,30 +9,29 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/inspection"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type InspectionRecord struct {
-	Number              int64                              `json:"number"`
-	TunnelID            string                             `json:"tunnel_id"`
-	PrimaryCheckoutRoot string                             `json:"primary_checkout_root"`
-	Project             string                             `json:"project_root"`
-	SharedProjectRoot   string                             `json:"shared_project_root"`
-	Service             string                             `json:"service,omitempty"`
-	Protocol            controlv1.PublicURLServiceProtocol `json:"protocol"`
-	ReceivedAt          time.Time                          `json:"received_at"`
-	Method              string                             `json:"method,omitempty"`
-	Path                string                             `json:"path,omitempty"`
-	Status              int                                `json:"status,omitempty"`
-	DurationMS          int64                              `json:"duration_ms"`
-	Origin              string                             `json:"origin"`
-	Operation           inspection.Operation               `json:"operation,omitempty"`
-	Result              inspection.Result                  `json:"result,omitempty"`
-	RedisCommand        string                             `json:"redis_command,omitempty"`
-	SQLState            string                             `json:"sql_state,omitempty"`
-	Rows                int64                              `json:"rows,omitempty"`
-	ResultSets          int64                              `json:"result_sets,omitempty"`
-	MySQLErrorCode      int64                              `json:"mysql_error_code,omitempty"`
+	Number              int64                `json:"number"`
+	TunnelID            string               `json:"tunnel_id"`
+	PrimaryCheckoutRoot string               `json:"primary_checkout_root"`
+	Project             string               `json:"project_root"`
+	SharedProjectRoot   string               `json:"shared_project_root"`
+	Service             string               `json:"service,omitempty"`
+	Protocol            inspection.Protocol  `json:"protocol"`
+	ReceivedAt          time.Time            `json:"received_at"`
+	Method              string               `json:"method,omitempty"`
+	Path                string               `json:"path,omitempty"`
+	Status              int                  `json:"status,omitempty"`
+	DurationMS          int64                `json:"duration_ms"`
+	Origin              string               `json:"origin"`
+	Operation           inspection.Operation `json:"operation,omitempty"`
+	Result              inspection.Result    `json:"result,omitempty"`
+	RedisCommand        string               `json:"redis_command,omitempty"`
+	SQLState            string               `json:"sql_state,omitempty"`
+	Rows                int64                `json:"rows,omitempty"`
+	ResultSets          int64                `json:"result_sets,omitempty"`
+	MySQLErrorCode      int64                `json:"mysql_error_code,omitempty"`
 }
 
 // InspectionRecorder drops observations instead of blocking visitor traffic.
@@ -96,12 +95,12 @@ func validInspectionRecord(record InspectionRecord) bool {
 		record.MySQLErrorCode < 0 || record.MySQLErrorCode > 65535 {
 		return false
 	}
-	if record.Protocol == controlv1.Http {
+	if record.Protocol == inspection.HTTP {
 		return record.Method != "" && record.Status >= 100 && record.Status <= 599 &&
 			record.Operation == "" && record.Result == "" && record.RedisCommand == "" && record.SQLState == "" &&
 			record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0
 	}
-	if record.Protocol == controlv1.PublicURLServiceProtocol("redis") {
+	if record.Protocol == inspection.Redis {
 		if record.Operation != "" || !record.Result.Valid() || record.Method != "" || record.Path != "" || record.Status != 0 ||
 			record.SQLState != "" || record.Rows != 0 || record.ResultSets != 0 || record.MySQLErrorCode != 0 || record.Origin != "tnl" ||
 			len(record.RedisCommand) == 0 || len(record.RedisCommand) > 64 {
@@ -118,10 +117,10 @@ func validInspectionRecord(record InspectionRecord) bool {
 		}
 		return true
 	}
-	if record.Protocol != controlv1.PublicURLServiceProtocol("postgres") && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") ||
+	if !record.Protocol.IsSQL() ||
 		!record.Operation.Valid() || !record.Result.Valid() || record.RedisCommand != "" || record.Method != "" || record.Path != "" || record.Status != 0 ||
-		record.MySQLErrorCode != 0 && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") ||
-		record.ResultSets != 0 && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") {
+		record.MySQLErrorCode != 0 && record.Protocol != inspection.MySQL ||
+		record.ResultSets != 0 && record.Protocol != inspection.MySQL {
 		return false
 	}
 	return true
@@ -135,7 +134,7 @@ func (d *Database) saveInspection(ctx context.Context, tunnelID, primary, projec
 		return errors.New("clientstate: invalid inspection scope or policy")
 	}
 	if record.Protocol == "" {
-		record.Protocol = controlv1.Http
+		record.Protocol = inspection.HTTP
 	}
 	if !validInspectionRecord(record) {
 		return errors.New("clientstate: invalid inspection observation")
@@ -203,7 +202,7 @@ type InspectionFilter struct {
 	SharedProject string
 	AllWorktrees  bool
 	Service       string
-	Protocol      controlv1.PublicURLServiceProtocol
+	Protocol      inspection.Protocol
 	Method        string
 	Status        int
 	Result        inspection.Result
@@ -214,8 +213,8 @@ type InspectionFilter struct {
 func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter) ([]InspectionRecord, error) {
 	if filter.Project == "" || filter.SharedProject == "" || filter.Limit < 1 || filter.Limit > 500 ||
 		filter.Result != "" && !filter.Result.Valid() ||
-		filter.Protocol != "" && filter.Protocol != controlv1.Http && filter.Protocol != controlv1.PublicURLServiceProtocol("postgres") && filter.Protocol != controlv1.PublicURLServiceProtocol("mysql") && filter.Protocol != controlv1.PublicURLServiceProtocol("redis") ||
-		filter.Protocol != "" && filter.Protocol != controlv1.Http && (filter.Method != "" || filter.Status != 0) {
+		filter.Protocol != "" && !filter.Protocol.Valid() ||
+		filter.Protocol.IsTCP() && (filter.Method != "" || filter.Status != 0) {
 		return nil, errors.New("clientstate: invalid inspection filter")
 	}
 	_ = d.pruneInspections(ctx)

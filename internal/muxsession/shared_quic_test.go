@@ -2,7 +2,6 @@ package muxsession
 
 import (
 	"context"
-	"crypto/tls"
 	"testing"
 	"time"
 
@@ -32,7 +31,7 @@ func TestSharedQUICListenerAcceptsOnlyTunnelALPNs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		state := server.(interface{ TLSConnectionState() tls.ConnectionState }).TLSConnectionState()
+		state := server.(AcceptedPeer).TLSConnectionState()
 		if state.NegotiatedProtocol != candidate.alpn || state.ServerName != "relay.test" {
 			t.Fatalf("shared listener lost its verified role: %+v", state)
 		}

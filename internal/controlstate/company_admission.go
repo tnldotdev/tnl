@@ -40,7 +40,8 @@ func (d *Database) RequestCompanyAdmission(ctx context.Context, p ControlPrincip
 	if err != nil {
 		return result, publisherLookupError(err, ErrAuthorityAccess)
 	}
-	if c.State != "active" || c.Revision != revision {
+	connectionState := identityConnectionState(c.State)
+	if connectionState != identityConnectionActive || c.Revision != revision {
 		return result, ErrAuthorityConflict
 	}
 	var authenticated bool
@@ -72,17 +73,17 @@ func (d *Database) RequestCompanyAdmission(ctx context.Context, p ControlPrincip
 	if result.Subject != e.Subject || result.MemberSlug != slug {
 		return result, ErrAuthorityConflict
 	}
-	if c.Admission == "managed" && result.State == "pending" {
+	if companyAdmissionMode(c.Admission) == companyAdmissionManaged && companyAdmissionRequestState(result.State) == companyRequestPending {
 		var previousSource string
 		err = tx.QueryRow(ctx, `SELECT COALESCE(identity_connection_id,'') FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2 AND removed_at IS NULL`, team, p.IdentityID).Scan(&previousSource)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}
 		if previousSource == "" || previousSource == connection {
-			if err = d.admitCompanyMember(ctx, tx, q, c, result, false, now); err != nil {
+			if err = d.admitCompanyMember(ctx, tx, q, c, result, companyManagedAdmission, now); err != nil {
 				return result, err
 			}
-			result.State = "approved"
+			result.State = string(companyRequestApproved)
 			if err = companyPolicyChanged(ctx, tx, q, team, connection, p.IdentityID, p.IdentityID, "membership.managed_admission", companyAccessAuditDetails{ConnectionRevision: revision}, now); err != nil {
 				return result, err
 			}
@@ -91,7 +92,14 @@ func (d *Database) RequestCompanyAdmission(ctx context.Context, p ControlPrincip
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) admitCompanyMember(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, c controlstatedb.ControlIdentityConnection, r CompanyAdmissionRequest, ownerApproved bool, now time.Time) error {
+type companyMemberAdmission uint8
+
+const (
+	companyManagedAdmission companyMemberAdmission = iota
+	companyOwnerAdmission
+)
+
+func (d *Database) admitCompanyMember(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, c controlstatedb.ControlIdentityConnection, r CompanyAdmissionRequest, admission companyMemberAdmission, now time.Time) error {
 	e, err := q.GetCompanyEligibility(ctx, controlstatedb.GetCompanyEligibilityParams{IdentityConnectionID: c.ID, IdentityID: r.IdentityID})
 	if err != nil {
 		return publisherLookupError(err, ErrAuthorityAccess)
@@ -115,7 +123,7 @@ func (d *Database) admitCompanyMember(ctx context.Context, tx pgx.Tx, q *control
 	} else if err != nil {
 		return err
 	} else if source != "" && source != c.ID {
-		if !ownerApproved {
+		if admission != companyOwnerAdmission {
 			return ErrAuthorityConflict
 		}
 		if _, err = tx.Exec(ctx, `UPDATE control.team_memberships SET identity_connection_id=$2,updated_at=$3 WHERE id=$1`, member, c.ID, now); err != nil {
@@ -181,8 +189,9 @@ func (d *Database) ListCompanyAdmissions(ctx context.Context, p ControlPrincipal
 }
 
 func (d *Database) DecideCompanyAdmission(ctx context.Context, p ControlPrincipal, team, request string, revision int64, decision string, now time.Time) (retErr error) {
-	if decision != "approved" && decision != "denied" {
-		return ErrAuthorityInvalid
+	ownerDecision, err := parseCompanyOwnerAdmissionDecision(decision)
+	if err != nil {
+		return err
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -203,11 +212,15 @@ func (d *Database) DecideCompanyAdmission(ctx context.Context, p ControlPrincipa
 	if err != nil {
 		return err
 	}
-	if c.State != "active" || c.Revision != revision || r.ConnectionRevision != revision {
+	if identityConnectionState(c.State) != identityConnectionActive || c.Revision != revision || r.ConnectionRevision != revision {
 		return ErrAuthorityConflict
 	}
-	if decision == "approved" {
-		if err = d.admitCompanyMember(ctx, tx, q, c, r, true, now); err != nil {
+	next, err := companyAdmissionRequestState(r.State).decide(ownerDecision)
+	if err != nil {
+		return err
+	}
+	if next == companyRequestApproved {
+		if err = d.admitCompanyMember(ctx, tx, q, c, r, companyOwnerAdmission, now); err != nil {
 			return err
 		}
 	} else {
@@ -215,7 +228,7 @@ func (d *Database) DecideCompanyAdmission(ctx context.Context, p ControlPrincipa
 			return err
 		}
 	}
-	if err = companyPolicyChanged(ctx, tx, q, team, c.ID, owner, r.IdentityID, "membership."+decision, companyAccessAuditDetails{ConnectionRevision: revision}, now); err != nil {
+	if err = companyPolicyChanged(ctx, tx, q, team, c.ID, owner, r.IdentityID, "membership."+string(ownerDecision), companyAccessAuditDetails{ConnectionRevision: revision}, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

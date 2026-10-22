@@ -51,7 +51,7 @@ type defaultPublisherRecheck struct {
 	faults *privateRecheckFaults
 }
 
-func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.PublishRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ManagedRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	c.faults.mu.Lock()
 	defer c.faults.mu.Unlock()
 	if c.faults.outage == body.VisitorConnectionId {

@@ -63,7 +63,7 @@ func TestScopedPrivateInstallCapturesTargetTrustForRuntime(t *testing.T) {
 	if job.Kind != publisherjob.KindPrivateService || job.Protocol != config.ProtocolTCP || job.Trust == nil || job.Trust.Digest != trust.Digest || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
 		t.Fatalf("private target trust was split or lost: %+v", job)
 	}
-	if err := publisherjob.PreflightPrivate(t.Context(), job); err != nil {
+	if err := publisherjob.PreflightPrivate(t.Context(), job.PrivateTargetPlan()); err != nil {
 		t.Fatalf("installed preflight reopened a deleted source: %v", err)
 	}
 }

@@ -39,8 +39,7 @@ type tunnelPrivateControlError struct{ code tunnelv1.ErrorCode }
 func (e *tunnelPrivateControlError) Error() string { return "relay: " + string(e.code) }
 
 func validatePrivateClaim(ref tunnelv1.PrivatePublisherConnectionRef, claimed relayv1.PrivatePublisherConnection) error {
-	if claimed.PrivateServiceId != ref.PrivateServiceID || claimed.PrivateRunId != ref.PrivateRunID || claimed.RunNumber != int64(ref.RunNumber) ||
-		claimed.PublisherConnectionId != ref.PublisherConnectionID || claimed.ConnectionAssignmentRevision != int64(ref.ConnectionAssignmentRevision) || claimed.RelayServiceId != ref.RelayServiceID {
+	if privateClaimRef(claimed, ref.ConnectionSlot) != ref {
 		return errors.New("relay: control changed private publisher assignment")
 	}
 	return nil
@@ -52,7 +51,7 @@ func (c *Controller) privateTransition(ctx context.Context, ref tunnelv1.Private
 		return errors.New("relay: private control client is required")
 	}
 	current := c.Lease()
-	if !disconnect && (current.RelayId != lease.RelayId || current.RelayRunId != lease.RelayRunId || current.RelayLeaseRevision != lease.RelayLeaseRevision ||
+	if !disconnect && (current.RelayServiceId != lease.RelayServiceId || current.RelayId != lease.RelayId || current.RelayRunId != lease.RelayRunId || current.RelayLeaseRevision != lease.RelayLeaseRevision ||
 		current.Draining || !current.LeaseExpiresAt.After(c.now())) {
 		return errors.New("relay: private claim lease is stale")
 	}

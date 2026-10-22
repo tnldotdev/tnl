@@ -182,6 +182,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	if err != nil || challenge.PrivateServiceID != run.ServiceID || challenge.PublicURLID != "" || challenge.Identifier != plan.Identifiers[0] {
 		t.Fatal("DNS-01 lost private namespace authority", challenge, err)
 	}
+	assertDNSChallengeSubjectBinding(t, d, CertificateSubject{Kind: CertificateSubjectManagedService, ID: work.PrivateServiceID, RunID: work.PrivateRunID, RunNumber: work.PrivateRunNumber}, challenge)
 	work, found, err = d.ClaimACMEOrderWork(t.Context(), "managed-cert-test", now, time.Minute)
 	if err != nil || !found {
 		t.Fatal(err)

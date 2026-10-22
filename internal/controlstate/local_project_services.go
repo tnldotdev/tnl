@@ -73,7 +73,10 @@ func (d *Database) GetLocalProjectService(ctx context.Context, r GetLocalProject
 	if conflict {
 		return result, ErrProjectSourceConflict
 	}
-	m := privateMetadata(row.ControlPrivateService)
+	m, err := checkedPrivateMetadata(row.ControlPrivateService)
+	if err != nil {
+		return result, err
+	}
 	m.TLS = nil
 	result = LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "private_service", ServiceID: row.ControlPrivateService.ID, PrivateService: &m}
 	return result, tx.Commit(ctx)
@@ -89,7 +92,11 @@ func (d *Database) updateLocalPrivateService(ctx context.Context, tx pgx.Tx, q *
 	if err != nil {
 		return err
 	}
-	if !privateMetadataMatches(privateMetadata(row), PrivateServiceMetadata{Protocol: s.Protocol, TLS: trust}) {
+	saved, err := checkedPrivateMetadata(row)
+	if err != nil {
+		return err
+	}
+	if !privateMetadataMatches(saved, PrivateServiceMetadata{Protocol: s.Protocol, TLS: trust}) {
 		if _, err := tx.Exec(ctx, `UPDATE control.private_service_runs SET state='closed',closed_at=$2 WHERE private_service_id=$1 AND closed_at IS NULL`, row.ID, now); err != nil {
 			return err
 		}
@@ -237,7 +244,10 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if e != nil {
 			return result, e
 		}
-		m := privateMetadata(row)
+		m, e := checkedPrivateMetadata(row)
+		if e != nil {
+			return result, e
+		}
 		result.PrivateService = &m
 		result.ServiceID = row.ID
 	} else {

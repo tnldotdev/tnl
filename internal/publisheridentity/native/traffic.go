@@ -2,7 +2,6 @@ package native
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
@@ -24,6 +23,8 @@ func (n *Native) WithTraffic(selection *trafficlimits.Selection) (*Native, error
 		return nil, ErrScope
 	}
 	copy := *n
+	copy.private = append(copy.private[:0:0], n.private...)
+	copy.route = clonePublicURL(n.route)
 	copy.traffic = nil
 	if selection == nil {
 		return &copy, nil
@@ -34,13 +35,6 @@ func (n *Native) WithTraffic(selection *trafficlimits.Selection) (*Native, error
 	if _, ok := n.NativeControl.(TrafficControl); !ok {
 		return nil, ErrTrafficUnsupported
 	}
-	payload, err := json.Marshal(selection)
-	if err != nil {
-		return nil, err
-	}
-	copy.traffic = new(trafficlimits.Selection)
-	if err := json.Unmarshal(payload, copy.traffic); err != nil {
-		return nil, err
-	}
+	copy.traffic = selection.Clone()
 	return &copy, nil
 }

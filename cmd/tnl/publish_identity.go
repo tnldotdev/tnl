@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,13 +32,13 @@ func issuedNativePublisher(ctx context.Context, services publisherServices) (*na
 	}
 	defer lock.Close()
 	control, authority := services.authenticated.Control, services.authenticated.Authority
-	saved, found, err := services.state.PublisherSigningIdentity(ctx, scope)
+	saved, found, err := services.state.SelectedPublisherIdentity(ctx, "namespace", scope)
 	if err != nil {
 		return nil, err
 	}
 	if found {
 		var identity authorityv1.PublisherEnrollmentResult
-		if err := json.Unmarshal(saved.PublicValue, &identity); err != nil {
+		if err := json.Unmarshal(saved.PublicDocument, &identity); err != nil || identity.ClientId != saved.ID {
 			return nil, nativeauth.ErrScope
 		}
 		if identity.ClientId != "" {
@@ -46,7 +48,12 @@ func issuedNativePublisher(ctx context.Context, services publisherServices) (*na
 			native, _, err := nativeauth.LoadNative(ctx, services.state, control, authority, identity.ClientId)
 			return native, err
 		}
-	} else {
+	}
+	pending, found, err := services.state.PendingPublisherEnrollmentForSelection(ctx, "namespace", scope)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
 		body := controlv1.CreatePublisherEnrollmentRequest{TeamId: services.teamID, DomainId: &services.domainID, Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled, Name: "tnl"}
 		enrollment, err := control.CreatePublisherEnrollment(ctx, body)
 		if err != nil {
@@ -55,27 +62,21 @@ func issuedNativePublisher(ctx context.Context, services publisherServices) (*na
 		if enrollment.Kind != controlv1.PublisherEnrollmentKindNamespace || enrollment.TeamId != services.teamID || enrollment.DomainId == nil || *enrollment.DomainId != services.domainID || enrollment.Namespace == nil || *enrollment.Namespace != services.namespace || enrollment.EnrollmentKey == "" {
 			return nil, failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, nativeauth.ErrScope)
 		}
-		saved = clientstate.PublisherSigningIdentity{ID: enrollment.Id, PublicValue: []byte("{}"), PrivateValue: []byte(enrollment.EnrollmentKey)}
-		if err := services.state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		pending = clientstate.PendingPublisherEnrollment{EnrollmentID: enrollment.Id, SelectionKind: "namespace", SelectionKey: scope, PublicKey: public, SigningKey: private, EnrollmentSecret: []byte(enrollment.EnrollmentKey), ExpiresAt: time.Now().Add(10 * time.Minute)}
+		if err := services.state.SavePendingPublisherEnrollment(ctx, pending); err != nil {
 			return nil, err
 		}
 	}
-	native, identity, err := nativeauth.EnrollNative(ctx, services.state, control, authority, string(saved.PrivateValue))
+	native, identity, err := nativeauth.EnrollNative(ctx, services.state, control, authority, string(pending.EnrollmentSecret))
 	if err != nil {
 		return nil, err
 	}
 	if identity.Kind != authorityv1.Namespace || identity.TeamId != services.teamID || identity.DomainId == nil || *identity.DomainId != services.domainID || identity.Namespace == nil || *identity.Namespace != services.namespace {
 		return nil, failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, nativeauth.ErrScope)
-	}
-	current, found, err := services.state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, nativeauth.ErrScope
-	}
-	if err := services.state.SavePublisherSigningIdentity(ctx, scope, current); err != nil {
-		return nil, err
 	}
 	return native, nil
 }

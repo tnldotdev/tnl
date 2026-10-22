@@ -90,7 +90,7 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 	}
 	listener := settings.listener
 	if listener == nil {
-		listener, err = listenIngress(settings.listen, settings.runtime.servicePortRanges, settings.runtime.requireProxyHeader)
+		listener, err = listenIngress(settings.listen, settings.runtime.servicePortRanges.Ranges(), settings.runtime.requireProxyHeader)
 		if err != nil {
 			return fmt.Errorf("listen for public ingress: %w", err)
 		}
@@ -133,7 +133,7 @@ type ingressSettings struct {
 	routingTableWait                 time.Duration
 	traffic                          ingress.TrafficConfig
 	pending                          ingress.PendingConfig
-	servicePortRanges                []tcpport.Range
+	servicePortRanges                tcpport.Inventory
 }
 
 func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
@@ -200,7 +200,7 @@ func (d *daemon) startIngressRuntime(
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
-	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), tcpport.Ports(settings.servicePortRanges)
+	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	if runtimeConfig.privateHostname != "" {
 		registration.PrivateConnectorAddress = &runtimeConfig.privateAddress
 		registration.PrivateConnectorTlsServerName = &runtimeConfig.privateHostname
@@ -349,7 +349,7 @@ func (d *daemon) startIngressRuntime(
 			return err
 		}
 		runtime.private = private
-		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges
+		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges.Ranges()
 		ingressConfig.PrivateHostname, ingressConfig.PrivateConnector = runtimeConfig.privateHostname, private
 		if !runtimeConfig.disablePrivateQUIC {
 			address := runtimeConfig.privateUDPListen

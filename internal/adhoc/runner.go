@@ -13,9 +13,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -46,7 +46,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	if err := options.Limits.Validate(); err != nil {
 		return err
 	}
-	target, err := localproxy.NormalizeTarget(options.Target)
+	target, err := targetsyntax.NormalizeTarget(options.Target)
 	if err != nil || target != options.Target {
 		return errors.New("ad-hoc target must be an HTTP or HTTPS address with a host and port")
 	}

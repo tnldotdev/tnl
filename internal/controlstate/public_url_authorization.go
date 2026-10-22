@@ -35,10 +35,23 @@ func (d *Database) getPublicURLForAuthorization(ctx context.Context, id, key str
 	if err != nil {
 		return PublicURL{}, err
 	}
-	result := publicURLFromValues(row.ID, row.TeamID, row.DomainID, row.MembershipID, row.CanonicalHostname, row.Target, row.Namespace, row.PublicURLScope, row.Purpose, row.AccessMode, row.PolicyRevision, row.LifecycleState, row.DnsAuthorityReference, row.DnsState, row.NextPublishRunNumber, row.MutationRevision, row.Ephemeral, row.ExpiresAt, row.OpenPublishRunID, row.CreatedAt, row.UpdatedAt, row.ServiceProtocol, row.PublisherPool)
+	result := publicURLFromAuthorizationRow(row)
 	if err := d.restorePublicURLPolicy(&result, row.AllowedIpPolicyStorageKeyID, row.AllowedIpPolicyCiphertext, row.AllowedIpHashes); err != nil {
 		return PublicURL{}, err
 	}
-	result.AuthorizationPublishRunNumber = uint64(row.AuthorizationPublishRunNumber)
 	return result, nil
+}
+
+func publicURLFromAuthorizationRow(row controlstatedb.GetPublicURLForAuthorizationDataRow) PublicURL {
+	return publicURLFromProjection(publicURLProjection{
+		ID: row.ID, TeamID: row.TeamID, DomainID: row.DomainID, MembershipID: row.MembershipID,
+		CanonicalHostname: row.CanonicalHostname, Target: row.Target, Namespace: row.Namespace,
+		PublicURLScope: row.PublicURLScope, Purpose: row.Purpose, AccessMode: row.AccessMode,
+		PolicyRevision: row.PolicyRevision, LifecycleState: row.LifecycleState,
+		DNSAuthorityReference: row.DnsAuthorityReference, DNSState: row.DnsState,
+		NextPublishRunNumber: row.NextPublishRunNumber, MutationRevision: row.MutationRevision,
+		Ephemeral: row.Ephemeral, ExpiresAt: row.ExpiresAt, OpenPublishRunID: row.OpenPublishRunID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ServiceProtocol: row.ServiceProtocol, PublisherPool: row.PublisherPool,
+		AuthorizationPublishRunNumber: &row.AuthorizationPublishRunNumber,
+	})
 }

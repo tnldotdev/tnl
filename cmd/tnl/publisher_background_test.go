@@ -115,7 +115,7 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := profile.PublisherSigningIdentity(t.Context(), "publisher:"+a.identity.ClientId); err != nil || !found {
+	if _, found, err := profile.PublisherIdentity(t.Context(), a.identity.ClientId); err != nil || !found {
 		t.Fatalf("stop revoked/removed identity: %v", err)
 	}
 }

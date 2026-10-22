@@ -22,20 +22,32 @@ type ProjectTargetDiscovery struct {
 }
 
 func (t *ProjectTargetDiscovery) Validate(protocol string) error {
+	_, err := t.Normalize(protocol)
+	return err
+}
+
+// Normalize returns a fresh descriptor with explicit defaults. validation never
+// changes a stored descriptor or a caller's source configuration.
+func (t *ProjectTargetDiscovery) Normalize(protocol string) (*ProjectTargetDiscovery, error) {
 	if t == nil {
-		return ErrProjectConfigurationInvalid
+		return nil, ErrProjectConfigurationInvalid
 	}
 	target := config.ServiceTarget{Type: t.Type, Region: &t.Region, Cluster: t.Cluster, Instance: t.Instance, Endpoint: t.Endpoint}
-	if t.Type != "eks" && t.Type != "rds" {
-		return ErrProjectConfigurationInvalid
+	selector, err := config.NormalizeCloudTarget(protocol, target)
+	if err != nil {
+		return nil, ErrProjectConfigurationInvalid
 	}
-	if err := config.ValidateCloudTarget(protocol, target); err != nil {
-		return ErrProjectConfigurationInvalid
+	result := &ProjectTargetDiscovery{Type: selector.Type, Region: selector.Region}
+	if selector.Cluster != "" {
+		result.Cluster = new(selector.Cluster)
 	}
-	if t.Type == "rds" && t.Endpoint == nil {
-		t.Endpoint = new("writer")
+	if selector.Instance != "" {
+		result.Instance = new(selector.Instance)
 	}
-	return nil
+	if selector.Endpoint != "" {
+		result.Endpoint = new(string(selector.Endpoint))
+	}
+	return result, nil
 }
 
 // only this allowlisted projection crosses the visitor boundary. RDS metadata,

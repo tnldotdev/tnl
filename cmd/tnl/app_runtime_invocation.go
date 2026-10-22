@@ -18,8 +18,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -36,7 +36,7 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
-	canonical, err := localproxy.NormalizeTarget(request.Target)
+	canonical, err := targetsyntax.NormalizeTarget(request.Target)
 	if err != nil || canonical != request.Target || request.PublisherFile != "" && request.PublisherId != "" ||
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return privateprotocol.Registration{}, errors.New("invalid invocation target or policy")

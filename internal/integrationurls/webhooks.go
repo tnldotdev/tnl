@@ -20,8 +20,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
@@ -321,7 +321,7 @@ func writeWebhookResponse(response http.ResponseWriter, result webhookResponse) 
 }
 
 func deliverWebhook(incoming *http.Request, receiver clientstate.TunnelInfo, body []byte, includeResponse bool) (webhookResponse, error) {
-	canonicalTarget, err := localproxy.NormalizeTarget(receiver.Target)
+	canonicalTarget, err := targetsyntax.NormalizeTarget(receiver.Target)
 	if err != nil {
 		return webhookResponse{}, err
 	}

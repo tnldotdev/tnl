@@ -22,9 +22,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -40,8 +40,6 @@ var (
 	ErrJobNotFound  = failure.Wrap("read installed publication", failure.ServerResourceNotFound, errors.New("installed publisher job does not exist"))
 	ErrJobAmbiguous = failure.Wrap("select installed publication", failure.InstalledJobAmbiguous, errors.New("more than one installed job has this name"))
 )
-
-const registryName = "publisher-jobs-v1"
 
 type OpenOptions struct {
 	Root string
@@ -107,12 +105,37 @@ func (j Job) GoString() string { return j.String() }
 
 // status contains approved observations only; errors and tokens never enter it.
 type Status struct {
-	PublicURL        string `json:"public_url,omitempty"`
-	ObservedRevision int64  `json:"observed_revision,omitempty"`
-	State            string `json:"state"`
-	Failure          string `json:"failure,omitempty"`
-	Attempts         uint64 `json:"attempts,omitempty"`
-	PublishRunNumber uint64 `json:"publish_run_number,omitempty"`
+	PublicURL        string    `json:"public_url,omitempty"`
+	ObservedRevision int64     `json:"observed_revision,omitempty"`
+	State            JobStatus `json:"state"`
+	Failure          string    `json:"failure,omitempty"`
+	Attempts         uint64    `json:"attempts,omitempty"`
+	PublishRunNumber uint64    `json:"publish_run_number,omitempty"`
+}
+
+// JobStatus is a finite local observation, independent of desired Enabled state.
+type JobStatus string
+
+const (
+	JobUnobserved        JobStatus = ""
+	JobStarting          JobStatus = "starting"
+	JobStopping          JobStatus = "stopping"
+	JobStopped           JobStatus = "stopped"
+	JobProvisioning      JobStatus = "provisioning"
+	JobReconciling       JobStatus = "reconciling"
+	JobReady             JobStatus = "ready"
+	JobDraining          JobStatus = "draining"
+	JobRetrying          JobStatus = "retrying"
+	JobBlocked           JobStatus = "blocked"
+	JobTargetUnavailable JobStatus = "target unavailable"
+)
+
+func (s JobStatus) Valid() bool {
+	switch s {
+	case JobUnobserved, JobStarting, JobStopping, JobStopped, JobProvisioning, JobReconciling, JobReady, JobDraining, JobRetrying, JobBlocked, JobTargetUnavailable:
+		return true
+	}
+	return false
 }
 
 type Registry struct {
@@ -228,7 +251,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 				}
 				// retrying installation may refresh local settings, but cannot replace
 				// its signing key or grant. reconciliation joins the old worker first.
-				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: "starting"}
+				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
 				(*jobs)[i] = job
 				return nil
 			}
@@ -252,10 +275,12 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 		if err != nil {
 			return err
 		}
-		if err := profile.SavePublisherSigningIdentity(ctx, "job:"+job.ID, clientstate.PublisherSigningIdentity{ID: identity.ClientId, PublicValue: public, PrivateValue: private}); err != nil {
+		if err := profile.InstallPublisherIdentity(ctx,
+			clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: public, SigningKey: private},
+			clientstate.PublisherSelection{Kind: "job", Key: "job:" + job.ID}); err != nil {
 			return err
 		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: "starting"}
+		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		*jobs = append(*jobs, job)
 		return nil
 	})
@@ -287,7 +312,7 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 			if job.ID != id {
 				continue
 			}
-			if job.Enabled || job.Status.State != "stopped" {
+			if job.Enabled || job.Status.State != JobStopped {
 				return ErrScope
 			}
 			if job.Kind == KindGroup {
@@ -308,7 +333,7 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 				if err != nil {
 					return err
 				}
-				if err := profile.RemovePublisherSigningIdentity(ctx, "job:"+id); err != nil {
+				if err := profile.RemovePublisherSelection(ctx, "job", "job:"+id); err != nil {
 					return err
 				}
 			}
@@ -341,15 +366,15 @@ func (r *Registry) signingIdentity(ctx context.Context, job Job) (authorityv1.Pu
 	if err != nil {
 		return authorityv1.PublisherEnrollmentResult{}, nil, nil, err
 	}
-	saved, found, err := profile.PublisherSigningIdentity(ctx, "job:"+job.ID)
+	saved, found, err := profile.SelectedPublisherIdentity(ctx, "job", "job:"+job.ID)
 	if err != nil {
 		return authorityv1.PublisherEnrollmentResult{}, nil, nil, err
 	}
 	var identity authorityv1.PublisherEnrollmentResult
-	if !found || json.Unmarshal(saved.PublicValue, &identity) != nil || saved.ID != job.PublisherID || !matches(job, identity) || len(saved.PrivateValue) != ed25519.PrivateKeySize {
+	if !found || json.Unmarshal(saved.PublicDocument, &identity) != nil || saved.ID != job.PublisherID || !matches(job, identity) || len(saved.SigningKey) != ed25519.PrivateKeySize {
 		return identity, nil, nil, ErrScope
 	}
-	return identity, ed25519.PrivateKey(saved.PrivateValue), profile, nil
+	return identity, ed25519.PrivateKey(saved.SigningKey), profile, nil
 }
 
 func (r *Registry) Start(ctx context.Context, id string) error { return r.setEnabled(ctx, id, true) }
@@ -369,9 +394,9 @@ func (r *Registry) setEnabled(ctx context.Context, id string, enabled bool) erro
 			}
 			j.Enabled = enabled
 			j.Revision++
-			j.Status = Status{State: "stopping"}
+			j.Status = Status{State: JobStopping}
 			if enabled {
-				j.Status.State = "starting"
+				j.Status.State = JobStarting
 			}
 			return nil
 		}
@@ -409,6 +434,9 @@ func (r *Registry) ResolveJob(ctx context.Context, selected string) (Job, error)
 }
 
 func (r *Registry) status(ctx context.Context, id string, revision uint64, status Status) error {
+	if !status.State.Valid() {
+		return ErrScope
+	}
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i := range *jobs {
 			if (*jobs)[i].ID == id && (*jobs)[i].Revision == revision {
@@ -438,12 +466,12 @@ func (r *Registry) update(ctx context.Context, change func(*[]Job) error) error 
 			return err
 		}
 		// one SQLite statement atomically replaces the authenticated snapshot.
-		return r.database.SaveSystemState(ctx, registryName, value)
+		return r.database.SavePublisherJobRegistry(ctx, value)
 	})
 }
 
 func (r *Registry) load(ctx context.Context) ([]Job, error) {
-	value, found, err := r.database.SystemState(ctx, registryName)
+	value, found, err := r.database.PublisherJobRegistry(ctx)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -490,7 +518,7 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 		for _, job := range jobs {
 			if job.ID == id {
 				found = true
-				if !job.Enabled && job.Status.State == "stopped" {
+				if !job.Enabled && job.Status.State == JobStopped {
 					return nil
 				}
 			}
@@ -505,7 +533,10 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 }
 
 func validateJob(job *Job) error {
-	if job.ReadinessPath != "" && (job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !localproxy.ValidMountPrefix(job.ReadinessPath)) {
+	if !job.Status.State.Valid() {
+		return ErrScope
+	}
+	if job.ReadinessPath != "" && (job.Kind != KindPublicURL || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !targetsyntax.ValidMountPrefix(job.ReadinessPath)) {
 		return ErrScope
 	}
 	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
@@ -589,7 +620,7 @@ func (r *Registry) InstallConnector(ctx context.Context, job Job) error {
 				if existing.Kind != KindConnector || existing.Server != job.Server || existing.IdentityID != job.IdentityID || existing.PrivateServiceID != job.PrivateServiceID {
 					return ErrScope
 				}
-				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: "starting"}
+				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
 				(*jobs)[i] = job
 				return nil
 			}
@@ -597,7 +628,7 @@ func (r *Registry) InstallConnector(ctx context.Context, job Job) error {
 		if len(*jobs) >= 1024 {
 			return ErrScope
 		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: "starting"}
+		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		*jobs = append(*jobs, job)
 		return nil
 	})

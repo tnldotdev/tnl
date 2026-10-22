@@ -107,7 +107,7 @@ func (d *Database) mapDirectOIDCAdmission(ctx context.Context, q *controlstatedb
 	if err != nil {
 		return err
 	}
-	if c.ID != a.connection || c.Revision != intent.ConnectionRevision || c.State != "active" {
+	if c.ID != a.connection || c.Revision != intent.ConnectionRevision || identityConnectionState(c.State) != identityConnectionActive {
 		return ErrControlAuthentication
 	}
 	// only first-ever membership admission is automatic. tombstones, suspension,

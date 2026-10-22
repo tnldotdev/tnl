@@ -293,7 +293,7 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 			}
 		}
 		job.TargetTLSName, job.TargetCAPEM = "", nil
-		if err := publisherjob.PreflightPrivate(ctx, job); err != nil {
+		if err := publisherjob.PreflightPrivate(ctx, job.PrivateTargetPlan()); err != nil {
 			return err
 		}
 		job.TrustRevision, job.PublisherPool = service.TrustRevision, service.PublisherPool
@@ -338,14 +338,14 @@ func installBackgroundJob(ctx context.Context, registry *publisherjob.Registry, 
 	// load the completed enrollment without exporting native adapter private keys.
 	// the final job-scoped key remains authenticated by its own public binding.
 	if private == nil {
-		saved, found, err := profile.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
+		saved, found, err := profile.PublisherIdentity(ctx, identity.ClientId)
 		if err != nil {
 			return err
 		}
 		if !found {
 			return publisherjob.ErrScope
 		}
-		private = ed25519.PrivateKey(saved.PrivateValue)
+		private = ed25519.PrivateKey(saved.SigningKey)
 	}
 	job.PublisherID, job.GrantID, job.PublicURLID = identity.ClientId, identity.GrantId, publicURL.Id
 	job.ID = publisherjob.PublicURLJobKey(job.Server, job.PublicURLID)

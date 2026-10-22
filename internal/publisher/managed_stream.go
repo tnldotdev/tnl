@@ -44,6 +44,8 @@ type ManagedStream struct {
 }
 
 func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
+	var valid bool
+	s.Visitor, valid = normalizeManagedVisitor(s.Visitor)
 	protocol, _ := observability.ParseProtocol(string(s.Protocol))
 	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "direct", Exposure: "private"}
 	if s.Public {
@@ -62,7 +64,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	defer func() { admissionDone(result) }()
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
-	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" || s.TLS == nil || s.TLS.GetConfigForClient != nil || s.Visitor == nil || !s.Visitor.valid() {
+	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid {
 		return ErrManagedTLS
 	}
 	if _, ok := s.Visitor.(PublicHTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {

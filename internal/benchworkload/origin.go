@@ -50,8 +50,8 @@ func Origin(size int) http.Handler {
 }
 
 func serveBandwidth(w http.ResponseWriter, r *http.Request) {
-	direction := r.Header.Get(bandwidthDirectionHeader)
-	if direction != BandwidthDownstream && direction != BandwidthUpstream {
+	direction, valid := parseBandwidthDirection(r.Header.Get(bandwidthDirectionHeader))
+	if !valid {
 		http.Error(w, "invalid bandwidth direction", http.StatusBadRequest)
 		return
 	}
@@ -63,7 +63,7 @@ func serveBandwidth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expected := bytesForDuration(rate, duration)
-	if direction == BandwidthUpstream {
+	if direction == bandwidthUpstream {
 		if r.Method != http.MethodPost || r.ContentLength != expected {
 			http.Error(w, "invalid bandwidth upload", http.StatusBadRequest)
 			return

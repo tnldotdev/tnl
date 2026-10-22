@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
@@ -100,7 +100,7 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 // a private host:port is an opaque dial target, represented locally as an HTTP
 // origin without selecting who, if anyone, negotiates TLS on its bytes.
 func NormalizeHTTPServiceTarget(service Service, value string) (string, error) {
-	normalized, err := localproxy.NormalizeTarget(value)
+	normalized, err := targetsyntax.NormalizeTarget(value)
 	if err == nil || IsPublicService(service) || strings.Contains(value, "://") {
 		return normalized, err
 	}
@@ -123,7 +123,7 @@ func validateTarget(service Service) error {
 			return errors.New("region, cluster, instance, and endpoint require an eks or rds target")
 		}
 		if target.Type == "eks" || target.Type == "rds" {
-			return validateCloudTarget(protocol, *target)
+			return ValidateCloudTarget(protocol, *target)
 		}
 	}
 	if target == nil || target.Type == "app" {
@@ -204,40 +204,6 @@ func validateTarget(service Service) error {
 		}
 	}
 	return nil
-}
-
-var awsRegion = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`)
-var awsResourceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,99}$`)
-
-func validateCloudTarget(protocol string, target ServiceTarget) error {
-	if target.Region == nil || !awsRegion.MatchString(*target.Region) || target.Address != nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil || target.TLS != nil {
-		return errors.New("cloud targets require region and an exact resource selector; discovered TLS and addresses belong to the publisher")
-	}
-	if target.Type == "eks" {
-		if protocol != "kubernetes" || target.Cluster == nil || !awsResourceName.MatchString(*target.Cluster) || target.Instance != nil || target.Endpoint != nil {
-			return errors.New("target.type eks requires protocol kubernetes, cluster, and region only")
-		}
-		return nil
-	}
-	if protocol != "postgres" && protocol != "mysql" || (target.Instance == nil) == (target.Cluster == nil) {
-		return errors.New("target.type rds requires protocol postgres or mysql, region, and exactly one of instance or cluster")
-	}
-	selector := target.Instance
-	if selector == nil {
-		selector = target.Cluster
-	}
-	if !awsResourceName.MatchString(*selector) {
-		return errors.New("rds resource must be an exact resource identifier")
-	}
-	if target.Endpoint != nil && (*target.Endpoint != "writer" && *target.Endpoint != "reader" || *target.Endpoint == "reader" && target.Cluster == nil) {
-		return errors.New("rds endpoint must be writer (default), or reader for a cluster")
-	}
-	return nil
-}
-
-// ValidateCloudTarget validates selectors without contacting the provider.
-func ValidateCloudTarget(protocol string, target ServiceTarget) error {
-	return validateCloudTarget(protocol, target)
 }
 
 func validTLSHostname(value string) bool {

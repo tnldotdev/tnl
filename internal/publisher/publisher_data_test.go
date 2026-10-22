@@ -20,7 +20,7 @@ type measuredHTTPAuthority struct {
 	calls     int
 }
 
-func (c *measuredHTTPAuthority) AuthorizeManagedHTTPVisitor(context.Context, string, string, credentials.PublishRunToken, controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *measuredHTTPAuthority) AuthorizeManagedHTTPVisitor(context.Context, string, string, credentials.ManagedRunToken, controlv1.ManagedHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	c.calls++
 	if c.cause != nil {
 		return controlv1.ServiceClientCertificateDecision{}, c.cause

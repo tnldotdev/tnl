@@ -11,7 +11,7 @@ import (
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
-	"github.com/tnldotdev/tnl/internal/localproxy"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 type Operation string
@@ -266,7 +266,7 @@ func canonicalIPPrefix(value string) (netip.Prefix, error) {
 
 // ValidateTarget accepts the canonical HTTP or HTTPS target format used by public URLs.
 func ValidateTarget(target string) error {
-	canonical, err := localproxy.NormalizeTarget(target)
+	canonical, err := targetsyntax.NormalizeTarget(target)
 	if err != nil || canonical != target {
 		return invalid("invalid public URL target")
 	}

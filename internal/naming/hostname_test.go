@@ -2,11 +2,37 @@ package naming
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
+
+type hostnameAs struct{ value *ValidationError }
+
+func (hostnameAs) Error() string { return "custom hostname error" }
+func (e hostnameAs) As(target any) bool {
+	if out, ok := target.(**ValidationError); ok {
+		*out = e.value
+		return true
+	}
+	return false
+}
+
+func TestHostnameErrorExtractionContracts(t *testing.T) {
+	first := &ValidationError{Code: ErrorInvalidSyntax}
+	for _, err := range []error{first, fmt.Errorf("outer: %w", first), errors.Join(first, invalid(ErrorEmpty)), hostnameAs{first}} {
+		if code, ok := ErrorCodeOf(err); !ok || code != first.Code {
+			t.Fatalf("hostname error = %q, %t", code, ok)
+		}
+	}
+	for _, err := range []error{nil, errors.New("unknown"), (*ValidationError)(nil), hostnameAs{}} {
+		if code, ok := ErrorCodeOf(err); ok || code != "" {
+			t.Fatalf("absent hostname error = %q, %t", code, ok)
+		}
+	}
+}
 
 func TestErrorCodeOfWrappedValidationError(t *testing.T) {
 	code, ok := ErrorCodeOf(fmt.Errorf("canonicalize hostname: %w", invalid(ErrorInvalidSyntax)))

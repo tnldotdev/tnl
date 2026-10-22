@@ -11,6 +11,35 @@ import (
 	"testing/quick"
 )
 
+type commandAs struct{ value *commandError }
+
+func (commandAs) Error() string { return "custom command error" }
+func (e commandAs) As(target any) bool {
+	if out, ok := target.(**commandError); ok {
+		*out = e.value
+		return true
+	}
+	return false
+}
+
+func TestCommandExtractionContracts(t *testing.T) {
+	cause := errors.New("private cause")
+	first := &commandError{command: "tnl inspect list", err: cause}
+	for _, err := range []error{first, fmt.Errorf("outer: %w", first), errors.Join(first, WrapCommand("tnl publish", cause)), commandAs{first}} {
+		if command, ok := CommandOf(err); !ok || command != first.command {
+			t.Fatalf("command context = %q, %t", command, ok)
+		}
+	}
+	if !errors.Is(WrapCommand(first.command, cause), cause) || WrapCommand(first.command, nil) != nil {
+		t.Fatal("command wrapping changed cause identity")
+	}
+	for _, err := range []error{nil, cause, (*commandError)(nil), commandAs{}} {
+		if command, ok := CommandOf(err); ok || command != "" {
+			t.Fatalf("absent command context = %q, %t", command, ok)
+		}
+	}
+}
+
 func TestRenderFrame(t *testing.T) {
 	got, err := Render(Frame{
 		Command: "tnl wait",
