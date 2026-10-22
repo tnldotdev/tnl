@@ -19,8 +19,9 @@ import (
 )
 
 type splitRelayFixture struct {
-	config  tnldconfig.Config
-	process *integrationProcess
+	config    tnldconfig.Config
+	process   *integrationProcess
+	listeners runtimeListeners
 }
 
 type splitPublishFixture struct {
@@ -65,10 +66,13 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayACertificate = certificateAuthority.issueServer(t, "relay-a."+serverDomain)
 		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain)
 	}
-	controlAddress, privateControlAddress, ingressAddress := unusedTCPAddress(t), unusedTCPAddress(t), unusedTCPAddress(t)
+	controlProxyListener, privateControlListener, ingressListener := privateRuntimeListener(t), privateRuntimeListener(t), privateRuntimeListener(t)
+	controlAddress, privateControlAddress, ingressAddress := controlProxyListener.Addr().String(), privateControlListener.Addr().String(), ingressListener.Addr().String()
 	publicIngressAddress := ingressAddress
+	publicIngressListener := ingressListener
 	if options.proxyIngress {
-		ingressAddress = unusedTCPAddress(t)
+		ingressListener = privateRuntimeListener(t)
+		ingressAddress = ingressListener.Addr().String()
 	}
 	var dnsAddress string
 	var localDNS *privateFixtureDNS
@@ -84,9 +88,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	serviceHTTP := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
 	controlConfig := splitPublishConfig(t, tnldconfig.RoleControl)
-	controlConfig.ServicePortRanges = integrationServicePorts(t)
+	controlSockets := runtimeListeners{control: privateRuntimeListener(t), privateControl: privateControlListener, metrics: privateRuntimeListener(t)}
+	var serviceListeners []net.Listener
+	controlConfig.ServicePortRanges, serviceListeners = reserveIntegrationServicePorts(t)
 	controlConfig.DatabaseURL = databaseURL
-	controlConfig.ControlListen = unusedTCPAddress(t)
+	controlConfig.ControlListen = controlSockets.control.Addr().String()
+	controlConfig.MetricsListen = controlSockets.metrics.Addr().String()
 	controlConfig.PrivateControlListen = privateControlAddress
 	controlConfig.ClusterSecret = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
@@ -117,33 +124,16 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	if err := controlConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// dependencies outlive every incarnation of control, ingress, and relay.
-	owner := newRuntimeTopology(t)
-	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	startIntegrationControlProxy(t, owner, controlAddress, controlConfig.ControlListen, controlTLS)
-	if options.proxyIngress {
-		startSplitIngressProxy(t, owner, publicIngressAddress, ingressAddress)
-	}
-	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
-	if options.processContext != nil {
-		controlOptions.context = options.processContext("control")
-	}
-	if localDNS != nil {
-		controlOptions.dns = localDNS
-	}
-	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)
-	waitForProcessReady(t, control)
 	ingressConfig := splitPublishConfig(t, tnldconfig.RoleIngress)
+	ingressSockets := runtimeListeners{ingress: ingressListener, metrics: privateRuntimeListener(t)}
+	ingressConfig.MetricsListen = ingressSockets.metrics.Addr().String()
 	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
-	relayAConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
-	relayBConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
+	relayAConfig, relayASockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
+	relayBConfig, relayBSockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
 	if options.dns != nil {
 		relayAConfig.ControlRetryInterval = 100 * time.Millisecond
 		relayBConfig.ControlRetryInterval = 100 * time.Millisecond
@@ -156,6 +146,31 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 			t.Fatal(err)
 		}
 	}
+	if !ingressConfig.RequireProxyHeader {
+		ingressSockets.ingress = combineIngressListeners(append([]net.Listener{ingressListener}, serviceListeners...))
+		t.Cleanup(func() { _ = ingressSockets.ingress.Close() })
+	}
+	// dependencies outlive every incarnation of control, ingress, and relay.
+	owner := newRuntimeTopology(t)
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveIntegrationControlProxy(t, owner, controlProxyListener, controlConfig.ControlListen, controlTLS)
+	if options.proxyIngress {
+		startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
+	}
+	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner, listeners: controlSockets}
+	if options.processContext != nil {
+		controlOptions.context = options.processContext("control")
+	}
+	if localDNS != nil {
+		controlOptions.dns = localDNS
+	}
+	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)
+	waitForProcessReady(t, control)
+	// replacements bind their configured addresses after the previous process stops.
+	controlOptions.listeners = runtimeListeners{}
 	relayRoots := certificateAuthority.roots
 	if options.dns != nil {
 		relayRoots = pebble.roots
@@ -166,13 +181,13 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		roots:         &tls.Config{RootCAs: relayRoots, MinVersion: tls.VersionTLS13},
 		controlConfig: controlConfig, controlOptions: controlOptions, ingressConfig: ingressConfig,
 		control: control, serviceHTTP: serviceHTTP,
-		relayA: splitRelayFixture{config: relayAConfig}, relayB: splitRelayFixture{config: relayBConfig},
+		relayA: splitRelayFixture{config: relayAConfig, listeners: relayASockets}, relayB: splitRelayFixture{config: relayBConfig, listeners: relayBSockets},
 	}
 	f.relayA.process = f.startRelay(t, relayAConfig)
 	f.relayB.process = f.startRelay(t, relayBConfig)
 	f.ingress = startIntegrationProcessWithOptions(t, ingressConfig, integrationProcessOptions{
 		context:        f.contextFor("ingress"),
-		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, relayClientTLS: f.roots, owner: owner,
+		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, relayClientTLS: f.roots, owner: owner, listeners: ingressSockets,
 	})
 	for _, process := range []*integrationProcess{f.relayA.process, f.relayB.process, f.ingress} {
 		waitForProcessReady(t, process)
@@ -191,12 +206,8 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 // a disposable front address writes trusted PROXY v2 metadata for ordinary
 // HTTPS visitors. database test clients supply their own original port
 // through the separate private ingress listener.
-func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, public, backend string) {
+func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string) {
 	t.Helper()
-	listener, err := net.Listen("tcp", public)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var active sync.WaitGroup
 	acceptDone := make(chan struct{})
 	owner.cleanupResource(t, func() {
@@ -259,7 +270,7 @@ func splitPublishConfig(t *testing.T, role tnldconfig.Role) tnldconfig.Config {
 	return cfg
 }
 
-func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayServiceID, relayID string, certificate integrationCertificate) tnldconfig.Config {
+func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayServiceID, relayID string, certificate integrationCertificate) (tnldconfig.Config, runtimeListeners) {
 	t.Helper()
 	cfg := splitPublishConfig(t, tnldconfig.RoleRelay)
 	cfg.ControlHostname = controlHostname
@@ -269,16 +280,26 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 	cfg.RelayAddress = relayServiceID + "." + serverDomain + ":443"
 	cfg.RelayTLSCertificateFile = certificate.certificateFile
 	cfg.RelayTLSPrivateKeyFile = certificate.privateKeyFile
-	cfg.RelayTCPListen = unusedTCPAddress(t)
+	listeners := runtimeListeners{metrics: privateRuntimeListener(t), relayTCP: privateRuntimeListener(t), relayInternal: privateRuntimeListener(t)}
+	cfg.MetricsListen = listeners.metrics.Addr().String()
+	cfg.RelayTCPListen = listeners.relayTCP.Addr().String()
 	cfg.RelayUDPListen = unusedUDPAddress(t)
-	cfg.InternalRelayListen = unusedTCPAddress(t)
+	cfg.InternalRelayListen = listeners.relayInternal.Addr().String()
 	cfg.InternalRelayAddress = cfg.InternalRelayListen
-	return cfg
+	return cfg, listeners
 }
 
 func (f *splitPublishFixture) startRelay(t *testing.T, cfg tnldconfig.Config) *integrationProcess {
 	t.Helper()
-	return startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{context: f.contextFor("relay"), acmeHTTPClient: f.pebble.httpClient, serviceHTTPClient: f.serviceHTTP, owner: f.owner})
+	options := integrationProcessOptions{context: f.contextFor("relay"), acmeHTTPClient: f.pebble.httpClient, serviceHTTPClient: f.serviceHTTP, owner: f.owner}
+	for _, relay := range []*splitRelayFixture{&f.relayA, &f.relayB} {
+		if relay.config.RelayID == cfg.RelayID {
+			options.listeners = relay.listeners
+			relay.listeners = runtimeListeners{}
+			break
+		}
+	}
+	return startIntegrationProcessWithOptions(t, cfg, options)
 }
 
 func (f *splitPublishFixture) contextFor(role string) context.Context {

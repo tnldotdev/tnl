@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -26,13 +27,14 @@ type standalonePublishFixture struct {
 	visitor                        *integrationVisitor
 }
 
-func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalonePublishFixture {
+func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart ...func(tnldconfig.Config)) *standalonePublishFixture {
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicAddress, relayUDPAddress := unusedTCPAddress(t), unusedUDPAddress(t)
+	publicListener := privateRuntimeListener(t)
+	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
@@ -45,8 +47,11 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalone
 	}
 	owner := newRuntimeTopology(t)
 	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
+	for _, check := range beforeStart {
+		check(cfg)
+	}
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
-		dns:            dns,
+		dns: dns, listeners: listeners,
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
@@ -58,15 +63,21 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string) *standalone
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
 
-func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPAddress, directoryURL string) tnldconfig.Config {
+func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDPAddress, directoryURL string) (tnldconfig.Config, runtimeListeners) {
 	t.Helper()
 	const serverDomain = "integration.test"
 	// standalone uses one public listener and creates its internal listeners on
 	// :0 itself. these required but unused split-role addresses need no probes.
+	servicePorts, serviceListeners := reserveIntegrationServicePorts(t)
+	listeners := runtimeListeners{
+		control: privateRuntimeListener(t), metrics: privateRuntimeListener(t),
+		ingress: combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
+	}
+	t.Cleanup(func() { _ = listeners.ingress.Close() })
 	return tnldconfig.Config{
-		ServicePortRanges: integrationServicePorts(t),
-		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
-		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ServicePortRanges: servicePorts,
+		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
+		ControlListen: listeners.control.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicListener.Addr().String(),
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
@@ -81,7 +92,7 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,
 		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 3 * time.Second,
-	}
+	}, listeners
 }
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {

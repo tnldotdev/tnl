@@ -5,22 +5,23 @@ This is the execution plan for the first of two requested PRs. It covers the
 complete domain cleanup; the second PR follows the
 [role organization plan](https://md.cormo-turtle.ts.net/.worktree/tnl/role-organization/docs/maintainers/reorganization-plan.md).
 
-Status: first-PR domain implementation complete in the shared working tree;
-final validation and PR delivery pending. The scope sections retain the accepted
-plan. The execution record and ledger below identify the implemented boundaries,
-completed checks, corrected integration fixture, and checks still in progress.
-Role organization remains the second PR's pending work.
+Status: first-PR domain implementation delivered in
+[PR #448](https://github.com/tnldotdev/tnl/pull/448). The CI follow-up merges current
+main and adapts its socket-reservation fixtures to the validated port inventory.
+The execution record and ledger below identify completed local checks and the
+remaining CI qualification. Role organization remains the second PR's work.
 
 ## execution anchor and delivery
 
-| Item                   | Execution anchor                                                                                                 |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Latest baseline        | `5203676605d98999cfc012ec20fa857fa0271db9`                                                                       |
-| Landed rewrite         | PR #442 at `48a2b8e5`; its tree matches `331def37`                                                               |
-| Superseded checkpoints | Earlier checkpoints prefixed `45c`, `b371`, and `e423` are stale; they are not execution or validation baselines |
-| First PR               | `0xcadams/domain-boundaries`, based on the latest baseline                                                       |
-| Second PR              | `0xcadams/role-organization`, initially based on `0xcadams/domain-boundaries`                                    |
-| Working directory      | `/Users/chase/.worktree/tnl/role-organization`                                                                   |
+| Item                    | Execution anchor                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Implementation baseline | `5203676605d98999cfc012ec20fa857fa0271db9`                                                                       |
+| Main merged for CI      | `3a4ede1e252185ba485e7bab4724d88eef64236a`, including #446 and #447                                              |
+| Landed rewrite          | PR #442 at `48a2b8e5`; its tree matches `331def37`                                                               |
+| Superseded checkpoints  | Earlier checkpoints prefixed `45c`, `b371`, and `e423` are stale; they are not execution or validation baselines |
+| First PR                | [#448](https://github.com/tnldotdev/tnl/pull/448), `0xcadams/domain-boundaries`; implementation `bc1efd09`       |
+| Second PR               | `0xcadams/role-organization`, initially based on `0xcadams/domain-boundaries`                                    |
+| CI follow-up directory  | `/Users/chase/.worktree/tnl/domain-boundaries-ci`                                                                |
 
 The requested outcome is two implemented, validated PRs. Put both plans in the
 repository with the first PR so reviewers can see the complete sequence. The
@@ -583,12 +584,13 @@ explicit opt-in work with their existing server/workload approval rules.
 
 ## first-pr execution record
 
-This snapshot covers the shared, uncommitted `0xcadams/domain-boundaries` tree
-based on `5203676605d98999cfc012ec20fa857fa0271db9`. Implementation evidence comes
-from the source and assertion changes below; completed command results are
-reported by the parent execution. The documentation update does not claim a new
-test run or a final implementation commit. Record that commit and the confirmed
-PR URL when the parent finishes delivery.
+Implementation commit `bc1efd09c871124a62281d968c7cad2ba9913a7b` delivered the
+domain boundaries in [PR #448](https://github.com/tnldotdev/tnl/pull/448), based on
+`5203676605d98999cfc012ec20fa857fa0271db9`. The CI follow-up merges main at
+`3a4ede1e252185ba485e7bab4724d88eef64236a`. It preserves main's reserved-listener
+handoff in ingress and uses `Inventory.Ranges()` in the new standalone and split
+socket-reservation tests. The validation results distinguish implementation
+qualification from the checks rerun on this merged tree.
 
 ### implemented domain boundaries
 
@@ -747,57 +749,63 @@ unrecorded aggregate or platform run passed.
   observation test, selected through the PostgreSQL integration harness with
   `-race`. This closes that failure without claiming another full aggregate run.
 - **v12 — passed:** full `task go:test:race`, covering every routine Go package.
+  Repeated successfully on the CI follow-up tree after merging main.
 - **v13 — passed:** `task go:test:harness`, including its separate module's
-  race-enabled tests.
-- **v14 — pending or conditional:** committed-`HEAD` generated drift comparison,
-  final commit/PR review, and any additional platform, action, browser, fuzz, or
-  release-artifact qualification required by the final diff have no completed
-  result in this snapshot. The broad Go/JS/Python results do not establish those
-  separate tiers.
+  race-enabled tests; repeated successfully after merging main.
+- **v14 — passed:** `task generate-check` against committed generated files and
+  `task format-check` on the CI follow-up tree. Generation produced no drift.
+- **v15 — passed:** after merging main, `task go:test:focused
+PACKAGES='./internal/tnldruntime' RUN='^$'`, full `task go:test`, and
+  `task go:lint`. `task go:test:integration:runtime
+RUN='^TestIntegration(PrivateRuntimeReserves.*|StandalonePublishReservesSockets|SplitPublishReservesSockets)$'`
+  passed all four reservation tests, including control subtests, with `-race`
+  and disposable PostgreSQL.
+- **v16 — pending:** GitHub checks for the updated PR head. Earlier CI merge
+  checks could not compile new main fixtures that ranged over `tcpport.Inventory`;
+  v15 verifies the corrected callers. Additional platform, action, browser, fuzz,
+  and release-artifact checks are separate from the recorded local results.
 
 ## scope and progress ledger
 
-Rows d01-d23 are complete for the first PR's domain implementation in the shared
-tree, with source/assertion evidence above and validation references below.
-Final aggregate validation and delivery remain separate pending rows. Commit
-evidence will be added when the parent commits this tree; no commit or PR URL is
-invented for the uncommitted work.
+Rows d01-d23 are complete for implementation commit `bc1efd09`, with
+source/assertion evidence above and validation references below. The final rows
+record local qualification, PR delivery, and the remaining updated-head CI checks.
 
-| ID  | Scope                                                               | Implementation evidence                                     | Validation evidence                | Status               |
-| --- | ------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------- | -------------------- |
-| d01 | Protocol selectors and validated wire variants                      | Owned protocol and inspection values                        | v02                                | complete             |
-| d02 | Private run, claim, certificate, and DNS states                     | Lifecycle states and checked subject dispatch               | v02, v07-v09                       | complete             |
-| d03 | Revisions, counters, and checked adapters                           | Run/assignment bindings and overflow rejection              | v02, v08                           | complete             |
-| d04 | Certificate and visitor subject ownership                           | Subject constructors, SQL source, generated query           | v01-v02, v07-v09                   | complete             |
-| d05 | Company types, setup, offboarding, and recovery                     | Typed decisions; boolean-mode state adapter deleted         | v02, v07-v08                       | complete             |
-| d06 | Requested/resolved native scopes                                    | Authorized exclusive scopes and owned snapshots             | v02, v07                           | complete             |
-| d07 | Capabilities, enrollment, and credential installation               | Explicit storage APIs; enrollment adapter deleted           | v02, v07                           | complete             |
-| d08 | Device stages, cancellation, and late issuance                      | Exclusive stages and atomic cancellation                    | v02, v07-v08                       | complete             |
-| d09 | Feedback states, evidence, and verified authors                     | Authorized actor and typed thread/event states              | v02, v07-v08                       | complete             |
-| d10 | Bound runs and managed HTTP credential variants                     | Bound authority, typed tokens, canonical server validation  | v02, v07, v09, v11                 | complete             |
-| d11 | Assignment references and relay lifetime                            | Complete claim identity and owned stream lifetime           | v02, v06, v09                      | complete             |
-| d12 | Forwarding variants and accepted transport peers                    | Exclusive dispatch, accepted peer, release-once checks      | v02, v06, v09                      | complete             |
-| d13 | Bounded inventory, cloud metadata, and keyed YAML projections       | All metadata callers checked; shared selector/schema rules  | v01-v02, v07-v08                   | complete             |
-| d14 | Private target plans and job status                                 | Validated plans and closed status values                    | v02                                | complete             |
-| d15 | Exact current checks and accepted readiness results                 | Registration/run split and locked live read                 | v02                                | complete             |
-| d16 | Once-per-run readiness budget and joins                             | Accepted success, stale result, replacement/join assertions | v02                                | complete             |
-| d17 | OAuth/alias routing and listener ownership                          | Named callback boundaries and listener generations          | v02, v04-v05                       | complete             |
-| d18 | Three bounded subprocess buffers and config-loader drain            | Private buffers; copy/subprocess assertions; drain retained | v02                                | complete             |
-| d19 | Typed-nil safety and CSR error causes                               | Nil-safe keys/visitors/errors and CSR classification        | v02                                | complete             |
-| d20 | `AsType`, ownership clones, and parser state                        | Cause/snapshot ownership and bounded parser progress        | v02                                | complete             |
-| d21 | Nonextending workload expiry                                        | Immutable/narrowing session update boundary                 | v02, v10                           | complete             |
-| d22 | Benchmark direction and atomic aggregate correctness                | Direction validation and atomic owned merge                 | v02                                | complete             |
-| d23 | Public compatibility, wire/stored fixtures, and unchanged baselines | External Go consumer, hash vectors, unchanged migrations    | v01-v02, v04-v05, v07-v09          | complete             |
-| d24 | Routine, integration, platform, and packaging checks                | Completed results recorded; final checks outstanding        | v12-v14 pending; v10 not all-green | pending final checks |
-| d25 | First PR review and handoff to the stacked second PR                | Final commit, PR URL, and stacked handoff outstanding       | pending                            | pending              |
+| ID  | Scope                                                               | Implementation evidence                                     | Validation evidence                            | Status                    |
+| --- | ------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------- | ------------------------- |
+| d01 | Protocol selectors and validated wire variants                      | Owned protocol and inspection values                        | v02                                            | complete                  |
+| d02 | Private run, claim, certificate, and DNS states                     | Lifecycle states and checked subject dispatch               | v02, v07-v09                                   | complete                  |
+| d03 | Revisions, counters, and checked adapters                           | Run/assignment bindings and overflow rejection              | v02, v08                                       | complete                  |
+| d04 | Certificate and visitor subject ownership                           | Subject constructors, SQL source, generated query           | v01-v02, v07-v09                               | complete                  |
+| d05 | Company types, setup, offboarding, and recovery                     | Typed decisions; boolean-mode state adapter deleted         | v02, v07-v08                                   | complete                  |
+| d06 | Requested/resolved native scopes                                    | Authorized exclusive scopes and owned snapshots             | v02, v07                                       | complete                  |
+| d07 | Capabilities, enrollment, and credential installation               | Explicit storage APIs; enrollment adapter deleted           | v02, v07                                       | complete                  |
+| d08 | Device stages, cancellation, and late issuance                      | Exclusive stages and atomic cancellation                    | v02, v07-v08                                   | complete                  |
+| d09 | Feedback states, evidence, and verified authors                     | Authorized actor and typed thread/event states              | v02, v07-v08                                   | complete                  |
+| d10 | Bound runs and managed HTTP credential variants                     | Bound authority, typed tokens, canonical server validation  | v02, v07, v09, v11                             | complete                  |
+| d11 | Assignment references and relay lifetime                            | Complete claim identity and owned stream lifetime           | v02, v06, v09                                  | complete                  |
+| d12 | Forwarding variants and accepted transport peers                    | Exclusive dispatch, accepted peer, release-once checks      | v02, v06, v09                                  | complete                  |
+| d13 | Bounded inventory, cloud metadata, and keyed YAML projections       | All metadata callers checked; shared selector/schema rules  | v01-v02, v07-v08                               | complete                  |
+| d14 | Private target plans and job status                                 | Validated plans and closed status values                    | v02                                            | complete                  |
+| d15 | Exact current checks and accepted readiness results                 | Registration/run split and locked live read                 | v02                                            | complete                  |
+| d16 | Once-per-run readiness budget and joins                             | Accepted success, stale result, replacement/join assertions | v02                                            | complete                  |
+| d17 | OAuth/alias routing and listener ownership                          | Named callback boundaries and listener generations          | v02, v04-v05                                   | complete                  |
+| d18 | Three bounded subprocess buffers and config-loader drain            | Private buffers; copy/subprocess assertions; drain retained | v02                                            | complete                  |
+| d19 | Typed-nil safety and CSR error causes                               | Nil-safe keys/visitors/errors and CSR classification        | v02                                            | complete                  |
+| d20 | `AsType`, ownership clones, and parser state                        | Cause/snapshot ownership and bounded parser progress        | v02                                            | complete                  |
+| d21 | Nonextending workload expiry                                        | Immutable/narrowing session update boundary                 | v02, v10                                       | complete                  |
+| d22 | Benchmark direction and atomic aggregate correctness                | Direction validation and atomic owned merge                 | v02                                            | complete                  |
+| d23 | Public compatibility, wire/stored fixtures, and unchanged baselines | External Go consumer, hash vectors, unchanged migrations    | v01-v02, v04-v05, v07-v09                      | complete                  |
+| d24 | Routine, integration, platform, and packaging checks                | Local checks complete; updated-head CI outstanding          | v12-v15 passed; v16 pending; v10 not all-green | pending CI                |
+| d25 | First PR review and handoff to the stacked second PR                | Implementation committed; #448 open; CI follow-up isolated  | `bc1efd09`, #448; merged main `3a4ede1e`       | ready for stacked handoff |
 
 ## first pr completion gate
 
-The domain implementation is complete through d23. Finish recording the full
-race and harness results, resolve the final-diff qualification requirements, and
-record the reviewed commit and first PR URL before completing d24-d25. The broad
-integration invocation and its successful corrected-test rerun remain separate
-results; they are not rewritten as a second all-green aggregate.
+The domain implementation is complete through d23 and delivered in #448. Full
+routine race, harness, generated-drift, formatting, and focused reservation
+results are recorded above. Confirm updated-head CI before completing d24. The
+broad integration invocation and its successful corrected-test rerun remain
+separate results; they are not rewritten as a second all-green aggregate.
 
 Before opening or updating the PR, review the full branch diff against the
 recorded baseline, including generated output and fixtures. Carry forward the

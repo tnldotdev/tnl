@@ -52,6 +52,7 @@ type relayProcessSettings struct {
 	internalListener       net.Listener
 	internalAddress        string
 	tcpListen              string
+	tcpListener            net.Listener
 	udpListen              string
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
@@ -105,10 +106,13 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		_ = internalListener.Close()
 		return err
 	}
-	tcpListener, err := net.Listen("tcp", settings.tcpListen)
-	if err != nil {
-		_ = internalListener.Close()
-		return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
+	tcpListener := settings.tcpListener
+	if tcpListener == nil {
+		tcpListener, err = net.Listen("tcp", settings.tcpListen)
+		if err != nil {
+			_ = internalListener.Close()
+			return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
+		}
 	}
 	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
 		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,

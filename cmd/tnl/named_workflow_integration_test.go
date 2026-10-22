@@ -34,7 +34,12 @@ func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=150s", "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child"}
+	timeout := 150 * time.Second
+	if len(noGit) != 0 && noGit[0] {
+		// three git transitions each wait for a full owner shutdown and restart.
+		timeout = 4 * time.Minute
+	}
+	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=" + timeout.String(), "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child"}
 	if personal {
 		args = append(args, "-tnl-cli-workflow-personal-team")
 	}
@@ -318,11 +323,14 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			return ids
 		}
 		originalIDs = readIDs()
+		transitionsStarted := time.Now()
 		for phase := range 3 {
+			t.Logf("git transition %d: stopping the current owner after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
 			firstAPI()
 			firstWeb()
 			firstSDK()
 			workflowWait(t, 15*time.Second, func() bool { return !runtimeAvailable(t.Context(), endpoint) })
+			t.Logf("git transition %d: owner stopped after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
 			args := []string{"init", "--quiet", root}
 			if phase == 1 {
 				args = []string{"-C", root, "remote", "add", "origin", "https://example.test/first.git"}
@@ -339,6 +347,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 			if ids := readIDs(); ids != originalIDs {
 				t.Fatalf("Git transition replaced local services: %s != %s", ids, originalIDs)
 			}
+			t.Logf("git transition %d: the same services are ready after %s", phase+1, time.Since(transitionsStarted).Round(time.Millisecond))
 		}
 		firstAPI()
 		firstWeb()

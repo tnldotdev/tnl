@@ -207,10 +207,11 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
-	publicAddress, relayUDPAddress := unusedTCPAddress(t), unusedUDPAddress(t)
+	publicListener := privateRuntimeListener(t)
+	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
 	cfg.GuestDemoEnabled = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -225,7 +226,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	publicControl := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
-		dns:            dns,
+		dns: dns, listeners: listeners,
 		acmeHTTPClient: pebble.httpClient,
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})

@@ -620,11 +620,30 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegrationCLI" .RUN}}'
       SHARD: '{{default "1/1" .SHARD}}'
+      SKIP: '{{default "^$" .SKIP}}'
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: CLI integration tests require Linux for isolated credential protection
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  go:test:integration:cli:shard:
+    desc: Run one ordinary CLI shard, with real-clock Git identity continuity in its own target
+    requires:
+      vars: [SHARD]
+    cmds:
+      - task: go:test:integration:cli
+        vars:
+          SHARD: "{{.SHARD}}"
+          SKIP: ^TestIntegrationCLINamedLocalIdentityContinuity$
+
+  go:test:integration:cli:identity:
+    desc: Verify stable local service identity through three complete owner and Git transitions
+    cmds:
+      - task: go:test:integration:cli
+        vars:
+          RUN: ^TestIntegrationCLINamedLocalIdentityContinuity$
+          SHARD: 1/1
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
