@@ -34,7 +34,26 @@ while each test creates its own database. The same harness drives the runtime
 load topology and fault sweeps without a TypeScript container runner.
 The complete runtime tier has a 20-minute budget, including real lease-cycle
 tests; a shell running the full multi-package integration tier needs a longer
-deadline than an individual package. The Node 24 function-artifact fixture runs
+deadline than an individual package. CI runs four state shards, four runtime
+shards, and three CLI shards in parallel. Reproduce one with:
+
+```console
+mise exec -- task go:test:integration:state:shard SHARD=1/4
+mise exec -- task go:test:integration:runtime:shard SHARD=1/4
+mise exec -- task go:test:integration:cli SHARD=1/3
+```
+
+The harness discovers tests with `go test -list` and assigns each complete
+top-level test to one stable name-based shard. New tests enter a shard
+automatically; unsupported selectors and empty shards fail. Runtime shards
+exclude only the two real-clock proofs, which CI runs separately through
+`go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
+All matrix jobs contribute to the required `Go integration` result. CLI shards
+cover the named-app workflows; the management job adds their unique service
+share lookup checks. Native SDK checks run in the provider HTTP job, alongside
+its transport checks, rather than repeating in the binary job.
+
+The Node 24 function-artifact fixture runs
 only through its explicit `go:test:integration:vercel` target and artifact input.
 `generate-check` regenerates files and compares them with `HEAD`, so intentional
 uncommitted generated changes also appear as drift. `format-check` only checks;

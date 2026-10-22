@@ -14,9 +14,21 @@ concurrency:
 
 jobs:
   postgres:
-    name: PostgreSQL integration
+    name: PostgreSQL (${{ matrix.suite }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [state:shard, runtime:shard]
+        shard: [1/4, 2/4, 3/4, 4/4]
+        include:
+          - suite: api
+            shard: 1/1
+          - suite: runtime:leases
+            shard: 1/1
+          - suite: runtime:workload
+            shard: 1/1
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,15 +55,26 @@ jobs:
       - name: Install pinned tools
         run: go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
 
+      - name: Check test harness and shard selection
+        if: matrix.suite == 'api'
+        run: task go:test:harness
+
       - name: Run integration tests
-        run: task go:test:integration
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+          SHARD: ${{ matrix.shard }}
+        run: task "go:test:integration:$TEST_SUITE" SHARD="$SHARD"
 
   workload-function:
-    name: Native workload function boundary
+    name: Native workload (${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [provider-http, vercel]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,13 +114,27 @@ jobs:
           pnpm install --frozen-lockfile
           go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
 
-      - name: Qualify SDK, transports, and workload-owned function artifact
-        run: task go:test:integration:provider-http go:test:integration:vercel
+      - name: Qualify native workload boundary
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+        run: task "go:test:integration:$TEST_SUITE"
 
   clients:
-    name: CLI and database clients
+    name: Clients (${{ matrix.suite }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [cli]
+        shard: [1/3, 2/3, 3/3]
+        include:
+          - suite: publisher-groups
+            shard: 1/1
+          - suite: management
+            shard: 1/1
+          - suite: tcp-clients
+            shard: 1/1
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -132,41 +169,36 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Set up Python driver fixture
+        if: matrix.suite == 'tcp-clients'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13.9"
 
       - name: Install pinned uv
+        if: matrix.suite == 'tcp-clients'
         run: python3 -m pip install uv==0.9.18
 
       - name: Install OpenSSH fixture
+        if: matrix.suite == 'cli' || matrix.suite == 'management'
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends openssh-server
           sudo install -d -m 0755 /run/sshd
 
-      - name: Verify CLI workflows
-        run: task go:test:integration:cli
-
-      - name: Verify fixed-list publisher groups
-        run: task go:test:integration:publisher-groups
-
-      - name: Verify repaired ownership and management boundaries
-        run: task go:test:integration:app-workflows go:test:integration:private-claims go:test:integration:service-access go:test:integration:aws-bootstrap
-
-      - name: Verify private connector and publisher lifecycle
-        run: task go:test:integration:tcp-lifecycle
-
-      - name: Verify TCP clients
-        run: task go:test:integration:tcp-clients
-
-      - name: Verify existing sshd through private streams
-        run: task go:test:integration:private-sshd
+      - name: Verify client boundary
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+          SHARD: ${{ matrix.shard }}
+        run: task "go:test:integration:$TEST_SUITE" SHARD="$SHARD"
 
   binary:
-    name: Binary integration
+    name: Binary (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [owner-lifecycle, connections, binary]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,17 +234,10 @@ jobs:
       - name: Allow local DNS and HTTPS test listeners
         run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=53
 
-      - name: Verify native SDK connections
-        run: task go:test:connections
-
-      - name: Verify shared owner service isolation
-        run: task go:test:integration:owner-lifecycle
-
-      - name: Verify native Drizzle Kit migration
-        run: task go:test:integration:connections
-
-      - name: Run binary integration tests
-        run: task go:test:integration:binary
+      - name: Verify binary boundary
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
+        run: task "go:test:integration:$TEST_SUITE"
 
   compose:
     name: Compose publisher integration

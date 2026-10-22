@@ -464,6 +464,40 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
+  go:test:harness:
+    desc: Check disposable test orchestration and complete, stable shard selection
+    cmds:
+      - go -C tools/testharness test -race ./...
+
+  go:test:integration:api:
+    desc: Check API, generated database, certificate and DNS boundaries with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi ./internal/controlapi ./internal/controlstate/controlstatedb ./internal/certificates ./internal/dnscontroller -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  go:test:integration:state:shard:
+    desc: Run one complete control-state integration shard (SHARD=1/4 through 4/4)
+    requires:
+      vars: [SHARD]
+    cmds:
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/controlstate -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  go:test:integration:runtime:shard:
+    desc: Run one runtime integration shard, with real-clock lease proofs in separate targets
+    requires:
+      vars: [SHARD]
+    cmds:
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegration' -skip='^TestIntegration(WorkloadTransportLifecycle|PrivateDefaultLeaseCycles)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  go:test:integration:runtime:leases:
+    desc: Cross production private visitor lease cycles and outage deadlines on real sockets
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationPrivateDefaultLeaseCycles$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:integration:runtime:workload:
+    desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   go:test:integration:private-services:
     desc: Check private services, applied publisher groups, and audit in disposable PostgreSQL
     cmds:
@@ -492,6 +526,15 @@ tasks:
     desc: Check the signed-human service bridge and CLI manager lookup with disposable PostgreSQL
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./cmd/tnl -run='^TestIntegration(ServiceActor|PrivateServiceAccessClient|ServiceShareManagerLookup)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:integration:management:
+    desc: Check publisher claims, manager lookup, AWS bootstrap and connector lifecycle
+    cmds:
+      - task: go:test:integration:private-claims
+      - task: go:test:integration:service-access
+      - task: go:test:integration:aws-bootstrap
+      - task: go:test:integration:tcp-lifecycle
+      - task: go:test:integration:private-sshd
 
   go:test:integration:publisher-egress:
     desc: Check signed publisher runtime egress and trusted proxy evidence in disposable PostgreSQL
@@ -560,11 +603,12 @@ tasks:
     desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
     vars:
       RUN: '{{default "^TestIntegrationCLI" .RUN}}'
+      SHARD: '{{default "1/1" .SHARD}}'
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: CLI integration tests require Linux for isolated credential protection
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
