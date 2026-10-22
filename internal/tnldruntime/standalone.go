@@ -40,6 +40,7 @@ type standaloneSettings struct {
 	controlListen          string
 	controlProxy           controlproxy.Config
 	publicListen           string
+	publicListener         net.Listener
 	relayUDPListen         string
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
@@ -78,9 +79,13 @@ func (d *daemon) startStandalone(
 	metrics *observability.Metrics,
 	controlHandler http.Handler,
 ) error {
-	publicListener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges, settings.ingress.requireProxyHeader)
-	if err != nil {
-		return fmt.Errorf("listen for standalone public traffic: %w", err)
+	publicListener := settings.publicListener
+	if publicListener == nil {
+		listener, err := listenIngress(settings.publicListen, settings.ingress.servicePortRanges, settings.ingress.requireProxyHeader)
+		if err != nil {
+			return fmt.Errorf("listen for standalone public traffic: %w", err)
+		}
+		publicListener = listener
 	}
 	publicOwned := false
 	defer func() {

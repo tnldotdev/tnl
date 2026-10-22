@@ -94,7 +94,12 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
 	config.ControlListen, config.PrivateControlListen = privateUnusedTCPAddress(t), privateUnusedTCPAddress(t)
-	config.ServicePortRanges = integrationServicePorts(t)
+	var serviceListeners []net.Listener
+	if standalone {
+		config.ServicePortRanges, serviceListeners = reserveIntegrationServicePorts(t)
+	} else {
+		config.ServicePortRanges = integrationServicePorts(t)
+	}
 	ports, err := config.ServicePortInventory()
 	if err != nil {
 		t.Fatal(err)
@@ -110,9 +115,15 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		config.IngressLeaseDuration, config.RelayLeaseDuration = 30*time.Second, 30*time.Second
 		config.LeaseRenewalInterval, config.ControlRetryInterval = 10*time.Second, time.Second
 	}
+	var publicListener net.Listener
 	if standalone {
 		config.Role = tnldconfig.RoleStandalone
-		config.IngressListen = privateUnusedTCPAddress(t)
+		publicListener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = publicListener.Close() })
+		config.IngressListen = publicListener.Addr().String()
 		config.RelayUDPListen = "127.0.0.1:0"
 	}
 	serviceTransport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
@@ -141,6 +152,11 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	startPrivateFixtureWorkers(t, ctx, control, database, config, pebble, dnsProvider)
 	if standalone {
 		settings := standaloneSettingsFrom(config)
+		settings.publicListener = publicListener
+		if !config.RequireProxyHeader {
+			settings.publicListener = combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...))
+		}
+		t.Cleanup(func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = privateRuntimeTLS(t, ca, settings.relayHostname)
 		settings.configurePrivate = func(id string, config *ingress.PrivateConnectorConfig) {
 			if !defaults {
