@@ -35,12 +35,12 @@ load topology and fault sweeps without a TypeScript container runner.
 The complete runtime tier has a 20-minute budget, including real lease-cycle
 tests; a shell running the full multi-package integration tier needs a longer
 deadline than an individual package. CI runs four state shards, four runtime
-shards, and three CLI shards in parallel. Reproduce one with:
+shards, and three ordinary CLI shards in parallel. Reproduce one with:
 
 ```console
 mise exec -- task go:test:integration:state:shard SHARD=1/4
 mise exec -- task go:test:integration:runtime:shard SHARD=1/4
-mise exec -- task go:test:integration:cli SHARD=1/3
+mise exec -- task go:test:integration:cli:shard SHARD=1/3
 ```
 
 The harness discovers tests with `go test -list` and assigns each complete
@@ -48,6 +48,8 @@ top-level test to one stable name-based shard. New tests enter a shard
 automatically; unsupported selectors and empty shards fail. Runtime shards
 exclude only the two real-clock proofs, which CI runs separately through
 `go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
+The multi-cycle Git identity proof runs separately through
+`go:test:integration:cli:identity`; ordinary CLI shards exclude only that proof.
 All matrix jobs contribute to the required `Go integration` result. CLI shards
 cover the named-app workflows; the management job adds their unique service
 share lookup checks. Native SDK checks run in the provider HTTP job, alongside

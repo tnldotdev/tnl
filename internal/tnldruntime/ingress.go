@@ -59,6 +59,7 @@ type ingressProcessSettings struct {
 	clusterSecret    string
 	ingressID        string
 	listen           string
+	listener         net.Listener
 	runtime          ingressSettings
 	privateHostname  string
 	privateAddress   string
@@ -87,9 +88,12 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 	if err != nil {
 		return err
 	}
-	listener, err := listenIngress(settings.listen, settings.runtime.servicePortRanges, settings.runtime.requireProxyHeader)
-	if err != nil {
-		return fmt.Errorf("listen for public ingress: %w", err)
+	listener := settings.listener
+	if listener == nil {
+		listener, err = listenIngress(settings.listen, settings.runtime.servicePortRanges, settings.runtime.requireProxyHeader)
+		if err != nil {
+			return fmt.Errorf("listen for public ingress: %w", err)
+		}
 	}
 	if err := d.startIngressRuntime(ctx, settings.runtime, metrics, ingressRuntimeConfig{
 		client: privateClient, ingressID: settings.ingressID, listener: listener, clusterSecret: settings.clusterSecret,
