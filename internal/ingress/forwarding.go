@@ -330,9 +330,13 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 		entry := f.sessions[key]
 		created := false
 		if entry == nil {
+			obsolete, err := f.removeSupersededLocked(key)
+			if err != nil {
+				f.mu.Unlock()
+				return nil, false, err
+			}
 			connectCtx, cancel := context.WithTimeout(f.context, relaySessionSetupTimeout)
 			entry = &relaySession{ready: make(chan struct{}), cancel: cancel}
-			obsolete := f.removeSupersededLocked(key)
 			f.sessions[key] = entry
 			created = true
 			f.mu.Unlock()
@@ -411,15 +415,25 @@ func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session)
 	return entry != nil && entry.session == session
 }
 
-func (f *Forwarder) removeSupersededLocked(current relaySessionKey) []*relaySession {
-	var obsolete []*relaySession
-	for key, entry := range f.sessions {
+func (f *Forwarder) removeSupersededLocked(current relaySessionKey) ([]*relaySession, error) {
+	var keys []relaySessionKey
+	for key := range f.sessions {
 		if key != current && key.relayServiceID == current.relayServiceID && key.relayID == current.relayID {
-			delete(f.sessions, key)
-			obsolete = append(obsolete, entry)
+			// public URLs receive relay replacements independently. an older
+			// projection must not evict a newer session or its live visitors,
+			// including while that replacement is still connecting.
+			if key.relayLeaseRevision >= current.relayLeaseRevision {
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			keys = append(keys, key)
 		}
 	}
-	return obsolete
+	var obsolete []*relaySession
+	for _, key := range keys {
+		obsolete = append(obsolete, f.sessions[key])
+		delete(f.sessions, key)
+	}
+	return obsolete, nil
 }
 
 func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) error {

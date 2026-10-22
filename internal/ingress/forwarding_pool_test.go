@@ -13,7 +13,61 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestForwarderStaleProjectionPreservesReplacementSession(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
+		session, _, err := tunnel.Accept(ctx, transport, func(context.Context, tunnelv1.Message) error { return nil })
+		if err != nil {
+			return err
+		}
+		defer session.Close()
+		incoming, err := session.AcceptInternalForwardingStream(ctx)
+		if err != nil {
+			return err
+		}
+		request := incoming.(*tunnel.IncomingPublicForwardingStream)
+		if request.Header.RelayLeaseRevision != 5 {
+			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		}
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		// keep the replacement's visitor live while another public URL still
+		// projects the previous relay run. the echo proves its bytes survive.
+		_, _ = io.Copy(incoming.Stream(), incoming.Stream())
+		return nil
+	})
+	forwarder := newTestForwarder(t, material)
+	entry := forwardingTestEntry(time.Now(), server.address())
+	stale := mustOnlyBackend(t, forwarder, entry)
+	entry.PublisherConnections[0].RelayRunId = "relay_run_2"
+	entry.PublisherConnections[0].RelayLeaseRevision++
+	current := mustOnlyBackend(t, forwarder, entry)
+	visitor, err := current.Open(ingressContext(t), "visitor_current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownIngressConn(t, visitor)
+	_, err = stale.Open(ingressContext(t), "visitor_stale")
+	var rejected *tunnel.ProtocolError
+	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+		t.Fatalf("stale relay run rejection = %v", err)
+	}
+	if _, err := visitor.Write([]byte("ping")); err != nil {
+		t.Fatalf("stale projection closed the replacement visitor: %v", err)
+	}
+	var reply [4]byte
+	if _, err := io.ReadFull(visitor, reply[:]); err != nil || string(reply[:]) != "ping" {
+		t.Fatalf("replacement visitor response = %q, %v", reply, err)
+	}
+	if got := server.accepted.Load(); got != 1 {
+		t.Fatalf("relay sessions = %d; stale projection must not reconnect", got)
+	}
+}
 
 type gatedRelayConnector struct {
 	started chan struct{}
@@ -37,6 +91,51 @@ func (c *gatedRelayConnector) Connect(ctx context.Context, target relayTarget) (
 		return nil, c.failure
 	}
 	return c.next.Connect(ctx, target)
+}
+
+func TestForwarderStaleProjectionPreservesConnectingReplacement(t *testing.T) {
+	for _, revision := range []uint64{4, 5} {
+		t.Run(fmt.Sprintf("lease=%d", revision), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				release := make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				failure := errors.New("connect failed")
+				connector := &gatedRelayConnector{started: make(chan struct{}), release: release, failure: failure}
+				forwarder := newForwarder(connector)
+				t.Cleanup(func() { _ = forwarder.Close() })
+				target := relayTarget{address: "relay:443", relayServiceID: "relay_service_1", relayID: "relay_1", relayRunID: "new_run", relayLeaseRevision: 5}
+				ctx, cancel := context.WithCancel(t.Context())
+				current := ingressWorker(t, cancel, func() error { _, _, err := forwarder.session(ctx, target); return err })
+				ingressAwait(t, connector.started)
+				t.Cleanup(unblock)
+				stale := target
+				stale.relayRunID, stale.relayLeaseRevision = "old_run", revision
+				old := ingressWorker(t, cancel, func() error { _, _, err := forwarder.session(ctx, stale); return err })
+				synctest.Wait()
+				select {
+				case err := <-old:
+					var rejected *tunnel.ProtocolError
+					if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+						t.Fatalf("stale relay run rejection = %v", err)
+					}
+				default:
+					t.Fatal("stale projection started a competing connection")
+				}
+				select {
+				case err := <-current:
+					t.Fatalf("stale projection canceled replacement setup: %v", err)
+				default:
+				}
+				unblock()
+				if err := ingressAwait(t, current); !errors.Is(err, failure) {
+					t.Fatalf("replacement setup = %v", err)
+				}
+				if got := connector.calls.Load(); got != 1 {
+					t.Fatalf("connect calls = %d, want 1", got)
+				}
+			})
+		})
+	}
 }
 
 func TestForwarderConcurrentOpensShareConnection(t *testing.T) {

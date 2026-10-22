@@ -64,6 +64,11 @@ resnapshots, and projection expiry; only explicit `publish_run_closed` evidence
 permits retirement. The 100,000-key traffic bound fails closed rather than
 discarding an unknown run because a newer sibling exists.
 
+Public URL projections can name different relay runs during recovery. The
+[forwarding pool](../../../internal/ingress/forwarding.go) replaces a session only
+for a higher relay lease revision. An older projection cannot close a newer
+session or its visitors, including while the newer session is connecting.
+
 ## authorization and tls boundaries
 
 Public HTTP decisions bind URL, run, selected credential digest, and trusted
