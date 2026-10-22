@@ -187,10 +187,13 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(separatedDirectory, "roots.pem"), ca.certificatePEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"control", "relay-a", "relay-b", "pebble", "direct"} {
+	for _, role := range []string{"control", "relay-a", "relay-b", "pebble", "direct", "collector"} {
 		hostname := role + "." + separatedDomain
 		if role == "pebble" {
 			hostname = "pebble"
+		}
+		if role == "collector" {
+			hostname = "localhost"
 		}
 		material := ca.issue(t, hostname)
 		if err := errors.Join(os.WriteFile(filepath.Join(separatedDirectory, role+".pem"), material.certificatePEM, 0o600),

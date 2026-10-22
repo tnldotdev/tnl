@@ -24,6 +24,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestSeparatedRuntimeComponent(t *testing.T) {
@@ -37,6 +38,9 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	defer cancel()
 	coordination := separatedCoordination(t)
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) { return coordination.Get(ctx, "coordinator.ready", nil) })
+	if (*runtimeLoadWorkload == "public-auth" || *runtimeLoadWorkload == "connect") && !strings.HasPrefix(component, "app") && component != "pebble" {
+		ctx = startSeparatedSetupTraces(t, ctx, component)
+	}
 	var orders atomic.Int64
 	serveSeparatedResources(t, orders.Load)
 	separatedWrite(t, component+".resources-ready", true)
@@ -56,6 +60,10 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		}
 		runSeparatedPublishers(t, ctx, routes, rate, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
+		if *runtimeLoadWorkload == "public-auth" {
+			runSeparatedPublicAuthorizationVisitor(t, ctx, component, rate)
+			return
+		}
 		if *runtimeLoadWorkload == "connect" {
 			runSeparatedConnectVisitor(t, ctx, component, rate)
 			return
@@ -81,6 +89,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			separatedWrite(t, component+".admission-limits", separatedAdmissionFrom(cfg))
 		}
 		options := integrationProcessOptions{acmeHTTPClient: client,
+			context:           ctx,
 			serviceHTTPClient: splitTestServiceHTTPClient(t, separatedRoots(t, "roots.pem"), "control:9443"),
 			relayClientTLS:    separatedRelayTLS(t), owner: newRuntimeTopology(t)}
 		if cfg.Role.RunsControl() {
@@ -305,6 +314,10 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 	if *runtimeLoadTrace {
 		traceRuntimeCertificateHTTP(t, client, time.Now())
 	}
+	mode := controlv1.Anonymous
+	if *runtimeLoadWorkload == "public-auth" && *publicLoadAccess != "anonymous" {
+		mode = controlv1.Restricted
+	}
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {
@@ -315,8 +328,9 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 		t.Fatal(err)
 	}
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
-		Server: "https://control." + separatedDomain,
-		Domain: "routes." + separatedDomain, StateRoot: stateRoot, Target: "http://127.0.0.1:8080",
+		AccessMode: mode,
+		Server:     "https://control." + separatedDomain,
+		Domain:     "routes." + separatedDomain, StateRoot: stateRoot, Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
 		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,

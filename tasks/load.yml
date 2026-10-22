@@ -29,8 +29,10 @@ tasks:
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
       RUNTIME_WORKLOAD: '{{default "public-url" .WORKLOAD}}'
+      VISITOR_ACCESS: '{{default "anonymous" .ACCESS}}'
       CONNECT_PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
       VISITOR_MEMORY: '{{default "128m" .VISITOR_MEMORY}}'
+      COORDINATOR_MEMORY: '{{default "128m" .COORDINATOR_MEMORY}}'
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: '{{default "" .START_PARALLEL}}'
       READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
@@ -92,7 +94,35 @@ tasks:
           SEED: '{{default "0" .SEED}}'
           RACE: '{{default "0" .RACE}}'
           VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
+          COORDINATOR_MEMORY: '{{default "512m" .COORDINATOR_MEMORY}}'
           RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
+
+  go:test:load:visitors:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure public HTTP cold/warm/refresh permission and HTTP/2 reuse (ACCESS=anonymous/browser/share)
+    cmds:
+      - task: go:test:load:runtime
+        vars:
+          WORKLOAD: public-auth
+          ACCESS: '{{default "anonymous" .ACCESS}}'
+          PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
+          RPS: '{{default "4" .RPS}}'
+          WORKERS: '{{default "16" .WORKERS}}'
+          QUEUE: '{{default "8" .QUEUE}}'
+          DURATION: '{{default "10s" .DURATION}}'
+          READY_TIMEOUT: '{{default "60s" .READY_TIMEOUT}}'
+          HA_TOPOLOGY: "1"
+          CAPACITY_ONLY: "1"
+          HELD_STREAMS: "0"
+          SCENARIO: '{{default "relay-restart" .SCENARIO}}'
+          NETWORK_PATH: '{{default "publisher" .NETWORK_PATH}}'
+          RTT: '{{default "20ms" .RTT}}'
+          LOSS: '{{default "0.1" .LOSS}}'
+          SEED: '{{default "0" .SEED}}'
+          RACE: '{{default "0" .RACE}}'
+          VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
+          COORDINATOR_MEMORY: '{{default "512m" .COORDINATOR_MEMORY}}'
+          RESULTS: '{{default (printf "bench-results/visitors-%s" (now | date "20060102-150405")) .RESULTS}}'
 
   go:bench:plan:
     dir: "{{.ROOT_DIR}}"

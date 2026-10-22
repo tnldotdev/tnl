@@ -25,6 +25,7 @@ type Visitor struct {
 	Network       string
 	SourceAddress *net.TCPAddr
 	PayloadBytes  int
+	Jar           http.CookieJar
 }
 
 func (v Visitor) client() (*http.Client, *http.Transport) {
@@ -50,10 +51,49 @@ func (v Visitor) httpClient(disableKeepAlives bool) (*http.Client, *http.Transpo
 		TLSClientConfig:   &tls.Config{RootCAs: v.Roots, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}},
 		DisableKeepAlives: disableKeepAlives, DisableCompression: true, ForceAttemptHTTP2: false,
 	}
-	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, transport
+	return &http.Client{Transport: transport, Jar: v.Jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, transport
 }
 
 func (v Visitor) Request(parent context.Context, url string, scheduled time.Time) (result RequestResult) {
+	client, transport := v.client()
+	defer transport.CloseIdleConnections()
+	return v.request(parent, client, url, scheduled)
+}
+
+// HTTPVisitor owns the transport for one workload phase. callers close it after
+// joining requests; preparation and measured traffic can share verified sockets.
+type HTTPVisitor struct {
+	visitor   Visitor
+	client    *http.Client
+	transport *http.Transport
+}
+
+func (v Visitor) OpenHTTP(reuse, http2 bool) *HTTPVisitor {
+	client, transport := v.httpClient(!reuse)
+	transport.ForceAttemptHTTP2 = http2
+	if http2 {
+		transport.TLSClientConfig.NextProtos = []string{"h2", "http/1.1"}
+	}
+	return &HTTPVisitor{visitor: v, client: client, transport: transport}
+}
+
+// Do is for sign-in or redemption preparation, outside the offered workload.
+// redirects remain explicit so credentials cannot follow an unexpected origin.
+func (v *HTTPVisitor) Do(request *http.Request) (*http.Response, error) {
+	return v.client.Do(request)
+}
+
+func (v *HTTPVisitor) Request(ctx context.Context, url string, scheduled time.Time) RequestResult {
+	return v.visitor.request(ctx, v.client, url, scheduled)
+}
+
+func (v *HTTPVisitor) Run(ctx context.Context, config VisitorConfig, urls []string) (VisitorResult, error) {
+	return runVisitors(ctx, config, urls, v.Request)
+}
+
+func (v *HTTPVisitor) Close() { v.transport.CloseIdleConnections() }
+
+func (v Visitor) request(parent context.Context, client *http.Client, url string, scheduled time.Time) (result RequestResult) {
 	result.URL = url
 	result.Started = time.Now()
 	scheduled = localSchedule(result.Started, scheduled)
@@ -69,14 +109,14 @@ func (v Visitor) Request(parent context.Context, url string, scheduled time.Time
 	}
 	ctx, cancel := context.WithDeadline(parent, scheduled.Add(RequestTimeout))
 	defer cancel()
-	client, transport := v.client()
-	defer transport.CloseIdleConnections()
 	var mu sync.Mutex
 	var dnsStarted, tlsStarted time.Time
 	connectStarted := make(map[string]time.Time)
 	var dns, connect, handshake time.Duration
 	trace := &httptrace.ClientTrace{
-		DNSStart: func(httptrace.DNSStartInfo) { mu.Lock(); defer mu.Unlock(); dnsStarted = time.Now() },
+		GotConn:              func(info httptrace.GotConnInfo) { mu.Lock(); defer mu.Unlock(); result.Reused = info.Reused },
+		GotFirstResponseByte: func() { mu.Lock(); defer mu.Unlock(); result.ResponseHeaders = time.Now() },
+		DNSStart:             func(httptrace.DNSStartInfo) { mu.Lock(); defer mu.Unlock(); dnsStarted = time.Now() },
 		DNSDone: func(httptrace.DNSDoneInfo) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -127,6 +167,7 @@ func (v Visitor) Request(parent context.Context, url string, scheduled time.Time
 		return
 	}
 	defer func() { failure = errors.Join(failure, response.Body.Close()) }()
+	result.HTTPProtocol = response.Proto
 	first := make([]byte, 1)
 	if _, err := io.ReadFull(response.Body, first); err != nil {
 		failure = err

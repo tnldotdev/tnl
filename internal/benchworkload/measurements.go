@@ -111,19 +111,22 @@ func (h *Histogram) Merge(other Histogram) error {
 }
 
 type RequestResult struct {
-	URL          string        `json:"url,omitempty"`
-	Scheduled    time.Time     `json:"scheduled"`
-	Started      time.Time     `json:"started"`
-	FirstByte    time.Time     `json:"first_body_byte,omitzero"`
-	QueueDelay   time.Duration `json:"queue_delay"`
-	DNS          time.Duration `json:"dns"`
-	Connect      time.Duration `json:"connect"`
-	TLS          time.Duration `json:"tls"`
-	Duration     time.Duration `json:"duration"`
-	Bytes        int64         `json:"bytes"`
-	Error        string        `json:"error,omitempty"`
-	Timeout      bool          `json:"timeout,omitempty"`
-	QueueExpired bool          `json:"queue_expired,omitempty"`
+	URL             string        `json:"url,omitempty"`
+	Scheduled       time.Time     `json:"scheduled"`
+	Started         time.Time     `json:"started"`
+	FirstByte       time.Time     `json:"first_body_byte,omitzero"`
+	ResponseHeaders time.Time     `json:"response_headers,omitzero"`
+	HTTPProtocol    string        `json:"http_protocol,omitempty"`
+	Reused          bool          `json:"reused,omitempty"`
+	QueueDelay      time.Duration `json:"queue_delay"`
+	DNS             time.Duration `json:"dns"`
+	Connect         time.Duration `json:"connect"`
+	TLS             time.Duration `json:"tls"`
+	Duration        time.Duration `json:"duration"`
+	Bytes           int64         `json:"bytes"`
+	Error           string        `json:"error,omitempty"`
+	Timeout         bool          `json:"timeout,omitempty"`
+	QueueExpired    bool          `json:"queue_expired,omitempty"`
 }
 
 type VisitorResult struct {

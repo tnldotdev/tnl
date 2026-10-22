@@ -28,6 +28,7 @@ x-runtime: &runtime
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
         -tnl-runtime-load-workload='${RUNTIME_WORKLOAD:-public-url}' \
+        -tnl-public-load-access='${VISITOR_ACCESS:-anonymous}' \
         -tnl-connect-load-payload-bytes='${CONNECT_PAYLOAD_BYTES:-256}' \
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \

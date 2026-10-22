@@ -90,6 +90,11 @@ jobs:
       - name: Run native connector load smoke
         run: task go:test:load:connect RACE=1 RESULTS=bench-results/ci-connect
 
+      - name: Run public visitor permission smoke
+        run: |
+          task go:test:load:visitors ACCESS=browser RACE=1 RESULTS=bench-results/ci-visitor-browser
+          task go:test:load:visitors ACCESS=share RACE=1 RESULTS=bench-results/ci-visitor-share
+
       - name: Run reference and extended fault workloads
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
@@ -99,6 +104,8 @@ jobs:
           task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/ci-udp-fallback
           task go:test:load:connect SCENARIO=latency NETWORK_PATH=publisher RTT=50ms RESULTS=bench-results/ci-connect-publisher-latency
           task go:test:load:connect SCENARIO=latency NETWORK_PATH=connector RTT=50ms RESULTS=bench-results/ci-connect-connector-latency
+          task go:test:load:visitors ACCESS=anonymous RESULTS=bench-results/ci-visitor-anonymous
+          task go:test:load:visitors ACCESS=browser SCENARIO=latency NETWORK_PATH=publisher RTT=50ms RESULTS=bench-results/ci-visitor-browser-publisher50
 
       - name: Retain workload evidence
         if: always()
