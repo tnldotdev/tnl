@@ -22,8 +22,11 @@ restarting just one app cannot silently publish with the old owner's policy.
 preparation serializes competing owners for one service, while unrelated
 services can authenticate and discover their targets independently.
 
-public workers perform automatic, proof-bearing readiness checks. a changed
-target invalidates the current run's previous observation. `tnl wait` selects
+public workers start one proof-bearing automatic readiness checker per routable
+run. it stops on success or after a two-minute retry budget, and drain or shutdown
+cancels and joins it. a changed target invalidates the current run's previous
+observation without restarting its automatic budget; `tnl wait` can check again.
+`tnl wait` selects
 local configured services by default; explicit remote selections point to
 `tnl status` for applied group state. local status verifies owner availability
 before presenting durable readiness, including private workers without a public

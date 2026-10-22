@@ -332,9 +332,14 @@ responses always fail. service readiness can select a path. a proof derived
 for that exact run and path remains in owner memory and is stripped before the
 target sees the GET. checks use normal DNS/TLS, follow no redirects, and read headers only
 with a five-second deadline. retries start at
-500 milliseconds and double to two seconds for up to two minutes. each new run
-gets an automatic check; `tnl wait` checks again. a failed check leaves the
-publication running. `tnl status` reads local observations by default;
+500 milliseconds and double to two seconds for up to two minutes, including
+in-flight probes. each new run starts one automatic check when it becomes
+routable; success or an exhausted budget stops that checker. drain, replacement,
+and shutdown cancel and join it. repeated ready events for the same run do not
+restart it. a target change invalidates its observation without creating another
+budget: an active checker can retry within its remaining budget; otherwise
+`tnl wait` checks again. a failed check leaves the publication running.
+`tnl status` reads local observations by default;
 `--scope=server` fetches saved URL state for locally known public URL IDs.
 `tnl ping` checks the public address from the invoking machine without an
 owner proof or app credentials.

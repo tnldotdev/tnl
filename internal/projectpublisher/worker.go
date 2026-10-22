@@ -47,8 +47,11 @@ type Workers struct {
 	RunPublisher       func(context.Context, publisher.Config) error
 	HTTPTransport      http.RoundTripper
 	AutomaticReadiness bool
-	mu                 sync.Mutex
-	proofs             map[string]*proofEntry
+	// zero values use the public readiness retry policy; tests can shorten time.
+	readinessBudget time.Duration
+	readinessDelay  func(int) time.Duration
+	mu              sync.Mutex
+	proofs          map[string]*proofEntry
 }
 
 func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
@@ -87,24 +90,6 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 		return err
 	}
 	ctx = tunnel.Context()
-	if w.AutomaticReadiness {
-		checks, cancel := context.WithCancel(ctx)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			for attempt := 0; ; attempt++ {
-				timer := time.NewTimer(clientruntime.RetryDelay(attempt))
-				select {
-				case <-checks.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-				_, _ = w.Check(checks, []string{service.Name})
-			}
-		}()
-		defer func() { cancel(); <-done }()
-	}
 	defer func() {
 		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -237,8 +222,16 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 		}
 		w.mu.Unlock()
 	}()
+	// lifecycle events are ordered by the publisher. each run gets one bounded
+	// automatic check, even if ready is reported again after that check finishes.
+	lastReadinessRun := uint64(0)
+	stopReadiness := func() {}
+	defer func() { stopReadiness() }()
 	previous := cfg.Observe
 	cfg.Observe = func(event publisher.Event) error {
+		if event.Type == publisher.EventProvisioning || event.Type == publisher.EventDraining {
+			stopReadiness()
+		}
 		if previous != nil {
 			if err := previous(event); err != nil {
 				return err
@@ -265,7 +258,15 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 			if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
 				return err
 			}
-			return observe(event.PublishRunNumber, true)
+			if err := observe(event.PublishRunNumber, true); err != nil {
+				return err
+			}
+			if w.AutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
+				stopReadiness()
+				lastReadinessRun = event.PublishRunNumber
+				stopReadiness = w.startReadiness(ctx, service, event.PublishRunNumber)
+			}
+			return nil
 		case publisher.EventDraining:
 			if err := tunnel.SetDraining(ctx); err != nil {
 				return err
@@ -335,6 +336,9 @@ func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snap
 				}
 				entry.check.Lock()
 				defer entry.check.Unlock()
+				if ctx.Err() != nil {
+					return
+				}
 				secret, err := entry.proof.Renew()
 				if err != nil {
 					return
