@@ -223,6 +223,7 @@ type ServiceStreamHeader struct {
 	PublisherConnectionID        string              `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64              `json:"connection_assignment_revision"`
 	ExpiresAt                    time.Time           `json:"expires_at"`
+	Reservation                  StreamReservation   `json:"reservation,omitzero"`
 }
 
 // ConnectorAdmission is an authenticated identity selected by ingress. direct
@@ -256,6 +257,9 @@ func (h ServiceStreamHeader) Validate() error {
 func (h ServiceStreamHeader) validate(kind StreamKind) error {
 	if err := h.TraceContext.Validate(); err != nil {
 		return err
+	}
+	if h.Reservation != (StreamReservation{}) && (h.Reservation.Validate() != nil || h.Reservation.ResourceKind != "service" || h.Reservation.ResourceID != h.ServiceID || h.Reservation.RunID != h.ServiceRunID || h.Reservation.RunNumber != h.RunNumber || h.Reservation.VisitorConnectionID != h.VisitorConnectionID) {
+		return ErrInvalidStreamReservation
 	}
 	if h.ProtocolVersion != Version || h.Kind != kind ||
 		!opaqueid.Valid(h.ServiceID, opaqueid.ServicePrefix) ||

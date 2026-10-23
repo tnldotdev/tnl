@@ -86,12 +86,17 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				defer client.Close()
 				_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 				done := make(chan error, 1)
-				go func() { defer server.Close(); done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref)) }()
+				header := privateHeader(t, ref)
+				go func() { defer server.Close(); done <- bound.serveBody(ctx, ref, server, header) }()
 				proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 				if _, err := client.Write(proxy); err != nil {
 					t.Fatal(err)
 				}
-				secure := tls.Client(client, verification)
+				native, err := writeNativeFixtureOpening(t, client, header)
+				if err != nil {
+					t.Fatal(err)
+				}
+				secure := tls.Client(native, verification)
 				if err := secure.HandshakeContext(ctx); err != nil {
 					t.Fatal(err)
 				}
@@ -160,6 +165,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
+	prepareNativeFixturePolicy(t, p)
 	return p, bound, bound.assignments[setup.PublisherConnections[0].PublisherConnectionId], verification
 }
 
@@ -172,7 +178,8 @@ func privateHeader(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef) tun
 		}
 		return v
 	}
-	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: id(opaqueid.IdentityPrefix), DeviceID: id(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	visitor := id(opaqueid.VisitorConnectionPrefix)
+	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.ConnectorSessionPrefix), Subject: nativeFixtureSubject(), GrantRevision: 1}, SourceIP: "192.0.2.10", VisitorConnectionID: visitor, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute), Reservation: nativeFixtureReservation(ref, visitor)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
@@ -203,11 +210,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			case "source":
 				header.SourceIP = "192.0.2.11"
 			case "denied":
-				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-					return publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
-						return publisher.ServiceVisitorDecision{}, nil
-					}}
-				}
+				p.policy.Close()
 			case "wrong-certificate-name":
 				verification.ServerName = "another.example.test"
 			}
@@ -219,10 +222,11 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header) }()
 			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 			_, _ = client.Write(proxy)
-			secure := tls.Client(client, verification)
+			native, _ := writeNativeFixtureOpening(t, client, header)
+			secure := tls.Client(native, verification)
 			handshakeErr := secure.Handshake()
-			if name == "denied" && handshakeErr != nil {
-				t.Fatal(handshakeErr)
+			if name == "denied" && handshakeErr == nil {
+				t.Fatal("denied permission reached visitor TLS")
 			}
 			_ = client.Close()
 			if err := <-done; err == nil {

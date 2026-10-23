@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -16,7 +15,7 @@ import (
 // recheck closes both ends; an unavailable control can never extend admission
 // past two minutes since the last successful decision. the copy worker joins
 // before the caller releases its ordinary stream capacity.
-func (p *Connector) copyLivePrivateVisitor(ctx context.Context, visitor muxsession.Stream, backend net.Conn,
+func (p *Connector) copyLivePrivateVisitor(ctx context.Context, visitor net.Conn, backend net.Conn,
 	lease ingressv1.IngressLease, bound ingressv1.ConnectorSessionResult,
 	claimed ingressv1.ServiceStreamResult, source netip.AddrPort, claimedAt time.Time) (retErr error) {
 	ctx, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")

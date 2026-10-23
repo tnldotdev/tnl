@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -128,66 +127,4 @@ func recheckWorkloadServiceStream(ctx context.Context, tx pgx.Tx, lease IngressL
 		return result, err
 	}
 	return result, nil
-}
-
-type SubjectConnectorVisitor struct {
-	Subject                 VisitorSubject
-	SessionID, ConnectionID string
-	Source                  netip.Addr
-	GrantRevision           int64
-}
-
-// AuthorizeVisitorServiceConnector is the publisher-facing subject-aware
-// authorization API. a current run token and the exact admitted stream are both
-// required; a workload credential cannot impersonate a publisher.
-func (d *Database) AuthorizeVisitorServiceConnector(ctx context.Context, service, run, token string, number int64, v SubjectConnectorVisitor, now time.Time) (result ServiceVisitorValidity, retErr error) {
-	if v.Subject.Validate() != nil || v.GrantRevision < 1 || !opaqueid.Valid(v.ConnectionID, opaqueid.VisitorConnectionPrefix) || !opaqueid.Valid(v.SessionID, opaqueid.ConnectorSessionPrefix) || !v.Source.IsValid() || v.Source.Zone() != "" {
-		return result, ErrServiceAccess
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "authorize visitor service connector", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
-		return result, err
-	}
-	q := controlstatedb.New(tx)
-	if err = d.serviceHTTPSourceAllowed(ctx, q, service, v.Source); err != nil {
-		return result, err
-	}
-	current, err := serviceRunAuthorization(ctx, tx, q, service, run, token, now)
-	if err != nil {
-		return result, err
-	}
-	if current.RunNumber != number {
-		return result, ErrServiceAccess
-	}
-	var revisionMatch bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_visitor_streams WHERE visitor_connection_id=$1 AND service_id=$2 AND service_run_id=$3 AND connector_session_id=$4 AND run_number=$5 AND grant_revision=$6)`, v.ConnectionID, service, run, v.SessionID, number, v.GrantRevision).Scan(&revisionMatch); err != nil {
-		return result, err
-	}
-	if !revisionMatch {
-		return result, ErrServiceAccess
-	}
-	if v.Subject.Kind == tunnelv1.VisitorHumanDevice {
-		result, err = recheckServiceConnector(ctx, tx, service, run, number, ConnectorVisitor{IdentityID: v.Subject.IdentityID, DeviceID: v.Subject.DeviceID, SessionID: v.SessionID, ConnectionID: v.ConnectionID, Source: v.Source}, now)
-		if err != nil {
-			return result, err
-		}
-		result.Admitted = result.Allowed
-		return result, tx.Commit(ctx)
-	}
-	var lease IngressLeaseIdentity
-	var revision int64
-	err = tx.QueryRow(ctx, `SELECT ingress_id,ingress_run_id,ingress_lease_revision FROM control.connector_sessions WHERE id=$1 AND service_id=$2 AND workload_session_id=$3 AND bound_at IS NOT NULL AND revoked_at IS NULL`, v.SessionID, service, v.Subject.WorkloadSessionID).Scan(&lease.IngressID, &lease.IngressRunID, &revision)
-	if err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	lease.IngressLeaseRevision = uint64(revision)
-	result, err = recheckWorkloadServiceStream(ctx, tx, lease, service, run, v.SessionID, v.ConnectionID, v.Subject, number, v.Source, now)
-	if err != nil {
-		return result, err
-	}
-	return result, tx.Commit(ctx)
 }

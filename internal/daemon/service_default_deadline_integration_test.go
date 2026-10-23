@@ -12,200 +12,195 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
-	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type privateRecheckFaults struct {
-	mu             sync.Mutex
-	outage         string
-	checks         map[string]int
-	publisherUntil map[string]time.Time
+type privatePolicyFaults struct {
+	mu          sync.Mutex
+	unavailable bool
+	checks      int
+	until       time.Time
+	allocations map[string]time.Time
+	blocked     chan struct{}
+	once        sync.Once
 }
 
-type defaultPrivateRecheck struct {
-	ingress.PrivateControl
-	faults *privateRecheckFaults
-}
-
-func (c defaultPrivateRecheck) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	c.faults.mu.Lock()
-	defer c.faults.mu.Unlock()
-	if c.faults.outage == body.VisitorConnectionId {
-		return ingressv1.ServiceVisitorRecheckResult{}, errors.New("control recheck unavailable")
-	}
-	result, err := c.PrivateControl.RecheckServiceVisitor(ctx, id, body)
-	if err == nil && result.Allowed {
-		c.faults.checks[body.VisitorConnectionId]++
-	}
-	return result, err
-}
-
-type defaultPublisherRecheck struct {
+type defaultPublisherPolicy struct {
 	publisherservice.RunControl
-	faults *privateRecheckFaults
+	faults *privatePolicyFaults
 }
 
-func (c defaultPublisherRecheck) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c defaultPublisherPolicy) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
 	c.faults.mu.Lock()
-	defer c.faults.mu.Unlock()
-	if c.faults.outage == body.VisitorConnectionId {
-		return controlv1.ServiceClientCertificateDecision{}, clientcontrol.ErrUnavailable
+	unavailable := c.faults.unavailable
+	c.faults.mu.Unlock()
+	if unavailable {
+		c.faults.once.Do(func() { close(c.faults.blocked) })
+		return controlv1.VisitorPolicyUpdate{}, clientcontrol.ErrUnavailable
 	}
-	decision, err := c.RunControl.AuthorizeServiceConnector(ctx, service, run, token, body)
-	if err == nil && decision.Allowed {
-		c.faults.publisherUntil[body.VisitorConnectionId] = decision.ValidUntil
+	started := time.Now()
+	policy, err := c.RunControl.ReadPublisherVisitorPolicy(ctx, request, token)
+	if err == nil {
+		c.faults.mu.Lock()
+		c.faults.checks++
+		c.faults.until = started.Add(policy.Policy.ValidUntil.Sub(policy.Policy.ObservedAt))
+		c.faults.allocations = make(map[string]time.Time)
+		for _, allocation := range policy.Policy.StreamAllocations {
+			c.faults.allocations[allocation.Id] = started.Add(allocation.ValidUntil.Sub(policy.Policy.ObservedAt))
+		}
+		c.faults.mu.Unlock()
 	}
-	return decision, err
+	return policy, err
 }
 
 func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	opened := make(chan privateObservation, 4)
-	f := newServiceRuntimeFixtureTiming(t, false, opened, true)
-	faults := &privateRecheckFaults{checks: make(map[string]int), publisherUntil: make(map[string]time.Time)}
-	f.configurePrivate = func(config *ingress.ConnectorConfig) {
-		// observe real control decisions without changing scheduling hints or TTLs.
-		config.Control = defaultPrivateRecheck{config.Control, faults}
-	}
-	startSeparatedPrivateIngress(t, f, 0, "tls-tcp", opened)
-	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", opened)
-	target := startPrivateEchoTarget(t)
-	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "default-leases", key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	startPrivateHTTPPublisher(t, f, service, target.address, defaultPublisherRecheck{RunControl: f.identity.routes, faults: faults})
-	person, err := f.identity.authority.IdentityContext(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := control.ConnectorSigner(t.Context(), person.Identity.Id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	ready, done := make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id,
-			Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
-	}()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Error(err)
+	for _, revoke := range []bool{false, true} {
+		t.Run(map[bool]string{false: "renewal-and-outage", true: "revocation"}[revoke], func(t *testing.T) {
+			opened := make(chan privateObservation, 8)
+			f := newServiceRuntimeFixtureTiming(t, false, opened, true)
+			for slot := range 2 {
+				startSeparatedPrivateIngress(t, f, slot, "tls-tcp", opened)
 			}
-		case <-time.After(10 * time.Second):
-			t.Error("connector did not join")
-		}
-	})
-	select {
-	case <-ready:
-	case <-time.After(10 * time.Second):
-		t.Fatal("connector did not become ready")
+			target := startPrivateEchoTarget(t)
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "default-leases", key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			faults := &privatePolicyFaults{blocked: make(chan struct{})}
+			startPrivateHTTPPublisher(t, f, service, target.address, defaultPublisherPolicy{RunControl: f.identity.routes, faults: faults})
+			person, err := f.identity.authority.IdentityContext(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			device, err := control.ConnectorSigner(t.Context(), person.Identity.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			ready, done := make(chan struct{}), make(chan error, 1)
+			go func() {
+				done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					reason, _ := failure.ReasonOf(err)
+					expected := revoke && (errors.Is(err, clientcontrol.ErrNotFound) || reason == failure.ServerDenied)
+					if err != nil && !expected {
+						t.Error(err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Error("connector did not join")
+				}
+			})
+			select {
+			case <-ready:
+			case <-time.After(10 * time.Second):
+				t.Fatal("connector did not become ready")
+			}
+			connectorReadinessObservation(t, opened)
+			connection, err := net.Dial("tcp", listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close()
+			exchange := func(conn net.Conn, step int) {
+				t.Helper()
+				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+				message := fmt.Sprintf("same-stream-%d\n", step)
+				if _, err := io.WriteString(conn, message); err != nil {
+					t.Fatal(err)
+				}
+				data := make([]byte, len(message))
+				if _, err := io.ReadFull(conn, data); err != nil || string(data) != message {
+					t.Fatalf("default lease cycle changed or closed the stream: %v", err)
+				}
+				_ = conn.SetDeadline(time.Time{})
+			}
+			exchange(connection, 0)
+			original := <-opened
+			if !revoke {
+				// retain the production proof across more than two complete
+				// 30-second infrastructure lease cycles on the same visitor.
+				for step := 1; step <= 14; step++ {
+					waitRuntimeTime(t, time.Now().Add(5*time.Second))
+					exchange(connection, step)
+				}
+				select {
+				case <-opened:
+					t.Fatal("permission renewal replaced the active visitor")
+				default:
+				}
+				faults.mu.Lock()
+				checks := faults.checks
+				faults.unavailable = true
+				faults.mu.Unlock()
+				if checks < 2 {
+					t.Fatal("native stream did not cross policy refresh cycles")
+				}
+				select {
+				case <-faults.blocked:
+				case <-time.After(3 * time.Second):
+					t.Fatal("publisher did not attempt background policy renewal")
+				}
+				faults.mu.Lock()
+				deadline := faults.until
+				allocationDeadline := faults.allocations[original.header.Reservation.AllocationID]
+				faults.mu.Unlock()
+				if allocationDeadline.IsZero() {
+					t.Fatal("publisher did not install the active visitor's allocation")
+				}
+				deadline = minTime(deadline, allocationDeadline)
+				_ = connection.SetReadDeadline(deadline.Add(2 * time.Second))
+				if _, err := connection.Read(make([]byte, 1)); err == nil {
+					t.Fatal("outage retained native traffic")
+				} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+					t.Fatal("native stream exceeded its last policy deadline")
+				}
+				if time.Now().Before(deadline.Add(-100 * time.Millisecond)) {
+					t.Fatal("outage discarded unexpired native permission")
+				}
+			} else {
+				other, err := net.Dial("tcp", listener.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer other.Close()
+				exchange(other, 1)
+				sibling := <-opened
+				if sibling.header.VisitorConnectionID == original.header.VisitorConnectionID {
+					t.Fatal("sibling reused the original visitor ID")
+				}
+				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
+					t.Fatal(err)
+				}
+				for _, conn := range []net.Conn{connection, other} {
+					_ = conn.SetReadDeadline(time.Now().Add(12 * time.Second))
+					if _, err := conn.Read(make([]byte, 1)); err == nil {
+						t.Fatal("revocation retained native traffic")
+					} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+						t.Fatal("revocation missed the policy fence")
+					}
+				}
+			}
+		})
 	}
-	connectorReadinessObservation(t, opened)
-	conn, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	exchange := func(n int) {
-		t.Helper()
-		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-		payload := fmt.Sprintf("same-stream-%d\n", n)
-		if _, err := io.WriteString(conn, payload); err != nil {
-			t.Fatal(err)
-		}
-		data := make([]byte, len(payload))
-		if _, err := io.ReadFull(conn, data); err != nil || string(data) != payload {
-			t.Fatalf("default lease cycle closed or changed the stream: %v", err)
-		}
-	}
-	exchange(0)
-	observation := <-opened
-	visitorID := observation.header.VisitorConnectionID
-	var initial time.Time
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.connector_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&initial); err != nil {
-		t.Fatal(err)
-	}
-	// cross more than two full production 30-second lease cycles on this socket.
-	for n := 1; n <= 14; n++ {
-		select {
-		case <-time.After(5 * time.Second):
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
-		}
-		exchange(n)
-	}
-	var count int
-	var latest time.Time
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),max(valid_until) FROM control.connector_visitor_streams WHERE connector_session_id=$1 AND closed_at IS NULL`, observation.header.Connector.SessionID).Scan(&count, &latest); err != nil || count != 1 || !latest.After(initial.Add(30*time.Second)) {
-		t.Fatalf("did not renew the same admitted visitor: count=%d err=%v", count, err)
-	}
-	select {
-	case <-opened:
-		t.Fatal("long-lived stream was replaced")
-	default:
-	}
-	faults.mu.Lock()
-	checks := faults.checks[visitorID]
-	faults.outage = visitorID
-	publisherUntil := faults.publisherUntil[visitorID]
-	faults.mu.Unlock()
-	if checks < 2 {
-		t.Fatalf("only %d successful default rechecks", checks)
-	}
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT valid_until FROM control.connector_visitor_streams WHERE visitor_connection_id=$1`, visitorID).Scan(&latest); err != nil {
-		t.Fatal(err)
-	}
-	if !publisherUntil.IsZero() && publisherUntil.Before(latest) {
-		latest = publisherUntil
-	}
-	// a second stream can still reach control and must observe device revocation;
-	// the original stream's unavailable recheck must honor its last hard deadline.
-	other, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer other.Close()
-	_ = other.SetDeadline(time.Now().Add(3 * time.Second))
-	_, _ = io.WriteString(other, "revoked\n")
-	if _, err := io.ReadFull(other, make([]byte, len("revoked\n"))); err != nil {
-		t.Fatal(err)
-	}
-	<-opened
-	if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
-		t.Fatal(err)
-	}
-	assertClosed := func(c net.Conn, deadline time.Time) {
-		t.Helper()
-		_ = c.SetReadDeadline(deadline.Add(2 * time.Second))
-		if _, err := c.Read(make([]byte, 1)); err == nil {
-			t.Fatal("visitor remained open")
-		} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-			t.Fatal("visitor exceeded authorization deadline")
-		}
-	}
-	assertClosed(conn, latest)
-	if time.Now().Before(latest.Add(-100 * time.Millisecond)) {
-		t.Fatal("outage did not preserve admitted stream until its deadline")
-	}
-	assertClosed(other, time.Now().Add(30*time.Second))
 }

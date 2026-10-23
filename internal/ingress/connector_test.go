@@ -28,6 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -210,6 +211,13 @@ func (f *privateForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1
 		if err != nil || meta.Source.Addr().String() != wantSource {
 			return
 		}
+		if h.Connector != nil {
+			_, initial, err := tunnelv1.ReadConnectorVisitorOpening(remaining)
+			if err != nil {
+				return
+			}
+			remaining = tunnel.NewNativeRequestReader(&testReaderConn{Conn: upstream, reader: remaining}, initial, func(tunnelv1.NativeVisitorPermission) error { return nil })
+		}
 		f.observed <- h
 		if f.closeAfterByte {
 			var first [1]byte
@@ -297,10 +305,16 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 		t.Fatal(err)
 	}
 	t.Cleanup(policy.Close)
-	if err := policy.Apply(policy.Begin(), visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}); err != nil {
+	allocation := controlv1.StreamCapacityAllocation{Id: privateTestID(t, "salloc_"), Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, RunId: run, RunNumber: 1, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, Capacity: 64, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}
+	if err := policy.Apply(policy.Begin(), visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}); err != nil {
 		t.Fatal(err)
 	}
-	connector.prepared[run] = &preparedVisitorRun{policy: &visitorPolicy{lease: policy}}
+	pool := newStreamReservations(nil)
+	t.Cleanup(pool.Close)
+	if err := pool.apply(streamAllocation{ID: allocation.Id, ResourceKind: "service", ResourceID: service, RunID: run, RunNumber: 1, IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), Capacity: 64, ObservedAt: now, ValidUntil: allocation.ValidUntil}, now); err != nil {
+		t.Fatal(err)
+	}
+	connector.prepared[run] = &preparedVisitorRun{policy: &visitorPolicy{lease: policy}, capacity: &streamCapacity{owner: lease, pool: pool, id: allocation.Id, ready: true}}
 	if err := connector.refreshRouting(t.Context(), lease); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +354,7 @@ func privateTestConnectAs(t *testing.T, connector *Connector, control *privateCo
 		_ = listener.Close()
 		t.Fatal(err)
 	}
-	return session, func() {
+	return nativeTestSession{Session: session}, func() {
 		_ = session.Close()
 		cancel()
 		_ = listener.Close()
@@ -351,6 +365,36 @@ func privateTestConnectAs(t *testing.T, connector *Connector, control *privateCo
 		}
 	}
 }
+
+type nativeTestSession struct{ muxsession.Session }
+
+func (s nativeTestSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return wrapNativeTestStream(stream), nil
+}
+
+type nativeTestStream struct {
+	muxsession.Stream
+	writer *tunnel.NativeRequestWriter
+	opened bool
+}
+
+func wrapNativeTestStream(stream muxsession.Stream) muxsession.Stream {
+	return &nativeTestStream{Stream: stream, writer: tunnel.NewNativeRequestWriter(stream)}
+}
+
+func (s *nativeTestStream) Write(p []byte) (int, error) {
+	if !s.opened {
+		s.opened = true
+		return s.Stream.Write(p)
+	}
+	return s.writer.Write(p)
+}
+
+func (s *nativeTestStream) CloseWrite() error { return s.writer.CloseWrite() }
 
 func privateEntry(control *privateControlFixture, selectedSession ...string) tunnelv1.ConnectorVisitorEntry {
 	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
@@ -572,6 +616,7 @@ func TestConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	stream = wrapNativeTestStream(stream)
 	defer stream.Close()
 	if err = stream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)

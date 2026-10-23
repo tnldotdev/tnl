@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -377,14 +378,16 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, now.Add(time.Second)); err != nil || !decision.Allowed {
 		t.Fatal("private workload recheck", decision, err)
 	}
-	if decision, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); err != nil || !decision.Allowed {
-		t.Fatal("publisher did not recheck workload connector", decision, err)
+	prepareVisitorTokenKeys(t, d, now)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	if policy, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, run.Token, 0, nil, now); err != nil || !policy.Policy.Enabled {
+		t.Fatal("publisher could not prepare local workload policy", err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, session.Credential, 0, nil, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision + 1}, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("spoofed grant revision", err)
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber+1, run.Token, 0, nil, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("publisher policy accepted a replaced run number", err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, session.Credential, service.ID, csr, now)

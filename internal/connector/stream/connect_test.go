@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -313,14 +315,22 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 	if tunnelv1.WriteConnectorVisitorAccepted(stream, accepted) != nil {
 		return
 	}
+	request := tunnel.NewNativeRequestReader(stream, initial, func(p tunnelv1.NativeVisitorPermission) error {
+		message, err := visitortoken.NativeProofMessage(visitortoken.Token(p.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+		signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(p.Signature)
+		if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
+			return ErrServiceConnection
+		}
+		return nil
+	})
 	certificate := f.certificate
 	if f.wrongCertificate.Load() {
 		certificate = f.badCertificate
 	}
 	switch run.Protocol {
 	case "postgres":
-		var request [8]byte
-		if _, err := io.ReadFull(stream, request[:]); err != nil || request != targettransport.PostgresSSLRequest {
+		var requestBytes [8]byte
+		if _, err := io.ReadFull(request, requestBytes[:]); err != nil || requestBytes != targettransport.PostgresSSLRequest {
 			return
 		}
 		if _, err := stream.Write([]byte{'S'}); err != nil {
@@ -339,11 +349,11 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		if _, err := stream.Write(greeting); err != nil {
 			return
 		}
-		if _, err := targettransport.ReadMySQLPacket(stream, 64<<10); err != nil {
+		if _, err := targettransport.ReadMySQLPacket(request, 64<<10); err != nil {
 			return
 		}
 	}
-	secure := tls.Server(stream, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
+	secure := tls.Server(request, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
 	if secure.HandshakeContext(ctx) != nil {
 		return
 	}

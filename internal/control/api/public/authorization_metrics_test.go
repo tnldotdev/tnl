@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -13,18 +14,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-type connectorDecisionStore struct {
+type certificateDecisionStore struct {
 	PublicURLStore
 	allowed  bool
 	admitted bool
 	err      error
 }
 
-func (s connectorDecisionStore) AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.ServiceVisitorValidity, error) {
+func (s certificateDecisionStore) AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.ServiceVisitorValidity, error) {
 	return controlstate.ServiceVisitorValidity{Allowed: s.allowed, Admitted: s.admitted, ValidUntil: time.Now().Add(time.Minute)}, s.err
 }
 
-func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *testing.T) {
+func TestCertificateDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *testing.T) {
 	for _, test := range []struct {
 		name, outcome string
 		allowed       bool
@@ -39,12 +40,12 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			h := &handler{store: connectorDecisionStore{allowed: test.allowed, admitted: test.admitted, err: test.err}}
+			h := &handler{store: certificateDecisionStore{allowed: test.allowed, admitted: test.admitted, err: test.err}}
 			mux := http.NewServeMux()
 			mux.HandleFunc("POST /service/{service}/run/{run}", func(w http.ResponseWriter, r *http.Request) {
-				h.AuthorizeServiceConnector(w, r, r.PathValue("service"), r.PathValue("run"))
+				h.AuthorizeServiceClientCertificate(w, r, r.PathValue("service"), r.PathValue("run"))
 			})
-			r := httptest.NewRequest("POST", "/service/service/run/service-run", strings.NewReader(`{"run_number":1,"grant_revision":1,"source_ip":"192.0.2.7","connector_session_id":"private-session","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"visitor_connection_id":"private-visitor"}`))
+			r := httptest.NewRequest("POST", "/service/service/run/service-run", strings.NewReader(`{"run_number":1,"source_ip":"192.0.2.7","visitor_connection_id":"private-visitor","certificate":"Y2VydA=="}`))
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Authorization", "Bearer private-token")
 			response := httptest.NewRecorder()
@@ -59,7 +60,7 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 				t.Fatal("missing semantic request outcome", test.outcome)
 			}
 			if test.err == nil {
-				labels := `tnl_operation="service_connector",tnl_outcome="` + test.outcome + `"`
+				labels := `tnl_operation="service_client_certificate",tnl_outcome="` + test.outcome + `"`
 				if test.allowed && !test.admitted {
 					labels += `,tnl_reason="not_admitted"`
 				}
