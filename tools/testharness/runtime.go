@@ -49,8 +49,8 @@ var runtimeApps = []string{"app", "app-2", "app-3", "app-4"}
 
 func runRuntime(ctx context.Context, root string) (retErr error) {
 	workload := os.Getenv("RUNTIME_WORKLOAD")
-	if workload != "" && workload != "public-url" && workload != "connect" {
-		return errors.New("RUNTIME_WORKLOAD must be public-url or connect")
+	if workload != "" && workload != "public-url" && workload != "public-auth" && workload != "connect" {
+		return errors.New("RUNTIME_WORKLOAD must be public-url, public-auth, or connect")
 	}
 	results := os.Getenv("RESULTS")
 	if results == "" {
@@ -155,6 +155,11 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	services = append(services, runtimeApps...)
 	services = append(services, "dns", "pebble", "coordinator")
 	if err := stack.Up(ctx, compose.RunServices(services...)); err != nil {
+		if logs, logErr := h.compose(ctx, "logs", "--no-color"); logErr == nil {
+			if writeErr := os.WriteFile(filepath.Join(h.results, "startup-failure.log"), []byte(logs), 0o644); writeErr != nil {
+				return errors.Join(fmt.Errorf("start runtime components: %w", err), writeErr)
+			}
+		}
 		return fmt.Errorf("start runtime components: %w", err)
 	}
 	if err := h.startLogWatcher(ctx); err != nil {

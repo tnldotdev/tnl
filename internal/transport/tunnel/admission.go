@@ -5,13 +5,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // PromoteVisitor waits for the complete publisher -> relay -> ingress capacity
 // acknowledgement. it never writes to the visitor or the lifecycle control stream.
-func (s *Session) PromoteVisitor(ctx context.Context, h tunnelv1.AdmissionHeader) error {
+func (s *Session) PromoteVisitor(ctx context.Context, h tunnelv1.AdmissionHeader) (retErr error) {
+	ctx, finish := observability.Start(observability.WithVisitor(ctx, h.VisitorConnectionID), "publisher.promotion")
+	defer func() { finish(retErr) }()
 	stream, err := s.openAcknowledgedStream(ctx, "admission", func(stream muxsession.Stream) error {
 		if err := tunnelv1.WriteAdmissionHeader(stream, h); err != nil {
 			return err

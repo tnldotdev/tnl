@@ -122,12 +122,15 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 				return decision(result, err)
 			}
 			observability.PublisherAuthorization(ctx, true, false, nil)
+			_, endWait := observability.Start(ctx, "publisher.admission_retry_wait")
 			timer := time.NewTimer(25 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				endWait(context.Cause(ctx))
 				return publisher.ServiceVisitorDecision{}, context.Cause(ctx)
 			case <-timer.C:
+				endWait(nil)
 			}
 		}
 	}

@@ -572,6 +572,8 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if err != nil {
 		return err
 	}
+	ctx = observability.WithVisitor(ctx, visitorID)
+	observability.Visitor(ctx, visitorID)
 	audit, auditErr := serviceaudit.NewPrivateSessionDenial(bound, visitorID)
 	auditOpened := false
 	defer func() {
@@ -595,11 +597,13 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	}
 	streamCtx, stop := context.WithDeadline(ctx, deadline)
 	defer stop()
-	claimed, err := p.config.Control.AuthorizeServiceStream(streamCtx, lease.IngressId, ingressv1.ServiceStreamClaim{
+	authorizationCtx, endAuthorization := observability.Start(streamCtx, "ingress.visitor_authorization")
+	claimed, err := p.config.Control.AuthorizeServiceStream(authorizationCtx, lease.IngressId, ingressv1.ServiceStreamClaim{
 		IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 		ServiceId: entry.ServiceID, ServiceRunId: entry.ServiceRunID, RunNumber: int64(entry.RunNumber),
 		ConnectorSessionId: bound.ConnectorSessionId, ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitorID,
 	})
+	endAuthorization(err)
 	if err != nil {
 		return err
 	}
@@ -618,7 +622,10 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		return ErrServiceAdmission
 	}
 	audit, auditErr = serviceaudit.NewPrivateStreamObservation(bound, claimed, "connection.open", "denied", "authorization")
-	if err := p.refreshRouting(streamCtx, lease); err != nil {
+	routingCtx, endRouting := observability.Start(streamCtx, "ingress.routing_refresh")
+	err = p.refreshRouting(routingCtx, lease)
+	endRouting(err)
+	if err != nil {
 		audit.Outcome, audit.Reason = "failed", "unavailable"
 		return err
 	}

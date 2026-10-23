@@ -139,3 +139,45 @@ start separately from scheduled-slot latency, so generator delay remains visible
 Failures, missed offers, queue expiry, resource rejection, and retained connector
 assignments fail the run. CI runs the race-enabled smoke and adds latency runs to
 the scheduled workload; timings are measurements, not machine-dependent pass limits.
+
+## visitor authorization and setup
+
+Measure anonymous, browser sign-in, and share access against the same separated
+public HTTPS topology. each invocation needs a fresh results directory:
+
+```console
+mise exec -- task go:test:load:visitors ACCESS=anonymous RESULTS=bench-results/visitor-anonymous
+mise exec -- task go:test:load:visitors ACCESS=browser RESULTS=bench-results/visitor-browser
+mise exec -- task go:test:load:visitors ACCESS=share RESULTS=bench-results/visitor-share
+mise exec -- task go:test:load:visitors ACCESS=browser SCENARIO=latency NETWORK_PATH=publisher RTT=50ms RESULTS=bench-results/visitor-browser-publisher50
+```
+
+The workload prepares sign-in handoffs or redeems exact-URL shares before
+measuring application requests. identity-provider sign-in is seeded; handoff and
+share redemption use the real publisher and control APIs. credentials stay in the
+private coordinator and cookie jars, outside result artifacts.
+
+Each run records direct fresh HTTPS, one cold request per public URL, warm fresh
+HTTPS, HTTP/2 reuse, and one refresh-due request per public URL. the explicit
+26-second cache-aging wait is a separate artifact. HTTP/2 negotiation is required;
+fallback to HTTP/1 fails. the default offers four requests/second for ten-second
+warm windows, with four URLs and sixteen bounded workers. publisher startup has a
+separate sixty-second deadline for real DNS and ACME preparation.
+
+Both this target and `go:test:load:connect` collect local stage spans using
+verified, fixture-private OTLP HTTPS. each phase keeps raw spans and
+`*-setup-evidence.json`, grouping stage durations and control API calls by visitor
+connection ID. connector selection, acceptance, TLS, ingress authorization and
+routing refresh, publisher authorization, promotion, target work, and explicit
+admission-retry timer waits remain separate observations. nested span durations
+overlap and must not be added as independent latency. unattributed control calls
+are retained separately; their presence does not prove visitor-path work.
+trace collection has a hard 100,000-span bound per component. these workloads
+default the coordinator to 512 MiB, including race instrumentation and evidence
+aggregation; `COORDINATOR_MEMORY` remains an explicit resource override.
+
+Raw HTTP samples include negotiated protocol, socket reuse, response-header time,
+and first body-byte time. `*-latency.json` retains exact request-start and
+scheduled-slot distributions. the ordinary resource, rejection, offer-accounting,
+usage-flush, and joined-cleanup assertions still apply. use the same settings on
+the baseline and cutover trees; full tracing adds measurement overhead.
