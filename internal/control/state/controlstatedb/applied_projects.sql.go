@@ -35,7 +35,7 @@ func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, ar
 }
 
 const getLocalProjectService = `-- name: GetLocalProjectService :one
-SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.visitor_policy_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
+SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
 FROM control.local_project_services local
 JOIN control.services s ON s.id=local.service_id AND s.team_id=local.team_id
 WHERE local.team_id=$1 AND local.project_key=$2
@@ -74,7 +74,6 @@ func (q *Queries) GetLocalProjectService(ctx context.Context, arg GetLocalProjec
 		&i.ControlService.TlsMetadata,
 		&i.ControlService.TrustRevision,
 		&i.ControlService.VisitorRevision,
-		&i.ControlService.VisitorPolicyRevision,
 		&i.ControlService.PublisherPool,
 		&i.ControlService.DomainID,
 		&i.ControlService.CertificateHostname,

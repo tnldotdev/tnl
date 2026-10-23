@@ -40,7 +40,7 @@ func TestCaptureOutputBoundThroughCopyAndGitSubprocess(t *testing.T) {
 
 func gitInTest(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	command := exec.CommandContext(t.Context(), "git", args...)
+	command := exec.CommandContext(t.Context(), "git", append([]string{"-c", "commit.gpgsign=false"}, args...)...)
 	command.Dir = root
 	output, err := command.CombinedOutput()
 	if err != nil {

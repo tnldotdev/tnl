@@ -180,6 +180,9 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			permission.Subject = subject
+			if workload, ok := subject.(Workload); ok {
+				view.Workloads = map[string]WorkloadLease{workload.SessionID: {KeySHA256: workload.KeySHA256, ExpiresAt: permission.ExpiresAt}}
+			}
 			token := issueToken(t, key, permission, view, now)
 			message, err := NativeProofMessage(token, session, connection, initial)
 			if err != nil {

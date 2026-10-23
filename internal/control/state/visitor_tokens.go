@@ -86,7 +86,7 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if row.Purpose != "app" && row.Purpose != "alias" && row.Purpose != "demo" || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(now) {
 			return resource, ErrVisitorPermission
 		}
-		resource.TeamID, resource.Hostname, resource.Port, resource.Revision, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.VisitorPolicyRevision, row.AccessMode == "anonymous"
+		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.AccessMode == "anonymous"
 		if row.ExpiresAt.Valid {
 			resource.ExpiresAt = row.ExpiresAt.Time
 		}
@@ -101,9 +101,11 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if !row.Enabled || row.DeletedAt.Valid || row.CertificateHostname == "" || !row.ServicePort.Valid || row.ServicePort.Int32 < 1024 || row.ServicePort.Int32 > 65535 {
 			return resource, ErrVisitorPermission
 		}
-		resource.TeamID, resource.Hostname, resource.Port, resource.Revision = row.TeamID, row.CertificateHostname, uint16(row.ServicePort.Int32), row.VisitorPolicyRevision
+		resource.TeamID, resource.Hostname, resource.Port = row.TeamID, row.CertificateHostname, uint16(row.ServicePort.Int32)
 	}
-	return resource, nil
+	var err error
+	resource.Revision, err = q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID})
+	return resource, err
 }
 
 func (r visitorResource) permission(subject visitortoken.Subject, until, now time.Time) visitortoken.Permission {
@@ -119,7 +121,7 @@ func (r visitorResource) permission(subject visitortoken.Subject, until, now tim
 // key retention in the same transaction. serving processes never call this while
 // admitting a prepared visitor connection or request.
 func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}

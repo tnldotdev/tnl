@@ -41,6 +41,29 @@ slow reply does not start a fresh ten-second window. Verification keys must
 already be prepared: an unknown key causes verification to fail, without fetching
 keys during the visitor request.
 
+## policy updates
+
+Control records a separate visitor-policy revision for each resource. Permission
+changes and their invalidation events commit in the same transaction. Changes to
+a person or team also invalidate dependent resources, including shares created
+by someone who loses authority. Signing keys have their own revision; replacing
+a key does not change a resource's permission revision.
+
+Ingress and publisher fetch policy in the background every two seconds. Each
+reply contains a consistent snapshot and the policy revisions it covers. Control
+keeps 256 events per resource; a reader that falls behind needs a full snapshot.
+Failed requests leave the last confirmed deadline unchanged.
+
+[`visitorlease`](../../../internal/policy/visitorlease) checks update order and
+owns the local deadline. It fences replies that arrive after their lease expires
+and stops affected admissions when permission, key trust, or freshness ends.
+Serving owners supply the connection or request cancellation. Each HTTP request
+has its own guard, so cancellation need not close an unrelated HTTP/2 stream.
+
+The local deadline starts before the policy request. Token times are checked
+using control's observation time plus elapsed local time, so clock differences
+and slow replies cannot add authorization time.
+
 ## certificate binding
 
 For native TLS clients, control puts the same token in the certificate's standard

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -34,7 +35,7 @@ func (d *Database) IssueVisitorClientCertificate(ctx context.Context, issuerURL 
 	if err != nil {
 		return result, err
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}

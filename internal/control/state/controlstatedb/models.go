@@ -741,7 +741,6 @@ type ControlPublicUrl struct {
 	PublisherPool               bool
 	PublicURLScope              string
 	PolicyRevision              int64
-	VisitorPolicyRevision       int64
 	AccessMode                  string
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
@@ -1210,7 +1209,6 @@ type ControlService struct {
 	TlsMetadata            []byte
 	TrustRevision          int64
 	VisitorRevision        int64
-	VisitorPolicyRevision  int64
 	PublisherPool          bool
 	DomainID               pgtype.Text
 	CertificateHostname    string
@@ -1627,6 +1625,20 @@ type ControlVisitorNetworkHashKey struct {
 	CreatedAt                               pgtype.Timestamptz
 }
 
+type ControlVisitorPolicy struct {
+	ResourceKind string
+	ResourceID   string
+	Revision     int64
+	ChangedAt    pgtype.Timestamptz
+}
+
+type ControlVisitorPolicyEvent struct {
+	ResourceKind string
+	ResourceID   string
+	Revision     int64
+	ChangedAt    pgtype.Timestamptz
+}
+
 type ControlVisitorTokenIssuer struct {
 	ID     bool
 	Issuer string
@@ -1641,6 +1653,11 @@ type ControlVisitorTokenKey struct {
 	RetainUntil    pgtype.Timestamptz
 	RetiredAt      pgtype.Timestamptz
 	RevokedAt      pgtype.Timestamptz
+}
+
+type ControlVisitorVerificationKeyRevision struct {
+	ID       int16
+	Revision int64
 }
 
 type ControlWorkloadAssertion struct {

@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -223,7 +224,7 @@ func TestForwarderEnforcesHashedCIDRsAndFailsClosedWithoutVerifier(t *testing.T)
 	entry.IpPolicy = ingressv1.HashedAllowlist
 	entry.IpPolicyKey = &key
 	entry.AllowedIpHashes = []ingressv1.HashedIPPrefix{{
-		Family: ingressv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
+		Family: controlv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
 	}}
 	route, err := forwarder.PublicURL(entry)
 	if err != nil || !route.allowsIP(netip.MustParseAddr("203.0.113.42")) ||
