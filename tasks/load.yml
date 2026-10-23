@@ -28,6 +28,9 @@ tasks:
       SEED: '{{default "0" .SEED}}'
       RESULTS: '{{default (printf "bench-results/runtime-%s" (now | date "20060102-150405")) .RESULTS}}'
     env:
+      RUNTIME_WORKLOAD: '{{default "public-url" .WORKLOAD}}'
+      CONNECT_PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
+      VISITOR_MEMORY: '{{default "128m" .VISITOR_MEMORY}}'
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: '{{default "" .START_PARALLEL}}'
       READY_TIMEOUT: '{{default "" .READY_TIMEOUT}}'
@@ -65,6 +68,31 @@ tasks:
       RESULTS: "{{.RESULTS}}"
     cmds:
       - go -C tools/testharness run . runtime
+
+  go:test:load:connect:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure built tnl connect startup, fresh sockets, and reused sockets in the separated local topology
+    cmds:
+      - task: go:test:load:runtime
+        vars:
+          WORKLOAD: connect
+          PUBLIC_URLS: '{{default "4" .SERVICES}}'
+          RPS: '{{default "4" .RPS}}'
+          WORKERS: '{{default "16" .WORKERS}}'
+          QUEUE: '{{default "8" .QUEUE}}'
+          DURATION: '{{default "10s" .DURATION}}'
+          PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
+          HA_TOPOLOGY: "1"
+          CAPACITY_ONLY: "1"
+          HELD_STREAMS: "0"
+          SCENARIO: '{{default "relay-restart" .SCENARIO}}'
+          NETWORK_PATH: '{{default "publisher" .NETWORK_PATH}}'
+          RTT: '{{default "20ms" .RTT}}'
+          LOSS: '{{default "0.1" .LOSS}}'
+          SEED: '{{default "0" .SEED}}'
+          RACE: '{{default "0" .RACE}}'
+          VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
+          RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
 
   go:bench:plan:
     dir: "{{.ROOT_DIR}}"

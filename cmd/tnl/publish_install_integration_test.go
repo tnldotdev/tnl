@@ -390,13 +390,16 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	secret := enrollment()
 	consumedSecret := secret
 	environmentFile := filepath.Join(t.TempDir(), ".env")
+	composeCommand := func(ctx context.Context, extra ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../deploy/publisher/compose/compose.yaml", "--file", override}, extra...)...)
+	}
 	compose := func(allowFailure bool, extra ...string) string {
 		t.Helper()
 		data := "TNL_IMAGE=" + image + "\nTNL_SERVER=" + f.url + "\nTNL_TARGET=" + target.URL + "\nTNL_ENROLL_KEY=" + secret + "\n"
 		if err := os.WriteFile(environmentFile, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		command := exec.CommandContext(t.Context(), "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../deploy/publisher/compose/compose.yaml", "--file", override}, extra...)...)
+		command := composeCommand(t.Context(), extra...)
 		output, err := command.CombinedOutput()
 		if err != nil && !allowFailure {
 			t.Fatalf("Compose fixture: %v\n%s", err, output)
@@ -405,9 +408,26 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Log(compose(true, "logs", "--no-color", "publisher"))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			for _, args := range [][]string{{"ps", "--all", "--format", "json"}, {"logs", "--no-color", "publisher"}} {
+				output, err := composeCommand(ctx, args...).CombinedOutput()
+				t.Logf("Compose %v: %v\n%s", args, err, output)
+			}
+			output, err := composeCommand(ctx, "ps", "--all", "--quiet", "publisher").Output()
+			if err == nil && strings.TrimSpace(string(output)) != "" {
+				id := strings.TrimSpace(string(output))
+				output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "name={{.Name}} state={{json .State}} restarts={{.RestartCount}}", id).CombinedOutput()
+				t.Logf("Compose publisher state: %v\n%s", err, output)
+				output, err = exec.CommandContext(ctx, "docker", "top", id, "-eo", "pid,ppid,stat,comm,wchan").CombinedOutput()
+				t.Logf("Compose publisher processes: %v\n%s", err, output)
+			}
+			cancel()
 		}
-		compose(true, "down", "--volumes", "--remove-orphans")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if output, err := composeCommand(ctx, "down", "--volumes", "--remove-orphans").CombinedOutput(); err != nil {
+			t.Errorf("Compose cleanup: %v\n%s", err, output)
+		}
 	})
 	compose(false, "up", "--detach")
 	ready := func() {

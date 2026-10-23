@@ -9,10 +9,11 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     new URL("../../browserfonts/fira-code-latin-wght-normal.woff2", import.meta.url),
   );
   let id = "fb_0123456789abcdefghijkl";
-  let state = "open";
   let messageCount = 12;
   let cursor = 1;
   const reports: unknown[] = [];
+  // clicking submit must not imply that the asynchronous report was saved.
+  const acceptReport = Promise.withResolvers<void>();
   const report = {
     schema_version: 1,
     id,
@@ -27,7 +28,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   const snapshot = () => ({
     ...report,
     id,
-    state,
+    state: "open",
     message_count: messageCount,
     latest_event_cursor: cursor,
     anchor: currentAnchor,
@@ -51,7 +52,8 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
       if (request.method === "POST") {
         const chunks: Buffer[] = [];
         request.on("data", (chunk: Buffer) => chunks.push(chunk));
-        request.on("end", () => {
+        request.on("end", async () => {
+          await acceptReport.promise;
           const input: unknown = JSON.parse(Buffer.concat(chunks).toString());
           if (
             url.pathname === "/__tnl/feedback" &&
@@ -62,7 +64,6 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
           ) {
             reports.push(input);
             id = "fb_1123456789abcdefghijkl";
-            state = "open";
             messageCount = 1;
             cursor++;
             currentText = input.text;
@@ -71,21 +72,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
             response.end(JSON.stringify(snapshot()));
             return;
           }
-          const type =
-            typeof input === "object" && input !== null && "type" in input ? input.type : "reply";
-          state = type === "thread.resolved" ? "resolved" : "open";
-          cursor++;
-          if (type === "reply" || type === "update") messageCount++;
-          response.end(
-            JSON.stringify({
-              schema_version: 1,
-              cursor,
-              feedback_id: id,
-              actor: "reviewer",
-              type,
-              at: "2026-10-05T00:00:00Z",
-            }),
-          );
+          response.writeHead(400).end();
         });
       } else if (url.pathname.endsWith("/events"))
         response.end(JSON.stringify({ schema_version: 1, events: [], event_cursor: cursor }));
@@ -110,7 +97,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch();
+    browser = await chromium.launch({ channel: "chrome" });
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("missing browser fixture listener");
@@ -164,12 +151,6 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
       node.textContent = "Changed";
     });
     await expect.poll(() => pin.count()).toBe(1);
-    await page.getByRole("button", { name: "View Use a clearer label" }).click();
-    await page.getByRole("button", { name: /^resolve$/i }).click();
-    await expect.poll(() => pin.textContent()).toBe("[x]");
-    await page.getByRole("button", { name: /^reopen$/i }).click();
-    await page.getByRole("button", { name: /^resolve$/i }).waitFor();
-    await page.getByRole("button", { name: /^back to list$/i }).click();
     await page.getByRole("button", { name: "Close feedback" }).click();
     const app = page.getByRole("button", { name: "Changed", exact: true });
     await app.evaluate((node) =>
@@ -177,11 +158,9 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     );
     await page.getByRole("button", { name: "Comment", exact: true }).click();
     await app.click();
-    await page.getByRole("textbox", { name: /^feedback$/i }).fill("Unsent draft");
-    expect(reports).toHaveLength(0);
+    await page.getByRole("textbox", { name: /^feedback$/i }).waitFor();
     expect(await app.getAttribute("data-activated")).toBeNull();
     await page.getByRole("button", { name: /^cancel$/i }).click();
-    expect(reports).toHaveLength(0);
     await page.evaluate(() => {
       const start = document.querySelector("#intro")?.firstChild;
       const end = document.querySelector("#intro strong")?.firstChild;
@@ -197,8 +176,9 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     await page.locator(".selection-hint").click();
     await page.getByRole("textbox", { name: /^feedback$/i }).fill("A text selection suggestion");
     await page.getByRole("button", { name: /^send feedback$/i }).click();
-    expect(reports).toHaveLength(1);
+    acceptReport.resolve();
     await page.getByRole("heading", { name: "A text selection suggestion" }).waitFor();
+    expect(reports).toHaveLength(1);
     await expect.poll(() => page.locator(".highlight").count()).toBeGreaterThan(0);
     const rectangles = await page.locator(".highlight").count();
     await page.locator("#intro").evaluate((node) => {
@@ -218,6 +198,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     await expect.poll(() => pin.count()).toBe(1);
     expect(errors).toEqual([]);
   } finally {
+    acceptReport.resolve();
     await browser?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

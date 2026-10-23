@@ -87,3 +87,55 @@ visitor summaries, resource measurements, raw metrics, and component-exit
 evidence. A local Docker profile is not a production capacity limit. See the
 [local capacity results](local-capacity.md) for measured comparisons and the
 [capacity plan](capacity-plan.md) for how to qualify a limit.
+
+## native connector load
+
+Measure the `tnl connect` path with the same disposable separated topology:
+
+```console
+mise exec -- task go:test:load:connect RESULTS=bench-results/connect-smoke
+mise exec -- task go:test:load:connect SCENARIO=latency NETWORK_PATH=publisher RTT=50ms RESULTS=bench-results/connect-publisher-latency
+mise exec -- task go:test:load:connect SCENARIO=latency NETWORK_PATH=connector RTT=50ms RESULTS=bench-results/connect-connector-latency
+```
+
+The default starts four private TCP services, each with two publisher connections,
+and four built `tnl connect` processes, each with two authenticated ingress paths.
+Publisher services alternate forced QUIC and TLS/TCP; connectors use the normal
+transport race. The test uses production device enrollment, run selection, stream
+authorization, and verified service TLS. Sign-in is seeded locally; no browser
+approval or deployed server is involved.
+
+Each of four ten-second windows offers four verified echo requests/second with a
+256-byte payload: direct fresh TCP, fresh TCP through the connector, direct reused
+TCP, and reused TCP through the connector. The direct path reaches the same target
+without tnl or TLS, so it is a lower bound rather than an equivalent encrypted path.
+The fresh connector measurement includes remote setup after the loopback socket
+opens. Its `connect` timing measures only that loopback dial. Reused sockets are
+opened and verified before their measurement window; failed sockets are never
+silently replaced. This measures opaque TCP, not PostgreSQL/MySQL login or browser
+HTTP behavior.
+
+Use a fresh `RESULTS` directory. `SERVICES=4..64`, `RPS=4..256`,
+`WORKERS=4..64`, `QUEUE=0..4096`, `DURATION=10s..1m`, and
+`PAYLOAD_BYTES=8..1048576` bound the workload. Each phase gets the selected
+duration. Connector visitors default to 512 MiB per container, including the CLI
+children and their race instrumentation. Larger service counts may need higher `VISITOR_MEMORY`, since each
+visitor container owns several real CLI processes. The smoke rate leaves headroom
+for per-connection authorization on the one-CPU PostgreSQL profile; increase `RPS`
+explicitly when measuring its saturation point. The runtime resource overrides
+also apply to this target.
+
+`SCENARIO=latency` supports `RTT=20ms`, `50ms`, or `100ms`.
+`NETWORK_PATH=connector` delays connector-to-ingress traffic, `forwarding` delays
+ingress-to-relay traffic, and `publisher` delays relay-to-publisher traffic.
+`SCENARIO=packet-loss LOSS=0.1` or `1` uses the same paths. Impairments apply before
+startup and remain active through all traffic windows; qdisc/filter evidence records
+both directions. Direct traffic and control API traffic are outside those filters.
+
+Results include `connect-startup.json`, per-phase `*-setup.json`, raw request
+samples, publisher-transport cohorts, process resources, server metrics, and
+`connect-cleanup.json`. `*-latency.json` reports exact mean/p50/p95/p99 from request
+start separately from scheduled-slot latency, so generator delay remains visible.
+Failures, missed offers, queue expiry, resource rejection, and retained connector
+assignments fail the run. CI runs the race-enabled smoke and adds latency runs to
+the scheduled workload; timings are measurements, not machine-dependent pass limits.

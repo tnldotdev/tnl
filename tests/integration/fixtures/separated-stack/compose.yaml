@@ -27,6 +27,8 @@ x-runtime: &runtime
         -tnl-test-tier=runtime-load \
         -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable' \
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
+        -tnl-runtime-load-workload='${RUNTIME_WORKLOAD:-public-url}' \
+        -tnl-connect-load-payload-bytes='${CONNECT_PAYLOAD_BYTES:-256}' \
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
@@ -62,6 +64,7 @@ x-runtime: &runtime
 
 x-visitor: &visitor
   <<: *runtime
+  cap_add: [NET_ADMIN]
   cpus: "${VISITOR_CPUS:-1}"
   mem_limit: "${VISITOR_MEMORY:-128m}"
   memswap_limit: "${VISITOR_MEMORY:-128m}"
@@ -73,6 +76,7 @@ services:
     environment:
       GOBIN: /artifacts
       RACE: "${RACE:-0}"
+      RUNTIME_WORKLOAD: "${RUNTIME_WORKLOAD:-public-url}"
     volumes:
       - ../../../..:/workspace:ro
       - artifacts:/artifacts
@@ -88,6 +92,13 @@ services:
           go test -buildvcs=false -race -c -o /artifacts/runtime.test ./internal/daemon
         else
           go test -buildvcs=false -c -o /artifacts/runtime.test ./internal/daemon
+        fi
+        if [ "$${RUNTIME_WORKLOAD}" = connect ]; then
+          if [ "$${RACE}" = 1 ]; then
+            go build -buildvcs=false -race -o /artifacts/tnl ./cmd/tnl
+          else
+            go build -buildvcs=false -o /artifacts/tnl ./cmd/tnl
+          fi
         fi
 
   postgres:
@@ -162,7 +173,7 @@ services:
       SEPARATED_COMPONENT: ingress-a
     networks:
       default:
-        aliases: [ingress]
+        aliases: [ingress, ingress-a-separated.split.integration.test]
 
   ingress-b:
     <<: *runtime
@@ -176,7 +187,7 @@ services:
       SEPARATED_COMPONENT: ingress-b
     networks:
       default:
-        aliases: [ingress]
+        aliases: [ingress, ingress-b-separated.split.integration.test]
 
   relay-a:
     <<: *runtime

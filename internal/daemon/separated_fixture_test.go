@@ -243,6 +243,10 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
+	if *runtimeLoadWorkload == "connect" {
+		// the echo target is private; these ports only allocate its managed TLS identity.
+		cfg.ServicePortRanges = []string{"20000-20127"}
+	}
 	switch role {
 	case daemonconfig.RoleControl:
 		cfg.DatabaseURL = testutil.PostgresURL(t)
@@ -266,6 +270,9 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	case daemonconfig.RoleIngress:
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
+		if *runtimeLoadWorkload == "connect" {
+			cfg.IngressUDPListen = "0.0.0.0:443"
+		}
 	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
 		serviceID := strings.TrimSuffix(component, "-2")

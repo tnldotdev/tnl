@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.2
           package-manager-cache: false
@@ -157,7 +157,7 @@ jobs:
           node scripts/package/verify-python-wheels.ts "$RUNNER_TEMP/tnl-python-wheels"
 
       - name: Upload Python wheels
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tnl-python-wheels
           path: ${{ runner.temp }}/tnl-python-wheels
@@ -167,7 +167,7 @@ jobs:
           overwrite: true
 
       - name: Upload npm client packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tnl-npm-packages
           path: ${{ runner.temp }}/tnl-npm-packages
@@ -265,14 +265,14 @@ jobs:
 
       # npm trusted publishing needs the npm version bundled with Node 24.
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.20.0
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
       - name: Download npm client packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tnl-npm-packages
           path: ${{ runner.temp }}/tnl-npm-packages
@@ -288,6 +288,7 @@ jobs:
     needs: [validate, archives]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: pypi
     permissions:
       contents: read
       id-token: write
@@ -306,7 +307,7 @@ jobs:
         run: python3 -m pip install uv==0.9.18
 
       - name: Download verified Python wheels
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tnl-python-wheels
           path: ${{ runner.temp }}/tnl-python-wheels
@@ -356,7 +357,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.2
           package-manager-cache: false

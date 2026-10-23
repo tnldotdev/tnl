@@ -167,6 +167,12 @@ tasks:
     cmds:
       - task: workloads:go:test:load:runtime
 
+  go:test:load:connect:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure built tnl connect startup, fresh sockets, and reused sockets in the separated local topology
+    cmds:
+      - task: workloads:go:test:load:connect
+
   go:bench:plan:
     dir: "{{.ROOT_DIR}}"
     desc: Describe a local workload against an explicit tnl server without creating resources
