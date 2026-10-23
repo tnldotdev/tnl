@@ -3,7 +3,7 @@
 `protocol: kubernetes` uses the existing service publisher stream and
 publisher connection slots. the publisher terminates managed visitor TLS,
 authorizes the visitor, then verifies a separate HTTPS connection to the cluster.
-tunnel protocol version 1 carries the same stream headers and bytes.
+tunnel protocol version 2 carries the same stream headers and bytes.
 
 the visitor's Kubernetes `Authorization` header reaches the cluster unchanged.
 public access uses a tnl client certificate; private access uses the authenticated

@@ -227,7 +227,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		_, err = io.Copy(incoming.Stream(), incoming.Stream())
 		return err
 	})
-	stream, err := ingress.OpenServiceForwardingStream(ctx, header)
+	stream, err := ingress.StartServiceForwardingStream(ctx, header, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,12 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		}
 		return forwarder.forward(ctx, incoming, nil)
 	})
-	if _, err := ingress.OpenServiceForwardingStream(ctx, header); err == nil {
+	stale, err := ingress.StartServiceForwardingStream(ctx, header, nil, nil)
+	if err == nil {
+		_, err = stale.Read(make([]byte, 1))
+		_ = stale.Close()
+	}
+	if err == nil {
 		t.Fatal("stale private assignment admitted")
 	}
 	_ = relayAwait(t, denied)

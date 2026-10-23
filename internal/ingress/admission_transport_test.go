@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
@@ -130,6 +131,17 @@ func assertAdmissionCode(t *testing.T, err error, want tunnelv1.ErrorCode) {
 	}
 }
 
+func sendTransportPromotion(t *testing.T, incoming *tunnel.IncomingVisitorStream, h tunnelv1.AdmissionHeader) error {
+	t.Helper()
+	notifier, ok := incoming.Stream.(interface {
+		Promote(tunnelv1.AdmissionHeader) error
+	})
+	if !ok {
+		t.Fatal("publisher stream cannot emit an ordered promotion")
+	}
+	return notifier.Promote(h)
+}
+
 func TestAuthenticatedPromotionBindsIdentitySessionAndSingleUse(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
 	var decisions atomic.Int32
@@ -140,32 +152,44 @@ func TestAuthenticatedPromotionBindsIdentitySessionAndSingleUse(t *testing.T) {
 		}
 		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
 	})
-	stream, incoming := openPendingTransport(t, f, "visitor_promotion")
-	t.Cleanup(func() { _ = stream.Close(); _ = incoming.Stream.Close() })
-	h := publisherAdmission(incoming.Header)
-	for _, change := range []func(*tunnelv1.AdmissionHeader){
+	for index, change := range []func(*tunnelv1.AdmissionHeader){
 		func(h *tunnelv1.AdmissionHeader) { h.PublicURLID = "other" }, func(h *tunnelv1.AdmissionHeader) { h.PublishRunID = "other" },
 		func(h *tunnelv1.AdmissionHeader) { h.PublishRunNumber++ }, func(h *tunnelv1.AdmissionHeader) { h.PublisherConnectionID = "other" },
 		func(h *tunnelv1.AdmissionHeader) { h.ConnectionSlot = 1 }, func(h *tunnelv1.AdmissionHeader) { h.ConnectionAssignmentRevision++ },
 		func(h *tunnelv1.AdmissionHeader) { h.RelayServiceID = "other" },
 	} {
-		bad := h
+		stream, incoming := openPendingTransport(t, f, fmt.Sprintf("visitor_bad_promotion_%d", index))
+		t.Cleanup(func() { _ = stream.Close(); _ = incoming.Stream.Close() })
+		bad := publisherAdmission(incoming.Header)
 		change(&bad)
-		assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), bad), tunnelv1.StaleConnectionAssignment)
+		sent := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error { return sendTransportPromotion(t, incoming, bad) })
+		_, err := stream.Read(make([]byte, 1))
+		assertAdmissionCode(t, err, tunnelv1.StaleConnectionAssignment)
+		if err := ingressAwait(t, sent); err != nil {
+			t.Fatal(err)
+		}
 	}
-	assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), h), "")
-	assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), h), tunnelv1.StaleConnectionAssignment)
-	if decisions.Load() != 1 {
-		t.Fatal(decisions.Load())
-	}
-	// authorization sidebands must leave the visitor data stream untouched.
-	done := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error { _, err := incoming.Stream.Write([]byte("encrypted")); return err })
+	stream, incoming := openPendingTransport(t, f, "visitor_promotion")
+	t.Cleanup(func() { _ = stream.Close(); _ = incoming.Stream.Close() })
+	h := publisherAdmission(incoming.Header)
+	// notification is one-way. only return-side consumption observes rejection;
+	// no acceptance record or notification may enter visitor TLS bytes.
+	done := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error {
+		if err := sendTransportPromotion(t, incoming, h); err != nil {
+			return err
+		}
+		_, err := incoming.Stream.Write([]byte("encrypted"))
+		return err
+	})
 	bytes := make([]byte, 9)
 	if _, err := io.ReadFull(stream, bytes); err != nil || string(bytes) != "encrypted" {
 		t.Fatalf("%q, %v", bytes, err)
 	}
 	if err := ingressAwait(t, done); err != nil {
 		t.Fatal(err)
+	}
+	if err := sendTransportPromotion(t, incoming, h); !errors.Is(err, tunnelv1.ErrReturnFrame) || decisions.Load() != 1 {
+		t.Fatal("promotion was reusable or authorized another visitor", err, decisions.Load())
 	}
 }
 
@@ -189,8 +213,15 @@ func TestAuthenticatedPromotionRejectsStaleRelayLeaseAndPropagatesCapacity(t *te
 				f.lease.Store(&lease)
 			}
 			h := publisherAdmission(incoming.Header)
-			assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), h), test.want)
-			assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), h), tunnelv1.StaleConnectionAssignment)
+			sent := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error { return sendTransportPromotion(t, incoming, h) })
+			_, err := c.Read(make([]byte, 1))
+			assertAdmissionCode(t, err, test.want)
+			if err := ingressAwait(t, sent); err != nil {
+				t.Fatal(err)
+			}
+			if err := sendTransportPromotion(t, incoming, h); !errors.Is(err, tunnelv1.ErrReturnFrame) {
+				t.Fatal("rejected promotion was reusable", err)
+			}
 		})
 	}
 }
@@ -232,12 +263,21 @@ func TestAuthenticatedPromotionRejectsAnotherIngressSessionAndClosedVisitor(t *t
 		t.Fatal(err)
 	}
 	h := forwardingTestHeader(f.entry, "visitor_session").Admission()
-	assertAdmissionCode(t, ingressAwait(t, peer).PromoteVisitor(ingressContext(t), h), tunnelv1.StaleConnectionAssignment)
+	// a notification belongs to one stream. a separately authenticated session
+	// cannot substitute for the session retained by that stream's local binding.
+	foreign := ingressAwait(t, peer)
+	result := f.forwarder.promoteAdmission(ingressContext(t), foreign, h)
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StaleConnectionAssignment {
+		t.Fatal("foreign session replaced a stream's notification binding")
+	}
 	if decisions.Load() != 0 {
 		t.Fatal("foreign authenticated session authorized visitor")
 	}
 	_ = c.Close()
-	assertAdmissionCode(t, f.publisher.PromoteVisitor(ingressContext(t), publisherAdmission(incoming.Header)), tunnelv1.StaleConnectionAssignment)
+	result = f.forwarder.promoteAdmission(ingressContext(t), foreign, h)
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StaleConnectionAssignment {
+		t.Fatal("closed visitor retained a notification binding")
+	}
 	if decisions.Load() != 0 {
 		t.Fatal("closed visitor authorized")
 	}

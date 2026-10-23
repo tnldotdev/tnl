@@ -1,5 +1,5 @@
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "kind": "internal_forward",
   "visitor_connection_id": "visitor_connection_1",
   "public_url_id": "public_url_1",

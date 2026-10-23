@@ -267,7 +267,7 @@ WHERE connections.publish_run_id = $1
   AND connections.state = 'ready'
   AND relays.lease_expires_at > $2
   AND NOT relays.draining
-  AND relays.protocol_version = 1
+  AND relays.protocol_version = $3
   AND relays.connection_capacity > 0
   AND relays.stream_capacity > 0
   AND services.enabled
@@ -275,8 +275,9 @@ ORDER BY connections.connection_slot
 `
 
 type ListValidReadyPublisherConnectionsParams struct {
-	PublishRunID string
-	Now          pgtype.Timestamptz
+	PublishRunID    string
+	Now             pgtype.Timestamptz
+	ProtocolVersion int64
 }
 
 type ListValidReadyPublisherConnectionsRow struct {
@@ -297,7 +298,7 @@ type ListValidReadyPublisherConnectionsRow struct {
 }
 
 func (q *Queries) ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listValidReadyPublisherConnections, arg.PublishRunID, arg.Now)
+	rows, err := q.db.Query(ctx, listValidReadyPublisherConnections, arg.PublishRunID, arg.Now, arg.ProtocolVersion)
 	if err != nil {
 		return nil, err
 	}

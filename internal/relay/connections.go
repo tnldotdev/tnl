@@ -15,7 +15,6 @@ type PublisherConnection struct {
 	ref     tunnelv1.PublisherConnectionRef
 	claimed relayv1.ClaimedPublisherConnection
 	*streamLifetime
-	pending map[string]*pendingForwarding
 }
 
 func NewPublisherConnection(
@@ -34,35 +33,31 @@ func NewPublisherConnection(
 	}
 	c := &PublisherConnection{
 		ref: ref, claimed: claimed, streamLifetime: newStreamLifetime(session),
-		pending: make(map[string]*pendingForwarding),
 	}
-	go func() {
-		_ = session.ServeAdmissions(context.Background(), tunnelv1.PublisherAdmissionStream, c.promoteVisitor)
-	}()
 	return c, nil
 }
 
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
 
 func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, false)
+	return c.openVisitor(ctx, visitorConnectionID, false, nil, nil)
 }
 
 func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, true)
+	return c.openVisitor(ctx, visitorConnectionID, true, nil, nil)
 }
 
-func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
+func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool, initial []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
+	stream, err := c.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: visitorConnectionID, PublicURLID: c.ref.PublicURLID,
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
 		AccessPending:                denied,
-	})
+	}, initial, events)
 	return c.finishOpen(stream, err)
 }

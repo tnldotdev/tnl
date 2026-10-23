@@ -37,7 +37,7 @@ func (m *Metrics) ObserveOperationContext(ctx context.Context, operation string,
 		histogram = m.controlOperations
 	case "IngressRegister", "IngressFetchSnapshot", "IngressFetchEvents", "IngressRenewLease",
 		"IngressApplySnapshot", "IngressApplyEvents",
-		"IngressRelayConnect", "IngressForwardingAck", "IngressForwardingCleanup",
+		"IngressRelayConnect", "IngressForwardingStart", "IngressForwardingCleanup",
 		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback",
 		"IngressUsagePage", "IngressUsageFinalFlush":
 		histogram = m.ingressOperations

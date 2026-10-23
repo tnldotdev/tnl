@@ -15,7 +15,7 @@ func testOpaqueID(prefix string) string { return prefix + strings.Repeat("a", 22
 
 func TestManagedAdmissionGoldenFrames(t *testing.T) {
 	entry := ConnectorVisitorEntry{ProtocolVersion: Version, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 7}
-	const golden = `{"protocol_version":1,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7}`
+	const golden = `{"protocol_version":2,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7}`
 	var wire bytes.Buffer
 	if err := WriteConnectorVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)

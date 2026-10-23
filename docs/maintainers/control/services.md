@@ -81,8 +81,8 @@ and client-supplied addresses do not select a service or visitor source.
 
 each application stream needs a current ready run and a separate admission.
 ingress and publisher check the exact subject, session, service/run, source,
-grant, and connection assignment. ingress emits PROXY v2 once, after the relay
-acknowledges its assignment. connector-admitted streams do not request an
+grant, and connection assignment. ingress emits PROXY v2 once; relay preserves
+it through the pipelined opening and byte stream. connector-admitted streams do not request an
 application client certificate. direct HTTP uses its current HTTP credential;
 direct database clients use mTLS. application authorization remains independent.
 

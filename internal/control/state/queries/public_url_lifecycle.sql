@@ -79,7 +79,7 @@ WHERE connections.publish_run_id = sqlc.arg(publish_run_id)
   AND connections.state = 'ready'
   AND relays.lease_expires_at > sqlc.arg(now)
   AND NOT relays.draining
-  AND relays.protocol_version = 1
+  AND relays.protocol_version = sqlc.arg(protocol_version)
   AND relays.connection_capacity > 0
   AND relays.stream_capacity > 0
   AND services.enabled

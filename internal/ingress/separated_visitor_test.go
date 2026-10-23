@@ -15,10 +15,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig) {
@@ -26,12 +24,6 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	c.Hostname = "route.example"
 	c.PublicURLID = f.entry.PublicUrlId
 	c.PublishRunNumber = uint64(f.entry.PublishRunNumber)
-	c.PromoteVisitor = tunnel.NewVisitorPromoter(func(v publisher.Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, func(id string) *tunnel.Session {
-		if id == f.ref.PublisherConnectionID {
-			return f.publisher
-		}
-		return nil
-	})
 	r, err := publisher.NewPublicURLServer(c)
 	if err != nil {
 		t.Fatal(err)

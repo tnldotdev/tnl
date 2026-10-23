@@ -64,7 +64,7 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 		{VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: testOpaqueID("wls_")}, `{"session_id":"cns_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
 	} {
 		t.Run(test.subject.Kind, func(t *testing.T) {
-			hello := ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: testOpaqueID(opaqueid.ServicePrefix), SessionID: testOpaqueID(opaqueid.ConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: test.subject, Nonce: bytes.Repeat([]byte{1}, 32)}
+			hello := ConnectorSessionHello{ProtocolVersion: Version, Kind: "connector_session", ServiceID: testOpaqueID(opaqueid.ServicePrefix), SessionID: testOpaqueID(opaqueid.ConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: test.subject, Nonce: bytes.Repeat([]byte{1}, 32)}
 			digest, err := hello.Claim().Digest()
 			if err != nil {
 				t.Fatal(err)
@@ -101,7 +101,7 @@ func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
 			if err != nil || string(data) != test.golden {
 				t.Fatalf("admission golden: %s %v", data, err)
 			}
-			accepted := ConnectorSessionAccepted{ProtocolVersion: 1, Kind: "connector_session_accepted", ServiceID: hello.ServiceID, SessionID: hello.SessionID, Subject: test.subject, SourceIP: "192.0.2.1", ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
+			accepted := ConnectorSessionAccepted{ProtocolVersion: Version, Kind: "connector_session_accepted", ServiceID: hello.ServiceID, SessionID: hello.SessionID, Subject: test.subject, SourceIP: "192.0.2.1", ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
 			if err := WriteConnectorSessionAccepted(&frame, accepted); err != nil {
 				t.Fatal(err)
 			}

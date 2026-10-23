@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const publishRunConnectionCount = 2
@@ -451,7 +452,7 @@ func availableRelayServicePlacements(
 		return nil, nil, fmt.Errorf("lock relay services: %w", err)
 	}
 	leases, err := queries.LockEligibleRelayLeases(ctx, controlstatedb.LockEligibleRelayLeasesParams{
-		Now: timestamptz(now), ProtocolVersion: 1, RelayServiceIds: serviceIDs,
+		Now: timestamptz(now), ProtocolVersion: tunnelv1.Version, RelayServiceIds: serviceIDs,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("lock relay leases: %w", err)

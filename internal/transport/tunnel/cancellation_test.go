@@ -110,9 +110,9 @@ func TestSetupDeadlineClearsOnlyAfterSuccess(t *testing.T) {
 	}
 }
 
-func TestSetupCancellationInterruptsRead(t *testing.T) {
+func TestSetupCancellationInterruptsHandshakeReadOrOpeningWrite(t *testing.T) {
 	for _, handshake := range []bool{true, false} {
-		name := "stream_ack"
+		name := "stream_opening_write"
 		if handshake {
 			name = "hello_ack"
 		}
@@ -137,10 +137,14 @@ func TestSetupCancellationInterruptsRead(t *testing.T) {
 				} else {
 					client, server := newAuthenticatedPair(t)
 					result = tunnelWorker(t, func() { _ = client.Close() }, func() error {
-						_, err := client.OpenVisitorStream(ctx, visitorStreamHeader())
+						_, err := client.StartVisitorStream(ctx, visitorStreamHeader(), nil, nil)
 						return err
 					})
-					if _, err := server.AcceptVisitorStream(ctx); err != nil {
+					stream, err := server.transport.AcceptStream(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := tunnelv1.ReadVisitorStreamHeader(stream); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -191,10 +195,14 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	result := tunnelWorker(t, cancel, func() error {
-		_, err := client.OpenVisitorStream(ctx, visitorStreamHeader())
+		_, err := client.StartVisitorStream(ctx, visitorStreamHeader(), nil, nil)
 		return err
 	})
-	if _, err := server.AcceptVisitorStream(tunnelContext(t)); err != nil {
+	partial, err := server.transport.AcceptStream(tunnelContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tunnelv1.ReadVisitorStreamHeader(partial); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
@@ -208,7 +216,7 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 		}
 		return incoming.Accept()
 	})
-	stream, err := client.OpenVisitorStream(tunnelContext(t), visitorStreamHeader())
+	stream, err := client.StartVisitorStream(tunnelContext(t), visitorStreamHeader(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

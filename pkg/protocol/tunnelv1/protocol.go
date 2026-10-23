@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	Version         = 1
+	Version         = 2
+	ALPN            = "tnl-tunnel/2"
 	MaxControlBytes = 64 << 10
 	// seven 256-byte identifiers may each need six JSON bytes per input byte.
 	// include the fixed keys, uint64 counters, timestamps and bounded traceparent.
@@ -126,7 +127,7 @@ type VisitorStreamHeader struct {
 	PublisherConnectionID        string       `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
 	// AccessPending is trusted ingress state: this visitor has only bounded
-	// pending authorization capacity until an authenticated promotion is accepted.
+	// pending authorization capacity until the publisher authorizes it.
 	AccessPending bool `json:"access_pending,omitempty"`
 }
 
@@ -158,7 +159,7 @@ const (
 	StreamRejected StreamResponseType = "rejected"
 )
 
-// StreamResponse is sent before PROXY v2 metadata or visitor bytes are written.
+// StreamResponse classifies one local admission decision.
 type StreamResponse struct {
 	Type StreamResponseType `json:"type"`
 	Code ErrorCode          `json:"code,omitempty"`

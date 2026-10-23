@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func privateClaimRun(t *testing.T, f publishRunFixture) ServiceRunState {
@@ -63,7 +64,7 @@ func TestIntegrationPrivateMixedProcessClaimCapacity(t *testing.T) {
 				t.Fatal(err)
 			}
 			second, err := d.RegisterRelay(t.Context(), RelayRegistration{RelayServiceID: slot.RelayServiceID, RelayID: "second-process", RelayRunID: processRun,
-				RelayAddress: service.RelayAddress, TLSServerName: service.TLSServerName, InternalRelayAddress: "127.0.0.1:9449", ProtocolVersion: 1, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
+				RelayAddress: service.RelayAddress, TLSServerName: service.TLSServerName, InternalRelayAddress: "127.0.0.1:9449", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}

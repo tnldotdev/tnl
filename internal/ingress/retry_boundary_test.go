@@ -14,41 +14,77 @@ import (
 
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIngressRetryBoundary(t *testing.T) {
-	for _, committed := range []int{0, 1} {
-		t.Run(fmt.Sprintf("visitor_bytes=%d", committed), func(t *testing.T) {
-			first := newFailAfterProxyBackend(t, committed)
-			fallback := newTLSBackend(t)
-			_, address := startIngress(t, publicURLConfig(first, fallback))
-			client := ingressClient(t, address, "route.example", "")
-			err := client.Handshake()
-			if committed != 0 {
-				if err == nil {
-					t.Fatal("partial ClientHello backend completed TLS")
+	for _, pipelined := range []bool{false, true} {
+		for _, committed := range []int{0, 1} {
+			t.Run(fmt.Sprintf("pipelined=%t/visitor_bytes=%d", pipelined, committed), func(t *testing.T) {
+				first := newFailAfterProxyBackend(t, committed)
+				var selected ingressbackend.Backend = first
+				opening := &failedOpeningBackend{failAfterProxyBackend: first, visitorBytes: committed}
+				if pipelined {
+					selected = opening
 				}
-				if fallback.opens.Load() != 0 {
-					t.Fatal("retried after visitor byte commit")
+				fallback := newTLSBackend(t)
+				_, address := startIngress(t, publicURLConfig(selected, fallback))
+				client := ingressClient(t, address, "route.example", "")
+				err := client.Handshake()
+				if committed != 0 {
+					if err == nil {
+						t.Fatal("partial ClientHello backend completed TLS")
+					}
+					if fallback.opens.Load() != 0 {
+						t.Fatal("retried after visitor byte commit")
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					exchangePing(t, client)
+					result := ingressAwait(t, fallback.result)
+					if result.err != nil || result.request != "ping" || result.visitorConnectionID != first.visitorConnectionID() {
+						t.Fatalf("fallback = %+v", result)
+					}
+					if fallback.opens.Load() != 1 {
+						t.Fatal("fallback not opened exactly once")
+					}
 				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
+				if first.opens.Load() != 1 || !strings.HasPrefix(first.visitorConnectionID(), visitorConnectionIDPrefix) {
+					t.Fatalf("first opens=%d, ID=%q", first.opens.Load(), first.visitorConnectionID())
 				}
-				exchangePing(t, client)
-				result := ingressAwait(t, fallback.result)
-				if result.err != nil || result.request != "ping" || result.visitorConnectionID != first.visitorConnectionID() {
-					t.Fatalf("fallback = %+v", result)
+				if pipelined && opening.starts.Load() != 1 {
+					t.Fatal("network forwarding did not use the combined opening")
 				}
-				if fallback.opens.Load() != 1 {
-					t.Fatal("fallback not opened exactly once")
-				}
-			}
-			if first.opens.Load() != 1 || !strings.HasPrefix(first.visitorConnectionID(), visitorConnectionIDPrefix) {
-				t.Fatalf("first opens=%d, ID=%q", first.opens.Load(), first.visitorConnectionID())
-			}
-		})
+			})
+		}
 	}
+}
+
+type failedOpeningBackend struct {
+	*failAfterProxyBackend
+	visitorBytes int
+	starts       atomic.Int32
+}
+
+func (b *failedOpeningBackend) Start(ctx context.Context, id string, _ bool, proxy, hello []byte) (net.Conn, error) {
+	b.starts.Add(1)
+	connection, err := b.Open(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	h := forwardingTestHeader(forwardingTestEntry(time.Now(), ""), id)
+	committed, err := tunnelv1.WriteForwardingOpening(openingFailureWriter{visitorBytes: b.visitorBytes, initialLength: len(hello)}, h, proxy, hello)
+	return nil, &tunnel.OpeningError{Committed: committed, Err: err}
+}
+
+type openingFailureWriter struct{ visitorBytes, initialLength int }
+
+func (w openingFailureWriter) Write(p []byte) (int, error) {
+	return len(p) - w.initialLength + w.visitorBytes, io.ErrClosedPipe
 }
 
 func TestIngressAlternatesInitialRelayPerVisitor(t *testing.T) {

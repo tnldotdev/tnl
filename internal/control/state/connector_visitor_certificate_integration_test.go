@@ -64,7 +64,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ingress, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: "certificate-run", ProtocolVersion: 1, ConnectionCapacity: 8,
+	ingress, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: "certificate-run", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8,
 		ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "ingress.example.test"}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: run.ServiceID, SessionID: session.ID,
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: run.ServiceID, SessionID: session.ID,
 		Credential: session.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device.ID}, Nonce: nonce}
 	digest, err := hello.Claim().Digest()
 	if err != nil {

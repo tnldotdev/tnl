@@ -32,7 +32,7 @@ func TestSessionParentCancellationDrainsAdmittedVisitor(t *testing.T) {
 	for _, transport := range []string{"quic", "tls_yamux"} {
 		t.Run(transport, func(t *testing.T) {
 			h := newVisitorDrainHarness(t, transport, nil)
-			stream := h.admit()
+			stream := h.prepareVisitor(h.admit())
 			h.cancel()
 			awaitPublisherTest(t, h.draining)
 			h.assertAdmissionRejected()
@@ -43,6 +43,67 @@ func TestSessionParentCancellationDrainsAdmittedVisitor(t *testing.T) {
 			}
 			h.assertFinished(nil)
 		})
+	}
+}
+
+func TestPublicURLStopAdmissionsKeepsVisitorAdmittedBeforeTLS(t *testing.T) {
+	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
+	publisher, relay := promotionSessionPair(t, ref)
+	certificate := publicURLTestCertificate(t, "route.example")
+	r, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: 1,
+		Certificate: certificate, AccessMode: "anonymous", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "finished") })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	live, err := r.registerPublisherSession(t.Context(), publisher, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.unregisterPublisherSession(live)
+	admitted := make(chan error, 1)
+	go func() {
+		incoming, err := publisher.AcceptVisitorStream(t.Context())
+		if err == nil {
+			err = r.acceptVisitorContext(t.Context(), incoming, ref)
+		}
+		admitted <- err
+	}()
+	stream, err := relay.StartVisitorStream(t.Context(), tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "before-drain",
+		PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: 1, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: 1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+	if err := awaitPublisherTest(t, admitted); err != nil {
+		t.Fatal(err)
+	}
+	// opening no longer promises remote admission to its sender. establish the
+	// actual publisher boundary, then preserve the pre-TLS drain assertion here.
+	r.stopAdmissions()
+	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:4321"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write(metadata); err != nil {
+		t.Fatal(err)
+	}
+	visitor := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
+	t.Cleanup(func() { _ = visitor.Close() })
+	if _, err := io.WriteString(visitor, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(visitor), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "finished" {
+		t.Fatalf("visitor admitted before TLS did not finish during drain: %d %q %v", response.StatusCode, body, err)
 	}
 }
 
@@ -248,8 +309,11 @@ func (h *visitorDrainHarness) assertAdmissionRejected() {
 	h.t.Helper()
 	admitted, err := h.relay.OpenVisitor(h.ctx, "visitor_after_cancel")
 	if err == nil {
+		_, err = admitted.Read(make([]byte, 1))
 		_ = admitted.Close()
-		h.t.Fatal("draining session admitted a new visitor")
+		if err == nil {
+			h.t.Fatal("draining session admitted a new visitor")
+		}
 	}
 	var rejected *tunnel.ProtocolError
 	if !errors.Is(err, relay.ErrDraining) && (!errors.As(err, &rejected) || rejected.Code != tunnelv1.Unavailable) {
@@ -257,8 +321,11 @@ func (h *visitorDrainHarness) assertAdmissionRejected() {
 	}
 }
 
-func (h *visitorDrainHarness) startVisitor(stream net.Conn, keepAlive bool) <-chan error {
+func (h *visitorDrainHarness) prepareVisitor(stream net.Conn) *tls.Conn {
 	h.t.Helper()
+	if visitor, ok := stream.(*tls.Conn); ok {
+		return visitor
+	}
 	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:4321"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
 	if err != nil {
 		h.t.Fatal(err)
@@ -268,6 +335,15 @@ func (h *visitorDrainHarness) startVisitor(stream net.Conn, keepAlive bool) <-ch
 	}
 	visitor := tls.Client(stream, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(h.t, h.control.signer)})
 	h.t.Cleanup(func() { _ = visitor.Close() })
+	if err := visitor.HandshakeContext(h.ctx); err != nil {
+		h.t.Fatal(err)
+	}
+	return visitor
+}
+
+func (h *visitorDrainHarness) startVisitor(stream net.Conn, keepAlive bool) <-chan error {
+	h.t.Helper()
+	visitor := h.prepareVisitor(stream)
 	request := "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"
 	if keepAlive {
 		request = "GET / HTTP/1.1\r\nHost: route.example\r\n\r\n"
