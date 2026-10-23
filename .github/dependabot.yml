@@ -3,31 +3,49 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 14
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
     groups:
       github-actions:
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
         patterns:
           - "*"
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 14
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
     groups:
       go-modules:
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
         patterns:
           - "*"
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 14
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
     groups:
       npm-packages:
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
         patterns:
           - "*"
     ignore:
