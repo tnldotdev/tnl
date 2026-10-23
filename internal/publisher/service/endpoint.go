@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -24,6 +25,7 @@ import (
 )
 
 type ManagedControl interface {
+	visitorpolicy.Client
 	publisher.ServiceCertificateControl
 	publisher.ServiceHTTPControl
 	StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)

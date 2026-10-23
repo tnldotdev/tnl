@@ -61,7 +61,7 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	if err := ingressPolicy.Apply(ingressPolicy.Begin(), update); err != nil {
 		t.Fatal(err)
 	}
-	f.prepared = &publicVisitorRun{policy: &visitorPolicy{lease: ingressPolicy}, capacity: &streamCapacity{pool: pool, id: allocation.Id, ready: true}}
+	f.prepared = &preparedVisitorRun{policy: &visitorPolicy{lease: ingressPolicy}, capacity: &streamCapacity{pool: pool, id: allocation.Id, ready: true}}
 	r, err := publisher.NewPublicURLServer(c)
 	if err != nil {
 		t.Fatal(err)

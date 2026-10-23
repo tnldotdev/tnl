@@ -20,6 +20,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/net/websocket"
@@ -32,7 +33,7 @@ type liveHTTPControl struct {
 	mu       sync.Mutex
 	check    func(controlv1.HTTPVisitorRequest) (controlv1.HTTPVisitorResponse, error)
 	calls    int
-	policy   *visitorPolicy
+	policy   *visitorpolicy.Policy
 	tokens   *browserTokens
 	revision int64
 	sources  map[string]controlv1.HTTPVisitorRequest
@@ -48,13 +49,13 @@ func prepareLiveHTTPControl(t *testing.T, control *liveHTTPControl) {
 	t.Helper()
 	control.revision = 1
 	control.sources, control.allowed, control.issued = make(map[string]controlv1.HTTPVisitorRequest), make(map[string]bool), make(map[string]visitortoken.Token)
-	policy, err := prepareVisitorPolicy(t.Context(), control, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-token", nil)
+	policy, err := visitorpolicy.Prepare(t.Context(), control, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(policy.Close)
 	control.policy = policy
-	control.tokens, err = startBrowserTokens(t.Context(), control, policy.lease, nil)
+	control.tokens, err = startBrowserTokens(t.Context(), control, policy.Lease, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func startLiveHTTPRoute(t *testing.T, control *liveHTTPControl, handler http.Han
 	t.Helper()
 	prepareLiveHTTPControl(t, control)
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), Handler: handler,
-		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens,
+		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.Lease, VisitorTokens: control.tokens,
 		BrowserAccess: &browserAccess{client: control, runID: "original-run", version: 1}})
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +188,7 @@ func (c *liveHTTPControl) credential(t *testing.T, cookie string, share bool) st
 func (c *liveHTTPControl) permission(t *testing.T, cookie string, share bool) controlv1.VisitorTokenResponse {
 	t.Helper()
 	token := c.credential(t, cookie, share)
-	view, _, _ := c.policy.lease.Current()
+	view, _, _ := c.policy.Lease.Current()
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -456,7 +457,7 @@ func TestPublicHTTPGuardRetainsCachedDecisionAge(t *testing.T) {
 		control.mu.Lock()
 		revoked = true
 		control.mu.Unlock()
-		confirmed, _, _ := control.policy.lease.Current()
+		confirmed, _, _ := control.policy.Lease.Current()
 		time.Sleep(time.Until(confirmed.ValidUntil) - 2*time.Second)
 		stream := request("stream")
 		defer stream.Body.Close()

@@ -30,7 +30,7 @@ type admissionTransportFixture struct {
 	ref       tunnelv1.PublisherConnectionRef
 	material  forwardingTestMaterial
 	lease     atomic.Pointer[relayv1.RelayLease]
-	prepared  *publicVisitorRun
+	prepared  *preparedVisitorRun
 }
 
 // both hops use verified TLS/yamux and the real tunnel authentication handshake.

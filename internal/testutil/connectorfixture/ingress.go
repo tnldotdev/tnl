@@ -91,12 +91,12 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 						}
 						workers.Go(func() {
 							defer stream.Close()
-							if _, err := tunnelv1.ReadConnectorVisitorEntry(stream); err != nil {
+							entry, initial, err := tunnelv1.ReadConnectorVisitorOpening(stream)
+							if err != nil || len(initial) != 0 {
 								return
 							}
-							visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 							publisher, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-							if err := tunnelv1.WriteConnectorVisitorAccepted(stream, tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: visitor, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
+							if err := tunnelv1.WriteConnectorVisitorAccepted(stream, tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: entry.VisitorConnectionID, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
 								return
 							}
 							backend, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", target)

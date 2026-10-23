@@ -5,35 +5,74 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // NativeProofMessage binds permission to one authenticated infrastructure session,
-// visitor connection and exact opening bytes. replay exclusion belongs to ingress.
-func NativeProofMessage(token Token, session, connection string, initial []byte) ([]byte, error) {
-	if len(token.Reveal()) == 0 || len(token.Reveal()) > MaxTokenBytes || !opaqueid.Valid(session, opaqueid.ConnectorSessionPrefix) || !opaqueid.Valid(connection, opaqueid.VisitorConnectionPrefix) || len(initial) > 64<<10 {
+// visitor connection, approved metadata revision and exact opening bytes. replay
+// exclusion belongs to ingress and the publisher's reservation owner.
+func NativeProofMessage(token Token, session, connection string, metadataRevision uint64, initial []byte) ([]byte, error) {
+	if len(token.Reveal()) == 0 || len(token.Reveal()) > MaxTokenBytes || !opaqueid.Valid(session, opaqueid.ConnectorSessionPrefix) || !opaqueid.Valid(connection, opaqueid.VisitorConnectionPrefix) || metadataRevision == 0 || metadataRevision > math.MaxInt64 || len(initial) > 64<<10 {
 		return nil, ErrBinding
 	}
 	permissionHash, initialHash := sha256.Sum256([]byte(token.Reveal())), sha256.Sum256(initial)
 	body, err := json.Marshal(struct {
-		Session    string   `json:"session_id"`
-		Connection string   `json:"visitor_connection_id"`
-		Token      [32]byte `json:"token_sha256"`
-		Initial    [32]byte `json:"initial_sha256"`
-	}{session, connection, permissionHash, initialHash})
+		Session          string   `json:"session_id"`
+		Connection       string   `json:"visitor_connection_id"`
+		Token            [32]byte `json:"token_sha256"`
+		Initial          [32]byte `json:"initial_sha256"`
+		MetadataRevision uint64   `json:"metadata_revision"`
+	}{session, connection, permissionHash, initialHash, metadataRevision})
 	if err != nil {
 		return nil, ErrBinding
 	}
 	return append([]byte("tnl visitor opening v1\x00"), body...), nil
 }
 
-func VerifyNative(token Token, view View, expectedSubject Subject, session, connection string, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+func VerifyNative(token Token, view View, expectedSubject Subject, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+	if view.MetadataRevision < 1 || uint64(view.MetadataRevision) != metadataRevision {
+		return Permission{}, ErrBinding
+	}
 	permission, err := verify(token, view, now)
 	if err != nil {
 		return Permission{}, err
 	}
+	if permission.Subject != expectedSubject {
+		return Permission{}, ErrBinding
+	}
+	return verifyNativePossession(token, permission, session, connection, metadataRevision, initial, public, signature)
+}
+
+// VerifyNativeSession compares signed permission with the subject already bound
+// to the infrastructure session, then proves possession of the signed key.
+func VerifyNativeSession(token Token, view View, expected tunnelv1.VisitorSubject, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+	if expected.Validate() != nil || view.MetadataRevision < 1 || uint64(view.MetadataRevision) != metadataRevision {
+		return Permission{}, ErrBinding
+	}
+	permission, err := verify(token, view, now)
+	if err != nil {
+		return Permission{}, err
+	}
+	switch subject := permission.Subject.(type) {
+	case Device:
+		if expected.Kind != tunnelv1.VisitorHumanDevice || expected.IdentityID != subject.IdentityID || expected.DeviceID != subject.DeviceID {
+			return Permission{}, ErrBinding
+		}
+	case Workload:
+		if expected.Kind != tunnelv1.VisitorWorkloadSession || expected.WorkloadSessionID != subject.SessionID {
+			return Permission{}, ErrBinding
+		}
+	default:
+		return Permission{}, ErrBinding
+	}
+	return verifyNativePossession(token, permission, session, connection, metadataRevision, initial, public, signature)
+}
+
+func verifyNativePossession(token Token, permission Permission, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte) (Permission, error) {
 	var expectedKey string
 	switch subject := permission.Subject.(type) {
 	case Device:
@@ -43,14 +82,11 @@ func VerifyNative(token Token, view View, expectedSubject Subject, session, conn
 	default:
 		return Permission{}, ErrBinding
 	}
-	if permission.Subject != expectedSubject {
-		return Permission{}, ErrBinding
-	}
 	digest, err := KeyDigest(public)
 	if err != nil || digest != expectedKey || len(public) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
 		return Permission{}, ErrBinding
 	}
-	message, err := NativeProofMessage(token, session, connection, initial)
+	message, err := NativeProofMessage(token, session, connection, metadataRevision, initial)
 	if err != nil || !ed25519.Verify(public, message, signature) {
 		return Permission{}, ErrBinding
 	}

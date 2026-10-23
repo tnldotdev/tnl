@@ -37,11 +37,11 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	}
 	issuer, err := q.ReadVisitorTokenIssuer(ctx)
 	if err != nil {
-		return result, err
+		return result, publisherLookupError(err, ErrVisitorPolicy)
 	}
 	keyRevision, err := q.ReadVisitorVerificationKeyRevision(ctx)
 	if err != nil {
-		return result, err
+		return result, publisherLookupError(err, ErrVisitorPolicy)
 	}
 	keys, err := q.VisitorTokenVerificationKeys(ctx, timestamptz(now))
 	if err != nil {
@@ -121,6 +121,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 			return result, ErrVisitorPolicy
 		}
 		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
+		policy.MetadataRevision = row.TrustRevision
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 		if err != nil {

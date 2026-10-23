@@ -72,7 +72,7 @@ type Controller struct {
 	observer         OperationObserver
 	leaseEstablished func(ingressv1.IngressLease) error
 	visitorControl   PublicVisitorControl
-	publicVisitors   map[string]*publicVisitorRun
+	publicVisitors   map[string]*preparedVisitorRun
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
@@ -111,7 +111,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
 		observer: config.Observer, leaseEstablished: config.LeaseEstablished, visitorControl: config.VisitorControl,
-		publicVisitors: make(map[string]*publicVisitorRun),
+		publicVisitors: make(map[string]*preparedVisitorRun),
 	}, nil
 }
 

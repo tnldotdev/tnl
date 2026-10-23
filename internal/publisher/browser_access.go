@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -37,7 +38,7 @@ type browserAccess struct {
 	version                                   uint64
 	token                                     credentials.PublishRunToken
 	tokens                                    *browserTokens
-	policy                                    *visitorPolicy
+	policy                                    *visitorpolicy.Policy
 }
 
 func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) *browserAccess {
@@ -327,7 +328,7 @@ func (a *browserAccess) prepareToken(ctx context.Context, source json.RawMessage
 	}
 	// redemption is explicit credential preparation. a new revision or signing
 	// key is loaded here, before redirecting to an ordinary application request.
-	if err := a.policy.refresh(ctx); err != nil {
+	if err := a.policy.Refresh(ctx); err != nil {
 		return err
 	}
 	return a.tokens.install(source, permission, parent)

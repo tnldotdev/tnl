@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -44,6 +45,19 @@ func (f *lifecycleControl) GetPublisherService(context.Context, string) (control
 		return *f.approved, nil
 	}
 	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: f.prep.ServicePort}}, nil
+}
+
+func (f *lifecycleControl) ReadPublisherVisitorPolicy(_ context.Context, request controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if request.Resource.Kind != "service" || request.Resource.Id != f.prep.ServiceId || request.RunId != f.prep.ServiceRunId || request.RunNumber != f.prep.RunNumber || credential != f.setup.RunToken {
+		return controlv1.VisitorPolicyUpdate{}, errors.New("visitor policy used another service run")
+	}
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("s", 32)))
+	now := time.Now()
+	return controlv1.VisitorPolicyUpdate{AfterRevision: request.AfterRevision, Revisions: []int64{}, SnapshotRequired: request.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: request.Resource, Hostname: f.prep.Hostname, Port: f.prep.ServicePort, Issuer: "https://control.example.test", MetadataRevision: 1,
+			VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "service-fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, StreamAllocations: []controlv1.StreamCapacityAllocation{}}}, nil
 }
 
 func (f *lifecycleControl) PrepareServiceRun(_ context.Context, id, key, token string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {

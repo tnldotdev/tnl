@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,8 @@ import (
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -163,7 +166,11 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-second", IngressRunID: "audit-second-process", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10,
+	secondProcess, err := opaqueid.New(opaqueid.IngressRunPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-second", IngressRunID: secondProcess, IngressPoolID: controlstate.PrimaryIngressPoolID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10,
 		ConnectorAddress: "127.0.0.1:9442", ConnectorTLSServerName: "private.example.test"}, now, time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -211,13 +218,26 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "private.example.test", TLSConfig: serverTLS, Control: direct, Forwarder: target,
+	const visitorIssuer = "https://control.example.test"
+	if err := d.PrepareVisitorSigningKeys(ctx, visitorIssuer, now); err != nil {
+		t.Fatal(err)
+	}
+	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Report: func(err error) { t.Logf("private preparation: %v", err) }, Hostname: "private.example.test", TLSConfig: serverTLS, Control: direct, VisitorControl: direct, Forwarder: target,
 		Routing: &ingress.ServiceRoutingTable{}, AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
 			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
 		}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	preparationCtx, stopPreparation := context.WithCancel(ctx)
+	preparedDone := make(chan error, 1)
+	go func() { preparedDone <- connector.Run(preparationCtx) }()
+	defer func() {
+		stopPreparation()
+		if err := <-preparedDone; err != nil {
+			t.Error(err)
+		}
+	}()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -264,13 +284,29 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal(err)
 	}
 	defer session.Close()
-	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service.ID, ServiceRunID: badRun, RunNumber: 1}
+	var parentSession string
+	if err := inspect.QueryRow(ctx, `SELECT id FROM control.control_sessions WHERE identity_id=$1 AND revoked_at IS NULL LIMIT 1`, actor).Scan(&parentSession); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := d.IssueVisitorToken(controlstate.WithControlPrincipal(ctx, controlstate.ControlPrincipal{IdentityID: actor, SessionID: parentSession}), visitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, controlstate.DeviceTokenSource{DeviceID: device.ID}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitorID, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := visitortoken.NativeProofMessage(issued.Token, assignment.ID, visitorID, uint64(service.TrustRevision), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service.ID, ServiceRunID: badRun, RunNumber: 1, VisitorConnectionID: visitorID, MetadataRevision: uint64(service.TrustRevision), Permission: tunnelv1.NativeVisitorPermission{Token: issued.Token.Reveal(), PublicKey: base64.RawURLEncoding.EncodeToString(public), Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(deviceKey, message))}}
 	denied, err := session.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = denied.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = tunnelv1.WriteConnectorVisitorEntry(denied, entry); err != nil {
+	if _, err = tunnelv1.WriteConnectorVisitorOpening(denied, entry, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tunnelv1.ReadConnectorVisitorAccepted(denied); err == nil {
@@ -278,12 +314,21 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	}
 	_ = denied.Close()
 	entry.ServiceRunID, entry.RunNumber = run.RunID, uint64(run.RunNumber)
+	entry.VisitorConnectionID, err = opaqueid.New(opaqueid.VisitorConnectionPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err = visitortoken.NativeProofMessage(issued.Token, assignment.ID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(deviceKey, message))
 	valid, err := session.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = valid.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = tunnelv1.WriteConnectorVisitorEntry(valid, entry); err != nil {
+	if _, err = tunnelv1.WriteConnectorVisitorOpening(valid, entry, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tunnelv1.ReadConnectorVisitorAccepted(valid); err != nil {

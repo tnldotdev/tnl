@@ -244,6 +244,20 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		write(w, preparation)
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/start":
 		write(w, f.setup)
+	case "/v1/visitor-policy":
+		var request controlv1.PublisherVisitorPolicyRequest
+		if r.Header.Get("Authorization") != "Bearer "+f.setup.RunToken || json.NewDecoder(r.Body).Decode(&request) != nil ||
+			request.Resource.Kind != "service" || request.Resource.Id != f.service.Id || request.RunId != f.setup.ServiceRunId || request.RunNumber != f.setup.RunNumber || len(request.ObservedAllocations) != 0 {
+			t.Error("publisher requested policy outside its exact service run")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		now := time.Now()
+		write(w, controlv1.VisitorPolicyUpdate{AfterRevision: request.AfterRevision, SnapshotRequired: request.AfterRevision == 0, Revisions: []int64{},
+			Policy: controlv1.VisitorPolicySnapshot{Resource: request.Resource, Issuer: f.Server.URL, Hostname: f.service.Endpoint.Hostname, Port: f.service.Endpoint.Port,
+				MetadataRevision: f.service.TrustRevision, VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
+				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture-key", PublicKey: f.Key.Public().(ed25519.PublicKey)}},
+				WorkloadLeases:   []controlv1.VisitorWorkloadLease{}, StreamAllocations: []controlv1.StreamCapacityAllocation{}}})
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId:
 		if r.Method == "DELETE" {
 			f.Closes.Add(1)

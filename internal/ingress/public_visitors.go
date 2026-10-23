@@ -22,7 +22,7 @@ type PublicVisitorControl interface {
 	streamCapacityClient
 }
 
-type publicVisitorRun struct {
+type preparedVisitorRun struct {
 	policy        *visitorPolicy
 	capacity      *streamCapacity
 	mu            sync.Mutex
@@ -31,7 +31,7 @@ type publicVisitorRun struct {
 	nextExpansion time.Time
 }
 
-func (r *publicVisitorRun) close(ctx context.Context) {
+func (r *preparedVisitorRun) close(ctx context.Context) {
 	r.policy.Close()
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
@@ -40,7 +40,7 @@ func (r *publicVisitorRun) close(ctx context.Context) {
 	}
 }
 
-func (r *publicVisitorRun) active() bool {
+func (r *preparedVisitorRun) active() bool {
 	for _, capacity := range r.capacities() {
 		capacity.pool.mu.Lock()
 		active := len(capacity.pool.active) != 0
@@ -52,13 +52,13 @@ func (r *publicVisitorRun) active() bool {
 	return false
 }
 
-func (r *publicVisitorRun) capacities() []*streamCapacity {
+func (r *preparedVisitorRun) capacities() []*streamCapacity {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]*streamCapacity{r.capacity}, r.additional...)
 }
 
-func (r *publicVisitorRun) expand(ctx context.Context, report func(error)) {
+func (r *preparedVisitorRun) expand(ctx context.Context, report func(error)) {
 	var used, delegated int
 	for _, capacity := range r.capacities() {
 		capacity.pool.mu.Lock()
@@ -85,7 +85,7 @@ func (r *publicVisitorRun) expand(ctx context.Context, report func(error)) {
 	r.mu.Unlock()
 }
 
-func (r *publicVisitorRun) reserve(visitor string, source netip.Addr, stop func()) (*streamReservation, *visitorlease.ReservationGuard, error) {
+func (r *preparedVisitorRun) reserve(visitor string, source netip.Addr, stop func()) (*streamReservation, *visitorlease.ReservationGuard, error) {
 	for _, capacity := range r.capacities() {
 		reservation, err := capacity.reserve(visitor, stop)
 		if err != nil {
@@ -151,11 +151,11 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 	defer func() {
 		c.mu.Lock()
 		runs := c.publicVisitors
-		c.publicVisitors = make(map[string]*publicVisitorRun)
+		c.publicVisitors = make(map[string]*preparedVisitorRun)
 		c.mu.Unlock()
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		jobs := make(chan *publicVisitorRun)
+		jobs := make(chan *preparedVisitorRun)
 		var workers sync.WaitGroup
 		for range min(8, len(runs)) {
 			workers.Go(func() {
@@ -199,7 +199,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		}
 		c.routingTable.mu.RUnlock()
 		c.mu.Lock()
-		var retired []*publicVisitorRun
+		var retired []*preparedVisitorRun
 		for id, run := range c.publicVisitors {
 			_, present := current[id]
 			owner := run.capacity.owner
@@ -209,7 +209,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 			}
 		}
 		var pending []string
-		var existing []*publicVisitorRun
+		var existing []*preparedVisitorRun
 		for id := range current {
 			if c.publicVisitors[id] == nil {
 				pending = append(pending, id)
@@ -258,7 +258,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 					_ = capacity.Close(ctx)
 					return
 				}
-				run := &publicVisitorRun{policy: policy, capacity: capacity, limit: limits.Connections}
+				run := &preparedVisitorRun{policy: policy, capacity: capacity, limit: limits.Connections}
 				c.mu.Lock()
 				c.publicVisitors[entry.PublishRunId] = run
 				c.mu.Unlock()

@@ -96,7 +96,7 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 	defer upstream.Close()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL,
-		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease, VisitorTokens: authority.tokens,
 		BrowserAccess: &browserAccess{client: client, runID: "run_test", version: 1},
 	})
 	if err != nil {
@@ -121,7 +121,7 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 	authority.mu.Lock()
 	client.revoked = true
 	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	authority.tokens.refresh(t.Context(), nil)
@@ -168,7 +168,7 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	access := &shareAccess{client: client, runID: "pr_test", version: 1}
 	decisions := &shareHeaderDecisionClient{shareID: client.shareID, cookieSecret: client.cookie}
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
-		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+		PublicURLID: certificateTestPublicURLID, VisitorPolicy: authority.policy.Lease, VisitorTokens: authority.tokens,
 		BrowserAccess: &browserAccess{client: decisions, runID: "run_test", version: 1}})
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 	client.active = false
 	authority.mu.Unlock()
 	decisions.revoked = true
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	authority.tokens.refresh(t.Context(), nil)
@@ -264,7 +264,7 @@ func TestShareVisitorClearsDeniedTLSDeadlineAfterRealHandshake(t *testing.T) {
 	authority := preparedShareAuthority(t, client)
 	access := &shareAccess{client: client, runID: "pr_test", version: 1}
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+		VisitorPolicy: authority.policy.Lease, VisitorTokens: authority.tokens,
 		Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
 		Certificate: publicURLTestCertificate(t, "route.example"),
 	})

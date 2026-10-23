@@ -9,6 +9,19 @@ import (
 
 const MaxInitialBytes = 64 << 10
 
+func WriteConnectorVisitorOpening(w io.Writer, h ConnectorVisitorEntry, initial []byte) (bool, error) {
+	return writeOpening(w, nil, initial, func(w io.Writer) error { return WriteConnectorVisitorEntry(w, h) })
+}
+
+func ReadConnectorVisitorOpening(r io.Reader) (ConnectorVisitorEntry, []byte, error) {
+	h, err := ReadConnectorVisitorEntry(r)
+	if err != nil {
+		return h, nil, err
+	}
+	initial, err := ReadInitialBytes(r)
+	return h, initial, err
+}
+
 // an opening is one bounded header followed by a length-prefixed initial byte
 // block. subsequent request bytes are raw. the sender does not wait for a reply.
 func WriteVisitorOpening(w io.Writer, h VisitorStreamHeader, initial []byte) (bool, error) {

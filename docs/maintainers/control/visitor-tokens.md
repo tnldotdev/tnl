@@ -58,6 +58,12 @@ reply contains a consistent snapshot and the policy revisions it covers. Control
 keeps 256 events per resource; a reader that falls behind needs a full snapshot.
 Failed requests leave the last confirmed deadline unchanged.
 
+[`publisher/visitorpolicy`](../../../internal/publisher/visitorpolicy) owns the
+run-bound publisher fetch lifetime. Public URL and service runtimes both compose
+it and depend on the policy lease below it. Keeping this owner below both
+runtimes lets service publication reuse the same renewal and join behavior
+without importing the public publisher process owner.
+
 [`visitorlease`](../../../internal/policy/visitorlease) checks update order and
 owns the local deadline. It fences replies that arrive after their lease expires
 and stops affected admissions when permission, key trust, or freshness ends.
@@ -93,6 +99,32 @@ A changed policy revision gives an active renewable request only its last
 confirmed policy window while the credential owner obtains fresh permission.
 Unrelated policy updates cannot extend that window. The run cancels and joins
 renewal work before discarding its private source credentials.
+
+## native preparation
+
+One service connector prepares its approved metadata and signed device or
+workload permission together before accepting local sockets. The connector
+refreshes that private snapshot every two seconds; socket setup reads it locally
+instead of selecting a run through control. Its deadline starts before the fetch
+and ends within ten seconds, or earlier at the metadata or token deadline.
+
+A changed approved metadata revision stops that service's listener and active
+connections so the owner can prepare it again. Outages retain only the last
+confirmed window. Malformed replies and explicit denials stop the service;
+shutdown cancels and joins pending preparation before releasing its control
+client. Tokens and signing operations remain inside the native process, outside
+the read-only connection metadata returned to SDKs.
+
+Each native opening carries that permission, a visitor connection ID, and the
+approved metadata revision. Its key proof covers the authenticated connector
+session, visitor ID, token, revision, and bounded initial bytes. Ingress checks
+the proof against its prepared service policy before making a stream decision.
+Service routing is prepared independently of visitor arrivals; a missing or
+expired local projection rejects setup without starting a routing fetch.
+
+The opening proves possession and approved metadata; control's per-stream
+admission and publisher rechecks still own active native stream authority.
+Their records also supply audit identity and source attribution.
 
 ## stream capacity
 
