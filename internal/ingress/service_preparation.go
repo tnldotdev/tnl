@@ -64,7 +64,17 @@ func (p *Connector) Run(ctx context.Context) error {
 	if p.config.VisitorControl == nil {
 		return ErrServiceAdmission
 	}
-	return runUntilEitherStops(ctx, p.runServiceRouting, p.runServiceVisitors)
+	p.mu.Lock()
+	if p.closed || p.preparationStarted || p.admissions.Err() != nil {
+		p.mu.Unlock()
+		return ErrServiceAdmission
+	}
+	lifetime, cancel := context.WithCancel(ctx)
+	p.preparationStarted, p.stopPreparation, p.preparationDone = true, cancel, make(chan struct{})
+	done := p.preparationDone
+	p.mu.Unlock()
+	defer func() { cancel(); close(done) }()
+	return runUntilEitherStops(lifetime, p.runServiceRouting, p.runServiceVisitors)
 }
 
 func (p *Connector) runServiceRouting(ctx context.Context) error {
@@ -99,9 +109,11 @@ func (p *Connector) runServiceVisitors(ctx context.Context) error {
 		runs := p.prepared
 		p.prepared = make(map[string]*preparedVisitorRun)
 		p.mu.Unlock()
+		retired := make([]*preparedVisitorRun, 0, len(runs))
 		for _, run := range runs {
-			run.close(ctx)
+			retired = append(retired, run)
 		}
+		retirePreparedVisitors(ctx, retired)
 	}()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -133,9 +145,7 @@ func (p *Connector) runServiceVisitors(ctx context.Context) error {
 			}
 		}
 		p.mu.Unlock()
-		for _, run := range retired {
-			run.close(ctx)
-		}
+		retirePreparedVisitors(ctx, retired)
 		for id, entry := range current {
 			p.mu.Lock()
 			run := p.prepared[id]
