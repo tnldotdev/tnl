@@ -194,6 +194,7 @@ membership or grant rules.
 | **visitor connection ID**   | The unique identifier used to correlate one visitor connection across ingress, relay, and publisher.                                                                          |
 | **visitor stream**          | One multiplexed stream that carries a visitor connection through a relay to the publisher and back.                                                                           |
 | **visitor token**           | A control-signed credential authorizing a visitor to access one public URL or service; serving processes verify its scope, expiry, binding, and current policy state locally. |
+| **stream reservation**      | One connection's held slot in a bounded control allocation, bound to its resource, run, visitor, and exact ingress process lease; it grants capacity, not visitor permission. |
 | **visitor policy revision** | A resource's current visitor permission version; distinct from management policy, routing revisions, and run numbers.                                                         |
 | **internal forwarding**     | Sending a visitor connection from ingress to a connected relay over an authenticated internal connection.                                                                     |
 | **retry boundary**          | The first visitor byte sent to a relay. Ingress may try another relay before this point but never afterward.                                                                  |
@@ -288,6 +289,8 @@ membership or grant rules.
 | Publisher connection credential | `publisher_connection_credential`                    |
 | Visitor connection ID           | `visitor_connection_id`                              |
 | Visitor token                   | `visitor_token`                                      |
+| Stream reservation ID           | `reservation_id`                                     |
+| Stream capacity allocation ID   | `allocation_id`                                      |
 | Visitor policy revision         | `visitor_policy_revision`                            |
 | Ingress identity                | `ingress_id`                                         |
 | Ingress process run ID          | `ingress_run_id`                                     |

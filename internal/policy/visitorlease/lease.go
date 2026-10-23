@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"errors"
+	"maps"
 	"net/netip"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var ErrUpdate = errors.New("visitor policy update is stale or incomplete")
@@ -28,6 +31,7 @@ type Update struct {
 	AfterRevision      int64
 	Events             []int64
 	Snapshot           bool
+	Allocations        map[string]controlv1.StreamCapacityAllocation
 }
 
 type Request struct {
@@ -47,6 +51,9 @@ type Lease struct {
 	current, closed          bool
 	timer                    *time.Timer
 	guards                   map[*Guard]struct{}
+	reservations             map[reservationSlot]*ReservationGuard
+	sequences                map[reservationSlot]uint64
+	visitors                 map[string]*ReservationGuard
 }
 
 func New(scope visitorscope.Scope, now func() time.Time) (*Lease, error) {
@@ -56,7 +63,7 @@ func New(scope visitorscope.Scope, now func() time.Time) (*Lease, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Lease{scope: scope, now: now, guards: make(map[*Guard]struct{})}, nil
+	return &Lease{scope: scope, now: now, guards: make(map[*Guard]struct{}), reservations: make(map[reservationSlot]*ReservationGuard), sequences: make(map[reservationSlot]uint64), visitors: make(map[string]*ReservationGuard)}, nil
 }
 
 func (l *Lease) Begin() Request {
@@ -84,8 +91,10 @@ func (l *Lease) Apply(request Request, update Update) error {
 			}
 		}
 	}
+	reservations := l.checkReservationsLocked(now)
 	l.mu.Unlock()
 	stopGuards(stopped)
+	stopReservations(reservations)
 	return err
 }
 
@@ -93,6 +102,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 	view := update.View
 	duration := view.ValidUntil.Sub(view.ObservedAt)
 	if l.closed || request.epoch != l.epoch || request.sequence <= l.applied || request.sequence > l.sequence || request.StartedAt.IsZero() || now.Before(request.StartedAt) ||
+		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
 		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || len(view.Keys) > 64 {
 		return ErrUpdate
@@ -127,6 +137,15 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		workloads[id] = parent
 	}
 	view.Keys, view.Workloads = keys, workloads
+	if len(update.Allocations) > 2048 {
+		return ErrUpdate
+	}
+	for id, a := range update.Allocations {
+		if id != a.Id || !validAllocation(a, l.scope) {
+			return ErrUpdate
+		}
+	}
+	update.Allocations = maps.Clone(update.Allocations)
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil
@@ -149,6 +168,27 @@ func (l *Lease) Current() (visitortoken.View, bool, bool) {
 	l.mu.Unlock()
 	stopGuards(stopped)
 	return view, enabled, anonymous
+}
+
+func (l *Lease) ValidateReservation(reservation tunnelv1.StreamReservation) error {
+	if reservation.Validate() != nil {
+		return ErrUpdate
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.validateReservationLocked(reservation, l.now())
+}
+
+func (l *Lease) validateReservationLocked(reservation tunnelv1.StreamReservation, now time.Time) error {
+	if reservation.Validate() != nil || !l.current || !l.update.Enabled || !now.Before(l.update.View.ValidUntil) {
+		return visitortoken.ErrPolicy
+	}
+	a, found := l.update.Allocations[reservation.AllocationID]
+	if !found || a.Retired || reservation.Slot >= uint32(a.Capacity) || !a.ValidUntil.After(l.update.View.AuthorityTime(now)) || string(a.Resource.Kind) != reservation.ResourceKind || a.Resource.Id != reservation.ResourceID ||
+		a.RunId != reservation.RunID || uint64(a.RunNumber) != reservation.RunNumber || a.IngressId != reservation.IngressID || a.IngressRunId != reservation.IngressRunID || uint64(a.IngressLeaseRevision) != reservation.IngressLeaseRevision {
+		return ErrUpdate
+	}
+	return nil
 }
 
 func (l *Lease) allowedLocked(permission visitortoken.Permission, source netip.Addr, now time.Time) bool {
@@ -249,8 +289,10 @@ func (l *Lease) expireLocked(now time.Time) []*Guard {
 func (l *Lease) expire() {
 	l.mu.Lock()
 	stopped := l.expireLocked(l.now())
+	reservations := l.checkReservationsLocked(l.now())
 	l.mu.Unlock()
 	stopGuards(stopped)
+	stopReservations(reservations)
 }
 
 func (l *Lease) Close() {
@@ -266,8 +308,12 @@ func (l *Lease) Close() {
 		guards = append(guards, guard)
 		delete(l.guards, guard)
 	}
+	reservations := l.checkReservationsLocked(l.now())
+	clear(l.sequences)
+	clear(l.visitors)
 	l.mu.Unlock()
 	stopGuards(guards)
+	stopReservations(reservations)
 }
 
 func stopGuards(guards []*Guard) {

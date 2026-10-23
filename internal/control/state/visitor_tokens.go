@@ -64,6 +64,7 @@ type IssuedVisitorToken struct {
 type visitorResource struct {
 	Scope            visitorscope.Scope
 	TeamID, Hostname string
+	IngressPoolID    string
 	Port             uint16
 	Revision         int64
 	Anonymous        bool
@@ -88,6 +89,7 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 			return resource, ErrVisitorPermission
 		}
 		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.AccessMode == "anonymous"
+		resource.IngressPoolID = row.IngressPoolID
 		if row.ExpiresAt.Valid {
 			resource.ExpiresAt = row.ExpiresAt.Time
 		}
@@ -103,6 +105,7 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 			return resource, ErrVisitorPermission
 		}
 		resource.TeamID, resource.Hostname, resource.Port = row.TeamID, row.CertificateHostname, uint16(row.ServicePort.Int32)
+		resource.IngressPoolID = row.IngressPoolID
 	}
 	var err error
 	resource.Revision, err = q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID})

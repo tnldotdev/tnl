@@ -64,6 +64,20 @@ The local deadline starts before the policy request. Token times are checked
 using control's observation time plus elapsed local time, so clock differences
 and slow replies cannot add authorization time.
 
+## stream capacity
+
+A visitor token grants permission, not capacity. Control delegates bounded
+portions of a run's connection limit to exact ingress process leases. Each
+allocation lasts at most ten seconds and is renewed in the background. Retiring
+or restarting an owner does not make its slots available before that deadline.
+
+Ingress reserves a local slot before forwarding. Each use has a new reservation
+ID and an increasing slot sequence. The publisher checks the current allocation
+and retains the sequence after release, preventing replay through either relay
+connection. Both relay connections also share the publisher's final run limit.
+Allocation or policy expiry stops held connections. These connection slots are
+separate from HTTP request concurrency, rate, and byte limits.
+
 ## certificate binding
 
 For native TLS clients, control puts the same token in the certificate's standard

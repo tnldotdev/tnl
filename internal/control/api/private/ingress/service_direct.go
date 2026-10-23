@@ -30,6 +30,9 @@ func (s *service) privateStateError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, controlstate.ErrStreamCapacity) {
+		return serviceapi.NewProblemError(http.StatusTooManyRequests, "capacity_exceeded", "stream capacity is unavailable")
+	}
 	if errors.Is(err, controlstate.ErrVisitorPolicy) {
 		return serviceapi.NewProblemError(http.StatusServiceUnavailable, "unavailable", "visitor policy is unavailable")
 	}

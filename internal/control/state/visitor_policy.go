@@ -49,7 +49,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	if len(keys) == 0 || len(keys) > maximumVisitorVerificationKeys {
 		return result, ErrVisitorPolicy
 	}
-	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
+	policy := controlv1.VisitorPolicySnapshot{StreamAllocations: []controlv1.StreamCapacityAllocation{}, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
 		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
@@ -200,6 +200,16 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if len(policy.WorkloadLeases) > 4096 {
 			return result, ErrVisitorPolicy
 		}
+	}
+	allocations, err := q.ReadStreamCapacityAllocations(ctx, controlstatedb.ReadStreamCapacityAllocationsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
+	if len(allocations) > 2048 {
+		return result, ErrVisitorPolicy
+	}
+	for _, allocation := range allocations {
+		policy.StreamAllocations = append(policy.StreamAllocations, allocationRecord(allocation, now).Wire())
 	}
 	events, err := q.ReadVisitorPolicyEvents(ctx, controlstatedb.ReadVisitorPolicyEventsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, AfterRevision: after})
 	if err != nil {
