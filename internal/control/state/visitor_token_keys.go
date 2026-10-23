@@ -44,14 +44,32 @@ func (d *Database) PrepareVisitorSigningKeys(ctx context.Context, issuer string,
 	return tx.Commit(ctx)
 }
 
-// the issuer row is the replica-wide serialization point for issuance, rotation,
-// and retirement. resource authorization locks are acquired before this row.
+// startup and rotation establish one issuer for every control replica.
+// issuance reads that value and locks the signing key after resource authority.
 func ensureVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer string) error {
 	canonical, err := naming.CanonicalControlURL(issuer)
 	if err != nil || canonical != issuer || len(issuer) > 256 {
 		return ErrVisitorSigningKey
 	}
 	stored, err := q.EnsureVisitorTokenIssuer(ctx, issuer)
+	if err != nil {
+		return fmt.Errorf("read visitor issuer: %w", err)
+	}
+	if stored != issuer {
+		return ErrVisitorSigningKey
+	}
+	return nil
+}
+
+func currentVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer string) error {
+	canonical, err := naming.CanonicalControlURL(issuer)
+	if err != nil || canonical != issuer || len(issuer) > 256 {
+		return ErrVisitorSigningKey
+	}
+	stored, err := q.ReadVisitorTokenIssuer(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrVisitorSigningKey
+	}
 	if err != nil {
 		return fmt.Errorf("read visitor issuer: %w", err)
 	}
@@ -94,7 +112,7 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 		return "", ErrVisitorSigningKey
 	}
 	q := controlstatedb.New(tx)
-	if err := ensureVisitorIssuer(ctx, q, issuer); err != nil {
+	if err := currentVisitorIssuer(ctx, q, issuer); err != nil {
 		return "", err
 	}
 	row, err := q.LockVisitorTokenSigningKey(ctx)
@@ -124,12 +142,14 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if err != nil {
 		return "", err
 	}
-	changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
-	if err != nil {
-		return "", err
-	}
-	if changed != 1 {
-		return "", ErrVisitorSigningKey
+	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
+		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
+		if err != nil {
+			return "", err
+		}
+		if changed != 1 {
+			return "", ErrVisitorSigningKey
+		}
 	}
 	return token, nil
 }

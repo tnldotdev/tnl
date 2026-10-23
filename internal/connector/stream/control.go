@@ -294,6 +294,10 @@ func (c *controlAdapter) ResolveService(ctx context.Context, service string) (Ru
 		!selected.ExpiresAt.After(time.Now()) || !validProtocol(string(selected.Protocol)) {
 		return Run{}, ErrServiceConnection
 	}
+	permission, err := c.client.IssueDeviceVisitorToken(ctx, service, signer.Subject.DeviceID)
+	if err != nil {
+		return Run{}, err
+	}
 	return Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber),
-		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint}, nil
+		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, Permission: permission}, nil
 }

@@ -34,7 +34,7 @@ const alternateAttemptTimeout = 250 * time.Millisecond
 const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
 
 type PublicURL struct {
-	prepared          *publicVisitorRun
+	prepared          *preparedVisitorRun
 	ID                string
 	PublishRunNumber  uint64
 	RecoveryEpisodeID uint64

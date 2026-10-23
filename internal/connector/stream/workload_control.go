@@ -235,5 +235,9 @@ func (c *workloadControl) resolve(ctx context.Context, service string) (Run, err
 	if r.ServiceId != service || !visitorsubject.Equal(r.Subject, c.subject) || !opaqueid.Valid(r.ServiceRunId, opaqueid.ServiceRunPrefix) || r.RunNumber < 1 || r.TrustRevision < 1 || !validProtocol(string(r.Protocol)) || !r.ExpiresAt.After(time.Now()) || r.Endpoint == nil {
 		return Run{}, ErrServiceConnection
 	}
-	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint}, nil
+	permission, err := c.client.PrepareVisitorToken(ctx, service)
+	if err != nil {
+		return Run{}, err
+	}
+	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint, Permission: permission}, nil
 }

@@ -1,4 +1,7 @@
-package publisher
+// package visitorpolicy owns run-bound policy fetching for public URL and service
+// publishers. both runtimes compose this lifetime; it depends only on policy
+// mechanics and control contracts, never on either publication orchestrator.
+package visitorpolicy
 
 import (
 	"context"
@@ -10,20 +13,20 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type visitorPolicyClient interface {
+type Client interface {
 	ReadPublisherVisitorPolicy(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
 }
 
-type visitorPolicy struct {
-	lease   *visitorlease.Lease
-	client  visitorPolicyClient
+type Policy struct {
+	Lease   *visitorlease.Lease
+	client  Client
 	request controlv1.PublisherVisitorPolicyRequest
 	token   string
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
 
-func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
+func Prepare(ctx context.Context, client Client, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*Policy, error) {
 	if client == nil || run == "" || number < 1 || token == "" {
 		return nil, errors.New("visitor policy needs the current publisher run")
 	}
@@ -31,8 +34,8 @@ func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope
 	if err != nil {
 		return nil, err
 	}
-	p := &visitorPolicy{lease: lease, client: client, token: token, done: make(chan struct{}), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
-	if err := p.refresh(ctx); err != nil {
+	p := &Policy{Lease: lease, client: client, token: token, done: make(chan struct{}), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
+	if err := p.Refresh(ctx); err != nil {
 		lease.Close()
 		return nil, err
 	}
@@ -47,7 +50,7 @@ func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope
 			case <-lifetime.Done():
 				return
 			case <-ticker.C:
-				if err := p.refresh(lifetime); err != nil && lifetime.Err() == nil && report != nil {
+				if err := p.Refresh(lifetime); err != nil && lifetime.Err() == nil && report != nil {
 					report(err)
 				}
 			}
@@ -56,10 +59,10 @@ func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope
 	return p, nil
 }
 
-func (p *visitorPolicy) refresh(ctx context.Context) error {
-	request := p.lease.Begin()
+func (p *Policy) Refresh(ctx context.Context) error {
+	request := p.Lease.Begin()
 	body := p.request
-	body.ObservedAllocations = p.lease.ObservedAllocations(body.RunId)
+	body.ObservedAllocations = p.Lease.ObservedAllocations(body.RunId)
 	body.AfterRevision = request.AfterRevision
 	if request.Snapshot {
 		body.AfterRevision = 0
@@ -77,11 +80,14 @@ func (p *visitorPolicy) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return p.lease.Apply(request, update)
+	return p.Lease.Apply(request, update)
 }
 
-func (p *visitorPolicy) Close() {
+func (p *Policy) Close() {
 	p.cancel()
 	<-p.done
-	p.lease.Close()
+	p.Lease.Close()
 }
+
+func (*Policy) String() string   { return "publisher visitor policy" }
+func (*Policy) GoString() string { return "publisher visitor policy" }

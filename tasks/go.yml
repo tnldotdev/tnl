@@ -261,7 +261,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Verify signed visitor permissions and local policy deadlines without external infrastructure
     cmds:
-      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(Policy|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|BrowserTokens|LocalHTTPPermission|BearerRenewalProof|VisitorPolicyRevision|Token|NativeProof)' -count=1
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/publisher/visitorpolicy ./internal/ingress -run='^Test(Policy|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|BrowserTokens|LocalHTTPPermission|BearerRenewalProof|VisitorPolicyRevision|Token|NativeProof)' -count=1
 
   test:fuzz:visitors:
     dir: "{{.ROOT_DIR}}"

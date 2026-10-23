@@ -1,4 +1,4 @@
-package publisher
+package visitorpolicy
 
 import (
 	"context"
@@ -48,12 +48,12 @@ func TestPublisherVisitorPolicyOutageEndsTrafficWithoutVisitorRPCs(t *testing.T)
 	synctest.Test(t, func(t *testing.T) {
 		client := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
 		scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
-		policy, err := prepareVisitorPolicy(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
+		policy, err := Prepare(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer policy.Close()
-		view, enabled, _ := policy.lease.Current()
+		view, enabled, _ := policy.Lease.Current()
 		if !enabled {
 			t.Fatal("publisher became ready without policy")
 		}
@@ -76,7 +76,7 @@ func TestPublisherVisitorPolicyOutageEndsTrafficWithoutVisitorRPCs(t *testing.T)
 			t.Fatal(err)
 		}
 		var stopped atomic.Bool
-		guard, err := policy.lease.Bind(verified, netip.MustParseAddr("192.0.2.1"), func() { stopped.Store(true) })
+		guard, err := policy.Lease.Bind(verified, netip.MustParseAddr("192.0.2.1"), func() { stopped.Store(true) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,13 +87,13 @@ func TestPublisherVisitorPolicyOutageEndsTrafficWithoutVisitorRPCs(t *testing.T)
 		if !stopped.Load() {
 			t.Fatal("background failures extended publisher authority")
 		}
-		if _, enabled, _ := policy.lease.Current(); enabled {
+		if _, enabled, _ := policy.Lease.Current(); enabled {
 			t.Fatal("publisher retained expired visitor policy")
 		}
 		client.fail.Store(false)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
-		if _, enabled, _ := policy.lease.Current(); !enabled {
+		if _, enabled, _ := policy.Lease.Current(); !enabled {
 			t.Fatal("publisher did not recover through a fresh snapshot")
 		}
 	})

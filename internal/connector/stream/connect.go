@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"net"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -53,6 +55,7 @@ func (Assignment) GoString() string { return "private connector assignment" }
 // Run is a current control-selected publisher and its approved TLS metadata.
 // selection never grants a stream: ingress checks the live grant separately.
 type Run struct {
+	Permission              controlv1.VisitorTokenResponse `json:"-"`
 	ServiceID, ServiceRunID string
 	RunNumber               uint64
 	ValidUntil              time.Time
@@ -92,6 +95,7 @@ func (Config) GoString() string { return "private connector configuration" }
 
 type connectorPath struct {
 	*tunnel.ConnectorSession
+	signer    Signer
 	transport tunnel.Transport
 	mu        sync.Mutex
 	active    int
@@ -238,6 +242,11 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
 		return ErrServiceConnection
 	}
+	prepared, err := prepareSelection(serveCtx, config, cancel)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
 	attempted := make(map[string]bool)
@@ -332,7 +341,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			return nil, ErrServiceConnection
 		}
 		lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
-		path := &connectorPath{ConnectorSession: session, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
+		path := &connectorPath{ConnectorSession: session, signer: signer, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
 		go func() {
 			defer close(path.watchDone)
 			select {
@@ -375,28 +384,12 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	forward := func(forwardCtx context.Context, local net.Conn) (retErr error) {
 		forwardCtx, endConnection := observability.Start(observability.Independent(forwardCtx), "connector.visitor_connection")
 		defer func() { endConnection(retErr) }()
-		// resolve approved metadata before opening one publisher stream. native
-		// clients negotiate TLS through it; opaque clients use tnl's TLS helper.
-		selectionCtx, endSelection := observability.Start(forwardCtx, "connector.run_selection")
-		run, err := config.Control.ResolveService(selectionCtx, config.ServiceID)
-		endSelection(err)
+		// only the preparation owner can select metadata or contact control.
+		// native protocols still negotiate through this exact prepared stream.
+		run, err := prepared.current()
 		if err != nil {
 			return err
 		}
-		if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 ||
-			run.Endpoint == nil || !run.ValidUntil.After(time.Now()) {
-			return ErrServiceConnection
-		}
-		protocol := run.Protocol
-		if !validProtocol(protocol) || run.TrustRevision < 1 {
-			return ErrServiceConnection
-		}
-		if protocol != config.Protocol || run.TrustRevision != config.TrustRevision || !sameEndpoint(run.Endpoint, config.Endpoint) {
-			err := metadataReload(config.ServiceID, config.TrustRevision, run.TrustRevision)
-			cancel(err)
-			return err
-		}
-		run.ServiceTLS = config.ServiceTLS
 		if forwardCtx.Err() != nil {
 			return context.Cause(forwardCtx)
 		}
@@ -455,7 +448,11 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		next.Store(0)
 	}
 	finishStartup(nil)
-	return consume(observability.LinkContext(serveCtx, startupCtx), forward)
+	err = consume(observability.LinkContext(serveCtx, startupCtx), forward)
+	if serveCtx.Err() != nil && ctx.Err() == nil {
+		return context.Cause(serveCtx)
+	}
+	return err
 }
 
 func validProtocol(protocol string) bool {
@@ -495,8 +492,18 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	defer stop()
 	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream,
 		ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber}
+	entry.VisitorConnectionID, err = opaqueid.New(opaqueid.VisitorConnectionPrefix)
+	if err != nil {
+		return nil, false, err
+	}
+	entry.MetadataRevision = uint64(run.TrustRevision)
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(run.Permission.VisitorToken), path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+	if err != nil || path.signer.Sign == nil {
+		return nil, false, ErrServiceConnection
+	}
+	entry.Permission = tunnelv1.NativeVisitorPermission{Token: run.Permission.VisitorToken, PublicKey: base64.RawURLEncoding.EncodeToString(path.signer.PublicKey), Signature: base64.RawURLEncoding.EncodeToString(path.signer.Sign(message))}
 	entry.TraceContext = observability.WireTrace(ctx)
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, entry); err != nil {
+	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, entry, nil); err != nil {
 		return nil, false, err
 	}
 	_, endAcceptance := observability.Start(ctx, "connector.acceptance")
@@ -505,7 +512,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	if err != nil {
 		return nil, false, err
 	}
-	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP {
+	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP || accepted.VisitorConnectionID != entry.VisitorConnectionID {
 		return nil, true, ErrServiceConnection
 	}
 	if run.Endpoint == nil {

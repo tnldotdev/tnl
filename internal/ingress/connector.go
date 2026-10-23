@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -44,12 +44,14 @@ type ServiceForwarder interface {
 }
 
 type ConnectorConfig struct {
+	Report                                                       func(error)
 	AuditSink                                                    serviceaudit.Sink
 	Hostname                                                     string
 	IngressPoolID                                                string
 	TLSConfig                                                    *tls.Config
 	Transport                                                    muxsession.TLSYamuxConfig
 	Control                                                      PrivateControl
+	VisitorControl                                               PublicVisitorControl
 	DirectControl                                                DirectControl
 	Forwarder                                                    ServiceForwarder
 	Routing                                                      *ServiceRoutingTable
@@ -73,6 +75,8 @@ type Connector struct {
 	changed                   chan struct{}
 	closed                    bool
 	nextRelay                 atomic.Uint64
+	prepared                  map[string]*preparedVisitorRun
+	lastPreparationReport     time.Time
 }
 
 func NewConnector(config ConnectorConfig) (*Connector, error) {
@@ -126,7 +130,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 		config.IngressPoolID = "ingress-a"
 	}
 	return &Connector{config: config, services: make(map[string]int), sources: make(map[netip.Addr]int),
-		transports: make(map[muxsession.Session]struct{}), admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
+		transports: make(map[muxsession.Session]struct{}), prepared: make(map[string]*preparedVisitorRun), admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
 }
 
 func (p *Connector) lease(now time.Time) (ingressv1.IngressLease, error) {
@@ -392,6 +396,17 @@ func (p *Connector) AcceptSession(ctx context.Context, transport muxsession.Sess
 			!bound.ExpiresAt.After(time.Now()) {
 			return tunnelv1.ConnectorSessionAccepted{}, ErrServiceAdmission
 		}
+		// the background owner is already discovering service runs. session
+		// startup may wait for it, but stream arrivals cannot initiate fetching.
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for !p.servicePolicyReady(bound.ServiceId) {
+			select {
+			case <-authCtx.Done():
+				return tunnelv1.ConnectorSessionAccepted{}, context.Cause(authCtx)
+			case <-ticker.C:
+			}
+		}
 		authenticated = lease
 		return tunnelv1.ConnectorSessionAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_session_accepted", ServiceID: bound.ServiceId,
 			SessionID: bound.ConnectorSessionId, Subject: hello.Subject, SourceIP: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt}, nil
@@ -561,17 +576,14 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if err := visitor.SetDeadline(deadline); err != nil {
 		return err
 	}
-	entry, err := tunnelv1.ReadConnectorVisitorEntry(visitor)
+	entry, initial, err := tunnelv1.ReadConnectorVisitorOpening(visitor)
 	if err != nil {
 		return ErrServiceAdmission
 	}
 	ctx = observability.ExtractWireTrace(ctx, entry.TraceContext)
 	ctx, finishConnection := observability.Start(ctx, "ingress.connector_visitor_connection")
 	defer func() { finishConnection(retErr) }()
-	visitorID, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	if err != nil {
-		return err
-	}
+	visitorID := entry.VisitorConnectionID
 	ctx = observability.WithVisitor(ctx, visitorID)
 	observability.Visitor(ctx, visitorID)
 	audit, auditErr := serviceaudit.NewPrivateSessionDenial(bound, visitorID)
@@ -585,6 +597,25 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		}
 	}()
 	if !bound.ExpiresAt.After(time.Now()) || entry.RunNumber > uint64(^uint64(0)>>1) {
+		return ErrServiceAdmission
+	}
+	if entry.ServiceID != bound.ServiceId {
+		return ErrServiceAdmission
+	}
+	p.mu.Lock()
+	prepared := p.prepared[entry.ServiceRunID]
+	p.mu.Unlock()
+	if prepared == nil {
+		return ErrServiceAdmission
+	}
+	view, enabled, _ := prepared.policy.lease.Current()
+	subject, subjectErr := visitorsubject.Parse(bound.Subject)
+	public, keyErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.PublicKey)
+	signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
+	if !enabled || view.Scope.ID != entry.ServiceID || subjectErr != nil || keyErr != nil || signatureErr != nil {
+		return ErrServiceAdmission
+	}
+	if _, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, initial, public, signature, time.Now()); err != nil {
 		return ErrServiceAdmission
 	}
 	if !admission.selectService(entry.ServiceID) {
@@ -622,14 +653,11 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		return ErrServiceAdmission
 	}
 	audit, auditErr = serviceaudit.NewPrivateStreamObservation(bound, claimed, "connection.open", "denied", "authorization")
-	routingCtx, endRouting := observability.Start(streamCtx, "ingress.routing_refresh")
-	err = p.refreshRouting(routingCtx, lease)
-	endRouting(err)
-	if err != nil {
-		audit.Outcome, audit.Reason = "failed", "unavailable"
-		return err
+	current, err = p.lease(time.Now())
+	if err != nil || !samePrivateLease(current, lease) {
+		return ErrServiceAdmission
 	}
-	projection, ok := p.config.Routing.Lookup(entry.ServiceID, entry.ServiceRunID, int64(entry.RunNumber), time.Now())
+	projection, ok := p.ServiceRoute(entry.ServiceID, entry.ServiceRunID, int64(entry.RunNumber), time.Now())
 	if !ok {
 		return ErrServiceAdmission
 	}
@@ -673,6 +701,17 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if !claimed.ValidUntil.After(time.Now()) {
 			_ = candidate.Close()
 			return ErrServiceAdmission
+		}
+		if len(initial) > 0 {
+			// buffered visitor bytes commit this attempt; never replay a partial
+			// write to another relay even when no return byte has arrived.
+			if written, err := writeSetup(streamCtx, candidate, nil, initial); err != nil {
+				_ = candidate.Close()
+				if written == 0 {
+					continue
+				}
+				return err
+			}
 		}
 		accepted.PublisherConnectionID, accepted.ConnectionAssignmentRevision = relay.PublisherConnectionId, uint64(relay.ConnectionAssignmentRevision)
 		if err := tunnelv1.WriteConnectorVisitorAccepted(visitor, accepted); err != nil {

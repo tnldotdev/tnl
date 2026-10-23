@@ -30,6 +30,9 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	}
 	t.Cleanup(d.Close)
 	now := time.Now()
+	if err := d.PrepareVisitorSigningKeys(t.Context(), "https://control.example.test", now); err != nil {
+		t.Fatal(err)
+	}
 	session, err := controltest.Session(t.Context(), d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)

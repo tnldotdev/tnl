@@ -135,7 +135,7 @@ func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			}
 			defer stream.Close()
 			_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
-			if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+			if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {

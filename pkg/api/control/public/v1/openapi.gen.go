@@ -3729,8 +3729,11 @@ type VisitorPolicySnapshot struct {
 	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
 	Issuer      string           `json:"issuer"`
 	KeyRevision int64            `json:"key_revision"`
-	ObservedAt  time.Time        `json:"observed_at"`
-	Port        int              `json:"port"`
+
+	// MetadataRevision current service metadata revision; zero for public URLs.
+	MetadataRevision int64     `json:"metadata_revision"`
+	ObservedAt       time.Time `json:"observed_at"`
+	Port             int       `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource              VisitorResourceScope       `json:"resource"`

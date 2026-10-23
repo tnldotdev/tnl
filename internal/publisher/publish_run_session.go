@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -119,11 +120,11 @@ func runSession(
 	if config.VisitorControl != nil {
 		visitorClient = config.VisitorControl
 	}
-	policyClient, ok := visitorClient.(visitorPolicyClient)
+	policyClient, ok := visitorClient.(visitorpolicy.Client)
 	if !ok {
 		return errors.New("publisher visitor policy client is required")
 	}
-	policy, err := prepareVisitorPolicy(ctx, policyClient, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
+	policy, err := visitorpolicy.Prepare(ctx, policyClient, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
 		int64(version), publishRunToken.String(), func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: visitor policy renewal failed")
@@ -184,7 +185,7 @@ func runSession(
 		if !ok {
 			return errors.New("publisher visitor token client is required")
 		}
-		browserRenewal, err = startBrowserTokens(ctx, issuer, policy.lease, func(error) {
+		browserRenewal, err = startBrowserTokens(ctx, issuer, policy.Lease, func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: browser visitor token renewal failed")
 			}
@@ -206,7 +207,7 @@ func runSession(
 		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
-		VisitorPolicy:         policy.lease,
+		VisitorPolicy:         policy.Lease,
 		VisitorTokens:         browserRenewal,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,

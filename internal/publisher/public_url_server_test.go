@@ -26,6 +26,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -60,12 +61,12 @@ func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*Public
 		if run == "" {
 			run = "pr_0123456789abcdefghijkl"
 		}
-		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, run, max(1, int64(config.PublishRunNumber)), "fixture-run-token", nil)
+		policy, err := visitorpolicy.Prepare(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, run, max(1, int64(config.PublishRunNumber)), "fixture-run-token", nil)
 		if err != nil {
 			return nil, err
 		}
 		t.Cleanup(policy.Close)
-		config.VisitorPolicy = policy.lease
+		config.VisitorPolicy = policy.Lease
 	}
 	if (config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http) && config.BrowserAccess == nil {
 		config.BrowserAccess = &browserAccess{client: &testVisitorControl{}, publicURLID: config.PublicURLID,

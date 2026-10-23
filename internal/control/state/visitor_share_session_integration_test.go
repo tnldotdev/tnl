@@ -15,6 +15,7 @@ import (
 
 func TestIntegrationVisitorShareSessionTokenUsesCapturedHostAndCurrentAuthority(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_share_session")
+	prepareVisitorTokenKeys(t, d, now)
 	request := oidcRouteRequest(t, d, now)
 	url := createTestPublicURL(t, d, request, now)
 	otherRequest := request

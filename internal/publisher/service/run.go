@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -40,6 +41,7 @@ type Prepared struct {
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *publisher.ServiceHTTPRequestLimits
+	policy              *visitorlease.Lease
 }
 
 // mutable certificate state stays behind a pointer so redacted value

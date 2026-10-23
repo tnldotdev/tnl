@@ -338,7 +338,14 @@ func (d *daemon) startIngressRuntime(
 		})
 		privateConfig := ingress.ConnectorConfig{Hostname: runtimeConfig.privateHostname, TLSConfig: transportTLS, IngressPoolID: string(settings.ingressPoolID),
 			Control: privateControl, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: controller.Lease, AuditSink: runtime.audit}
+		privateConfig.Report = func(err error) {
+			logOperationalError(ctx, "prepare private visitors", failure.ServerControlConnectionFailed, err)
+		}
 		privateConfig.DirectControl, _ = runtimeConfig.client.(ingress.DirectControl)
+		privateConfig.VisitorControl, _ = runtimeConfig.client.(ingress.PublicVisitorControl)
+		if privateConfig.VisitorControl == nil {
+			return errors.New("private ingress visitor preparation operations are required")
+		}
 		if runtimeConfig.configurePrivate != nil {
 			runtimeConfig.configurePrivate(&privateConfig)
 		}
@@ -348,6 +355,7 @@ func (d *daemon) startIngressRuntime(
 			return err
 		}
 		runtime.private = private
+		d.start("prepare private visitors", func() error { return private.Run(ctx) })
 		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges.Ranges()
 		ingressConfig.PrivateHostname, ingressConfig.Connector = runtimeConfig.privateHostname, private
 		if !runtimeConfig.disableConnectorQUIC {

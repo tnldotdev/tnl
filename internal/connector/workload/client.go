@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -282,6 +283,26 @@ func (c *Client) CheckService(ctx context.Context, service string) (controlv1.Wo
 		return controlv1.WorkloadServiceAuthorization{}, err
 	}
 	return c.control.CheckWorkloadService(ctx, r.Credential, service)
+}
+
+// PrepareVisitorToken keeps the workload source credential inside explicit
+// preparation. ordinary service sockets receive only the signed permission.
+func (c *Client) PrepareVisitorToken(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	if !r.LeaseExpiresAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+		return controlv1.VisitorTokenResponse{}, ErrSessionExpired
+	}
+	if !slices.Contains(r.ServiceIds, service) {
+		return controlv1.VisitorTokenResponse{}, invalidSession()
+	}
+	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: r.Credential})
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	return c.control.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Source: source})
 }
 func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string) (controlv1.WorkloadIngressAssignments, error) {
 	r, err := c.Session()

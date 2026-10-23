@@ -14,6 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -222,6 +224,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	defer bound.Invalidate()
 	bound.streamCapacity = int(config.StreamCapacity)
+	policy, err := visitorpolicy.Prepare(ctx, managedControl, visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId}, setup.ServiceRunId, setup.RunNumber, setup.RunToken, nil)
+	if err != nil {
+		return err
+	}
+	defer policy.Close()
+	prepared.policy = policy.Lease
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State)
