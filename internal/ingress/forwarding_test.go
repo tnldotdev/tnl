@@ -172,7 +172,11 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
 
 	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
-		_, err := backend.Open(ingressContext(t), visitorConnectionID)
+		stream, err := backend.Open(ingressContext(t), visitorConnectionID)
+		if err == nil {
+			_, err = stream.Read(make([]byte, 1))
+			_ = stream.Close()
+		}
 		var protocolError *tunnel.ProtocolError
 		if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("Open(%q) error = %v; want stale connection assignment", visitorConnectionID, err)

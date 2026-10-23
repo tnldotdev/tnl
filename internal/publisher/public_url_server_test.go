@@ -330,13 +330,13 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	// the same publisher connection.
 	openCtx, stopOpen := context.WithTimeout(ctx, 2*time.Second)
 	defer stopOpen()
-	stream, err := acceptedRelay.session.OpenVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
+	stream, err := acceptedRelay.session.StartVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: "visitor_connection_1", PublicURLID: ref.PublicURLID,
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
 		PublisherConnectionID:        ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,8 +353,8 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	if _, err := malformed.Write([]byte{0, 0, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
-	badResponse, err := tunnelv1.ReadStreamResponse(malformed)
-	if err != nil || badResponse.Type != tunnelv1.StreamRejected || badResponse.Code != tunnelv1.InvalidMessage {
+	badResponse, err := tunnelv1.ReadReturnFrame(malformed)
+	if err != nil || badResponse.Kind != tunnelv1.ReturnRejected || badResponse.Code != tunnelv1.InvalidMessage {
 		t.Fatalf("malformed stream response = %+v, %v", badResponse, err)
 	}
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {

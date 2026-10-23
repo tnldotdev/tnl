@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
@@ -60,7 +61,7 @@ func validReadyPublisherConnections(
 ) ([]controlstatedb.ListValidReadyPublisherConnectionsRow, error) {
 	connections, err := queries.ListValidReadyPublisherConnections(
 		ctx, controlstatedb.ListValidReadyPublisherConnectionsParams{
-			PublishRunID: publishRunID, Now: timestamptz(now),
+			PublishRunID: publishRunID, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version,
 		},
 	)
 	if err != nil {

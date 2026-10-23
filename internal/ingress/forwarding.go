@@ -31,7 +31,7 @@ type ForwarderConfig struct {
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and opens
-// acknowledged internal-forwarding streams for visitor connections.
+// pipelined internal-forwarding streams for visitor connections.
 type Forwarder struct {
 	connector       relayConnector
 	observer        OperationObserver
@@ -223,18 +223,21 @@ type forwardingBackend struct {
 	header    tunnelv1.InternalForwardingHeader
 }
 
-// Open waits for the relay to accept an internal forwarding stream. the caller
-// owns the stream, not the pooled session; acceptance does not establish visitor
-// TLS or prove that the local service is healthy.
+// Open sends a metadata-only opening. the caller owns the stream, not the
+// pooled session; remote acceptance or rejection arrives on return-side reads.
 func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return b.open(ctx, visitorConnectionID, false)
+	return b.open(ctx, visitorConnectionID, false, nil, nil)
 }
 
 func (b forwardingBackend) OpenPending(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return b.open(ctx, visitorConnectionID, true)
+	return b.open(ctx, visitorConnectionID, true, nil, nil)
 }
 
-func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (result net.Conn, retErr error) {
+func (b forwardingBackend) Start(ctx context.Context, visitorID string, pending bool, proxy, initial []byte) (net.Conn, error) {
+	return b.open(ctx, visitorID, pending, proxy, initial)
+}
+
+func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool, proxy, initial []byte) (result net.Conn, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.relay_attempt")
 	defer func() { finish(retErr) }()
 	header := b.header
@@ -260,8 +263,18 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 			b.forwarder.pending[visitorConnectionID] = binding
 			b.forwarder.mu.Unlock()
 		}
-		stream, err := session.OpenInternalForwardingStream(ctx, header)
-		b.forwarder.observe("IngressForwardingAck", err, started)
+		var events *tunnel.ReturnEvents
+		if denied {
+			events = &tunnel.ReturnEvents{Promoted: func(h tunnelv1.AdmissionHeader) error {
+				result := b.forwarder.promoteAdmission(ctx, session, h)
+				if result.Type != tunnelv1.StreamAccepted {
+					return &tunnel.ProtocolError{Code: result.Code}
+				}
+				return nil
+			}}
+		}
+		stream, err := session.StartInternalForwardingStream(ctx, header, proxy, initial, events)
+		b.forwarder.observe("IngressForwardingStart", err, started)
 		if err == nil {
 			if binding != nil {
 				return &pendingForwardingConn{Conn: stream, remove: func() { b.forwarder.removeAdmission(visitorConnectionID, binding) }}, nil
@@ -272,7 +285,8 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 			b.forwarder.removeAdmission(visitorConnectionID, binding)
 		}
 		var protocolError *tunnel.ProtocolError
-		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
+		var opening *tunnel.OpeningError
+		if errors.As(err, &protocolError) || errors.As(err, &opening) && opening.Committed || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
 		// a failed stream does not invalidate a still-usable pooled session.
@@ -401,11 +415,6 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	go f.removeWhenDone(key, entry, session)
-	go func() {
-		_ = session.ServeAdmissions(f.context, tunnelv1.IngressAdmissionStream, func(ctx context.Context, h tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-			return f.promoteAdmission(ctx, session, h)
-		})
-	}()
 }
 
 func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session) bool {

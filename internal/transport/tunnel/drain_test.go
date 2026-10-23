@@ -44,12 +44,12 @@ func TestSessionPublisherDrainRejectsUnexpectedResponses(t *testing.T) {
 		response      tunnelv1.Message
 		want          string
 	}{
-		{"draining/mismatched request ID", false, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: 1, RequestID: "request_other"}, "tunnel: unexpected draining response"},
-		{"draining/unexpected type", false, tunnelv1.Message{Type: tunnelv1.Drained, ProtocolVersion: 1, RequestID: "request_drain_1"}, "tunnel: unexpected draining response"},
-		{"draining/unrelated error", false, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: 1, RequestID: "request_other", Code: tunnelv1.Internal}, "tunnel: unexpected draining response"},
-		{"drained/mismatched request ID", true, tunnelv1.Message{Type: tunnelv1.Drained, ProtocolVersion: 1, RequestID: "request_other"}, "tunnel: unexpected drained response"},
-		{"drained/unexpected type", true, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: 1, RequestID: "request_drain_1"}, "tunnel: unexpected drained response"},
-		{"drained/unrelated error", true, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: 1, RequestID: "request_other", Code: tunnelv1.Internal}, "tunnel: unexpected drained response"},
+		{"draining/mismatched request ID", false, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: "request_other"}, "tunnel: unexpected draining response"},
+		{"draining/unexpected type", false, tunnelv1.Message{Type: tunnelv1.Drained, ProtocolVersion: tunnelv1.Version, RequestID: "request_drain_1"}, "tunnel: unexpected draining response"},
+		{"draining/unrelated error", false, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version, RequestID: "request_other", Code: tunnelv1.Internal}, "tunnel: unexpected draining response"},
+		{"drained/mismatched request ID", true, tunnelv1.Message{Type: tunnelv1.Drained, ProtocolVersion: tunnelv1.Version, RequestID: "request_other"}, "tunnel: unexpected drained response"},
+		{"drained/unexpected type", true, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: "request_drain_1"}, "tunnel: unexpected drained response"},
+		{"drained/unrelated error", true, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version, RequestID: "request_other", Code: tunnelv1.Internal}, "tunnel: unexpected drained response"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client, server := newAuthenticatedPair(t)
@@ -60,7 +60,7 @@ func TestSessionPublisherDrainRejectsUnexpectedResponses(t *testing.T) {
 				}
 				if err == nil && test.afterDraining {
 					err = tunnelv1.WriteControl(server.control, tunnelv1.Message{
-						Type: tunnelv1.Draining, ProtocolVersion: 1, RequestID: request.RequestID,
+						Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
 					})
 				}
 				if err == nil {
@@ -90,11 +90,11 @@ func TestSessionPublisherDrainPreservesProtocolError(t *testing.T) {
 				request, err := tunnelv1.ReadControl(server.control)
 				if err == nil && afterDraining {
 					err = tunnelv1.WriteControl(server.control, tunnelv1.Message{
-						Type: tunnelv1.Draining, ProtocolVersion: 1, RequestID: request.RequestID,
+						Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID,
 					})
 				}
 				if err == nil {
-					err = tunnelv1.WriteControl(server.control, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: 1, RequestID: request.RequestID, Code: tunnelv1.Internal})
+					err = tunnelv1.WriteControl(server.control, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, Code: tunnelv1.Internal})
 				}
 				return err
 			})
@@ -116,7 +116,7 @@ func TestSessionPublisherDrainCancellationUnblocksRequester(t *testing.T) {
 	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
 		request, err := tunnelv1.ReadControl(server.control)
 		if err == nil {
-			err = tunnelv1.WriteControl(server.control, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: 1, RequestID: request.RequestID})
+			err = tunnelv1.WriteControl(server.control, tunnelv1.Message{Type: tunnelv1.Draining, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID})
 		}
 		if err == nil {
 			close(sent)

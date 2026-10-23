@@ -640,7 +640,7 @@ func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, t
 		t.Fatal(err)
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
-	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: service, SessionID: a.SessionID, Credential: a.Credential, Subject: signer.Subject, Nonce: nonce}
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: service, SessionID: a.SessionID, Credential: a.Credential, Subject: signer.Subject, Nonce: nonce}
 	dial := func(h tunnelv1.ConnectorSessionHello) (*tunnel.ConnectorSession, error) {
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 		defer cancel()
@@ -694,7 +694,7 @@ func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, t
 	}
 	defer stream.Close()
 	run, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, tunnelv1.ConnectorVisitorEntry{ProtocolVersion: 1, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service, ServiceRunID: run, RunNumber: 1}); err != nil {
+	if err = tunnelv1.WriteConnectorVisitorEntry(stream, tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service, ServiceRunID: run, RunNumber: 1}); err != nil {
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))

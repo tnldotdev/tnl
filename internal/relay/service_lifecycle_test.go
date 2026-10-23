@@ -143,7 +143,7 @@ func openPrivateLifecycle(ctx context.Context, c *serviceConnection, h tunnelv1.
 	if err := c.paths.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.paths.session.OpenServiceForwardingStream(ctx, h)
+	stream, err := c.paths.session.StartServiceForwardingStream(ctx, h, nil, nil)
 	return c.paths.finishOpen(stream, err)
 }
 
@@ -160,6 +160,7 @@ func TestPrivateLifecycleCloseAndForcedDrainInterruptPendingOpen(t *testing.T) {
 			opened := relayWorker(t, func() { _ = c.paths.Close() }, func() error {
 				stream, err := openPrivateLifecycle(ctx, c, header)
 				if stream != nil {
+					_, err = stream.Read(make([]byte, 1))
 					_ = stream.Close()
 				}
 				return err
@@ -258,14 +259,23 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	}
 }
 
-func TestPrivateLifecycleDrainRejectsLatePendingAcknowledgement(t *testing.T) {
+func TestPrivateLifecycleDrainRejectsLateOpeningCompletion(t *testing.T) {
 	c, publisher, registry, header := privateLifecycleFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	opened := relayWorker(t, func() { _ = c.paths.Close() }, func() error {
-		stream, err := openPrivateLifecycle(ctx, c, header)
-		if stream != nil {
-			_ = stream.Close()
+	finish := make(chan struct{})
+	opened := relayWorker(t, func() { _ = c.paths.Close(); cancel() }, func() error {
+		if err := c.paths.beginOpen(); err != nil {
+			return err
+		}
+		stream, err := c.paths.session.StartServiceForwardingStream(ctx, header, nil, nil)
+		select {
+		case <-finish:
+		case <-ctx.Done():
+		}
+		tracked, err := c.paths.finishOpen(stream, err)
+		if tracked != nil {
+			_ = tracked.Close()
 		}
 		return err
 	})
@@ -279,20 +289,21 @@ func TestPrivateLifecycleDrainRejectsLatePendingAcknowledgement(t *testing.T) {
 	relayAwait(t, waiting.waiting)
 	select {
 	case err := <-drained:
-		t.Fatalf("drain skipped pending acknowledgement: %v", err)
+		t.Fatalf("drain skipped an outstanding opening: %v", err)
 	default:
 	}
 	if err := incoming.Accept(); err != nil {
 		t.Fatal(err)
 	}
+	close(finish)
 	if err := relayAwait(t, opened); !errors.Is(err, ErrDraining) {
-		t.Fatalf("late acknowledgement escaped drain: %v", err)
+		t.Fatalf("late opening completion escaped drain: %v", err)
 	}
 	if err := relayAwait(t, drained); err != nil {
 		t.Fatal(err)
 	}
 	if _, streams := registry.Load(); streams != 0 {
-		t.Fatal("late acknowledgement retained stream capacity")
+		t.Fatal("late opening completion retained stream capacity")
 	}
 }
 

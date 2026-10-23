@@ -312,7 +312,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		rejected = err
 		return incoming.Reject(tunnelv1.DrainingPublisherConnection)
 	}
-	stream, err := connection.paths.session.OpenServiceForwardingStream(ctx, header)
+	stream, err := connection.paths.session.StartServiceForwardingStream(ctx, header, incoming.TakeInitial(), &tunnel.ReturnEvents{Rejected: incoming.ForwardRejection})
 	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")

@@ -209,7 +209,7 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
                 AND leases.relay_run_id = connections.connected_relay_run_id
                 AND leases.relay_lease_revision = connections.connected_relay_lease_revision
                 AND leases.lease_expires_at > sqlc.arg(assigned_at)
-                AND NOT leases.draining AND leases.protocol_version = 1
+                AND NOT leases.draining AND leases.protocol_version = sqlc.arg(protocol_version)
                 AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
           )
           AND EXISTS (
@@ -220,7 +220,7 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
               WHERE services.relay_service_id = connections.relay_service_id
                 AND services.enabled
                 AND leases.lease_expires_at > sqlc.arg(assigned_at)
-                AND NOT leases.draining AND leases.protocol_version = 1
+                AND NOT leases.draining AND leases.protocol_version = sqlc.arg(protocol_version)
                 AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
                GROUP BY services.relay_service_id, totals.reserved_slot_count
                HAVING sum(leases.connection_capacity) >= totals.reserved_slot_count

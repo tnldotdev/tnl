@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
@@ -246,7 +247,7 @@ func newRelayLifecycleDatabase(t *testing.T) (*Database, time.Time) {
 
 func relayLifecycleRegistration(name string) RelayRegistration {
 	return RelayRegistration{
-		RelayServiceID: name, RelayID: name + "-1", RelayRunID: name + "-run", ProtocolVersion: 1,
+		RelayServiceID: name, RelayID: name + "-1", RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version,
 		RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test",
 		InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 1, StreamCapacity: 10,
 	}

@@ -34,8 +34,8 @@ func TestTraceContextCanonicalAndBounded(t *testing.T) {
 }
 
 func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
-	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"visitor","visitor_connection_id":"v","public_url_id":"u","publish_run_id":"r","publish_run_number":1,"publisher_connection_id":"p","connection_assignment_revision":1}`
-	want := VisitorStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
+	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":2,"kind":"visitor","visitor_connection_id":"v","public_url_id":"u","publish_run_id":"r","publish_run_number":1,"publisher_connection_id":"p","connection_assignment_revision":1}`
+	want := VisitorStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
 	var wire bytes.Buffer
 	if err := WriteVisitorStreamHeader(&wire, want); err != nil {
 		t.Fatal(err)
@@ -108,14 +108,14 @@ func FuzzWireTraceContext(f *testing.F) {
 			t.Fatal("unbounded trace context")
 		}
 		var wire bytes.Buffer
-		h := VisitorStreamHeader{TraceContext: tc, ProtocolVersion: 1, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
+		h := VisitorStreamHeader{TraceContext: tc, ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
 		if err := WriteVisitorStreamHeader(&wire, h); err == nil {
 			got, err := ReadVisitorStreamHeader(&wire)
 			if err != nil || got != h {
 				t.Fatal("trace round trip", err)
 			}
 		}
-		entry := ConnectorVisitorEntry{TraceContext: tc, ProtocolVersion: 1, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1}
+		entry := ConnectorVisitorEntry{TraceContext: tc, ProtocolVersion: Version, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1}
 		wire.Reset()
 		if err := WriteConnectorVisitorEntry(&wire, entry); err == nil {
 			got, err := ReadConnectorVisitorEntry(&wire)
@@ -127,8 +127,8 @@ func FuzzWireTraceContext(f *testing.F) {
 }
 
 func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
-	entry := ConnectorVisitorEntry{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 7}
-	const golden = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7}`
+	entry := ConnectorVisitorEntry{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 7}
+	const golden = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":2,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7}`
 	var wire bytes.Buffer
 	if err := WriteConnectorVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 
 func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("max", 23*3600+59*60))
-	h := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: ServiceForwardingStream,
+	h := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: ServiceForwardingStream,
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
 		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.ConnectorSessionPrefix), Subject: VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, GrantRevision: math.MaxUint64}},

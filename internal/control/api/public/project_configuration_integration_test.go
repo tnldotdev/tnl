@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
@@ -200,7 +201,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := range 2 {
-		if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: fmt.Sprintf("release-http-%d", index), IngressRunID: fmt.Sprintf("release-http-run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 8400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Minute); err != nil {
+		if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: fmt.Sprintf("release-http-%d", index), IngressRunID: fmt.Sprintf("release-http-run-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 8400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}

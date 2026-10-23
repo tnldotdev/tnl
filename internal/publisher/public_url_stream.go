@@ -164,8 +164,10 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 		return
 	}
 	promote := r.promote
-	if promote == nil && streamHeader.PublisherConnectionID != "" {
-		promote = r.defaultPromote
+	if promote == nil && streamHeader.PublisherConnectionID != "" && denied {
+		promote = func(ctx context.Context, visitor Visitor) error {
+			return r.promoteVisitorStream(ctx, visitor, connection)
+		}
 	}
 	streamHeader.AccessPending = denied
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}

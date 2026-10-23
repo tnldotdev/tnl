@@ -250,6 +250,9 @@ tasks:
       - go test ./internal/ingress/clienthello -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
       - go test ./internal/transport/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - task: test:fuzz:stream-opening
+        vars:
+          TIME: "{{.TIME}}"
       - task: :go:test:fuzz:publisher-observability
         vars:
           TIME: "{{.TIME}}"
@@ -281,6 +284,20 @@ tasks:
     desc: Check delegated connection slots, renewal deadlines, replay protection, and both publisher connections
     cmds:
       - go test {{.CLI_ARGS}} ./internal/ingress ./internal/policy/visitorlease ./internal/publisher ./internal/publisher/service ./pkg/protocol/tunnelv1 -run='^Test(StreamReservation|StreamCapacity|PublisherStreamCapacity|PublicURLStreamCapacity|Reservation)' -count=1
+
+  test:stream-opening:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check combined openings, exact byte commitment, ordered notifications, TLS isolation, and drain
+    cmds:
+      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions)' -count=1
+
+  test:fuzz:stream-opening:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz bounded visitor openings and return-side frame parsing
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadOpeningsAndReturnFrames$' -fuzztime='{{.TIME}}' -parallel=2
 
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"

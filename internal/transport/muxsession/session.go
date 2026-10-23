@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-const ALPN = "tnl-tunnel/1"
+const ALPN = tunnelv1.ALPN
 
 var ErrClosed = errors.New("muxsession: closed")
 

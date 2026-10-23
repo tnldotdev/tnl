@@ -283,7 +283,7 @@ the state APIs available to transport adapters are `AuthenticateVisitorConnector
 `SelectVisitorServiceRun`, `AuthorizeServiceStream`,
 `RecheckVisitorServiceStream`, and `AuthorizeVisitorServiceConnector`.
 `VisitorSubjectAccess` and `AuthenticateVisitorSubjectKey` share current permission
-and key checks across both variants. protocol version 1 carries the tagged
+and key checks across both variants. protocol version 2 carries the tagged
 subject through private hello, acceptance, ingress HTTP projections, relay
 forwarding, and the publisher's control request. removed human-only fields are
 rejected. ingress binds the observed source and one-use assignment; the

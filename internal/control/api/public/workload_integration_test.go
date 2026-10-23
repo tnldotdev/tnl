@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
@@ -230,7 +231,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: controlstate.PrimaryIngressPoolID}, at, time.Hour); err != nil {
+			if _, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: controlstate.PrimaryIngressPoolID}, at, time.Hour); err != nil {
 				t.Fatal(err)
 			}
 			handles, err := d.CreateWorkloadIngressAssignmentSet(ctx, s.Credential, service, "retention", 1, "", at)
