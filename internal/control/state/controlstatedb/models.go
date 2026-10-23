@@ -1494,6 +1494,7 @@ type ControlSharePublicUrl struct {
 }
 
 type ControlStreamCapacityAllocation struct {
+	PublisherObservedAt  pgtype.Timestamptz
 	ID                   string
 	ResourceKind         string
 	ResourceID           string

@@ -114,6 +114,11 @@ func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPu
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 2)
+	waitForPreparedPublicVisitor(t, f.visitor, ready.PublicURL)
+	var privateAllocations int
+	if err := f.inspect.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.stream_capacity_allocations WHERE resource_kind='public_url' AND resource_id=$1 AND run_number=$2 AND ingress_id<>$3`, ready.PublicURLID, ready.PublishRunNumber, standaloneIngressID).Scan(&privateAllocations); err != nil || privateAllocations != 0 {
+		t.Fatalf("private-only ingress reserved public visitor capacity: count=%d err=%v", privateAllocations, err)
+	}
 	return ready
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type admissionTransportFixture struct {
 	ref       tunnelv1.PublisherConnectionRef
 	material  forwardingTestMaterial
 	lease     atomic.Pointer[relayv1.RelayLease]
+	prepared  *publicVisitorRun
 }
 
 // both hops use verified TLS/yamux and the real tunnel authentication handshake.
@@ -33,6 +35,7 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
 	f := &admissionTransportFixture{entry: forwardingTestEntry(time.Now(), ""), material: material}
+	f.entry.PublicUrlId, f.entry.PublishRunId = "url_"+strings.Repeat("A", 22), "pr_"+strings.Repeat("B", 22)
 	f.entry.CanonicalHostname = "route.example"
 	f.entry.IpPolicy = ingressv1.AllowAll
 	registry := relay.NewRegistry()

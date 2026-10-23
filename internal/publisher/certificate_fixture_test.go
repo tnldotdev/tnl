@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -13,6 +14,7 @@ import (
 	"math/big"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-const certificateTestPublicURLID = "public_url_0123456789abcdef0123456789abcdef"
+const certificateTestPublicURLID = "url_0123456789abcdefghijkl"
 
 func (c *certificateTestControl) CreatePublishRun(_ context.Context, publicURLID, key string) (controlv1.PublishRunSetup, error) {
 	if publicURLID != c.setup.PublicUrl.Id || key == "" {
@@ -99,10 +101,27 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
 		setup: controlv1.PublishRunSetup{
 			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
-			PublishRun:      controlv1.PublishRun{Id: "publish_run_0123456789abcdef0123456789abcdef", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
+			PublishRun:      controlv1.PublishRun{Id: "pr_0123456789abcdefghijkl", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
 			PublishRunToken: token.String(), CertificatePlan: plan,
 		},
 	}
+}
+
+func (c *certificateTestControl) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if body.Resource.Id != c.setup.PublicUrl.Id || body.Resource.Kind != "public_url" || body.RunId != c.setup.PublishRun.Id || body.RunNumber != c.setup.PublishRun.PublishRunNumber || token != c.setup.PublishRunToken {
+		return controlv1.VisitorPolicyUpdate{}, errors.New("unexpected visitor policy identity")
+	}
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: c.setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: "https://control.example.test",
+			VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
+			Anonymous:        c.setup.PublicUrl.AccessMode == "" || c.setup.PublicUrl.AccessMode == "anonymous",
+			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "certificate-fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, StreamAllocations: testPublicAllocations(body, now)}}, nil
+}
+
+func (*certificateTestControl) IssueVisitorToken(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+	return controlv1.VisitorTokenResponse{}, errors.New("no test browser sign-in")
 }
 
 func namespaceCertificateTestPlan() controlv1.CertificatePlan {

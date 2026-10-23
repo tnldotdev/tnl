@@ -19,18 +19,19 @@ import (
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "url-1", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
 	entered, release := make(chan struct{}, 4), make(chan struct{})
 	var workers sync.WaitGroup
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if publisherproxy.IsReadinessProbe(r) {
 				entered <- struct{}{}
@@ -81,7 +82,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 }
 
 func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "url-1", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	body := httptest.NewRequest("GET", "/health", strings.NewReader("private-body"))
 	body.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
@@ -134,13 +135,18 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 				name += "/denied"
 			}
 			t.Run(name, func(t *testing.T) {
-				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "public-test", Number: 1}
+				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
 				proof, err := NewReadinessProof(run, "/health")
 				if err != nil {
 					t.Fatal(err)
 				}
 				var app, probes, promoted atomic.Int32
-				route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
+				access := controlv1.VisitorAccessMode("anonymous")
+				if denied {
+					access = "restricted"
+				}
+				route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
+					AccessMode:     access,
 					ReadinessProof: proof, Certificate: publicURLTestCertificate(t, run.Hostname), Limits: ApplicationLimits{Requests: 1, RateRequests: 1, RatePer: time.Hour},
 					PromoteVisitor: func(_ context.Context, v Visitor) error {
 						if v.Readiness {
@@ -215,11 +221,11 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 }
 
 func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "public-test", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
-		route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 			PromoteVisitor: func(context.Context, Visitor) error {
 				calls.Add(1)
 				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -307,7 +313,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls, forwarded atomic.Int32
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
 			close(started)
@@ -362,11 +368,11 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 }
 
 func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "url-1", Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 		Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)

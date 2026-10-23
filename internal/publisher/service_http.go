@@ -87,7 +87,7 @@ func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target Servi
 					serviceHTTPDenied(w, http.StatusBadRequest)
 					return
 				}
-				if browser.handle(w, r, false) {
+				if browser.handle(w, r) {
 					return
 				}
 				if sharePath(r.URL.Path) && r.Method == http.MethodGet {

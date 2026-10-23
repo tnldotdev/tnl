@@ -31,7 +31,7 @@ func (q *Queries) CountStreamCapacityAllocations(ctx context.Context, arg CountS
 
 const createStreamCapacityAllocation = `-- name: CreateStreamCapacityAllocation :one
 INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,issued_at,renewed_at,valid_until)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12) RETURNING id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12) RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
 `
 
 type CreateStreamCapacityAllocationParams struct {
@@ -66,6 +66,7 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 	)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
+		&i.PublisherObservedAt,
 		&i.ID,
 		&i.ResourceKind,
 		&i.ResourceID,
@@ -85,7 +86,7 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 }
 
 const findStreamCapacityAllocation = `-- name: FindStreamCapacityAllocation :one
-SELECT id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND run_id=$3
     AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6
     AND request_id=$7 FOR UPDATE
@@ -113,6 +114,7 @@ func (q *Queries) FindStreamCapacityAllocation(ctx context.Context, arg FindStre
 	)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
+		&i.PublisherObservedAt,
 		&i.ID,
 		&i.ResourceKind,
 		&i.ResourceID,
@@ -131,8 +133,36 @@ func (q *Queries) FindStreamCapacityAllocation(ctx context.Context, arg FindStre
 	return i, err
 }
 
+const observePublisherStreamAllocations = `-- name: ObservePublisherStreamAllocations :exec
+UPDATE control.stream_capacity_allocations SET publisher_observed_at=$1
+WHERE resource_kind=$2 AND resource_id=$3
+    AND run_id=$4 AND run_number=$5
+    AND id=ANY($6::text[]) AND retired_at IS NULL AND valid_until>$1
+`
+
+type ObservePublisherStreamAllocationsParams struct {
+	Now          pgtype.Timestamptz
+	ResourceKind string
+	ResourceID   string
+	RunID        string
+	RunNumber    int64
+	Ids          []string
+}
+
+func (q *Queries) ObservePublisherStreamAllocations(ctx context.Context, arg ObservePublisherStreamAllocationsParams) error {
+	_, err := q.db.Exec(ctx, observePublisherStreamAllocations,
+		arg.Now,
+		arg.ResourceKind,
+		arg.ResourceID,
+		arg.RunID,
+		arg.RunNumber,
+		arg.Ids,
+	)
+	return err
+}
+
 const readStreamCapacityAllocations = `-- name: ReadStreamCapacityAllocations :many
-SELECT id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND valid_until>$3
 ORDER BY id LIMIT 2049
 `
@@ -153,6 +183,7 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 	for rows.Next() {
 		var i ControlStreamCapacityAllocation
 		if err := rows.Scan(
+			&i.PublisherObservedAt,
 			&i.ID,
 			&i.ResourceKind,
 			&i.ResourceID,
@@ -180,7 +211,7 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 
 const renewStreamCapacityAllocation = `-- name: RenewStreamCapacityAllocation :one
 UPDATE control.stream_capacity_allocations SET renewed_at=$1,valid_until=$2
-WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
 `
 
 type RenewStreamCapacityAllocationParams struct {
@@ -193,6 +224,7 @@ func (q *Queries) RenewStreamCapacityAllocation(ctx context.Context, arg RenewSt
 	row := q.db.QueryRow(ctx, renewStreamCapacityAllocation, arg.Now, arg.ValidUntil, arg.ID)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
+		&i.PublisherObservedAt,
 		&i.ID,
 		&i.ResourceKind,
 		&i.ResourceID,

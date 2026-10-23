@@ -75,6 +75,11 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 		writeServiceHTTPBrowserProblem(w, err)
 		return
 	}
+	result.Permission, err = h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, controlstate.BrowserSessionTokenSource{Secret: result.CookieSecret})
+	if err != nil {
+		writeVisitorTokenProblem(w, err)
+		return
+	}
 	writeJSON(w, 200, result)
 }
 

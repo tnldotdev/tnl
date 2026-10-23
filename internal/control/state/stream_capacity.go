@@ -34,16 +34,17 @@ type StreamCapacityAllocation struct {
 	Capacity               int32
 	ObservedAt, ValidUntil time.Time
 	Retired                bool
+	PublisherObserved      bool
 }
 
 func (a StreamCapacityAllocation) Wire() controlv1.StreamCapacityAllocation {
 	return controlv1.StreamCapacityAllocation{Id: a.ID, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.Scope.Kind), Id: a.Scope.ID}, RunId: a.RunID, RunNumber: a.RunNumber,
-		IngressId: a.Owner.IngressID, IngressRunId: a.Owner.IngressRunID, IngressLeaseRevision: int64(a.Owner.IngressLeaseRevision), Capacity: int(a.Capacity), ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil, Retired: a.Retired}
+		IngressId: a.Owner.IngressID, IngressRunId: a.Owner.IngressRunID, IngressLeaseRevision: int64(a.Owner.IngressLeaseRevision), Capacity: int(a.Capacity), ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil, Retired: a.Retired, PublisherObserved: a.PublisherObserved}
 }
 
 func allocationRecord(row controlstatedb.ControlStreamCapacityAllocation, now time.Time) StreamCapacityAllocation {
 	return StreamCapacityAllocation{ID: row.ID, Scope: visitorscope.Scope{Kind: visitorscope.Kind(row.ResourceKind), ID: row.ResourceID}, RunID: row.RunID, RunNumber: row.RunNumber,
-		Owner: IngressLeaseIdentity{IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: uint64(row.IngressLeaseRevision)}, Capacity: row.Capacity, ObservedAt: now, ValidUntil: row.ValidUntil.Time, Retired: row.RetiredAt.Valid}
+		Owner: IngressLeaseIdentity{IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: uint64(row.IngressLeaseRevision)}, Capacity: row.Capacity, ObservedAt: now, ValidUntil: row.ValidUntil.Time, Retired: row.RetiredAt.Valid, PublisherObserved: row.PublisherObservedAt.Valid}
 }
 
 // AllocateStreamCapacity holds the existing team/resource/run admission guards.
@@ -59,14 +60,25 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	}
 	defer rollback(ctx, tx, "allocate stream capacity", &retErr)()
 	q := controlstatedb.New(tx)
-	resource, err := lockVisitorResource(ctx, tx, request.Scope, now)
-	if err != nil {
-		return result, err
-	}
+	var ingressPool string
+	var resourceExpiry time.Time
 	var capacity int64
 	var expires time.Time
 	switch request.Scope.Kind {
 	case visitorscope.PublicURL:
+		// integration URLs need transport capacity too. their purpose excludes
+		// browser/share grants, not encrypted visitor streams to their handlers.
+		url, err := lockVisitorURL(ctx, q, request.Scope.ID)
+		if err != nil {
+			return result, err
+		}
+		if url.ExpiresAt.Valid && !url.ExpiresAt.Time.After(now) {
+			return result, ErrStreamCapacity
+		}
+		ingressPool = url.IngressPoolID
+		if url.ExpiresAt.Valid {
+			resourceExpiry = url.ExpiresAt.Time
+		}
 		run, err := q.LockPublishRun(ctx, request.RunID)
 		if err != nil {
 			return result, publisherLookupError(err, ErrStreamCapacity)
@@ -80,6 +92,11 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 		}
 		capacity, expires = int64(limits.Connections), run.PublisherExpiresAt.Time
 	case visitorscope.Service:
+		resource, err := lockVisitorResource(ctx, tx, request.Scope, now)
+		if err != nil {
+			return result, err
+		}
+		ingressPool, resourceExpiry = resource.IngressPoolID, resource.ExpiresAt
 		run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: request.RunID, ServiceID: request.Scope.ID})
 		if err != nil {
 			return result, publisherLookupError(err, ErrStreamCapacity)
@@ -89,8 +106,8 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 		}
 		capacity, expires = int64(run.StreamCapacity), run.PublisherExpiresAt.Time
 	}
-	if !resource.ExpiresAt.IsZero() {
-		expires = minTime(expires, resource.ExpiresAt)
+	if !resourceExpiry.IsZero() {
+		expires = minTime(expires, resourceExpiry)
 	}
 	lease, err := lockCurrentIngressLease(ctx, q, request.Owner, now)
 	if err != nil {
@@ -99,7 +116,7 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if lease.Draining {
 		return result, ErrStreamCapacity
 	}
-	if resource.IngressPoolID != lease.IngressPoolID {
+	if ingressPool != lease.IngressPoolID {
 		return result, ErrStreamCapacity
 	}
 	until := minTime(now.Add(10*time.Second), minTime(expires, lease.LeaseExpiresAt.Time))

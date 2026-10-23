@@ -15,6 +15,10 @@ control or decide membership and grant rules. Tokens use Ed25519 signatures,
 type `tnl-visitor+jwt`, and format version one, with a 2 KiB size limit. Each
 credential kind has its own fixed set of fields.
 
+Each issuance also has a random JWT ID (`jti`). Two browsers can receive the same
+share permission in the same second, but their bearer tokens must stay distinct
+so renewal, sign-out, and denial remain attached to the right source credential.
+
 A visitor token permits visits. It does not identify a verified feedback author,
 authorize management or publishing, or reserve connection capacity.
 
@@ -64,6 +68,32 @@ The local deadline starts before the policy request. Token times are checked
 using control's observation time plus elapsed local time, so clock differences
 and slow replies cannot add authorization time.
 
+## public http requests
+
+Browser sign-in and share redemption return a signed permission. The publisher
+sets it in the secure, HTTP-only `__Host-tnl-visitor` cookie. Native HTTP callers
+can supply one `Tnl-Visitor-Token` header instead. Supplying both, a duplicate,
+an invalid token, or the retired share-token header fails admission, including
+on an anonymous public URL. The app's `Authorization` header is separate.
+
+The publisher verifies ordinary requests locally against the current hostname,
+policy, and ingress-owned source address. It strips tnl credentials before
+forwarding to the app. Browser and share fact cookies remain available only to
+publisher-owned operations such as sign-out and feedback authorship; a visitor
+token does not establish a verified author.
+
+The publish run owns bounded background renewal for explicitly redeemed browser
+and share sessions. Application requests neither issue tokens nor wait for a
+renewal. An unexpired old token may select an already prepared replacement for
+the same subject and exact binding. An expired token cannot act as that handle.
+Explicit renewal denial stops that source's requests and fences later uses of
+its tokens until expiry. Outages and malformed replies never extend a deadline.
+
+A changed policy revision gives an active renewable request only its last
+confirmed policy window while the credential owner obtains fresh permission.
+Unrelated policy updates cannot extend that window. The run cancels and joins
+renewal work before discarding its private source credentials.
+
 ## stream capacity
 
 A visitor token grants permission, not capacity. Control delegates bounded
@@ -71,12 +101,23 @@ portions of a run's connection limit to exact ingress process leases. Each
 allocation lasts at most ten seconds and is renewed in the background. Retiring
 or restarting an owner does not make its slots available before that deadline.
 
+The publisher reports installed allocation IDs on its next background policy
+request. Ingress waits for that observation before using new slots. This keeps
+allocation preparation out of visitor setup without forwarding slots that the
+publisher has not installed yet. The report is bound to the publisher's exact
+resource, run, and run credential.
+
 Ingress reserves a local slot before forwarding. Each use has a new reservation
 ID and an increasing slot sequence. The publisher checks the current allocation
 and retains the sequence after release, preventing replay through either relay
 connection. Both relay connections also share the publisher's final run limit.
 Allocation or policy expiry stops held connections. These connection slots are
 separate from HTTP request concurrency, rate, and byte limits.
+
+Ingress initially prepares a portion of the limit and can request more portions
+in the background as local occupancy grows. Pending browser connections still
+have their own connection, time, and byte quotas while holding a reservation;
+publisher promotion does not bypass those quotas or the final run limit.
 
 ## certificate binding
 

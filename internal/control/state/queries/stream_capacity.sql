@@ -28,3 +28,9 @@ WHERE id=sqlc.arg(id) AND ingress_id=sqlc.arg(ingress_id) AND ingress_run_id=sql
 SELECT * FROM control.stream_capacity_allocations
 WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND valid_until>sqlc.arg(now)
 ORDER BY id LIMIT 2049;
+
+-- name: ObservePublisherStreamAllocations :exec
+UPDATE control.stream_capacity_allocations SET publisher_observed_at=sqlc.arg(now)
+WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id)
+    AND run_id=sqlc.arg(run_id) AND run_number=sqlc.arg(run_number)
+    AND id=ANY(sqlc.arg(ids)::text[]) AND retired_at IS NULL AND valid_until>sqlc.arg(now);

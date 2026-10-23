@@ -17,9 +17,10 @@ import (
 )
 
 type policyClientFixture struct {
-	key   ed25519.PrivateKey
-	fail  atomic.Bool
-	calls atomic.Int64
+	key      ed25519.PrivateKey
+	fail     atomic.Bool
+	calls    atomic.Int64
+	revision atomic.Int64
 }
 
 func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
@@ -31,8 +32,15 @@ func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body
 		return controlv1.VisitorPolicyUpdate{}, errors.New("control unavailable")
 	}
 	now := time.Now()
-	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: 1, KeyRevision: 1,
+	revision := max(int64(1), f.revision.Load())
+	events := []int64{}
+	if body.AfterRevision != 0 {
+		for next := body.AfterRevision + 1; next <= revision; next++ {
+			events = append(events, next)
+		}
+	}
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: revision, KeyRevision: 1,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: false, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "test-key", PublicKey: f.key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
 

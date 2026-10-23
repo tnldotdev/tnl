@@ -10,7 +10,7 @@ import (
 )
 
 type publisherVisitorPolicyStore interface {
-	ReadPublisherVisitorPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, time.Time) (controlv1.VisitorPolicyUpdate, error)
+	ReadPublisherVisitorPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, []string, time.Time) (controlv1.VisitorPolicyUpdate, error)
 }
 
 func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +36,7 @@ func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 503, controlv1.Unavailable, "visitor policy is unavailable")
 		return
 	}
-	result, err := store.ReadPublisherVisitorPolicy(r.Context(), scope, body.RunId, body.RunNumber, credential, body.AfterRevision, observed)
+	result, err := store.ReadPublisherVisitorPolicy(r.Context(), scope, body.RunId, body.RunNumber, credential, body.AfterRevision, body.ObservedAllocations, observed)
 	if err != nil {
 		writeVisitorTokenProblem(w, err)
 		return

@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"io"
@@ -64,8 +65,8 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 	certificate := publicURLTestCertificate(t, "route.example")
 	client := &deniedHTTPDecision{called: make(chan controlv1.HTTPVisitorRequest, 1)}
 	var promoted, forwarded atomic.Int32
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", PublicURLID: "public-test", PublishRunNumber: 7, Certificate: certificate,
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
+		Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunNumber: 7, Certificate: certificate, AccessMode: "restricted",
 		BrowserAccess:  &browserAccess{client: client, publicURLID: "public-test", runID: "run-test", version: 7},
 		PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 		Handler:        http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwarded.Add(1) }),
@@ -83,25 +84,31 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = io.WriteString(secured, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n")
-	request := awaitPublisherTest(t, client.called)
-	if request.PublishRunNumber != 7 || request.SourceIp != "192.0.2.10" {
-		t.Fatalf("untrusted HTTP authorization: %+v", request)
+	response, err := http.ReadResponse(bufio.NewReader(secured), nil)
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatal("local visitor authorization did not reject before promotion", err)
 	}
-	_, _ = io.ReadAll(secured)
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	select {
+	case <-client.called:
+		t.Fatal("prepared visitor authorization made a synchronous control request")
+	default:
+	}
 	if promoted.Load() != 0 || forwarded.Load() != 0 {
 		t.Fatalf("authorization bypassed: promotions=%d forwarded=%d", promoted.Load(), forwarded.Load())
 	}
 }
 
 func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "public-test", Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
 	secret := proof.HeaderValue()
 	var forwarded, promoted, checked int
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" || !publisherproxy.IsReadinessProbe(r) {
 				t.Error("unverified or unstripped readiness proof")
@@ -167,7 +174,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if forwarded.Load() != 0 {
 		t.Fatal("preflight sent an HTTP request to the target")
 	}
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: "public-test", Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +183,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Handler: proxy})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Handler: proxy, AccessMode: "restricted"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +209,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 
 func TestHTTPPromotionRunsOncePerVisitorAndBeforeTarget(t *testing.T) {
 	var promoted atomic.Int32
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
 		PromoteVisitor: func(_ context.Context, v Visitor) error {
 			if v.Source.Addr().String() != "192.0.2.10" {
 				t.Error("lost trusted visitor source")
@@ -250,7 +257,7 @@ func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
 	target.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
 	target.StartTLS()
 	defer target.Close()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: publisherproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: publisherproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,14 +2,12 @@ package publisher
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"html"
 	"io"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -36,13 +34,11 @@ type browserAccess struct {
 	previewID, publicURLID, runID, controlURL string
 	version                                   uint64
 	token                                     credentials.PublishRunToken
-	shares                                    *shareAccess
-	decisions                                 *visitorDecisionCache[controlv1.HTTPVisitorResponse]
+	tokens                                    *browserTokens
+	policy                                    *visitorPolicy
 }
 
-type browserIdentityKey struct{}
-
-func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken, shares *shareAccess) *browserAccess {
+func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) *browserAccess {
 	if !strings.HasPrefix(config.ControlURL, "https://") || setup.PublicUrl.ServiceProtocol != controlv1.Http {
 		return nil
 	}
@@ -56,7 +52,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	}
 	return &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
-		controlURL: config.ControlURL, shares: shares, decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
+		controlURL: config.ControlURL}
 }
 
 func browserCookie(response http.ResponseWriter, secret string, expires time.Time) {
@@ -85,100 +81,7 @@ func (a *browserAccess) checkCurrent(request *http.Request) (controlv1.BrowserAc
 	return result, nil
 }
 
-// decision is the final HTTP admission boundary. the caller uses VisitAllowed
-// independently of IdentityId and handles errors before promoting the stream.
-func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorResponse, error) {
-	decision, _, err := a.currentDecision(request, false)
-	return decision, err
-}
-
-func (a *browserAccess) currentDecision(request *http.Request, refresh bool) (controlv1.HTTPVisitorResponse, time.Time, error) {
-	client, ok := a.client.(interface {
-		AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error)
-	})
-	if !ok {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("current visitor authorization is unavailable")
-	}
-	source, err := netip.ParseAddrPort(request.RemoteAddr)
-	if err != nil {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("visitor source is unavailable")
-	}
-	if session, ok := request.Context().Value(visitorSessionKey{}).(*visitorSession); ok {
-		source = session.visitor.Source
-	}
-	if !source.IsValid() || source.Addr().Zone() != "" {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("visitor source is invalid")
-	}
-	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(a.version), SourceIp: source.Addr().Unmap().String()}
-	if values, present := request.Header[http.CanonicalHeaderKey(shareAccessHeaderName)]; present {
-		if len(values) != 1 {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
-		}
-		id, secret, valid := strings.Cut(values[0], ".")
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
-		if !valid || id == "" || err != nil || len(raw) != 32 {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
-		}
-		input.ShareId, input.ShareSecret = &id, &secret
-	}
-	if input.ShareId == nil && suppliedCookieCount(request, browserAccessCookieName) != len(request.CookiesNamed(browserAccessCookieName)) {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
-	}
-	if cookie, err := request.Cookie(browserAccessCookieName); err == nil && input.ShareId == nil {
-		if len(request.CookiesNamed(browserAccessCookieName)) != 1 {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
-		}
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookie.Value)
-		if err != nil || len(raw) != 32 {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("browser credential is invalid")
-		}
-		input.BrowserCookieSecret = &cookie.Value
-	}
-	if input.ShareId == nil && input.BrowserCookieSecret == nil && suppliedCookieCount(request, shareCookieName) != len(request.CookiesNamed(shareCookieName)) {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
-	}
-	if cookie, err := request.Cookie(shareCookieName); err == nil && input.ShareId == nil && input.BrowserCookieSecret == nil {
-		if len(request.CookiesNamed(shareCookieName)) != 1 {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
-		}
-		if id, secret, found := strings.Cut(cookie.Value, "."); found {
-			input.ShareId = &id
-			input.ShareCookieSecret = &secret
-		} else {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, errors.New("share credential is invalid")
-		}
-	}
-	proof, err := json.Marshal(struct {
-		RunID       string                       `json:"run_id"`
-		PublicURLID string                       `json:"public_url_id"`
-		Request     controlv1.HTTPVisitorRequest `json:"request"`
-	}{a.runID, a.publicURLID, input})
-	if err != nil {
-		return controlv1.HTTPVisitorResponse{}, time.Time{}, err
-	}
-	key := sha256.Sum256(proof)
-	load := func(ctx context.Context) (controlv1.HTTPVisitorResponse, time.Time, bool, error) {
-		started := time.Now()
-		decision, err := client.AuthorizeHTTPVisitor(ctx, a.runID, input, a.token)
-		if err != nil {
-			return controlv1.HTTPVisitorResponse{}, time.Time{}, false, err
-		}
-		if decision.ValidUntil == nil {
-			return decision, time.Time{}, decision.VisitAllowed, nil
-		}
-		until := earlierDecisionTime(*decision.ValidUntil, started.Add(visitorDecisionLifetime))
-		decision.ValidUntil = &until
-		return decision, until, decision.VisitAllowed, nil
-	}
-	if a.decisions == nil {
-		checkedAt := time.Now()
-		decision, _, _, err := load(request.Context())
-		return decision, checkedAt, err
-	}
-	return a.decisions.checkCurrent(request.Context(), key, refresh, load)
-}
-
-func (a *browserAccess) handle(response http.ResponseWriter, request *http.Request, permitted bool) bool {
+func (a *browserAccess) handle(response http.ResponseWriter, request *http.Request) bool {
 	const root = "/__tnl/team/"
 	if !strings.HasPrefix(request.URL.Path, root) {
 		return false
@@ -228,6 +131,20 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		result, err := a.client.RedeemBrowserHandoff(request.Context(), a.runID, a.version, ticket, a.token)
 		if err != nil || !validBrowserPath(result.ReturnPath) {
 			http.Error(response, "browser sign-in expired", http.StatusForbidden)
+			return true
+		}
+		if a.tokens != nil {
+			source, err := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: result.CookieSecret})
+			if err == nil {
+				err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)
+			}
+			if err != nil {
+				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				return true
+			}
+		}
+		if err := visitorPermissionCookie(response, result.Permission); err != nil {
+			http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
 			return true
 		}
 		browserCookie(response, result.CookieSecret, result.ExpiresAt)
@@ -285,6 +202,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			}
 		}
 		http.SetCookie(response, &http.Cookie{Name: browserAccessCookieName, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+		http.SetCookie(response, &http.Cookie{Name: visitorTokenCookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 		if request.URL.Path == root+"switch" {
 			path := request.URL.Query().Get("return")
 			if path == "" {
@@ -303,6 +221,21 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		http.NotFound(response, request)
 		return true
 	}
+}
+
+func (a *browserAccess) prepareToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse, parent time.Time) error {
+	if a.policy == nil || a.tokens == nil {
+		return errors.New("browser token preparation is unavailable")
+	}
+	if err := a.tokens.install(source, permission, parent); err == nil {
+		return nil
+	}
+	// redemption is explicit credential preparation. a new revision or signing
+	// key is loaded here, before redirecting to an ordinary application request.
+	if err := a.policy.refresh(ctx); err != nil {
+		return err
+	}
+	return a.tokens.install(source, permission, parent)
 }
 
 func validBrowserPath(path string) bool {

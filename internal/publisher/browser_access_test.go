@@ -22,7 +22,8 @@ type browserAccessStub struct {
 }
 
 func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
-	response := controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: "/settings", ExpiresAt: time.Now().Add(time.Hour)}
+	response := controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: "/settings", ExpiresAt: time.Now().Add(time.Hour),
+		Permission: controlv1.VisitorTokenResponse{VisitorToken: "signed-browser-permission", ExpiresAt: time.Now().Add(5 * time.Minute)}}
 	if s.next != "" {
 		response.NextUrl = &s.next
 		response.Bridge = &s.bridge
@@ -37,16 +38,6 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 	return controlv1.BrowserAccessResponse{IdentityId: "user-one", DisplayName: "Sam", TeamMember: s.member, VisitAllowed: s.member || s.invited}, nil
 }
 
-func (s *browserAccessStub) AuthorizeHTTPVisitor(_ context.Context, _ string, request controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	result := controlv1.HTTPVisitorResponse{VisitAllowed: request.BrowserCookieSecret != nil && *request.BrowserCookieSecret == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && (s.member || s.invited), TeamMember: s.member}
-	result.ValidUntil = new(time.Now().Add(time.Minute))
-	if request.BrowserCookieSecret != nil {
-		id, name := "user-one", "Sam"
-		result.IdentityId, result.DisplayName = &id, &name
-	}
-	return result, nil
-}
-
 func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
 }
@@ -58,11 +49,15 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	shares := &shareAccess{confirmed: time.Now(), teamAccessEnabled: true, shares: map[string]cachedShare{}}
 	client := &browserAccessStub{member: true}
 	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
-		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test", shares: shares}
-	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access, BrowserLoginAvailable: true})
+		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test"}
+	authority := &liveHTTPControl{check: func(controlv1.HTTPVisitorRequest) (controlv1.HTTPVisitorResponse, error) {
+		return controlv1.HTTPVisitorResponse{VisitAllowed: client.member || client.invited, ValidUntil: new(time.Now().Add(5 * time.Minute))}, nil
+	}}
+	prepareLiveHTTPControl(t, authority)
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: access.publicURLID, Target: upstream.URL,
+		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +94,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		t.Fatalf("team login redirect = %d %q", login.Code, login.Header().Get("Location"))
 	}
 	handoff := serve("/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", true)
-	if handoff.Code != http.StatusSeeOther || handoff.Header().Get("Location") != "/settings" || len(handoff.Result().Cookies()) != 1 {
+	if handoff.Code != http.StatusSeeOther || handoff.Header().Get("Location") != "/settings" || len(handoff.Result().Cookies()) != 2 {
 		t.Fatalf("browser handoff = %d %q", handoff.Code, handoff.Header().Get("Location"))
 	}
 	client.next, client.bridge = "https://api.example.test/__tnl/team/handoff/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", true
@@ -108,29 +103,46 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		!strings.Contains(bridge.Body.String(), client.next) || bridge.Header().Get("Content-Security-Policy") != "default-src 'none'; base-uri 'none'" {
 		t.Fatalf("cross-host bridge = %d, %q", bridge.Code, bridge.Header().Get("Content-Security-Policy"))
 	}
-	visitorCookie := "app_session=ok; " + browserAccessCookieName + "=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	visitorCookie := "app_session=ok; " + visitorTokenCookie + "=" + authority.credential(t, liveBrowserCookie, false)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusOK {
 		t.Fatalf("signed-in team member = %d", response.Code)
 	}
 	if got := <-cookies; got != "app_session=ok" {
 		t.Fatalf("local app received browser credential: %q", got)
 	}
+	authority.mu.Lock()
 	client.member = false
+	authority.mu.Unlock()
+	if err := authority.policy.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	authority.tokens.refresh(t.Context(), nil)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusForbidden {
 		t.Fatalf("nonmember without share or IP = %d", response.Code)
 	}
+	authority.mu.Lock()
 	client.invited = true
+	authority.mu.Unlock()
+	if err := authority.policy.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	visitorCookie = "app_session=ok; " + visitorTokenCookie + "=" + authority.credential(t, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA", false)
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusOK {
 		t.Fatalf("invited identity outside the team = %d", response.Code)
 	}
 	if got := <-cookies; got != "app_session=ok" {
 		t.Fatalf("local app received visitor credential: %q", got)
 	}
+	authority.mu.Lock()
 	client.invited = false
+	authority.mu.Unlock()
+	if err := authority.policy.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	authority.tokens.refresh(t.Context(), nil)
 	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusForbidden {
 		t.Fatalf("source IP bypassed visitor access: %d", response.Code)
 	}
-	shares.teamAccessEnabled = false
 	if response := serve("/__tnl/team/login", "", true); response.Code != http.StatusSeeOther {
 		t.Fatalf("identity sign-in without a preview team grant = %d", response.Code)
 	}

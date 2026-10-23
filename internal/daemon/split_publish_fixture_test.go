@@ -328,5 +328,6 @@ func (f *splitPublishFixture) waitReady(t *testing.T, handle *integrationPublish
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, f.inspect, 1)
+	waitForPreparedPublicVisitor(t, f.visitor, ready.PublicURL)
 	return ready
 }
