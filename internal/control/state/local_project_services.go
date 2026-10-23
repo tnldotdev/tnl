@@ -447,10 +447,10 @@ func (d *Database) GetProjectPublicMetadata(ctx context.Context, team, project, 
 	    SELECT service,public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
 	    UNION SELECT service,public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
 	    SELECT s.service,u.id,''::text,u.canonical_hostname,443 FROM public_services s JOIN control.public_urls u ON u.id=s.public_url_id AND u.lifecycle_state='enabled'
-	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_permission(u.id,$3,'',$4))
+	    WHERE $5 OR EXISTS(SELECT 1 FROM control.visitor_identity_permission('public_url',u.id,$3,$6,'',$4))
 	    UNION ALL SELECT a.service,''::text,s.id,s.certificate_hostname,s.service_port FROM control.applied_project_services a JOIN control.services s ON s.id=a.service_id
 	    WHERE a.team_id=$1 AND a.project_key=$2 AND s.enabled AND s.deleted_at IS NULL AND s.public AND s.protocol='http'
-	    ORDER BY 1,2,3`, team, project, actor, now, manager)
+	    ORDER BY 1,2,3`, team, project, actor, now, manager, companySessionID(ctx, actor))
 	if err != nil {
 		return result, err
 	}

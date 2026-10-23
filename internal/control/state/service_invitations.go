@@ -150,7 +150,7 @@ func (d *Database) AcceptServiceInvitation(ctx context.Context, identityID, secr
 		return result, err
 	}
 	grant, err := q.InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
-		ID: grantID, ServiceID: serviceID, TeamID: invitation.TeamID, Kind: "identity",
+		ID: grantID, ServiceID: text(serviceID), TeamID: invitation.TeamID, Kind: "identity",
 		IdentityID: text(identityID), InvitationID: text(id), CreatedByIdentityID: invitation.CreatedByIdentityID,
 		IdempotencyKey: "invitation/" + id, RequestDigest: invitation.RequestDigest,
 		Now: timestamptz(now), ExpiresAt: invitation.ExpiresAt,
@@ -277,7 +277,7 @@ func (d *Database) RevokeServiceInvitation(ctx context.Context, serviceID, actor
 		return ErrServiceAccess
 	}
 	revoked, err := q.RevokeServiceInvitationGrant(ctx, controlstatedb.RevokeServiceInvitationGrantParams{
-		InvitationID: text(invitationID), ServiceID: serviceID, Now: timestamptz(now),
+		InvitationID: text(invitationID), ServiceID: text(serviceID), Now: timestamptz(now),
 	})
 	if err != nil {
 		return err

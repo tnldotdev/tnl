@@ -260,17 +260,10 @@ type ServiceSelection struct {
 func privateVisitorAccess(ctx context.Context, tx pgx.Tx, serviceID, identityID string, now time.Time) (time.Time, int64, error) {
 	var until time.Time
 	var revision int64
-	err := tx.QueryRow(ctx, `SELECT LEAST($3::timestamptz+interval '2 minutes',control.company_subject_deadline(s.team_id,i.id,$4,$3),CASE WHEN
-	    EXISTS(SELECT 1 FROM control.service_grants g LEFT JOIN control.team_memberships m ON m.team_id=s.team_id AND m.identity_id=i.id AND control.active_membership(m.id,$3)
-	        WHERE g.service_id=s.id AND g.revoked_at IS NULL AND g.expires_at IS NULL AND(NOT g.auto_owner OR m.role IN('owner','admin')) AND ((g.kind='identity' AND g.identity_id=i.id) OR(g.kind='team' AND m.id IS NOT NULL)))
-	    THEN 'infinity'::timestamptz ELSE (SELECT max(g.expires_at) FROM control.service_grants g
-	        LEFT JOIN control.team_memberships m ON m.team_id=s.team_id AND m.identity_id=i.id AND control.active_membership(m.id,$3)
-	        WHERE g.service_id=s.id AND g.revoked_at IS NULL AND g.expires_at>$3 AND(NOT g.auto_owner OR m.role IN('owner','admin')) AND ((g.kind='identity' AND g.identity_id=i.id) OR(g.kind='team' AND m.id IS NOT NULL))) END),s.visitor_revision+t.policy_revision
-	    FROM control.services s JOIN control.teams t ON t.id=s.team_id AND t.deleted_at IS NULL
-	    JOIN control.identities i ON i.id=$2 AND i.disabled_at IS NULL WHERE s.id=$1 AND s.enabled AND s.deleted_at IS NULL
-	    AND control.company_subject_session_authorized(s.team_id,i.id,$4,$3)
-	    AND (EXISTS(SELECT 1 FROM control.service_grants g LEFT JOIN control.team_memberships m ON m.team_id=s.team_id AND m.identity_id=i.id AND control.active_membership(m.id,$3)
-	        WHERE g.service_id=s.id AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$3) AND(NOT g.auto_owner OR m.role IN('owner','admin')) AND ((g.kind='identity' AND g.identity_id=i.id) OR(g.kind='team' AND m.id IS NOT NULL))))`, serviceID, identityID, now, companySessionID(ctx, identityID)).Scan(&until, &revision)
+	err := tx.QueryRow(ctx, `SELECT LEAST($3::timestamptz+interval '2 minutes',permission.expires_at),s.visitor_revision+t.policy_revision
+	    FROM control.services s JOIN control.teams t ON t.id=s.team_id
+	    CROSS JOIN LATERAL control.visitor_identity_permission('service',s.id,$2,$4,'',$3) permission
+	    WHERE s.id=$1`, serviceID, identityID, now, companySessionID(ctx, identityID)).Scan(&until, &revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return until, 0, ErrServiceAccess
 	}

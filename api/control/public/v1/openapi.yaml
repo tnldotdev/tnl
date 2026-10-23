@@ -9,6 +9,12 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/visitor-tokens:
+    $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-tokens"
+  /v1/visitor-credentials:
+    $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-credentials"
+  /v1/visitor-certificates:
+    $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-certificates"
   /v1/workload/services/{service_id}/run:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1run"
   /v1/workload/ingress-assignments/{session_id}:
@@ -308,8 +314,32 @@ components:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadServices"
     WorkloadIngressAssignments:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadIngressAssignments"
-    HTTPAuthorizationSubject:
-      $ref: "./schemas/browser-access.yaml#/schemas/HTTPAuthorizationSubject"
+    VisitorResourceScope:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorResourceScope"
+    VisitorTokenSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenSource"
+    VisitorTokenControlSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenControlSessionSource"
+    VisitorTokenBrowserSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenBrowserSessionSource"
+    VisitorTokenDeviceSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenDeviceSource"
+    VisitorTokenWorkloadSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
+    VisitorTokenShareSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
+    VisitorTokenGrantSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenGrantSource"
+    VisitorTokenRequest:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenRequest"
+    VisitorTokenResponse:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenResponse"
+    CreateVisitorCredentialRequest:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/CreateVisitorCredentialRequest"
+    VisitorCredential:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorCredential"
+    VisitorCertificateRequest:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorCertificateRequest"
     CreateServiceHTTPGrantRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
     ServiceHTTPGrant:

@@ -67,7 +67,7 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	result = controlv1.ServiceHTTPGrant{Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: service}, Id: id, Kind: controlv1.ServiceHTTPGrantKind(input.Kind), Secret: secret, ExpiresAt: input.ExpiresAt}
+	result = controlv1.ServiceHTTPGrant{Subject: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Id: id, Kind: controlv1.ServiceHTTPGrantKind(input.Kind), Secret: secret, ExpiresAt: input.ExpiresAt}
 	if input.Kind == "share" {
 		origin, err := serviceHTTPOrigin(endpoint)
 		if err != nil {
@@ -95,7 +95,7 @@ func (d *Database) ListServiceHTTPGrants(ctx context.Context, service, actor str
 	}
 	result = make([]controlv1.ServiceHTTPGrantSummary, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, controlv1.ServiceHTTPGrantSummary{Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: service}, Id: row.ID, Kind: controlv1.ServiceHTTPGrantSummaryKind(row.Kind), ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)})
+		result = append(result, controlv1.ServiceHTTPGrantSummary{Subject: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Id: row.ID, Kind: controlv1.ServiceHTTPGrantSummaryKind(row.Kind), ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)})
 	}
 	return result, tx.Commit(ctx)
 }

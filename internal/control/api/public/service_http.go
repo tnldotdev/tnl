@@ -8,14 +8,14 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceHTTPStore interface {
-	ServiceHTTPBrowserTeam(context.Context, httpsubject.Subject, time.Time) (string, error)
-	BeginServiceBrowserLogin(context.Context, httpsubject.Subject, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
+	ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error)
+	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	AuthorizeServiceHTTPVisitor(context.Context, controlstate.ServiceHTTPRun, controlv1.ServiceHTTPVisitorRequest, time.Time) (controlstate.ServiceVisitorValidity, error)
 	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, time.Time) (controlv1.BrowserHandoffResponse, error)
 	ServiceBrowserSession(context.Context, controlstate.ServiceHTTPRun, string, bool, time.Time) (controlstate.VisitorPermission, error)
@@ -38,7 +38,7 @@ func (h *handler) serviceHTTP(w http.ResponseWriter, r *http.Request) (serviceHT
 }
 
 func serviceHTTPRun(service, run, token string, number int64) controlstate.ServiceHTTPRun {
-	return controlstate.ServiceHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: service}, RunID: run, Number: number, Token: credentials.ServiceRunToken(token)}
+	return controlstate.ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, RunID: run, Number: number, Token: credentials.ServiceRunToken(token)}
 }
 
 func (h *handler) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
