@@ -151,7 +151,9 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 	if err != nil || !certificate.ExpiresAt.Equal(issued.Permission.ExpiresAt) {
 		t.Fatal("certificate did not carry the scoped permission deadline", err)
 	}
-	if _, err := visitortoken.VerifyBearer(certificateToken, stateTestVisitorView(issued.Permission, stateTestVisitorKeys(t, d, now), now), now); !errors.Is(err, visitortoken.ErrBinding) {
+	currentPermission := issued.Permission
+	currentPermission.VisitorPolicyRevision = policyRevision(t, d, scope)
+	if _, err := visitortoken.VerifyBearer(certificateToken, stateTestVisitorView(currentPermission, stateTestVisitorKeys(t, d, now), now), now); !errors.Is(err, visitortoken.ErrBinding) {
 		t.Fatal("certificate permission became bearer access", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.service_client_certificates SET revoked_at=$2 WHERE service_id=$1`, service.ID, now); err != nil {

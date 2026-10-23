@@ -67,8 +67,9 @@ func VerifyCertificate(token Token, view View, state tls.ConnectionState, now ti
 		return Permission{}, ErrBinding
 	}
 	leaf := state.PeerCertificates[0]
+	authorityNow := view.AuthorityTime(now)
 	digest, err := KeyDigest(leaf.PublicKey)
-	if err != nil || digest != subject.KeySHA256 || leaf.SerialNumber == nil || leaf.SerialNumber.Text(16) != subject.Serial || !now.Before(leaf.NotAfter) || now.Before(leaf.NotBefore) || permission.ExpiresAt.After(leaf.NotAfter) {
+	if err != nil || digest != subject.KeySHA256 || leaf.SerialNumber == nil || leaf.SerialNumber.Text(16) != subject.Serial || !authorityNow.Before(leaf.NotAfter) || authorityNow.Before(leaf.NotBefore) || permission.ExpiresAt.After(leaf.NotAfter) {
 		return Permission{}, ErrBinding
 	}
 	return permission, nil

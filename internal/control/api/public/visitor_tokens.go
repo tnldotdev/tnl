@@ -214,7 +214,7 @@ func writeVisitorTokenProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
-	case errors.Is(err, controlstate.ErrVisitorSigningKey):
+	case errors.Is(err, controlstate.ErrVisitorSigningKey), errors.Is(err, controlstate.ErrVisitorPolicy):
 		writeProblem(w, 503, controlv1.Unavailable, "visitor token signing is unavailable; retry preparation")
 	default:
 		writeControlStateProblem(w, "issue visitor permission", err)

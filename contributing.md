@@ -186,6 +186,13 @@ long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
 `task go:test:integration:live-authorization` owns disposable PostgreSQL for
 browser and alias handoffs, current visitor authorization, and HTTP logout.
 
+For signed visitor permissions and local policy freshness, run
+`task go:test:visitor-policy`, then `task go:test:visitor-policy -- -race` through
+`mise exec --`. These checks use deterministic clocks for outage deadlines,
+delayed responses, clock skew, ordered updates, and affected-admission cancellation.
+The ordinary PostgreSQL integration tier also checks transactional invalidation,
+history compaction, key rotation, and exact ingress lease/pool access.
+
 For ingress production wiring, pool selection, lifetime traffic totals, pending
 promotion, private relay fallback, and server-first half-closes, run
 `task go:test:ingress`, then `task go:test:ingress -- -race`.

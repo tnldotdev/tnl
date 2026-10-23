@@ -9,6 +9,8 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/visitor-policy:
+    $ref: "./paths/visitor-policy.yaml#/paths/~1v1~1visitor-policy"
   /v1/visitor-tokens:
     $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-tokens"
   /v1/visitor-credentials:
@@ -340,6 +342,20 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorCredential"
     VisitorCertificateRequest:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorCertificateRequest"
+    PublisherVisitorPolicyRequest:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/PublisherVisitorPolicyRequest"
+    VisitorPolicyUpdate:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyUpdate"
+    VisitorPolicySnapshot:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicySnapshot"
+    VisitorPolicyIP:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyIP"
+    VisitorVerificationKey:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
+    VisitorWorkloadLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    HashedIPPrefix:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
     CreateServiceHTTPGrantRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
     ServiceHTTPGrant:

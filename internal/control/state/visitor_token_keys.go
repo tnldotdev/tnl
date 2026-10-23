@@ -22,6 +22,28 @@ const maximumVisitorVerificationKeys = 64
 
 func visitorSigningKeyContext(id string) string { return "visitor-token-signing-key:" + id }
 
+// PrepareVisitorSigningKeys runs during control startup, before serving owners
+// prepare policy views. anonymous traffic must not wait for a first token issue.
+func (d *Database) PrepareVisitorSigningKeys(ctx context.Context, issuer string, now time.Time) (retErr error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx, "prepare visitor signing keys", &retErr)()
+	q := controlstatedb.New(tx)
+	if err := ensureVisitorIssuer(ctx, q, issuer); err != nil {
+		return err
+	}
+	if _, err := q.LockVisitorTokenSigningKey(ctx); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := d.createVisitorSigningKey(ctx, q, now); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // the issuer row is the replica-wide serialization point for issuance, rotation,
 // and retirement. resource authorization locks are acquired before this row.
 func ensureVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer string) error {

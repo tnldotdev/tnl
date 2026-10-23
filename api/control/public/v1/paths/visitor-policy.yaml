@@ -1,0 +1,18 @@
+paths:
+  /v1/visitor-policy:
+    post:
+      operationId: readPublisherVisitorPolicy
+      description: Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherVisitorPolicyRequest" }
+      responses:
+        "200":
+          description: Consistent resource snapshot and covered policy history with a fixed freshness deadline
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyUpdate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

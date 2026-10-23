@@ -262,6 +262,12 @@ tasks:
         vars:
           TIME: "{{.TIME}}"
 
+  test:visitor-policy:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify signed visitor permissions and local policy deadlines without external infrastructure
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(PolicyLease|PolicyKey|PolicyClock|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|Token|NativeProof)' -count=1
+
   test:fuzz:visitors:
     dir: "{{.ROOT_DIR}}"
     desc: Fuzz bounded signed visitor token parsing and verification
