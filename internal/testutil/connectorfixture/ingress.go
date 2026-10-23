@@ -79,7 +79,7 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 						if hello.SessionID != id || hello.ServiceID != service || hello.Subject.Kind != tunnelv1.VisitorWorkloadSession || hello.Subject.WorkloadSessionID != workload {
 							return tunnelv1.ConnectorSessionAccepted{}, io.ErrUnexpectedEOF
 						}
-						return tunnelv1.ConnectorSessionAccepted{ProtocolVersion: 1, Kind: "connector_session_accepted", ServiceID: service, SessionID: id, Subject: hello.Subject, SourceIP: "127.0.0.1", ExpiresAt: expires}, nil
+						return tunnelv1.ConnectorSessionAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_session_accepted", ServiceID: service, SessionID: id, Subject: hello.Subject, SourceIP: "127.0.0.1", ExpiresAt: expires}, nil
 					})
 					if err != nil {
 						return
@@ -96,7 +96,7 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 							}
 							visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 							publisher, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-							if err := tunnelv1.WriteConnectorVisitorAccepted(stream, tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: 1, Kind: "connector_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: visitor, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
+							if err := tunnelv1.WriteConnectorVisitorAccepted(stream, tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted", ConnectorSessionID: id, Subject: session.Accepted.Subject, SourceIP: "127.0.0.1", VisitorConnectionID: visitor, GrantRevision: 1, PublisherConnectionID: publisher, ConnectionAssignmentRevision: 1}); err != nil {
 								return
 							}
 							backend, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", target)

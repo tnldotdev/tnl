@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T) {
@@ -150,7 +151,7 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 		t.Fatal(err)
 	}
 	for _, name := range []string{"device-relay-a", "device-relay-b"} {
-		if _, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: 1, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 10}, time.Now(), time.Hour); err != nil {
+		if _, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 10}, time.Now(), time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}

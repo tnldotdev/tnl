@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type relayProcessLeaseIdentity struct {
@@ -223,6 +224,7 @@ func replacePublishRunConnection(
 		return controlstatedb.ControlPublishRunConnectionSlot{}, fmt.Errorf("controlstate: replenish publish-run connections: derive credential: %w", err)
 	}
 	updated, err := queries.ReplacePublishRunConnection(ctx, controlstatedb.ReplacePublishRunConnectionParams{
+		ProtocolVersion:          tunnelv1.Version,
 		NewPublisherConnectionID: publisherConnectionID, NewConnectionAssignmentRevision: revision,
 		RelayServiceID: placement.relayServiceID, RelayAddress: placement.relayAddress,
 		TlsServerName: placement.tlsServerName, PublisherConnectionCredentialDigest: hash[:],

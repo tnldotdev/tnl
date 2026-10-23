@@ -97,7 +97,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"workload-a", "workload-b"} {
-		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID}, now, time.Hour); err != nil {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID}, now, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -339,7 +339,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	var ingresses []IngressLease
 	for _, name := range []string{"workload-a", "workload-b"} {
-		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
+		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}

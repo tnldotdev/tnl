@@ -30,7 +30,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "replay", IngressRunID: "replay-run", ProtocolVersion: 1,
+			lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "replay", IngressRunID: "replay-run", ProtocolVersion: tunnelv1.Version,
 				ConnectionCapacity: 1, ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 			if err != nil {
 				t.Fatal(err)
@@ -105,7 +105,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 			case "released":
 				err = d.ReleaseVisitorIngressAssignment(ctx, r.ActingIdentityID, first.ID, now)
 			case "bound":
-				hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: service.ID,
+				hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: service.ID,
 					SessionID: first.ID, Credential: first.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device.ID, IdentityID: r.ActingIdentityID}, Nonce: make([]byte, 32)}
 				digest, _ := hello.Claim().Digest()
 				hello.Signature = ed25519.Sign(key, digest)
@@ -121,7 +121,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 					t.Fatal(err)
 				}
 				at = now.Add(2 * time.Second)
-				_, err = d.RegisterIngress(ctx, IngressRegistration{IngressID: lease.IngressID, IngressRunID: "replacement-run", ProtocolVersion: 1, ConnectionCapacity: 1,
+				_, err = d.RegisterIngress(ctx, IngressRegistration{IngressID: lease.IngressID, IngressRunID: "replacement-run", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1,
 					ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "private.example.test"}, at, time.Hour)
 			case "draining":
 				_, err = d.BeginIngressDrain(ctx, lease.IngressLeaseIdentity, now, now.Add(time.Minute))
@@ -173,7 +173,7 @@ func TestIntegrationPrivateVisitorSingleAssignmentRenewalAtCapacity(t *testing.T
 	}
 	leases := map[string]IngressLease{}
 	for index := range 2 {
-		lease, e := d.RegisterIngress(ctx, IngressRegistration{IngressID: fmt.Sprintf("single-%d", index), IngressRunID: fmt.Sprintf("single-run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+		lease, e := d.RegisterIngress(ctx, IngressRegistration{IngressID: fmt.Sprintf("single-%d", index), IngressRunID: fmt.Sprintf("single-run-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 		if e != nil {
 			t.Fatal(e)
 		}

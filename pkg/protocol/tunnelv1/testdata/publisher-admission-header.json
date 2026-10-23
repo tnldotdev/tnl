@@ -1,5 +1,5 @@
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "kind": "publisher_admission",
   "visitor_connection_id": "v",
   "public_url_id": "u",

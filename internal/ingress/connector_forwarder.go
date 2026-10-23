@@ -32,8 +32,8 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 			return nil, err
 		}
 		started := time.Now()
-		stream, err := session.OpenServiceForwardingStream(ctx, header)
-		f.observe("IngressForwardingAck", err, started)
+		stream, err := session.StartServiceForwardingStream(ctx, header, nil, nil)
+		f.observe("IngressForwardingStart", err, started)
 		if err == nil {
 			return stream, nil
 		}

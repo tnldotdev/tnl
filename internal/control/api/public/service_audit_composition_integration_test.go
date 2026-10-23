@@ -130,7 +130,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	relays := map[string]controlstate.RelayLease{}
 	for _, name := range []string{"audit-a", "audit-b"} {
 		process, _ := opaqueid.New(opaqueid.RelayRunPrefix)
-		r, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: process, ProtocolVersion: 1,
+		r, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: process, ProtocolVersion: tunnelv1.Version,
 			RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: "127.0.0.1:8443", ConnectionCapacity: 20, StreamCapacity: 20}, now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
@@ -163,7 +163,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-second", IngressRunID: "audit-second-process", ProtocolVersion: 1, ConnectionCapacity: 10,
+	if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-second", IngressRunID: "audit-second-process", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10,
 		ConnectorAddress: "127.0.0.1:9442", ConnectorTLSServerName: "private.example.test"}, now, time.Hour); err != nil {
 		t.Fatal(err)
 	}

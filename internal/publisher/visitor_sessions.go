@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"errors"
+	"net"
 
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -55,4 +56,25 @@ func (r *PublicURLServer) resolvePublisherSession(id string) *tunnel.Session {
 		}
 	}
 	return nil
+}
+
+func (r *PublicURLServer) promoteVisitorStream(ctx context.Context, visitor Visitor, connection net.Conn) error {
+	if !visitor.Header.AccessPending {
+		return nil
+	}
+	r.mu.Lock()
+	valid := false
+	if !r.closed && ctx.Err() == nil {
+		for _, live := range r.sessions {
+			if live != nil && live.ctx.Err() == nil && live.session.Err() == nil && r.validateIncomingPublicURL(visitor.Header, live.ref) == "" {
+				valid = true
+				break
+			}
+		}
+	}
+	r.mu.Unlock()
+	if !valid {
+		return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	return tunnel.PromoteVisitorStream(connection)
 }

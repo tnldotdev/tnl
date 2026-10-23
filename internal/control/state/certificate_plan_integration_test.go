@@ -18,6 +18,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
@@ -240,7 +241,7 @@ func registerCertificatePlanRelays(t *testing.T, database *Database, now time.Ti
 	for index := range 2 {
 		name := fmt.Sprintf("plan-relay-%d", index)
 		if _, err := database.RegisterRelay(t.Context(), RelayRegistration{
-			RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: 1,
+			RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version,
 			RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test",
 			InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 100, StreamCapacity: 100,
 		}, now, 48*time.Hour); err != nil {

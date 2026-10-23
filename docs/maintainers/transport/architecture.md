@@ -41,15 +41,22 @@ target: independently selected HTTP/TCP/database transport
 ```
 
 Ingress creates one PROXY v2 header carrying the original source/destination;
-relay preserves it and the TLS bytes. On restricted URLs, bounded pending capacity
-lasts until publisher authorization. The promotion sideband binds visitor, run,
-assignment, and connected relay. Ingress acknowledges ordinary capacity before
-target bytes. Promotion validates the current claim even when there is no spare
-new-stream capacity: the admitted visitor already owns its stream.
+relay preserves it and the TLS bytes. Protocol version 2 and ALPN `tnl-tunnel/2`
+require a coordinated client/server update. Each opening carries bounded metadata
+and up to 64 KiB of initial bytes in one write. Sending does not wait for remote
+acceptance; an opener's return is not proof of publisher admission.
+
+The return direction frames acceptance, rejection, promotion, data, and half-close
+in order. Only data reaches visitor TLS. Promotion stays on that visitor's return
+stream and binds its exact run, assignment, and connected relay. It precedes the
+response bytes it permits and has no acknowledgment round trip. A stale or
+rejected notification closes that stream without affecting its siblings. Pending
+capacity remains bounded until publisher authorization.
 
 Ingress may try another connected relay before the first visitor byte is sent.
-A rejected open, failed PROXY-header write, or zero-byte ClientHello write can
-still be retried. The first visitor byte commits the stream, even if the rest of
+A local opening failure, failed PROXY-header write, or zero-byte ClientHello write
+can still be retried. A return-side rejection after the opening committed visitor
+bytes cannot be retried. The first visitor byte commits the stream, even if the rest of
 ClientHello fails. Copy/close then owns it; live connections are never replayed
 or migrated. Public and private setup reserve time for alternate relays before
 that boundary. A denied visitor may use separate admission to finish TLS at the

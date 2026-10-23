@@ -21,6 +21,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func ingressTrustReviewDTO(t IngressTransportTrust) controlv1.IngressTransportTrust {
@@ -67,7 +68,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registration := IngressRegistration{IngressID: fmt.Sprintf("ingress-%d", index), IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 8,
+		registration := IngressRegistration{IngressID: fmt.Sprintf("ingress-%d", index), IngressRunID: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8,
 			ConnectorAddress: listener.Addr().String(), ConnectorTLSServerName: "private-ingress.example.test"}
 		lease, err := d.RegisterIngress(t.Context(), registration, now, time.Minute)
 		if err != nil {

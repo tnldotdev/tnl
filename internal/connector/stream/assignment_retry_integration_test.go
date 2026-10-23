@@ -95,7 +95,7 @@ func TestIntegrationConnectorRecoversCommittedAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
-	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: f.service.Id,
+	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: f.service.Id,
 		SessionID: healthy.SessionID, Credential: healthy.Credential, Subject: device.Subject, Nonce: nonce}
 	digest, _ := hello.Claim().Digest()
 	hello.Signature = device.Sign(digest)

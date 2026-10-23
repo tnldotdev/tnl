@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type companyMembershipSnapshot struct {
@@ -356,7 +357,7 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 	actorCtx := controlstate.WithControlPrincipal(ctx, actor)
 	leases := map[string]controlstate.RelayLease{}
 	for _, name := range []string{"replacement-relay-a", "replacement-relay-b"} {
-		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: 1, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 100, StreamCapacity: 100}, time.Now().UTC(), time.Hour)
+		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 100, StreamCapacity: 100}, time.Now().UTC(), time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}

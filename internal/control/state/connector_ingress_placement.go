@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var ErrInsufficientPrivateIngresses = errors.New("controlstate: two live private connector ingress addresses are required")
@@ -21,10 +22,10 @@ type privateIngressPlacement struct {
 // statement. concurrent setup cannot overbook the same advertised capacity.
 func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, count int, exclude string) ([]privateIngressPlacement, error) {
 	rows, err := tx.Query(ctx, `SELECT ingress_id,ingress_run_id,ingress_lease_revision,connector_address,connector_tls_server_name,connection_capacity,reported_connections
-	    FROM control.ingress_leases ingress WHERE lease_expires_at>$1 AND NOT draining AND protocol_version=1 AND connection_capacity>0
+	    FROM control.ingress_leases ingress WHERE lease_expires_at>$1 AND NOT draining AND protocol_version=$3 AND connection_capacity>0
 	    AND connector_address<>'' AND connector_tls_server_name<>'' AND ingress_id<>$2
 	    AND NOT EXISTS(SELECT 1 FROM control.ingress_leases excluded WHERE excluded.ingress_id=$2 AND excluded.connector_address=ingress.connector_address)
-	    ORDER BY ingress_id LIMIT 256 FOR UPDATE`, now, exclude)
+	    ORDER BY ingress_id LIMIT 256 FOR UPDATE`, now, exclude, tunnelv1.Version)
 	if err != nil {
 		return nil, err
 	}

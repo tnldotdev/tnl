@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationPublishRunCreation(t *testing.T) {
@@ -510,7 +511,7 @@ func readyTestSession(t *testing.T, f publishRunFixture) []PublisherConnectionCl
 
 func registerTestIngress(t *testing.T, database *Database, now time.Time) IngressLease {
 	t.Helper()
-	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{IngressID: "ingress_test", IngressRunID: "run_test", ProtocolVersion: 1, ConnectionCapacity: 100}, now, time.Hour)
+	lease, err := database.RegisterIngress(t.Context(), IngressRegistration{IngressID: "ingress_test", IngressRunID: "run_test", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 100}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

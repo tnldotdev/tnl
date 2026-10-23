@@ -75,11 +75,11 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		wrote := make(chan error, 1)
 		go func() { wrote <- tunnelv1.WriteServiceForwardingHeader(stream, changed) }()
 		type outcome struct {
-			response tunnelv1.StreamResponse
+			response tunnelv1.ReturnFrame
 			err      error
 		}
 		answered := make(chan outcome, 1)
-		go func() { value, err := tunnelv1.ReadStreamResponse(stream); answered <- outcome{value, err} }()
+		go func() { value, err := tunnelv1.ReadReturnFrame(stream); answered <- outcome{value, err} }()
 		if _, err := publisher.AcceptServiceForwardingStream(ctx); err == nil {
 			t.Fatal("wrong private run reached publisher")
 		}
@@ -87,7 +87,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 			t.Fatal(err)
 		}
 		result := <-answered
-		if result.err != nil || result.response.Type != tunnelv1.StreamRejected {
+		if result.err != nil || result.response.Kind != tunnelv1.ReturnRejected || result.response.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("wrong relay assignment was acknowledged: %+v %v", result.response, result.err)
 		}
 		_ = stream.Close()
@@ -98,13 +98,24 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	}
 	defer stream.Close()
 	wrote := make(chan error, 1)
-	go func() { wrote <- tunnelv1.WriteServiceForwardingHeader(stream, header) }()
+	go func() { _, err := tunnelv1.WriteServiceOpening(stream, header, nil); wrote <- err }()
 	type outcome struct {
-		response tunnelv1.StreamResponse
+		response tunnelv1.ReturnFrame
 		err      error
 	}
 	answered := make(chan outcome, 1)
-	go func() { value, err := tunnelv1.ReadStreamResponse(stream); answered <- outcome{value, err} }()
+	go func() {
+		value, err := tunnelv1.ReadReturnFrame(stream)
+		if err == nil {
+			ended, endErr := tunnelv1.ReadReturnFrame(stream)
+			if endErr != nil {
+				err = endErr
+			} else if ended.Kind != tunnelv1.ReturnEnded {
+				err = errors.New("private return stream did not preserve its half-close")
+			}
+		}
+		answered <- outcome{value, err}
+	}()
 	incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 	if err != nil || incoming.Header.PublisherConnectionID != ref.PublisherConnectionID {
 		t.Fatalf("matching private stream was rejected: %v", err)
@@ -115,8 +126,12 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	if err := incoming.Accept(); err != nil {
 		t.Fatal(err)
 	}
+	// acceptance is emitted with the first return-side bytes or half-close.
+	if err := incoming.Stream().CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
 	result := <-answered
-	if result.err != nil || result.response.Type != tunnelv1.StreamAccepted {
+	if result.err != nil || result.response.Kind != tunnelv1.ReturnAccepted {
 		t.Fatalf("matching private stream not acknowledged: %+v %v", result.response, result.err)
 	}
 }
