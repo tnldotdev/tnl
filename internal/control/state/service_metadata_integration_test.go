@@ -69,7 +69,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY team_id,project_key,service) FROM control.applied_project_services s),
 		    (SELECT jsonb_agg(to_jsonb(l) ORDER BY team_id,project_key,service,worktree_key) FROM control.local_project_services l),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.services s),
-		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.service_grants g),
+		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.visitor_grants g),
 		    (SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM control.service_runs r),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY publisher_connection_id) FROM control.service_connection_slots s),
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.publisher_grants g),

@@ -197,7 +197,7 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 		return result, err
 	}
 	result.TeamMember = err == nil
-	row, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{PublicURLID: urlID, IdentityID: identityID, PreviewID: previewID, Now: timestamptz(now)})
+	row, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "public_url", ResourceID: urlID, IdentityID: identityID, ControlSessionID: companySessionID(ctx, identityID), PreviewID: previewID, Now: timestamptz(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, nil
 	}

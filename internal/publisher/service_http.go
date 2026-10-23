@@ -15,7 +15,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -34,7 +34,7 @@ type ServiceHTTPControl interface {
 // headers. all requests use the same selected run and one upstream connection.
 type ServiceHTTP struct {
 	Control  ServiceHTTPControl
-	Subject  httpsubject.Subject
+	Subject  visitorscope.Scope
 	RunID    string
 	Number   int64
 	Token    credentials.ServiceRunToken
@@ -46,7 +46,7 @@ type ServiceHTTP struct {
 
 func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target ServiceHTTPTarget) error {
 	h := f.Header
-	if f.Control == nil || f.Subject.Kind != httpsubject.Service || !f.Subject.Valid() || h.Direct == nil || h.Connector != nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.Direct.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
+	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.Direct == nil || h.Connector != nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.Direct.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
 		return ErrEndpoint
 	}
 	controlURL, err := url.Parse(f.Control.ControlURL())

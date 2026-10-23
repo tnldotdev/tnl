@@ -33,18 +33,18 @@ WHERE s.id = sqlc.arg(service_id) AND p.id = sqlc.arg(publisher_identity_id)
     AND g.id = sqlc.arg(publisher_grant_id) AND s.enabled AND s.deleted_at IS NULL AND p.kind <> 'guest';
 
 -- name: InsertServiceGrant :one
-INSERT INTO control.service_grants(id, service_id, team_id, kind, identity_id, invitation_id,
+INSERT INTO control.visitor_grants(id, service_id, team_id, kind, identity_id, invitation_id,
     created_by_identity_id, idempotency_key, request_digest, created_at, expires_at)
 VALUES (sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(kind),
     sqlc.narg(identity_id), sqlc.narg(invitation_id), sqlc.arg(created_by_identity_id), sqlc.arg(idempotency_key),
     sqlc.arg(request_digest), sqlc.arg(now), sqlc.narg(expires_at)) RETURNING *;
 
 -- name: RevokeServiceGrant :execrows
-UPDATE control.service_grants SET revoked_at = sqlc.arg(now)
+UPDATE control.visitor_grants SET revoked_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) AND revoked_at IS NULL;
 
 -- name: ListServiceGrants :many
-SELECT * FROM control.service_grants WHERE service_id = sqlc.arg(service_id)
+SELECT * FROM control.visitor_grants WHERE service_id = sqlc.arg(service_id)
 AND id COLLATE "C" > sqlc.arg(after_id)
 ORDER BY id COLLATE "C" LIMIT 101;
 
@@ -77,7 +77,7 @@ WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id) AND revoked_at IS 
 
 -- name: RevokeServiceInvitationGrant :execrows
 -- caller revokes invitation and accepted grant in the same transaction.
-UPDATE control.service_grants SET revoked_at = sqlc.arg(now)
+UPDATE control.visitor_grants SET revoked_at = sqlc.arg(now)
 WHERE invitation_id = sqlc.arg(invitation_id) AND service_id = sqlc.arg(service_id)
     AND revoked_at IS NULL;
 
@@ -121,7 +121,7 @@ LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > sqlc.arg(after_id)
     AND control.company_subject_session_authorized(s.team_id,i.id,sqlc.arg(control_session_id)::text,sqlc.arg(now))
     AND (
-        EXISTS (SELECT 1 FROM control.service_grants g
+        EXISTS (SELECT 1 FROM control.visitor_grants g
             LEFT JOIN control.team_memberships m ON m.team_id = s.team_id
                 AND m.identity_id = i.id AND control.active_membership(m.id,sqlc.arg(now))
             WHERE g.service_id = s.id AND g.revoked_at IS NULL
@@ -374,7 +374,7 @@ WITH permitted AS (
             AND relay.relay_service_id = slot.relay_service_id
             AND relay.lease_expires_at > sqlc.arg(now) AND NOT relay.draining
           WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open),
-      CASE WHEN EXISTS (SELECT 1 FROM control.service_grants permanent
+      CASE WHEN EXISTS (SELECT 1 FROM control.visitor_grants permanent
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,sqlc.arg(now))
           WHERE permanent.service_id = service.id AND permanent.revoked_at IS NULL
@@ -383,7 +383,7 @@ WITH permitted AS (
             AND ((permanent.kind = 'identity' AND permanent.identity_id = person.id)
               OR (permanent.kind = 'team' AND member.id IS NOT NULL)))
       THEN 'infinity'::timestamptz ELSE
-        (SELECT MAX(limited.expires_at) FROM control.service_grants limited
+        (SELECT MAX(limited.expires_at) FROM control.visitor_grants limited
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,sqlc.arg(now))
           WHERE limited.service_id = service.id AND limited.revoked_at IS NULL
@@ -437,7 +437,7 @@ WITH permitted AS (
             AND relay.relay_service_id = slot.relay_service_id
             AND relay.lease_expires_at > sqlc.arg(now) AND NOT relay.draining
           WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open)
-      AND (EXISTS (SELECT 1 FROM control.service_grants grant_record
+      AND (EXISTS (SELECT 1 FROM control.visitor_grants grant_record
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,sqlc.arg(now))
           WHERE grant_record.service_id = service.id

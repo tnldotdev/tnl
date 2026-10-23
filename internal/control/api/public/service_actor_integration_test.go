@@ -298,7 +298,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 		t.Fatal("HTTP revocation disappeared from inventory")
 	}
 	// the bridge cannot turn management permission alone into visit access.
-	if _, err = f.sql.Exec(t.Context(), `UPDATE control.service_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
+	if _, err = f.sql.Exec(t.Context(), `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if w := f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateServiceHTTPGrantRequest{Kind: "share", ExpiresAt: deadline}, nil); w.Code < 400 {
@@ -389,7 +389,7 @@ func TestIntegrationServiceActorAccessPagination(t *testing.T) {
 	// locale. live access must remain discoverable beyond revoked history without
 	// adding management or membership to its visitor.
 	for _, query := range []string{
-		`INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)
+		`INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)
 		 SELECT 'sgr_'||(CASE WHEN n%2=0 THEN 'A' ELSE 'a' END)||lpad(n::text,21,'0'),$1,$2,'identity',$4,$3,'page-grant/'||n,sha256(convert_to('grant/'||n,'UTF8')),$5::timestamptz-interval '2 hours',
 		 CASE WHEN n BETWEEN 121 AND 140 THEN $5::timestamptz-interval '1 hour' ELSE $5::timestamptz+interval '1 hour' END,
 		 CASE WHEN n<=120 THEN $5::timestamptz END FROM generate_series(1,205) n`,
@@ -471,7 +471,7 @@ func TestIntegrationServiceActorAccessPagination(t *testing.T) {
 	}
 	// management inventory never becomes visitor permission. revoked/expired
 	// grants disappear from visitor inventory despite remaining in the audit list.
-	if _, err := f.sql.Exec(ctx, `UPDATE control.service_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
+	if _, err := f.sql.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _, err := f.d.ListAvailableServices(ctx, recipient.Identity.Identity.Id, "", f.now); err != nil || len(rows) != 0 {

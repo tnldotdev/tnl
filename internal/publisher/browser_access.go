@@ -16,7 +16,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -31,7 +31,7 @@ type browserAccessClient interface {
 }
 
 type browserAccess struct {
-	subject                                   httpsubject.Subject
+	subject                                   visitorscope.Scope
 	client                                    browserAccessClient
 	previewID, publicURLID, runID, controlURL string
 	version                                   uint64
@@ -54,7 +54,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	if !ok {
 		return nil
 	}
-	return &browserAccess{subject: httpsubject.Subject{Kind: httpsubject.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
+	return &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
 		controlURL: config.ControlURL, shares: shares, decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
 }
@@ -207,7 +207,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		if request.URL.Query().Get("switch") == "1" {
 			query.Set("switch_account", "true")
 		}
-		if a.subject.Kind == httpsubject.Service {
+		if a.subject.Kind == visitorscope.Service {
 			endpoint.Path = "/v1/browser/service-login"
 			query.Set("service_id", a.subject.ID)
 		} else {

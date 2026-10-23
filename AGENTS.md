@@ -145,7 +145,7 @@ Services and public URLs have separate records, credentials, and lifecycles.
 | **share**                  | Expiring, revocable access to the public URL IDs captured from a preview when the share is created.                   |
 | **share link**             | The URL containing the secret a reviewer uses to access the public URLs included in a share.                          |
 | **team access grant**      | An opt-in setting on one preview that lets current team members sign in and visit its included public URLs.           |
-| **browser access session** | A host-bound visitor credential issued after browser sign-in; control checks current access before use.               |
+| **browser access session** | Browser sign-in state used to issue and renew host-bound visitor tokens.                                              |
 | **feedback thread**        | A durable conversation containing an immutable first report and ordered follow-up events.                             |
 | **report**                 | The reviewer's immutable first submission in a feedback thread, including its submitted evidence and source state.    |
 | **verified author**        | An account identity and name snapshot derived by control from an authenticated browser or CLI session.                |
@@ -181,32 +181,42 @@ not _inbox_, for the collection of threads.
 
 ## visitor connections
 
-| Term                      | Definition                                                                                                      |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **visitor connection**    | One public TCP connection from a visitor to a public URL hostname.                                              |
-| **visitor connection ID** | The unique identifier used to correlate one visitor connection across ingress, relay, and publisher.            |
-| **visitor stream**        | One multiplexed stream that carries a visitor connection through a relay to the publisher and back.             |
-| **internal forwarding**   | Sending a visitor connection from ingress to a connected relay over an authenticated internal connection.       |
-| **retry boundary**        | The first visitor byte sent to a relay. Ingress may try another relay before this point but never afterward.    |
-| **PROXY v2 metadata**     | The original visitor source and destination information created once by ingress and preserved to the publisher. |
+A visitor token proves permission; it does not reserve stream capacity. SNI selects
+a hostname; it does not identify or authorize a visitor.
+
+Control owns visitor permission decisions. Serving processes verify signed
+decisions against current local policy state; they do not duplicate control's
+membership or grant rules.
+
+| Term                        | Definition                                                                                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **visitor connection**      | One public TCP connection from a visitor to a public URL hostname.                                                                                                            |
+| **visitor connection ID**   | The unique identifier used to correlate one visitor connection across ingress, relay, and publisher.                                                                          |
+| **visitor stream**          | One multiplexed stream that carries a visitor connection through a relay to the publisher and back.                                                                           |
+| **visitor token**           | A control-signed credential authorizing a visitor to access one public URL or service; serving processes verify its scope, expiry, binding, and current policy state locally. |
+| **visitor policy revision** | A resource's current visitor permission version; distinct from management policy, routing revisions, and run numbers.                                                         |
+| **internal forwarding**     | Sending a visitor connection from ingress to a connected relay over an authenticated internal connection.                                                                     |
+| **retry boundary**          | The first visitor byte sent to a relay. Ingress may try another relay before this point but never afterward.                                                                  |
+| **PROXY v2 metadata**       | The original visitor source and destination information created once by ingress and preserved to the publisher.                                                               |
 
 ## process coordination
 
-| Term                                | Definition                                                                                                           |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **ingress lease**                   | Control's time-limited permission for an ingress process to serve visitor traffic and use the ingress routing table. |
-| **relay lease**                     | Control's time-limited permission for a relay process to accept connection assignments and publisher connections.    |
-| **lease renewal**                   | A periodic request that extends a process's lease.                                                                   |
-| **lease expiration**                | The deadline after which control considers a process unavailable if its lease was not renewed.                       |
-| **lease revision**                  | An ever-increasing number that distinguishes the current lease from an older lease for the same process identity.    |
-| **process run ID**                  | A unique identifier generated each time an ingress or relay process starts.                                          |
-| **stale-state checks**              | Checks that reject an old publish run, replaced connection assignment, expired lease, or restarted process.          |
-| **placement**                       | Control's choice of different relay services for a publish run's connection slots.                                   |
-| **draining**                        | A process state that rejects new work while allowing existing connections to finish until a deadline.                |
-| **connection capacity**             | The number of publisher connections a relay is configured to support.                                                |
-| **stream capacity**                 | The number of concurrent visitor streams a relay is configured to support.                                           |
-| **recovery episode**                | The time from an unexpected publisher connection loss until a visitor again receives a publisher byte.               |
-| **public URL recovery observation** | Control's recorded measurement that closes one recovery episode.                                                     |
+| Term                                | Definition                                                                                                             |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **ingress lease**                   | Control's time-limited permission for an ingress process to serve visitor traffic and use the ingress routing table.   |
+| **relay lease**                     | Control's time-limited permission for a relay process to accept connection assignments and publisher connections.      |
+| **visitor policy lease**            | Control's time-limited confirmation of the policy and revocation state a process may use when checking visitor access. |
+| **lease renewal**                   | A periodic request that extends control's confirmation of a process or its authorized local state.                     |
+| **lease expiration**                | The deadline after which the lease no longer permits serving or trusting the state it covers.                          |
+| **lease revision**                  | An ever-increasing number that distinguishes a current lease from an older lease for the same owner and scope.         |
+| **process run ID**                  | A unique identifier generated each time an ingress or relay process starts.                                            |
+| **stale-state checks**              | Checks that reject an old publish run, replaced connection assignment, expired lease, or restarted process.            |
+| **placement**                       | Control's choice of different relay services for a publish run's connection slots.                                     |
+| **draining**                        | A process state that rejects new work while allowing existing connections to finish until a deadline.                  |
+| **connection capacity**             | The number of publisher connections a relay is configured to support.                                                  |
+| **stream capacity**                 | The number of concurrent visitor streams a relay is configured to support.                                             |
+| **recovery episode**                | The time from an unexpected publisher connection loss until a visitor again receives a publisher byte.                 |
+| **public URL recovery observation** | Control's recorded measurement that closes one recovery episode.                                                       |
 
 ## internal security
 
@@ -277,6 +287,8 @@ not _inbox_, for the collection of threads.
 | Connection assignment revision  | `connection_assignment_revision`                     |
 | Publisher connection credential | `publisher_connection_credential`                    |
 | Visitor connection ID           | `visitor_connection_id`                              |
+| Visitor token                   | `visitor_token`                                      |
+| Visitor policy revision         | `visitor_policy_revision`                            |
 | Ingress identity                | `ingress_id`                                         |
 | Ingress process run ID          | `ingress_run_id`                                     |
 | Ingress lease revision          | `ingress_lease_revision`                             |

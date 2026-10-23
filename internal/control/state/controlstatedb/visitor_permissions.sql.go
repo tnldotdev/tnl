@@ -99,12 +99,12 @@ const createVisitorGrant = `-- name: CreateVisitorGrant :one
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10)
-ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+ON CONFLICT (resource_kind,created_by_identity_id,kind,idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type CreateVisitorGrantParams struct {
 	ID                  string
-	PublicURLID         string
+	PublicURLID         pgtype.Text
 	TeamID              string
 	Kind                string
 	CreatedByIdentityID string
@@ -132,9 +132,14 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 	err := row.Scan(
 		&i.ID,
 		&i.PublicURLID,
+		&i.ServiceID,
+		&i.ResourceKind,
+		&i.ResourceID,
 		&i.TeamID,
 		&i.Kind,
 		&i.IdentityID,
+		&i.AutoOwner,
+		&i.InvitationID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -263,7 +268,7 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 }
 
 const getVisitorGrant = `-- name: GetVisitorGrant :one
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
+SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `
 
 func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisitorGrant, error) {
@@ -272,9 +277,14 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 	err := row.Scan(
 		&i.ID,
 		&i.PublicURLID,
+		&i.ServiceID,
+		&i.ResourceKind,
+		&i.ResourceID,
 		&i.TeamID,
 		&i.Kind,
 		&i.IdentityID,
+		&i.AutoOwner,
+		&i.InvitationID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -348,10 +358,10 @@ func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool
 }
 
 const listVisitorGrants = `-- name: ListVisitorGrants :many
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
 `
 
-func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorGrant, error) {
+func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID pgtype.Text) ([]ControlVisitorGrant, error) {
 	rows, err := q.db.Query(ctx, listVisitorGrants, publicUrlID)
 	if err != nil {
 		return nil, err
@@ -363,9 +373,14 @@ func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicURLID,
+			&i.ServiceID,
+			&i.ResourceKind,
+			&i.ResourceID,
 			&i.TeamID,
 			&i.Kind,
 			&i.IdentityID,
+			&i.AutoOwner,
+			&i.InvitationID,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
@@ -419,21 +434,21 @@ const listVisitorInventory = `-- name: ListVisitorInventory :many
 SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
-CROSS JOIN LATERAL control.visitor_permission(u.id, $1::text,
+CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,$1::text,$2::text,
     COALESCE((SELECT p.id FROM control.previews p JOIN control.preview_public_urls included ON included.preview_id = p.id
       WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
-    $2::timestamptz) permission
-WHERE u.id > $3::text AND ($4::text = '' OR u.team_id = $4)
-  AND control.company_subject_session_authorized(u.team_id,$1::text,$5::text,$2)
+    $3::timestamptz) permission
+WHERE u.id > $4::text AND ($5::text = '' OR u.team_id = $5)
+  AND control.company_subject_session_authorized(u.team_id,$1::text,$2::text,$3)
 ORDER BY u.id LIMIT 101
 `
 
 type ListVisitorInventoryParams struct {
 	IdentityID       string
+	ControlSessionID string
 	Now              pgtype.Timestamptz
 	Cursor           string
 	TeamID           string
-	ControlSessionID string
 }
 
 type ListVisitorInventoryRow struct {
@@ -448,10 +463,10 @@ type ListVisitorInventoryRow struct {
 func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInventoryParams) ([]ListVisitorInventoryRow, error) {
 	rows, err := q.db.Query(ctx, listVisitorInventory,
 		arg.IdentityID,
+		arg.ControlSessionID,
 		arg.Now,
 		arg.Cursor,
 		arg.TeamID,
-		arg.ControlSessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -805,15 +820,18 @@ func (q *Queries) VisitorFeedbackPolicy(ctx context.Context, id string) (string,
 }
 
 const visitorPermission = `-- name: VisitorPermission :one
-SELECT reason::text, expires_at::timestamptz FROM control.visitor_permission(
-    $1::text, $2::text, $3::text, $4::timestamptz)
+SELECT reason::text, expires_at::timestamptz FROM control.visitor_identity_permission(
+    $1::text,$2::text,$3::text,
+    $4::text,$5::text,$6::timestamptz)
 `
 
 type VisitorPermissionParams struct {
-	PublicURLID string
-	IdentityID  string
-	PreviewID   string
-	Now         pgtype.Timestamptz
+	ResourceKind     string
+	ResourceID       string
+	IdentityID       string
+	ControlSessionID string
+	PreviewID        string
+	Now              pgtype.Timestamptz
 }
 
 type VisitorPermissionRow struct {
@@ -823,8 +841,10 @@ type VisitorPermissionRow struct {
 
 func (q *Queries) VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error) {
 	row := q.db.QueryRow(ctx, visitorPermission,
-		arg.PublicURLID,
+		arg.ResourceKind,
+		arg.ResourceID,
 		arg.IdentityID,
+		arg.ControlSessionID,
 		arg.PreviewID,
 		arg.Now,
 	)
