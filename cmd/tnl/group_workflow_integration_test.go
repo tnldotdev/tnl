@@ -673,13 +673,15 @@ func (f *cliWorkflow) dnsWork(t *testing.T, database *controlstate.Database) {
 }
 
 func (f *cliWorkflow) logRuns(t *testing.T) {
-	connection, err := pgx.Connect(t.Context(), f.databaseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := pgx.Connect(ctx, f.databaseURL)
 	if err != nil {
 		t.Logf("inspect workflow state: %v", err)
 		return
 	}
-	defer connection.Close(context.Background())
-	rows, err := connection.Query(t.Context(), `SELECT u.canonical_hostname,coalesce(r.publisher_identity_id,''),r.state,r.certificate_installed_at IS NOT NULL FROM control.publish_runs r JOIN control.public_urls u ON u.id=r.public_url_id WHERE r.closed_at IS NULL ORDER BY u.canonical_hostname,r.publish_run_number`)
+	defer connection.Close(ctx)
+	rows, err := connection.Query(ctx, `SELECT u.canonical_hostname,coalesce(r.publisher_identity_id,''),r.state,r.certificate_installed_at IS NOT NULL FROM control.publish_runs r JOIN control.public_urls u ON u.id=r.public_url_id WHERE r.closed_at IS NULL ORDER BY u.canonical_hostname,r.publish_run_number`)
 	if err != nil {
 		t.Logf("inspect active runs: %v", err)
 		return

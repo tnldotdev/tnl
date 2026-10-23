@@ -12,6 +12,8 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   let messageCount = 12;
   let cursor = 1;
   const reports: unknown[] = [];
+  // clicking submit must not imply that the asynchronous report was saved.
+  const acceptReport = Promise.withResolvers<void>();
   const report = {
     schema_version: 1,
     id,
@@ -50,7 +52,8 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
       if (request.method === "POST") {
         const chunks: Buffer[] = [];
         request.on("data", (chunk: Buffer) => chunks.push(chunk));
-        request.on("end", () => {
+        request.on("end", async () => {
+          await acceptReport.promise;
           const input: unknown = JSON.parse(Buffer.concat(chunks).toString());
           if (
             url.pathname === "/__tnl/feedback" &&
@@ -173,8 +176,9 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     await page.locator(".selection-hint").click();
     await page.getByRole("textbox", { name: /^feedback$/i }).fill("A text selection suggestion");
     await page.getByRole("button", { name: /^send feedback$/i }).click();
-    expect(reports).toHaveLength(1);
+    acceptReport.resolve();
     await page.getByRole("heading", { name: "A text selection suggestion" }).waitFor();
+    expect(reports).toHaveLength(1);
     await expect.poll(() => page.locator(".highlight").count()).toBeGreaterThan(0);
     const rectangles = await page.locator(".highlight").count();
     await page.locator("#intro").evaluate((node) => {
@@ -194,6 +198,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
     await expect.poll(() => pin.count()).toBe(1);
     expect(errors).toEqual([]);
   } finally {
+    acceptReport.resolve();
     await browser?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
