@@ -2729,7 +2729,7 @@ type PublishRunSetup struct {
 	PublishRunToken      string                 `json:"publish_run_token"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 
-	// Traffic Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+	// Traffic Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
 	Traffic *TrafficLimits `json:"traffic,omitempty"`
 }
 
@@ -3579,10 +3579,27 @@ type SourceState struct {
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
+// StreamCapacityAllocation defines model for StreamCapacityAllocation.
+type StreamCapacityAllocation struct {
+	Capacity             int       `json:"capacity"`
+	Id                   string    `json:"id"`
+	IngressId            string    `json:"ingress_id"`
+	IngressLeaseRevision int64     `json:"ingress_lease_revision"`
+	IngressRunId         string    `json:"ingress_run_id"`
+	ObservedAt           time.Time `json:"observed_at"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource   VisitorResourceScope `json:"resource"`
+	Retired    bool                 `json:"retired"`
+	RunId      string               `json:"run_id"`
+	RunNumber  int64                `json:"run_number"`
+	ValidUntil time.Time            `json:"valid_until"`
+}
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
-// TrafficLimits Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+// TrafficLimits Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
 type TrafficLimits struct {
 	Burst              int    `json:"burst"`
 	Connections        int    `json:"connections"`
@@ -3695,11 +3712,12 @@ type VisitorPolicySnapshot struct {
 	Port        int              `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Resource              VisitorResourceScope     `json:"resource"`
-	ValidUntil            time.Time                `json:"valid_until"`
-	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
-	VisitorPolicyRevision int64                    `json:"visitor_policy_revision"`
-	WorkloadLeases        []VisitorWorkloadLease   `json:"workload_leases"`
+	Resource              VisitorResourceScope       `json:"resource"`
+	StreamAllocations     []StreamCapacityAllocation `json:"stream_allocations"`
+	ValidUntil            time.Time                  `json:"valid_until"`
+	VerificationKeys      []VisitorVerificationKey   `json:"verification_keys"`
+	VisitorPolicyRevision int64                      `json:"visitor_policy_revision"`
+	WorkloadLeases        []VisitorWorkloadLease     `json:"workload_leases"`
 }
 
 // VisitorPolicyUpdate defines model for VisitorPolicyUpdate.

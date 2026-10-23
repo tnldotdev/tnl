@@ -2879,3 +2879,25 @@ CREATE TRIGGER visitor_key_created AFTER INSERT OR DELETE ON control.visitor_tok
 CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FOR EACH ROW
     WHEN ((OLD.public_key,OLD.retired_at,OLD.revoked_at) IS DISTINCT FROM (NEW.public_key,NEW.retired_at,NEW.revoked_at))
     EXECUTE FUNCTION control.visitor_verification_keys_changed();
+
+-- delegated portions of one run's configured connection capacity. retirement
+-- never shortens a grant: another owner cannot spend it until valid_until.
+CREATE TABLE control.stream_capacity_allocations (
+    id text PRIMARY KEY CHECK (id ~ '^salloc_[A-Za-z0-9]{22}$'),
+    resource_kind text NOT NULL CHECK (resource_kind IN ('public_url','service')),
+    resource_id text NOT NULL,
+    run_id text NOT NULL,
+    run_number bigint NOT NULL CHECK (run_number>=1),
+    ingress_id text NOT NULL,
+    ingress_run_id text NOT NULL,
+    ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>=1),
+    request_id text NOT NULL,
+    capacity integer NOT NULL CHECK (capacity BETWEEN 1 AND 1048576),
+    issued_at timestamptz NOT NULL,
+    renewed_at timestamptz NOT NULL,
+    valid_until timestamptz NOT NULL,
+    retired_at timestamptz,
+    CHECK (renewed_at>=issued_at AND valid_until>renewed_at AND valid_until<=renewed_at+interval '10 seconds'),
+    UNIQUE(resource_kind,resource_id,run_id,ingress_id,ingress_run_id,ingress_lease_revision,request_id)
+);
+CREATE INDEX stream_capacity_allocations_run ON control.stream_capacity_allocations(resource_kind,resource_id,run_id,valid_until);

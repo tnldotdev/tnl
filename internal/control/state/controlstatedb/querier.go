@@ -108,6 +108,7 @@ type Querier interface {
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
 	CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecentGuestTrialsByIPParams) (int64, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
+	CountStreamCapacityAllocations(ctx context.Context, arg CountStreamCapacityAllocationsParams) (int64, error)
 	CountTeamOwners(ctx context.Context, teamID string) (int64, error)
 	CreateActiveSlugReservation(ctx context.Context, arg CreateActiveSlugReservationParams) error
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
@@ -126,6 +127,7 @@ type Querier interface {
 	CreatePublishRunPreview(ctx context.Context, arg CreatePublishRunPreviewParams) (ControlPreview, error)
 	CreateSeedMember(ctx context.Context, arg CreateSeedMemberParams) error
 	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
+	CreateStreamCapacityAllocation(ctx context.Context, arg CreateStreamCapacityAllocationParams) (ControlStreamCapacityAllocation, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
 	CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrantParams) (ControlVisitorGrant, error)
@@ -171,6 +173,7 @@ type Querier interface {
 	FindSeedTeam(ctx context.Context, displayName string) (ControlTeam, error)
 	// the caller rechecks current management before recovering metadata, never secrets.
 	FindServiceInvitationRequest(ctx context.Context, arg FindServiceInvitationRequestParams) (ControlServiceInvitation, error)
+	FindStreamCapacityAllocation(ctx context.Context, arg FindStreamCapacityAllocationParams) (ControlStreamCapacityAllocation, error)
 	FinishGuestPublishRun(ctx context.Context, arg FinishGuestPublishRunParams) (int64, error)
 	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
 	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)
@@ -510,6 +513,7 @@ type Querier interface {
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	ReadServiceRoutingClock(ctx context.Context) (int64, error)
+	ReadStreamCapacityAllocations(ctx context.Context, arg ReadStreamCapacityAllocationsParams) ([]ControlStreamCapacityAllocation, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, arg ReadVisitorPolicyRevisionParams) (int64, error)
 	ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error)
@@ -541,6 +545,7 @@ type Querier interface {
 	RenewPublisherRuntime(ctx context.Context, arg RenewPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	RenewServiceRun(ctx context.Context, arg RenewServiceRunParams) (ControlServiceRun, error)
+	RenewStreamCapacityAllocation(ctx context.Context, arg RenewStreamCapacityAllocationParams) (ControlStreamCapacityAllocation, error)
 	// a failed ready connection can keep its existing service reservation. this
 	// atomic ready -> assigned transition has zero counter delta and needs only the
 	// caller's public URL/publish run locks, not placement's global/service/lease guards.
@@ -556,6 +561,7 @@ type Querier interface {
 	ResolveLoginTeam(ctx context.Context, selection string) (string, error)
 	RetainVisitorTokenSigningKey(ctx context.Context, arg RetainVisitorTokenSigningKeyParams) (int64, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
+	RetireStreamCapacityAllocation(ctx context.Context, arg RetireStreamCapacityAllocationParams) (int64, error)
 	RetireVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error)
@@ -617,6 +623,7 @@ type Querier interface {
 	StopPublisherRuntime(ctx context.Context, arg StopPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	StoreIngressTransportCertificate(ctx context.Context, arg StoreIngressTransportCertificateParams) (ControlIngressTransportCertificate, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
+	SumStreamCapacityAllocations(ctx context.Context, arg SumStreamCapacityAllocationsParams) (int64, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error)
 	TeamMemberSlugReserved(ctx context.Context, arg TeamMemberSlugReservedParams) (bool, error)

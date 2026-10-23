@@ -81,11 +81,12 @@ type Bound struct {
 }
 
 type boundState struct {
-	assignments map[string]tunnelv1.ServicePublisherConnectionRef
-	connections [2]controlv1.ConnectionAssignment
-	mu          sync.Mutex
-	active      map[net.Conn]struct{}
-	closed      bool
+	assignments     map[string]tunnelv1.ServicePublisherConnectionRef
+	connections     [2]controlv1.ConnectionAssignment
+	mu              sync.Mutex
+	active          map[net.Conn]struct{}
+	closed          bool
+	reservedStreams int
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -220,6 +221,26 @@ func (b *Bound) current(ref tunnelv1.ServicePublisherConnectionRef) bool {
 	return !b.closed && b.assignments[ref.PublisherConnectionID] == ref
 }
 
+// reserveStream shares the final run limit across both relay connections. a
+// stream consumes capacity before acceptance, including partial setup failures.
+func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(), bool) {
+	if b == nil {
+		return nil, false
+	}
+	b.mu.Lock()
+	limit := b.streamCapacity
+	if limit == 0 {
+		limit = 64
+	}
+	if b.closed || b.assignments[ref.PublisherConnectionID] != ref || b.reservedStreams >= limit {
+		b.mu.Unlock()
+		return nil, false
+	}
+	b.reservedStreams++
+	b.mu.Unlock()
+	return sync.OnceFunc(func() { b.mu.Lock(); b.reservedStreams--; b.mu.Unlock() }), true
+}
+
 // ConnectSlot uses server-authenticated WebPKI on both transport candidates.
 // tunnel.Race returns only after the relay accepts this exact private claim.
 // no target CA or private TLS key is used for relay authentication.
@@ -312,11 +333,6 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
 	var workers sync.WaitGroup
 	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
-	limit := c.bound.streamCapacity
-	if limit == 0 {
-		limit = 64
-	}
-	capacity := make(chan struct{}, limit)
 	for {
 		incoming, err := c.session.AcceptServiceForwardingStream(ctx)
 		if err != nil {
@@ -333,18 +349,17 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 			_ = incoming.Reject(tunnelv1.StaleConnectionAssignment)
 			continue
 		}
-		select {
-		case capacity <- struct{}{}:
-		default:
+		release, available := c.bound.reserveStream(c.ref)
+		if !available {
 			_ = incoming.Reject(tunnelv1.CapacityExceeded)
 			continue
 		}
 		if err := incoming.Accept(); err != nil {
-			<-capacity
+			release()
 			return err
 		}
 		workers.Go(func() {
-			defer func() { <-capacity }()
+			defer release()
 			defer incoming.Stream().Close()
 			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header)
 		})

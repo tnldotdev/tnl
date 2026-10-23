@@ -1,0 +1,37 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/stream-capacity:
+    post:
+      operationId: allocateStreamCapacity
+      description: Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/StreamCapacityRequest" }
+      responses:
+        "200":
+          description: Fixed-deadline stream capacity allocation
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/StreamCapacityAllocation" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id}:
+    delete:
+      operationId: retireStreamCapacity
+      description: Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
+        - name: allocation_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/StreamCapacityRetirement" }
+      responses:
+        "204": { description: Exact allocation retired }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

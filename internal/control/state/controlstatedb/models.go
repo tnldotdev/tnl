@@ -1493,6 +1493,23 @@ type ControlSharePublicUrl struct {
 	PublicURLID string
 }
 
+type ControlStreamCapacityAllocation struct {
+	ID                   string
+	ResourceKind         string
+	ResourceID           string
+	RunID                string
+	RunNumber            int64
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+	RequestID            string
+	Capacity             int32
+	IssuedAt             pgtype.Timestamptz
+	RenewedAt            pgtype.Timestamptz
+	ValidUntil           pgtype.Timestamptz
+	RetiredAt            pgtype.Timestamptz
+}
+
 type ControlTeam struct {
 	ID                     string
 	Kind                   string

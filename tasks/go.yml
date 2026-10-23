@@ -268,6 +268,12 @@ tasks:
     cmds:
       - go test ./internal/security/visitortoken -run='^$' -fuzz='^FuzzVisitorTokenVerification$' -fuzztime='{{.TIME}}' -parallel=2
 
+  test:stream-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check delegated connection slots, renewal deadlines, replay protection, and both publisher connections
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/ingress ./internal/policy/visitorlease ./internal/publisher ./internal/publisher/service ./pkg/protocol/tunnelv1 -run='^Test(StreamReservation|StreamCapacity|PublisherStreamCapacity|PublicURLStreamCapacity|Reservation)' -count=1
+
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"
     desc: Fuzz bounded public and private infrastructure trace-context frames
