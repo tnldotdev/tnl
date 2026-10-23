@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const defaultRoutingTablePageSize = 256
@@ -322,7 +323,7 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		entries := make([]ingressv1.HashedIPPrefix, len(projection.AllowedIPHashes))
 		for index, entry := range projection.AllowedIPHashes {
 			entries[index] = ingressv1.HashedIPPrefix{
-				Family: ingressv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest,
+				Family: controlv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest,
 			}
 		}
 		hashed = entries

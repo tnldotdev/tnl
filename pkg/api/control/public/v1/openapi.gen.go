@@ -345,6 +345,24 @@ func (e FeedbackThreadState) Valid() bool {
 	}
 }
 
+// Defines values for HashedIPPrefixFamily.
+const (
+	HashedIPPrefixFamilyIpv4 HashedIPPrefixFamily = "ipv4"
+	HashedIPPrefixFamilyIpv6 HashedIPPrefixFamily = "ipv6"
+)
+
+// Valid indicates whether the value is a known member of the HashedIPPrefixFamily enum.
+func (e HashedIPPrefixFamily) Valid() bool {
+	switch e {
+	case HashedIPPrefixFamilyIpv4:
+		return true
+	case HashedIPPrefixFamilyIpv6:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	HealthResponseStatusOk HealthResponseStatus = "ok"
@@ -848,19 +866,19 @@ func (e PublisherRuntimeRequestAction) Valid() bool {
 
 // Defines values for PublisherRuntimeStatusAddressFamily.
 const (
-	Ipv4    PublisherRuntimeStatusAddressFamily = "ipv4"
-	Ipv6    PublisherRuntimeStatusAddressFamily = "ipv6"
-	Unknown PublisherRuntimeStatusAddressFamily = "unknown"
+	PublisherRuntimeStatusAddressFamilyIpv4    PublisherRuntimeStatusAddressFamily = "ipv4"
+	PublisherRuntimeStatusAddressFamilyIpv6    PublisherRuntimeStatusAddressFamily = "ipv6"
+	PublisherRuntimeStatusAddressFamilyUnknown PublisherRuntimeStatusAddressFamily = "unknown"
 )
 
 // Valid indicates whether the value is a known member of the PublisherRuntimeStatusAddressFamily enum.
 func (e PublisherRuntimeStatusAddressFamily) Valid() bool {
 	switch e {
-	case Ipv4:
+	case PublisherRuntimeStatusAddressFamilyIpv4:
 		return true
-	case Ipv6:
+	case PublisherRuntimeStatusAddressFamilyIpv6:
 		return true
-	case Unknown:
+	case PublisherRuntimeStatusAddressFamilyUnknown:
 		return true
 	default:
 		return false
@@ -2306,6 +2324,16 @@ type HTTPVisitorResponse struct {
 	VisitAllowed bool       `json:"visit_allowed"`
 }
 
+// HashedIPPrefix defines model for HashedIPPrefix.
+type HashedIPPrefix struct {
+	Digest       string               `json:"digest"`
+	Family       HashedIPPrefixFamily `json:"family"`
+	PrefixLength int                  `json:"prefix_length"`
+}
+
+// HashedIPPrefixFamily defines model for HashedIPPrefix.Family.
+type HashedIPPrefixFamily string
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -2979,6 +3007,16 @@ type PublisherShare struct {
 	ShareId           ShareID             `json:"share_id"`
 }
 
+// PublisherVisitorPolicyRequest defines model for PublisherVisitorPolicyRequest.
+type PublisherVisitorPolicyRequest struct {
+	AfterRevision int64 `json:"after_revision"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource  VisitorResourceScope `json:"resource"`
+	RunId     string               `json:"run_id"`
+	RunNumber int64                `json:"run_number"`
+}
+
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
 	Checks struct {
@@ -3639,6 +3677,39 @@ type VisitorInvitation struct {
 	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
 }
 
+// VisitorPolicyIP defines model for VisitorPolicyIP.
+type VisitorPolicyIP struct {
+	Key      []byte           `json:"key"`
+	Prefixes []HashedIPPrefix `json:"prefixes"`
+}
+
+// VisitorPolicySnapshot defines model for VisitorPolicySnapshot.
+type VisitorPolicySnapshot struct {
+	Anonymous   bool             `json:"anonymous"`
+	Enabled     bool             `json:"enabled"`
+	Hostname    string           `json:"hostname"`
+	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
+	Issuer      string           `json:"issuer"`
+	KeyRevision int64            `json:"key_revision"`
+	ObservedAt  time.Time        `json:"observed_at"`
+	Port        int              `json:"port"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource              VisitorResourceScope     `json:"resource"`
+	ValidUntil            time.Time                `json:"valid_until"`
+	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
+	VisitorPolicyRevision int64                    `json:"visitor_policy_revision"`
+	WorkloadLeases        []VisitorWorkloadLease   `json:"workload_leases"`
+}
+
+// VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
+type VisitorPolicyUpdate struct {
+	AfterRevision    int64                 `json:"after_revision"`
+	Policy           VisitorPolicySnapshot `json:"policy"`
+	Revisions        []int64               `json:"revisions"`
+	SnapshotRequired bool                  `json:"snapshot_required"`
+}
+
 // VisitorResourceScope An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 type VisitorResourceScope struct {
 	Id   string                   `json:"id"`
@@ -3735,6 +3806,19 @@ type VisitorTokenWorkloadSource struct {
 
 // VisitorTokenWorkloadSourceKind defines model for VisitorTokenWorkloadSource.Kind.
 type VisitorTokenWorkloadSourceKind string
+
+// VisitorVerificationKey defines model for VisitorVerificationKey.
+type VisitorVerificationKey struct {
+	Id        string `json:"id"`
+	PublicKey []byte `json:"public_key"`
+}
+
+// VisitorWorkloadLease defines model for VisitorWorkloadLease.
+type VisitorWorkloadLease struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	KeySha256 string    `json:"key_sha256"`
+	SessionId string    `json:"session_id"`
+}
 
 // WebhookProvider defines model for WebhookProvider.
 type WebhookProvider string
@@ -4325,6 +4409,9 @@ type EnrollVisitorDeviceJSONRequestBody EnrollVisitorDeviceJSONBody
 
 // AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
 type AcceptVisitorInvitationJSONRequestBody AcceptVisitorInvitationJSONBody
+
+// ReadPublisherVisitorPolicyJSONRequestBody defines body for ReadPublisherVisitorPolicy for application/json ContentType.
+type ReadPublisherVisitorPolicyJSONRequestBody = PublisherVisitorPolicyRequest
 
 // IssueVisitorTokenJSONRequestBody defines body for IssueVisitorToken for application/json ContentType.
 type IssueVisitorTokenJSONRequestBody = VisitorTokenRequest
@@ -5575,6 +5662,18 @@ type ClientInterface interface {
 	// AcceptVisitorInvitation performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPublisherVisitorPolicyWithBody performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	ReadPublisherVisitorPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPublisherVisitorPolicy performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueVisitorTokenWithBody performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
@@ -8740,6 +8839,38 @@ func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentTyp
 // Takes a body of the `application/json` content type.
 func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptVisitorInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPublisherVisitorPolicyWithBody performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+func (c *Client) ReadPublisherVisitorPolicyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPublisherVisitorPolicyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPublisherVisitorPolicy performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPublisherVisitorPolicyRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15190,6 +15321,46 @@ func NewAcceptVisitorInvitationRequestWithBody(server string, contentType string
 	return req, nil
 }
 
+// NewReadPublisherVisitorPolicyRequest calls the generic ReadPublisherVisitorPolicy builder with application/json body
+func NewReadPublisherVisitorPolicyRequest(server string, body ReadPublisherVisitorPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadPublisherVisitorPolicyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReadPublisherVisitorPolicyRequestWithBody constructs an http.Request for the ReadPublisherVisitorPolicy method, with any body, and a specified content type
+func NewReadPublisherVisitorPolicyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/visitor-policy")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewIssueVisitorTokenRequest calls the generic IssueVisitorToken builder with application/json body
 func NewIssueVisitorTokenRequest(server string, body IssueVisitorTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16985,6 +17156,20 @@ type ClientWithResponsesInterface interface {
 	// AcceptVisitorInvitationWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
+
+	// ReadPublisherVisitorPolicyWithBodyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReadPublisherVisitorPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error)
+
+	// ReadPublisherVisitorPolicyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+	ReadPublisherVisitorPolicyWithResponse(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error)
 
 	// IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
@@ -23112,6 +23297,54 @@ func (r AcceptVisitorInvitationResponse) ContentType() string {
 	return ""
 }
 
+type ReadPublisherVisitorPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorPolicyUpdate
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadPublisherVisitorPolicyResponse) GetJSON200() *VisitorPolicyUpdate {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadPublisherVisitorPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadPublisherVisitorPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadPublisherVisitorPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadPublisherVisitorPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadPublisherVisitorPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type IssueVisitorTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26146,6 +26379,32 @@ func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseAcceptVisitorInvitationResponse(rsp)
+}
+
+// ReadPublisherVisitorPolicyWithBodyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error) {
+	rsp, err := c.ReadPublisherVisitorPolicyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPublisherVisitorPolicyResponse(rsp)
+}
+
+// ReadPublisherVisitorPolicyWithResponse performs a POST /v1/visitor-policy (the `ReadPublisherVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Read one current publisher run's scoped visitor policy, revocations, and public verification keys. The bearer credential is the exact run token. This background operation is independent of the publisher's process lease and of ordinary visitor admission.
+func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithResponse(ctx context.Context, body ReadPublisherVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPublisherVisitorPolicyResponse, error) {
+	rsp, err := c.ReadPublisherVisitorPolicy(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPublisherVisitorPolicyResponse(rsp)
 }
 
 // IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
@@ -30491,6 +30750,39 @@ func ParseAcceptVisitorInvitationResponse(rsp *http.Response) (*AcceptVisitorInv
 	return response, nil
 }
 
+// ParseReadPublisherVisitorPolicyResponse parses an HTTP response from a ReadPublisherVisitorPolicyWithResponse call
+func ParseReadPublisherVisitorPolicyResponse(rsp *http.Response) (*ReadPublisherVisitorPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadPublisherVisitorPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorPolicyUpdate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseIssueVisitorTokenResponse parses an HTTP response from a IssueVisitorTokenWithResponse call
 func ParseIssueVisitorTokenResponse(rsp *http.Response) (*IssueVisitorTokenResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31262,6 +31554,9 @@ type ServerInterface interface {
 
 	// (POST /v1/visitor-invitations/accept)
 	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/visitor-policy)
+	ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/visitor-tokens)
 	IssueVisitorToken(w http.ResponseWriter, r *http.Request)
@@ -35627,6 +35922,20 @@ func (siw *ServerInterfaceWrapper) AcceptVisitorInvitation(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ReadPublisherVisitorPolicy operation middleware
+func (siw *ServerInterfaceWrapper) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadPublisherVisitorPolicy(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // IssueVisitorToken operation middleware
 func (siw *ServerInterfaceWrapper) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 
@@ -36036,6 +36345,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-policy", wrapper.ReadPublisherVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-tokens", wrapper.IssueVisitorToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-credentials", wrapper.CreateVisitorCredential)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-certificates", wrapper.IssueVisitorClientCertificate)

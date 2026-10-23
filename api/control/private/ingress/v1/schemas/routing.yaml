@@ -115,20 +115,7 @@ schemas:
       traffic:
         $ref: "../openapi.yaml#/components/schemas/IngressTrafficLimits"
   HashedIPPrefix:
-    type: object
-    additionalProperties: false
-    required: [family, prefix_length, digest]
-    properties:
-      family:
-        type: string
-        enum: [ipv4, ipv6]
-      prefix_length:
-        type: integer
-        minimum: 0
-        maximum: 128
-      digest:
-        type: string
-        pattern: "^[A-Za-z0-9_-]{43}$"
+    $ref: "../../../../public/v1/openapi.yaml#/components/schemas/HashedIPPrefix"
   IngressRoutingTableEvent:
     type: object
     additionalProperties: false

@@ -6,6 +6,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var policyTestKey = [32]byte{1}
@@ -32,7 +33,7 @@ func hashedRoutingPolicyForTest(t *testing.T, entry *ingressv1.IngressRoutingTab
 	key := append([]byte(nil), policyTestKey[:]...)
 	entry.IpPolicy = ingressv1.HashedAllowlist
 	entry.AllowedIpHashes = []ingressv1.HashedIPPrefix{{
-		Family: ingressv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
+		Family: controlv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
 	}}
 	entry.IpPolicyKey = &key
 }

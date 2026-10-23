@@ -1,0 +1,19 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/visitor-policy:
+    post:
+      operationId: readIngressVisitorPolicy
+      description: Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/IngressVisitorPolicyRequest" }
+      responses:
+        "200":
+          description: Consistent scoped policy and verification-key update
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyUpdate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

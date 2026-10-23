@@ -37,6 +37,7 @@ func (Token) GoString() string { return "visitor token" }
 func (t Token) Reveal() string { return string(t) }
 
 type Permission struct {
+	SigningKeyID          string
 	Scope                 visitorscope.Scope
 	Hostname              string
 	Port                  uint16
@@ -115,6 +116,29 @@ type View struct {
 	ObservedAt            time.Time
 	ValidUntil            time.Time
 	Keys                  map[string]ed25519.PublicKey
+	ControlTime           time.Time
+	Workloads             map[string]WorkloadLease
+}
+
+type WorkloadLease struct {
+	KeySHA256 string
+	ExpiresAt time.Time
+}
+
+// AuthorityTime uses elapsed local time from the policy request's start. it
+// advances conservatively through network delay without trusting clock skew.
+func (v View) AuthorityTime(now time.Time) time.Time {
+	if v.ControlTime.IsZero() {
+		return now
+	}
+	return v.ControlTime.Add(max(0, now.Sub(v.ObservedAt)))
+}
+
+func (v View) LocalDeadline(deadline time.Time) time.Time {
+	if v.ControlTime.IsZero() {
+		return deadline
+	}
+	return v.ObservedAt.Add(deadline.Sub(v.ControlTime))
 }
 
 func (v View) current(now time.Time) bool {
@@ -126,6 +150,7 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 	if !view.current(now) {
 		return Permission{}, ErrPolicy
 	}
+	authorityNow := view.AuthorityTime(now)
 	raw := token.Reveal()
 	if len(raw) == 0 || len(raw) > MaxTokenBytes {
 		return Permission{}, ErrToken
@@ -153,14 +178,43 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 	}
 	var value claims
 	if decode(payload, &value) != nil || value.Version != 1 || value.Issuer != view.Issuer || value.Scope != view.Scope || value.Hostname != view.Hostname || value.Port != view.Port ||
-		value.Revision != view.VisitorPolicyRevision || value.Issued > now.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= now.Unix() {
+		value.Revision != view.VisitorPolicyRevision || value.Issued > authorityNow.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= authorityNow.Unix() {
 		return Permission{}, ErrToken
 	}
 	subject, err := decodeSubject(value.Subject)
 	if err != nil {
 		return Permission{}, err
 	}
-	return Permission{Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}, nil
+	permission := Permission{SigningKeyID: header.KeyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
+	if err := CheckCurrent(permission, view, now); err != nil {
+		return Permission{}, err
+	}
+	return permission, nil
+}
+
+// CheckCurrent rechecks an already verified, proof-bound admission. it does not
+// replace signature or possession verification at the admission boundary.
+func CheckCurrent(permission Permission, view View, now time.Time) error {
+	if !view.current(now) {
+		return ErrPolicy
+	}
+	if permission.Scope != view.Scope || permission.Hostname != view.Hostname || permission.Port != view.Port || permission.VisitorPolicyRevision != view.VisitorPolicyRevision || !permission.ExpiresAt.After(view.AuthorityTime(now)) {
+		return ErrToken
+	}
+	if len(view.Keys[permission.SigningKeyID]) != ed25519.PublicKeySize {
+		return ErrKey
+	}
+	subject := permission.Subject
+	if certificate, ok := subject.(Certificate); ok {
+		subject = certificate.Source
+	}
+	if workload, ok := subject.(Workload); ok {
+		parent, found := view.Workloads[workload.SessionID]
+		if !found || parent.KeySHA256 != workload.KeySHA256 || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
+			return ErrBinding
+		}
+	}
+	return nil
 }
 
 func VerifyBearer(token Token, view View, now time.Time) (Permission, error) {

@@ -513,7 +513,6 @@ CREATE TABLE control.public_urls (
     publisher_pool boolean NOT NULL DEFAULT false,
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
-    visitor_policy_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_policy_revision >= 1),
     access_mode text NOT NULL DEFAULT 'restricted' CHECK (access_mode IN ('restricted', 'anonymous')),
     ip_policy text NOT NULL CHECK (ip_policy IN ('allow_all', 'allowlist')),
     allowed_ip_policy_ciphertext bytea,
@@ -1758,7 +1757,6 @@ CREATE TABLE control.services (
     tls_metadata jsonb,
     trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision >= 1),
     visitor_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_revision >= 1),
-    visitor_policy_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_policy_revision >= 1),
     publisher_pool boolean NOT NULL DEFAULT false,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
@@ -2658,3 +2656,226 @@ END;
 $$;
 -- +goose StatementEnd
 CREATE TRIGGER audit_public_service_run AFTER INSERT OR UPDATE ON control.publish_runs FOR EACH ROW EXECUTE FUNCTION control.audit_public_service_run();
+
+-- policy counters have their own rows: a child-fact mutation never locks a
+-- publication parent in reverse order. each scope's counter serializes its
+-- committed history, independently of routing and management revisions.
+CREATE TABLE control.visitor_policies (
+    resource_kind text NOT NULL CHECK (resource_kind IN ('public_url','service')),
+    resource_id text NOT NULL CHECK (resource_id<>''),
+    revision bigint NOT NULL CHECK (revision>=1),
+    changed_at timestamptz NOT NULL,
+    PRIMARY KEY(resource_kind,resource_id)
+);
+CREATE TABLE control.visitor_policy_events (
+    resource_kind text NOT NULL,
+    resource_id text NOT NULL,
+    revision bigint NOT NULL CHECK (revision>=1),
+    changed_at timestamptz NOT NULL,
+    PRIMARY KEY(resource_kind,resource_id,revision),
+    FOREIGN KEY(resource_kind,resource_id) REFERENCES control.visitor_policies(resource_kind,resource_id)
+);
+CREATE TABLE control.visitor_verification_key_revision (
+    id smallint PRIMARY KEY DEFAULT 1 CHECK (id=1),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision>=1)
+);
+INSERT INTO control.visitor_verification_key_revision(id) VALUES(1);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.touch_visitor_policy(kind text,resource text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE next_revision bigint; happened timestamptz:=clock_timestamp();
+BEGIN
+    IF resource IS NULL OR resource='' THEN RETURN; END IF;
+    INSERT INTO control.visitor_policies(resource_kind,resource_id,revision,changed_at)
+        VALUES(kind,resource,1,happened)
+    ON CONFLICT(resource_kind,resource_id) DO UPDATE
+        SET revision=control.visitor_policies.revision+1,changed_at=EXCLUDED.changed_at
+    RETURNING revision INTO next_revision;
+    INSERT INTO control.visitor_policy_events(resource_kind,resource_id,revision,changed_at)
+        VALUES(kind,resource,next_revision,happened);
+    DELETE FROM control.visitor_policy_events WHERE resource_kind=kind AND resource_id=resource
+        AND revision<=next_revision-256;
+END;
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION control.touch_team_visitor_policies(team text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE resource record;
+BEGIN
+    FOR resource IN SELECT 'public_url'::text AS kind,id FROM control.public_urls WHERE team_id=team
+        UNION ALL SELECT 'service'::text,id FROM control.services WHERE team_id=team ORDER BY 1,2 LOOP
+        PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION control.touch_person_visitor_policies(person text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE resource record;
+BEGIN
+    FOR resource IN
+        SELECT 'public_url'::text AS kind,u.id FROM control.public_urls u WHERE u.created_by_identity_id=person
+            OR EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=u.team_id AND m.identity_id=person)
+        UNION SELECT 'service'::text,s.id FROM control.services s WHERE s.created_by_identity_id=person
+            OR EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=person)
+        UNION SELECT g.resource_kind,g.resource_id FROM control.visitor_grants g WHERE g.identity_id=person
+        UNION SELECT 'service'::text,g.service_id FROM control.service_http_grants g WHERE g.created_by_identity_id=person
+        UNION SELECT 'public_url'::text,included.public_url_id FROM control.share_public_urls included
+            JOIN control.shares share ON share.id=included.share_id WHERE share.created_by_identity_id=person
+        ORDER BY 1,2 LOOP
+        PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+    END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+
+-- invalidation dispatch reads only declared fact identifiers. it does not make
+-- permission decisions. updates cover old and new dependencies, including a
+-- share creator losing authority outside the visitor's own memberships.
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_policy_fact_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE facts jsonb; versions jsonb[]; resource record; mode text:=TG_ARGV[0];
+BEGIN
+    IF TG_OP='INSERT' THEN versions:=ARRAY[to_jsonb(NEW)];
+    ELSIF TG_OP='DELETE' THEN versions:=ARRAY[to_jsonb(OLD)];
+    ELSE versions:=ARRAY[to_jsonb(OLD),to_jsonb(NEW)]; END IF;
+    FOREACH facts IN ARRAY versions LOOP
+        CASE mode
+        WHEN 'public_resource' THEN PERFORM control.touch_visitor_policy('public_url',facts->>'id');
+        WHEN 'service_resource' THEN PERFORM control.touch_visitor_policy('service',facts->>'id');
+        WHEN 'public_url' THEN PERFORM control.touch_visitor_policy('public_url',facts->>'public_url_id');
+        WHEN 'service' THEN PERFORM control.touch_visitor_policy('service',facts->>'service_id');
+        WHEN 'grant' THEN PERFORM control.touch_visitor_policy(facts->>'resource_kind',facts->>'resource_id');
+        WHEN 'team' THEN PERFORM control.touch_team_visitor_policies(CASE WHEN TG_TABLE_NAME='teams' THEN facts->>'id' ELSE facts->>'team_id' END);
+        WHEN 'person' THEN PERFORM control.touch_person_visitor_policies(CASE WHEN TG_TABLE_NAME='identities' THEN facts->>'id' ELSE facts->>'identity_id' END);
+        WHEN 'share' THEN
+            FOR resource IN SELECT public_url_id AS id FROM control.share_public_urls WHERE share_id=facts->>'id' ORDER BY public_url_id LOOP
+                PERFORM control.touch_visitor_policy('public_url',resource.id);
+            END LOOP;
+        WHEN 'preview' THEN
+            FOR resource IN SELECT public_url_id AS id FROM control.preview_public_urls WHERE preview_id=facts->>'id' ORDER BY public_url_id LOOP
+                PERFORM control.touch_visitor_policy('public_url',resource.id);
+            END LOOP;
+        WHEN 'workload' THEN
+            FOR resource IN SELECT service_id AS id FROM control.workload_session_services WHERE workload_session_id=facts->>'id' ORDER BY service_id LOOP
+                PERFORM control.touch_visitor_policy('service',resource.id);
+            END LOOP;
+        WHEN 'browser' THEN
+            FOR resource IN SELECT DISTINCT public_url_id AS id FROM control.browser_session_run_bindings WHERE session_digest=(facts->>'token_digest')::bytea ORDER BY public_url_id LOOP
+                PERFORM control.touch_visitor_policy('public_url',resource.id);
+            END LOOP;
+        WHEN 'guest' THEN
+            FOR resource IN SELECT public_url_id AS id FROM control.guest_public_urls WHERE guest_id=facts->>'id' ORDER BY public_url_id LOOP
+                PERFORM control.touch_visitor_policy('public_url',resource.id);
+            END LOOP;
+        ELSE RAISE EXCEPTION 'unknown visitor policy fact';
+        END CASE;
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER visitor_policy_public_created AFTER INSERT OR DELETE ON control.public_urls
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('public_resource');
+CREATE TRIGGER visitor_policy_public_changed AFTER UPDATE ON control.public_urls FOR EACH ROW
+    WHEN ((OLD.team_id,OLD.membership_id,OLD.created_by_identity_id,OLD.canonical_hostname,OLD.public_url_scope,OLD.lifecycle_state,OLD.access_mode,OLD.ip_policy,OLD.allowed_ip_hashes,OLD.allowed_ip_hash_key_id,OLD.expires_at)
+        IS DISTINCT FROM (NEW.team_id,NEW.membership_id,NEW.created_by_identity_id,NEW.canonical_hostname,NEW.public_url_scope,NEW.lifecycle_state,NEW.access_mode,NEW.ip_policy,NEW.allowed_ip_hashes,NEW.allowed_ip_hash_key_id,NEW.expires_at))
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('public_resource');
+CREATE TRIGGER visitor_policy_service_created AFTER INSERT OR DELETE ON control.services
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service_resource');
+CREATE TRIGGER visitor_policy_service_changed AFTER UPDATE ON control.services FOR EACH ROW
+    WHEN ((OLD.team_id,OLD.enabled,OLD.deleted_at,OLD.certificate_hostname,OLD.service_port,OLD.public,OLD.protocol,OLD.trust_revision)
+        IS DISTINCT FROM (NEW.team_id,NEW.enabled,NEW.deleted_at,NEW.certificate_hostname,NEW.service_port,NEW.public,NEW.protocol,NEW.trust_revision))
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('service_resource');
+CREATE TRIGGER visitor_policy_grant AFTER INSERT OR UPDATE OR DELETE ON control.visitor_grants
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('grant');
+CREATE TRIGGER visitor_policy_share AFTER UPDATE OR DELETE ON control.shares
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('share');
+CREATE TRIGGER visitor_policy_share_scope AFTER INSERT OR UPDATE OR DELETE ON control.share_public_urls
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('public_url');
+CREATE TRIGGER visitor_policy_preview AFTER UPDATE OR DELETE ON control.previews
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('preview');
+CREATE TRIGGER visitor_policy_preview_scope AFTER INSERT OR UPDATE OR DELETE ON control.preview_public_urls
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('public_url');
+CREATE TRIGGER visitor_policy_ip_grant AFTER INSERT OR UPDATE OR DELETE ON control.visitor_ip_grants
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('public_url');
+CREATE TRIGGER visitor_policy_refresh_grant AFTER INSERT OR UPDATE OR DELETE ON control.service_http_grants
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service');
+CREATE TRIGGER visitor_policy_device AFTER UPDATE OR DELETE ON control.visitor_devices
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('person');
+CREATE TRIGGER visitor_policy_identity AFTER UPDATE ON control.identities FOR EACH ROW
+    WHEN ((OLD.disabled_at,OLD.email_verified,OLD.normalized_email) IS DISTINCT FROM (NEW.disabled_at,NEW.email_verified,NEW.normalized_email))
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('person');
+CREATE TRIGGER visitor_policy_membership AFTER INSERT OR UPDATE OR DELETE ON control.team_memberships
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_team AFTER UPDATE OR DELETE ON control.teams
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_session AFTER UPDATE ON control.control_sessions FOR EACH ROW
+    WHEN (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at OR NEW.access_expires_at<OLD.access_expires_at OR NEW.refresh_expires_at<OLD.refresh_expires_at)
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('person');
+CREATE TRIGGER visitor_policy_browser AFTER UPDATE ON control.browser_access_sessions FOR EACH ROW
+    WHEN (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at OR NEW.expires_at<OLD.expires_at)
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('browser');
+CREATE TRIGGER visitor_policy_service_browser AFTER UPDATE ON control.service_http_browser_sessions FOR EACH ROW
+    WHEN (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at OR NEW.expires_at<OLD.expires_at)
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('service');
+CREATE TRIGGER visitor_policy_client_certificate AFTER UPDATE ON control.service_client_certificates FOR EACH ROW
+    WHEN (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at)
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('service');
+CREATE TRIGGER visitor_policy_workload AFTER UPDATE ON control.workload_sessions FOR EACH ROW
+    WHEN ((OLD.revoked_at,OLD.public_key,OLD.binding) IS DISTINCT FROM (NEW.revoked_at,NEW.public_key,NEW.binding)
+        OR NEW.expires_at<OLD.expires_at OR NEW.lease_expires_at<OLD.lease_expires_at)
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('workload');
+CREATE TRIGGER visitor_policy_workload_scope AFTER INSERT OR UPDATE OR DELETE ON control.workload_session_services
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service');
+CREATE TRIGGER visitor_policy_company_connection AFTER UPDATE OR DELETE ON control.identity_connections
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_company_eligibility AFTER INSERT OR UPDATE OR DELETE ON control.company_eligibility
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_company_session AFTER INSERT OR UPDATE OR DELETE ON control.company_session_contexts
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_domain AFTER UPDATE OR DELETE ON control.domains
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_guest AFTER UPDATE ON control.guest_trials FOR EACH ROW
+    WHEN (NEW.ended_at IS DISTINCT FROM OLD.ended_at OR NEW.expires_at<OLD.expires_at
+        OR (OLD.used_bytes<5242880 AND NEW.used_bytes>=5242880)
+        OR (OLD.used_ready_ns<900000000000 AND NEW.used_ready_ns>=900000000000))
+    EXECUTE FUNCTION control.visitor_policy_fact_changed('guest');
+
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_policy_project_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE resource record;
+BEGIN
+    FOR resource IN SELECT 'public_url'::text AS kind,public_url_id AS id FROM control.applied_project_services
+        WHERE team_id=NEW.team_id AND project_key=NEW.project_key AND public_url_id IS NOT NULL
+        UNION SELECT 'service'::text,service_id FROM control.applied_project_services
+        WHERE team_id=NEW.team_id AND project_key=NEW.project_key AND service_id IS NOT NULL
+        ORDER BY 1,2 LOOP
+        PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER visitor_policy_project AFTER UPDATE ON control.applied_projects FOR EACH ROW
+    WHEN (OLD.configuration_hash IS DISTINCT FROM NEW.configuration_hash)
+    EXECUTE FUNCTION control.visitor_policy_project_changed();
+
+-- key rotation is ordered separately from resource permission. ordinary
+-- rotation does not revoke otherwise valid tokens or reverse resource locks.
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_verification_keys_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE control.visitor_verification_key_revision SET revision=revision+1 WHERE id=1;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER visitor_key_created AFTER INSERT OR DELETE ON control.visitor_token_keys
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_verification_keys_changed();
+CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FOR EACH ROW
+    WHEN ((OLD.public_key,OLD.retired_at,OLD.revoked_at) IS DISTINCT FROM (NEW.public_key,NEW.retired_at,NEW.revoked_at))
+    EXECUTE FUNCTION control.visitor_verification_keys_changed();
