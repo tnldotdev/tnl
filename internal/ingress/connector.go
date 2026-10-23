@@ -51,7 +51,7 @@ type ConnectorConfig struct {
 	TLSConfig                                                    *tls.Config
 	Transport                                                    muxsession.TLSYamuxConfig
 	Control                                                      PrivateControl
-	VisitorControl                                               PublicVisitorControl
+	VisitorControl                                               VisitorPreparationControl
 	DirectControl                                                DirectControl
 	Forwarder                                                    ServiceForwarder
 	Routing                                                      *ServiceRoutingTable
@@ -77,6 +77,9 @@ type Connector struct {
 	nextRelay                 atomic.Uint64
 	prepared                  map[string]*preparedVisitorRun
 	lastPreparationReport     time.Time
+	preparationStarted        bool
+	stopPreparation           context.CancelFunc
+	preparationDone           chan struct{}
 }
 
 func NewConnector(config ConnectorConfig) (*Connector, error) {
@@ -197,14 +200,21 @@ func (p *Connector) Close() error {
 	p.stopAdmissions()
 	p.mu.Lock()
 	p.closed = true
+	stopPreparation, preparationDone := p.stopPreparation, p.preparationDone
 	sessions := make([]muxsession.Session, 0, len(p.transports))
 	for session := range p.transports {
 		sessions = append(sessions, session)
 	}
 	p.mu.Unlock()
+	if stopPreparation != nil {
+		stopPreparation()
+	}
 	var result error
 	for _, session := range sessions {
 		result = errors.Join(result, session.Close())
+	}
+	if preparationDone != nil {
+		<-preparationDone
 	}
 	return result
 }

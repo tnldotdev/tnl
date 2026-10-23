@@ -122,6 +122,12 @@ the proof against its prepared service policy before making a stream decision.
 Service routing is prepared independently of visitor arrivals; a missing or
 expired local projection rejects setup without starting a routing fetch.
 
+The ingress connector owns one preparation loop. Closing it cancels and joins
+routing and policy/capacity workers before returning. Public URL and service
+preparation share a two-second retirement budget across runs, with at most eight
+retirements in flight; a failed control endpoint cannot multiply shutdown time
+by the number of saved resources.
+
 The opening proves possession and approved metadata; control's per-stream
 admission and publisher rechecks still own active native stream authority.
 Their records also supply audit identity and source attribution.
