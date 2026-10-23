@@ -138,7 +138,11 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 			if _, err := stream.Write(proxy); err != nil {
 				t.Fatal(err)
 			}
-			secure := tls.Client(stream, verification.Clone())
+			native, err := writeNativeFixtureOpening(t, stream, header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secure := tls.Client(native, verification.Clone())
 			if err := secure.HandshakeContext(ctx); err != nil {
 				t.Fatal(err)
 			}

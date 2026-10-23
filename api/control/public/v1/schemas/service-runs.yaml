@@ -5,18 +5,6 @@ schemas:
   ServiceRunID:
     type: string
     pattern: "^srun_[A-Za-z0-9]{22}$"
-  AuthorizeServiceConnectorRequest:
-    type: object
-    additionalProperties: false
-    required:
-      [run_number, visitor_connection_id, source_ip, connector_session_id, subject, grant_revision]
-    properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
-      visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
-      source_ip: { type: string, maxLength: 64 }
-      connector_session_id: { type: string, pattern: "^cns_[A-Za-z0-9]{22}$" }
-      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
-      grant_revision: { type: integer, format: int64, minimum: 1 }
   AuthorizeServiceClientCertificateRequest:
     type: object
     additionalProperties: false

@@ -128,9 +128,25 @@ preparation share a two-second retirement budget across runs, with at most eight
 retirements in flight; a failed control endpoint cannot multiply shutdown time
 by the number of saved resources.
 
-The opening proves possession and approved metadata; control's per-stream
-admission and publisher rechecks still own active native stream authority.
-Their records also supply audit identity and source attribution.
+Ingress forwards the exact opening and its held reservation to the publisher.
+The publisher verifies permission, source, metadata and the reservation before
+target work. Both relay connections share reservation replay watermarks and the
+run's final connection limit. Publisher admission and active permission checks
+use local policy rather than a control authorization request.
+
+The native process sends renewed, possession-bound permission on the same outer
+request stream. Request framing is removed before visitor TLS or a native parser
+reads data. A renewal keeps the original session, visitor ID, subject, source,
+and metadata; it cannot move the connection to another target or restore an
+expired guard. HTTP upgrade deadline interruptions retain partial frame state.
+
+A verified renewal can arrive before background policy covers its revision.
+The guard retains one pending permission without extending the prior confirmed
+deadline. A covering policy snapshot activates it; missing coverage, revocation,
+changed metadata or expiry still closes the admission.
+
+Ingress's per-stream control admission/recheck records still supply audit
+identity and source attribution until their authenticated replacement is wired.
 
 ## stream capacity
 

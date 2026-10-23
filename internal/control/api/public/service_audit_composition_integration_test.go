@@ -79,7 +79,12 @@ func (f *auditCompositionTarget) open(public bool) net.Conn {
 			return
 		}
 		if !public {
-			_, _ = io.Copy(back, reader)
+			_, initial, err := tunnelv1.ReadConnectorVisitorOpening(reader)
+			if err != nil {
+				return
+			}
+			native := tunnel.NewNativeRequestReader(&auditReaderConn{Conn: back, reader: reader}, initial, func(tunnelv1.NativeVisitorPermission) error { return nil })
+			_, _ = io.Copy(back, native)
 			return
 		}
 		secure := tls.Server(&auditReaderConn{Conn: back, reader: reader}, f.tls)
@@ -238,6 +243,30 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 			t.Error(err)
 		}
 	}()
+	publisherPolicyDone := make(chan struct{})
+	go func() {
+		defer close(publisherPolicyDone)
+		var observed []string
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			policy, err := d.ReadPublisherVisitorPolicy(preparationCtx, visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, run.RunID, run.RunNumber, run.Token, 0, observed, time.Now())
+			if err == nil {
+				observed = nil
+				for _, allocation := range policy.Policy.StreamAllocations {
+					if allocation.RunId == run.RunID {
+						observed = append(observed, allocation.Id)
+					}
+				}
+			}
+			select {
+			case <-preparationCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	defer func() { stopPreparation(); <-publisherPolicyDone }()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +364,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal("valid private stream denied", err)
 	}
 	const secretPayload = "private-query-target-and-command-never-audit"
-	if _, err = io.WriteString(valid, secretPayload); err != nil {
+	if _, err = io.WriteString(tunnel.NewNativeRequestWriter(valid), secretPayload); err != nil {
 		t.Fatal(err)
 	}
 	reply := make([]byte, len(secretPayload))

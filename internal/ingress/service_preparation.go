@@ -7,6 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func (p *Connector) reportPreparation(err error) {
@@ -42,7 +43,7 @@ func (p *Connector) ServiceRoute(service, run string, number int64, now time.Tim
 	return p.config.Routing.Lookup(service, run, number, now)
 }
 
-func (p *Connector) servicePolicyReady(service string) bool {
+func (p *Connector) servicePolicyReady(service string, subject tunnelv1.VisitorSubject) bool {
 	p.mu.Lock()
 	runs := make([]*preparedVisitorRun, 0, len(p.prepared))
 	for _, run := range p.prepared {
@@ -50,8 +51,17 @@ func (p *Connector) servicePolicyReady(service string) bool {
 	}
 	p.mu.Unlock()
 	for _, run := range runs {
+		run.capacity.mu.Lock()
+		ready := run.capacity.ready
+		run.capacity.mu.Unlock()
 		view, enabled, _ := run.policy.lease.Current()
-		if enabled && view.Scope.ID == service {
+		if subject.Kind == tunnelv1.VisitorWorkloadSession {
+			parent, found := view.Workloads[subject.WorkloadSessionID]
+			if !found || !parent.ExpiresAt.After(view.AuthorityTime(time.Now())) {
+				continue
+			}
+		}
+		if ready && enabled && view.Scope.ID == service {
 			return true
 		}
 	}

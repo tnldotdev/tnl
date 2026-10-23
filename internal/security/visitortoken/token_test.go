@@ -248,6 +248,27 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 			if _, err := VerifyNativeSession(token, view, peer, session, connection, 1, initial, public, signature, now); err != nil {
 				t.Fatal("authenticated peer lost its signed permission", err)
 			}
+			future := permission
+			future.VisitorPolicyRevision++
+			futureToken := issueToken(t, key, future, view, now)
+			futureMessage, err := NativeProofMessage(futureToken, session, connection, 1, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			futureSignature := ed25519.Sign(visitor, futureMessage)
+			if _, err := VerifyNativeSession(futureToken, view, peer, session, connection, 1, nil, public, futureSignature, now); !errors.Is(err, ErrToken) {
+				t.Fatal("future policy revision admitted a native stream", err)
+			}
+			verifiedFuture, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, 1, nil, public, futureSignature, now)
+			if err != nil || verifiedFuture.VisitorPolicyRevision != future.VisitorPolicyRevision {
+				t.Fatal("signed future renewal could not wait for policy coverage", err)
+			}
+			if err := CheckCurrent(verifiedFuture, view, now); !errors.Is(err, ErrToken) {
+				t.Fatal("future renewal bypassed current local policy", err)
+			}
+			if _, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, 1, nil, public, signature, now); !errors.Is(err, ErrBinding) {
+				t.Fatal("future renewal accepted an old token's proof", err)
+			}
 			if _, err := VerifyNativeSession(token, view, peer, session, connection, 2, initial, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("proof crossed an approved metadata revision", err)
 			}

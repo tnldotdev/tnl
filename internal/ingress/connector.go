@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -410,7 +411,7 @@ func (p *Connector) AcceptSession(ctx context.Context, transport muxsession.Sess
 		// startup may wait for it, but stream arrivals cannot initiate fetching.
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
-		for !p.servicePolicyReady(bound.ServiceId) {
+		for !p.servicePolicyReady(bound.ServiceId, hello.Subject) {
 			select {
 			case <-authCtx.Done():
 				return tunnelv1.ConnectorSessionAccepted{}, context.Cause(authCtx)
@@ -625,9 +626,46 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if !enabled || view.Scope.ID != entry.ServiceID || subjectErr != nil || keyErr != nil || signatureErr != nil {
 		return ErrServiceAdmission
 	}
-	if _, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, initial, public, signature, time.Now()); err != nil {
+	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, initial, public, signature, time.Now())
+	if err != nil {
 		return ErrServiceAdmission
 	}
+	ctx, stopNative := context.WithCancel(ctx)
+	defer stopNative()
+	guard, err := prepared.policy.lease.BindNative(permission, source.Addr().Unmap(), int64(entry.MetadataRevision), stopNative)
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	defer guard.Close()
+	if err := guard.AllowRenewal(); err != nil {
+		return ErrServiceAdmission
+	}
+	var backendRequests *tunnel.NativeRequestWriter
+	request := tunnel.NewNativeRequestReader(visitor, nil, func(proof tunnelv1.NativeVisitorPermission) error {
+		view, enabled, _ := prepared.policy.lease.Current()
+		public, keyErr := base64.RawURLEncoding.Strict().DecodeString(proof.PublicKey)
+		signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(proof.Signature)
+		if !enabled || keyErr != nil || signatureErr != nil {
+			return ErrServiceAdmission
+		}
+		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, nil, public, signature, time.Now())
+		if err != nil || next.Subject != permission.Subject {
+			return ErrServiceAdmission
+		}
+		if err := guard.Renew(next); err != nil {
+			return err
+		}
+		if backendRequests == nil {
+			return ErrServiceAdmission
+		}
+		return backendRequests.Renew(proof)
+	})
+	reservation, reservationGuard, err := prepared.reserve(visitorID, source.Addr().Unmap(), stopNative)
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	defer reservation.Close()
+	defer reservationGuard.Close()
 	if !admission.selectService(entry.ServiceID) {
 		audit.Reason = "capacity"
 		return ErrServiceAdmission
@@ -697,6 +735,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			VisitorConnectionID: visitorID, PublisherConnectionID: relay.PublisherConnectionId,
 			ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
 			ExpiresAt:                    claimed.ExpiresAt,
+			Reservation:                  reservation.header,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId,
 			RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		if err := header.Validate(); err != nil {
@@ -712,17 +751,20 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			_ = candidate.Close()
 			return ErrServiceAdmission
 		}
-		if len(initial) > 0 {
-			// buffered visitor bytes commit this attempt; never replay a partial
-			// write to another relay even when no return byte has arrived.
-			if written, err := writeSetup(streamCtx, candidate, nil, initial); err != nil {
-				_ = candidate.Close()
-				if written == 0 {
-					continue
-				}
-				return err
-			}
+		// the exact signed opening reaches the publisher unchanged. native
+		// renewals and data stay framed after it until publisher verification.
+		var opening bytes.Buffer
+		if _, err := tunnelv1.WriteConnectorVisitorOpening(&opening, entry, initial); err != nil {
+			_ = candidate.Close()
+			return err
 		}
+		_, openingErr := writeSetup(streamCtx, candidate, opening.Bytes(), nil)
+		clear(opening.Bytes())
+		if openingErr != nil {
+			_ = candidate.Close()
+			return openingErr
+		}
+		backendRequests = tunnel.NewNativeRequestWriter(candidate)
 		accepted.PublisherConnectionID, accepted.ConnectionAssignmentRevision = relay.PublisherConnectionId, uint64(relay.ConnectionAssignmentRevision)
 		if err := tunnelv1.WriteConnectorVisitorAccepted(visitor, accepted); err != nil {
 			_ = candidate.Close()
@@ -745,7 +787,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if auditErr == nil {
 			serviceaudit.Emit(p.config.AuditSink, audit)
 		}
-		err = p.copyLivePrivateVisitor(ctx, visitor, candidate, lease, bound, claimed, source, claimedAt)
+		err = p.copyLivePrivateVisitor(ctx, request, backendRequests, lease, bound, claimed, source, claimedAt)
 		outcome, reason := "closed", "closed"
 		if err != nil {
 			outcome, reason = "failed", "authorization"

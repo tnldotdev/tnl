@@ -142,7 +142,11 @@ func TestDiscoveredPostgresDNSFailoverAndResourceFencePreserveActiveStream(t *te
 		if _, err := front.Write(metadata); err != nil {
 			t.Fatal(err)
 		}
-		return front, done
+		native, err := writeNativeFixtureOpening(t, front, header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return native, done
 	}
 	connect := func() (net.Conn, <-chan error) {
 		front, done := open()

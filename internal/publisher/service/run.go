@@ -36,6 +36,7 @@ type Prepared struct {
 	targetResolver      TargetResolver
 	managedHostname     string
 	managedProtocol     config.ProtocolName
+	metadataRevision    int64
 	managedTargetTLS    *tls.Config
 	managedVisitor      func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication
 	servicePort         uint16
@@ -412,6 +413,18 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.servicePort) {
 		return ErrPrivateStream
 	}
+	body := net.Conn(&replayConn{Conn: stream, reader: replay})
+	var visitor publisher.ServiceVisitorAuthentication
+	if header.Connector != nil {
+		var finish func()
+		ctx, body, visitor, finish, err = b.admitNative(ctx, body, header)
+		if err != nil {
+			return err
+		}
+		defer finish()
+	} else {
+		visitor = b.prepared.managedVisitor(header)
+	}
 	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
 	if b.prepared.targetResolver != nil {
 		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(ctx)
@@ -430,8 +443,8 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	}
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
-	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
+		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+	return managed.Forward(ctx, body)
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {

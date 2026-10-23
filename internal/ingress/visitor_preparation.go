@@ -57,6 +57,9 @@ func retirePreparedVisitors(ctx context.Context, runs []*preparedVisitorRun) {
 }
 
 func (r *preparedVisitorRun) active() bool {
+	if r.policy != nil && r.policy.lease.Active() {
+		return true
+	}
 	for _, capacity := range r.capacities() {
 		capacity.pool.mu.Lock()
 		active := len(capacity.pool.active) != 0

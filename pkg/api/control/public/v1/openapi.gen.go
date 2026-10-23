@@ -1776,18 +1776,6 @@ type AuthorizeServiceClientCertificateRequest struct {
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
-// AuthorizeServiceConnectorRequest defines model for AuthorizeServiceConnectorRequest.
-type AuthorizeServiceConnectorRequest struct {
-	ConnectorSessionId string `json:"connector_session_id"`
-	GrantRevision      int64  `json:"grant_revision"`
-	RunNumber          int64  `json:"run_number"`
-	SourceIp           string `json:"source_ip"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject             VisitorSubject      `json:"subject"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
 // AvailablePublicURL defines model for AvailablePublicURL.
 type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
@@ -4420,9 +4408,6 @@ type HeartbeatServiceRunJSONRequestBody = ServiceRunHeartbeat
 // AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
 type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
 
-// AuthorizeServiceConnectorJSONRequestBody defines body for AuthorizeServiceConnector for application/json ContentType.
-type AuthorizeServiceConnectorJSONRequestBody = AuthorizeServiceConnectorRequest
-
 // RedeemServiceBrowserHandoffJSONRequestBody defines body for RedeemServiceBrowserHandoff for application/json ContentType.
 type RedeemServiceBrowserHandoffJSONRequestBody = ServiceBrowserRequest
 
@@ -5538,14 +5523,6 @@ type ClientInterface interface {
 	//
 	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceConnectorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-	// with any type of body and a specified content type.
-	AuthorizeServiceConnectorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceConnector performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AuthorizeServiceConnector(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
@@ -8355,34 +8332,6 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 // Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceConnectorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AuthorizeServiceConnectorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceConnectorRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceConnector performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AuthorizeServiceConnector(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceConnectorRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14279,60 +14228,6 @@ func NewAuthorizeServiceClientCertificateRequestWithBody(server string, serviceI
 	return req, nil
 }
 
-// NewAuthorizeServiceConnectorRequest calls the generic AuthorizeServiceConnector builder with application/json body
-func NewAuthorizeServiceConnectorRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceConnectorRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceConnectorRequestWithBody constructs an http.Request for the AuthorizeServiceConnector method, with any body, and a specified content type
-func NewAuthorizeServiceConnectorRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-connector", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRedeemServiceBrowserHandoffRequest calls the generic RedeemServiceBrowserHandoff builder with application/json body
 func NewRedeemServiceBrowserHandoffRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16990,16 +16885,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
-
-	// AuthorizeServiceConnectorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AuthorizeServiceConnectorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error)
-
-	// AuthorizeServiceConnectorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AuthorizeServiceConnectorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error)
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
@@ -22321,54 +22206,6 @@ func (r AuthorizeServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
-type AuthorizeServiceConnectorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificateDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceConnectorResponse) GetJSON200() *ServiceClientCertificateDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceConnectorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceConnectorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceConnectorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceConnectorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceConnectorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RedeemServiceBrowserHandoffResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25997,28 +25834,6 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx 
 		return nil, err
 	}
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
-}
-
-// AuthorizeServiceConnectorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceConnectorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error) {
-	rsp, err := c.AuthorizeServiceConnectorWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceConnectorResponse(rsp)
-}
-
-// AuthorizeServiceConnectorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceConnectorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error) {
-	rsp, err := c.AuthorizeServiceConnector(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceConnectorResponse(rsp)
 }
 
 // RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
@@ -30092,39 +29907,6 @@ func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*Author
 	return response, nil
 }
 
-// ParseAuthorizeServiceConnectorResponse parses an HTTP response from a AuthorizeServiceConnectorWithResponse call
-func ParseAuthorizeServiceConnectorResponse(rsp *http.Response) (*AuthorizeServiceConnectorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceConnectorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificateDecision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRedeemServiceBrowserHandoffResponse parses an HTTP response from a RedeemServiceBrowserHandoffWithResponse call
 func ParseRedeemServiceBrowserHandoffResponse(rsp *http.Response) (*RedeemServiceBrowserHandoffResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31540,9 +31322,6 @@ type ServerInterface interface {
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector)
-	AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -35225,41 +35004,6 @@ func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.Resp
 	handler.ServeHTTP(w, r)
 }
 
-// AuthorizeServiceConnector operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceConnector(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RedeemServiceBrowserHandoff operation middleware
 func (siw *ServerInterfaceWrapper) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 
@@ -36419,7 +36163,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/services/{service}", wrapper.GetProjectService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/start", wrapper.StartServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/client-certificates", wrapper.IssueServiceClientCertificate)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-connector", wrapper.AuthorizeServiceConnector)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate", wrapper.AuthorizeServiceClientCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)

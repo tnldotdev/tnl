@@ -319,9 +319,6 @@ func (f *lifecycleControl) MarkServiceCertificateInstalled(_ context.Context, se
 	f.installs++
 	return nil
 }
-func (f *lifecycleControl) AuthorizeServiceConnector(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-}
 func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return controlv1.ServiceClientCertificateDecision{}, nil
 }

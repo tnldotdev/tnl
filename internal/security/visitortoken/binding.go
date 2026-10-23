@@ -50,10 +50,25 @@ func VerifyNative(token Token, view View, expectedSubject Subject, session, conn
 // VerifyNativeSession compares signed permission with the subject already bound
 // to the infrastructure session, then proves possession of the signed key.
 func VerifyNativeSession(token Token, view View, expected tunnelv1.VisitorSubject, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+	permission, err := VerifyNativeRenewalProof(token, view, expected, session, connection, metadataRevision, initial, public, signature, now)
+	if err != nil {
+		return Permission{}, err
+	}
+	if err := CheckCurrent(permission, view, now); err != nil {
+		return Permission{}, err
+	}
+	return permission, nil
+}
+
+// VerifyNativeRenewalProof verifies the signature and possession binding without
+// granting admission. an active guard may retain one verified future revision
+// until its independently refreshed policy covers it; it cannot extend the old
+// confirmed deadline or revive an expired admission while waiting.
+func VerifyNativeRenewalProof(token Token, view View, expected tunnelv1.VisitorSubject, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
 	if expected.Validate() != nil || view.MetadataRevision < 1 || uint64(view.MetadataRevision) != metadataRevision {
 		return Permission{}, ErrBinding
 	}
-	permission, err := verify(token, view, now)
+	permission, err := verifySignature(token, view, now)
 	if err != nil {
 		return Permission{}, err
 	}

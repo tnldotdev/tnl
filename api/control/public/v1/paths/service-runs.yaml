@@ -55,31 +55,6 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunSetup" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
-    post:
-      operationId: authorizeServiceConnector
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
-        - {
-            name: service_run_id,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
-          }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/AuthorizeServiceConnectorRequest" }
-      responses:
-        "200":
-          description: Live permission for the exact authenticated connector admission
-          content:
-            application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     post:
       operationId: authorizeServiceClientCertificate

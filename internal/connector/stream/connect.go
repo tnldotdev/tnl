@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
-	"encoding/base64"
 	"errors"
 	"net"
 	"sync"
@@ -17,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -400,7 +398,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			if !ok {
 				continue
 			}
-			provider, committed, err := openPrivate(forwardCtx, path, run)
+			provider, committed, err := openPrivate(forwardCtx, path, run, prepared)
 			if err != nil {
 				if committed {
 					return err
@@ -459,7 +457,7 @@ func validProtocol(protocol string) bool {
 	return protocol == "http" || protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 
-func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.Conn, committed bool, err error) {
+func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *preparedSelection) (result net.Conn, committed bool, err error) {
 	ctx, endSetup := observability.Start(ctx, "connector.visitor_setup")
 	defer func() { endSetup(err) }()
 	release, err := path.acquire()
@@ -497,11 +495,10 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 		return nil, false, err
 	}
 	entry.MetadataRevision = uint64(run.TrustRevision)
-	message, err := visitortoken.NativeProofMessage(visitortoken.Token(run.Permission.VisitorToken), path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
-	if err != nil || path.signer.Sign == nil {
-		return nil, false, ErrServiceConnection
+	entry.Permission, err = nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, run.Permission.VisitorToken, nil)
+	if err != nil {
+		return nil, false, err
 	}
-	entry.Permission = tunnelv1.NativeVisitorPermission{Token: run.Permission.VisitorToken, PublicKey: base64.RawURLEncoding.EncodeToString(path.signer.PublicKey), Signature: base64.RawURLEncoding.EncodeToString(path.signer.Sign(message))}
 	entry.TraceContext = observability.WireTrace(ctx)
 	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, entry, nil); err != nil {
 		return nil, false, err
@@ -510,7 +507,9 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
 	endAcceptance(err)
 	if err != nil {
-		return nil, false, err
+		// a complete native opening can start server-first target negotiation.
+		// an uncertain acceptance must never create a second target connection.
+		return nil, true, err
 	}
 	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP || accepted.VisitorConnectionID != entry.VisitorConnectionID {
 		return nil, true, ErrServiceConnection
@@ -518,6 +517,13 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	if run.Endpoint == nil {
 		return nil, false, ErrServiceConnection
 	}
+	request := tunnel.NewNativeRequestWriter(stream)
+	stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
+	defer func() {
+		if err != nil {
+			_ = stopRenewal()
+		}
+	}()
 	{
 		if run.Protocol == "tcp" {
 			if run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify {
@@ -526,7 +532,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 			verification := run.ServiceTLS.Clone()
 			verification.ServerName = run.Endpoint.Hostname
 			verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
-			secured := tls.Client(stream, verification)
+			secured := tls.Client(request, verification)
 			committed = true
 			tlsCtx, endTLS := observability.Start(setup, "connector.visitor_tls")
 			err = secured.HandshakeContext(tlsCtx)
@@ -537,18 +543,19 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 			if err = stream.SetDeadline(time.Time{}); err != nil {
 				return nil, true, err
 			}
-			return &privateConn{Conn: secured, release: release}, true, nil
+			return &privateConn{Conn: secured, release: release, stop: stopRenewal}, true, nil
 		}
 		if err = stream.SetDeadline(time.Time{}); err != nil {
 			return nil, false, err
 		}
-		return &privateConn{Conn: stream, release: release}, true, nil
+		return &privateConn{Conn: request, release: release, stop: stopRenewal}, true, nil
 	}
 }
 
 type privateConn struct {
 	net.Conn
 	release func()
+	stop    func() error
 }
 
 func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
@@ -558,7 +565,13 @@ func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	return left.Hostname == right.Hostname && left.Port == right.Port && left.Public == right.Public
 }
 
-func (c *privateConn) Close() error { defer c.release(); return c.Conn.Close() }
+func (c *privateConn) Close() error {
+	defer c.release()
+	if c.stop != nil {
+		return c.stop()
+	}
+	return c.Conn.Close()
+}
 func (c *privateConn) CloseWrite() error {
 	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return writer.CloseWrite()

@@ -49,8 +49,6 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
   /v1/services/{service_id}/client-certificates:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1client-certificates"
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-connector"
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-client-certificate"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
@@ -506,8 +504,6 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/IssueServiceClientCertificateRequest"
     ServiceClientCertificate:
       $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificate"
-    AuthorizeServiceConnectorRequest:
-      $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceConnectorRequest"
     AuthorizeServiceClientCertificateRequest:
       $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceClientCertificateRequest"
     ServiceClientCertificateDecision:

@@ -104,7 +104,7 @@ func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM
 								return
 							}
 							defer backend.Close()
-							_, _ = streamcopy.Copy(stream, backend)
+							_, _ = streamcopy.Copy(tunnel.NewNativeRequestReader(stream, initial, func(tunnelv1.NativeVisitorPermission) error { return nil }), backend)
 						})
 					}
 				})
