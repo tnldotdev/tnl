@@ -3,6 +3,7 @@ package visitortoken
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,7 @@ type Permission struct {
 }
 
 type claims struct {
+	ID       string             `json:"jti"`
 	Version  int                `json:"version"`
 	Issuer   string             `json:"iss"`
 	Scope    visitorscope.Scope `json:"scope"`
@@ -84,7 +86,11 @@ func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permissio
 	if err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(claims{Version: 1, Issuer: issuer, Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", ErrToken
+	}
+	payload, err := json.Marshal(claims{ID: base64.RawURLEncoding.EncodeToString(nonce[:]), Version: 1, Issuer: issuer, Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
 		Revision: permission.VisitorPolicyRevision, Issued: now.Unix(), Expires: permission.ExpiresAt.Unix(), Subject: visitor})
 	if err != nil {
 		return "", ErrToken
@@ -147,6 +153,17 @@ func (v View) current(now time.Time) bool {
 }
 
 func verify(token Token, view View, now time.Time) (Permission, error) {
+	permission, err := verifySignature(token, view, now)
+	if err != nil {
+		return Permission{}, err
+	}
+	if err := CheckCurrent(permission, view, now); err != nil {
+		return Permission{}, err
+	}
+	return permission, nil
+}
+
+func verifySignature(token Token, view View, now time.Time) (Permission, error) {
 	if !view.current(now) {
 		return Permission{}, ErrPolicy
 	}
@@ -178,7 +195,10 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 	}
 	var value claims
 	if decode(payload, &value) != nil || value.Version != 1 || value.Issuer != view.Issuer || value.Scope != view.Scope || value.Hostname != view.Hostname || value.Port != view.Port ||
-		value.Revision != view.VisitorPolicyRevision || value.Issued > authorityNow.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= authorityNow.Unix() {
+		value.Revision < 1 || value.Issued > authorityNow.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= authorityNow.Unix() {
+		return Permission{}, ErrToken
+	}
+	if nonce, err := base64.RawURLEncoding.Strict().DecodeString(value.ID); err != nil || len(nonce) != 16 {
 		return Permission{}, ErrToken
 	}
 	subject, err := decodeSubject(value.Subject)
@@ -186,9 +206,6 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 		return Permission{}, err
 	}
 	permission := Permission{SigningKeyID: header.KeyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
-	if err := CheckCurrent(permission, view, now); err != nil {
-		return Permission{}, err
-	}
 	return permission, nil
 }
 
@@ -219,6 +236,23 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 
 func VerifyBearer(token Token, view View, now time.Time) (Permission, error) {
 	permission, err := verify(token, view, now)
+	if err != nil {
+		return Permission{}, err
+	}
+	switch permission.Subject.(type) {
+	case Browser, Share, Grant:
+		return permission, nil
+	default:
+		return Permission{}, ErrBinding
+	}
+}
+
+// VerifyBearerRenewalProof proves possession of an unexpired signed bearer. it
+// does not authorize admission: a superseded revision still fails CheckCurrent
+// and Lease.Bind. the browser renewal owner may only match it to a separately
+// prepared, currently verified replacement for the exact same subject.
+func VerifyBearerRenewalProof(token Token, view View, now time.Time) (Permission, error) {
+	permission, err := verifySignature(token, view, now)
 	if err != nil {
 		return Permission{}, err
 	}

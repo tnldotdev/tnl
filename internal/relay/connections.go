@@ -40,18 +40,19 @@ func NewPublisherConnection(
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
 
 func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, false, nil, nil)
+	return c.StartVisitor(ctx, visitorConnectionID, false, tunnelv1.StreamReservation{}, nil, nil)
 }
 
 func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, true, nil, nil)
+	return c.StartVisitor(ctx, visitorConnectionID, true, tunnelv1.StreamReservation{}, nil, nil)
 }
 
-func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool, initial []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
+func (c *PublisherConnection) StartVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
 	stream, err := c.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
+		Reservation:     reservation,
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: visitorConnectionID, PublicURLID: c.ref.PublicURLID,
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,

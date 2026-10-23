@@ -54,6 +54,7 @@ type streamCapacity struct {
 	until     time.Time
 	mu        sync.Mutex
 	id        string
+	ready     bool
 	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
@@ -122,6 +123,7 @@ func (c *streamCapacity) refresh(ctx context.Context) error {
 	c.until = started.Add(a.ValidUntil.Sub(a.ObservedAt))
 	c.mu.Lock()
 	c.id = a.Id
+	c.ready = a.PublisherObserved
 	c.mu.Unlock()
 	return nil
 }
@@ -129,7 +131,11 @@ func (c *streamCapacity) refresh(ctx context.Context) error {
 func (c *streamCapacity) reserve(visitorID string, stop func()) (*streamReservation, error) {
 	c.mu.Lock()
 	id := c.id
+	ready := c.ready
 	c.mu.Unlock()
+	if !ready {
+		return nil, ErrStreamReservation
+	}
 	return c.pool.reserve(id, visitorID, stop)
 }
 

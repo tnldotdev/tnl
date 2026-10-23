@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -116,6 +117,30 @@ func (v *integrationVisitor) requestURLContext(ctx context.Context, method, targ
 		return nil, nil, err
 	}
 	return v.request(request)
+}
+
+func waitForPreparedPublicVisitor(t *testing.T, visitor *integrationVisitor, address string) {
+	t.Helper()
+	endpoint, err := url.Parse(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// publication and routing precede background allocation observation. prove
+	// that boundary with verified visitor TLS without contacting the local app.
+	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
+		target := net.JoinHostPort(endpoint.Hostname(), "443")
+		connection, err := visitor.transport.DialContext(ctx, "tcp", target)
+		if err != nil {
+			return false, err
+		}
+		defer connection.Close()
+		configuration := visitor.transport.TLSClientConfig.Clone()
+		configuration.ServerName = endpoint.Hostname()
+		secured := tls.Client(connection, configuration)
+		defer secured.Close()
+		err = secured.HandshakeContext(ctx)
+		return err == nil, err
+	})
 }
 
 func assertIntegrationPublicURLCertificate(t *testing.T, response *http.Response, hostname string) {

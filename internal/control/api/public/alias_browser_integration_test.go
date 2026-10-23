@@ -2,13 +2,17 @@ package public
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -62,17 +66,58 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(run.PublishRunNumber), SourceIp: "192.0.2.10", BrowserCookieSecret: &installed.CookieSecret}
-	allowed, err := client.AuthorizeHTTPVisitor(ctx, run.PublishRunID, input, run.PublishRunToken)
-	if err != nil || !allowed.VisitAllowed || allowed.IdentityId == nil || *allowed.IdentityId != p.IdentityID || allowed.ValidUntil == nil || !allowed.ValidUntil.After(f.now) {
-		t.Fatalf("alias owner HTTP admission: %+v, %v", allowed, err)
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}
+	policy, err := visitorlease.New(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer policy.Close()
+	refresh := func() visitortoken.View {
+		t.Helper()
+		started := policy.Begin()
+		update, err := client.ReadPublisherVisitorPolicy(ctx, controlv1.PublisherVisitorPolicyRequest{Resource: installed.Permission.Resource, RunId: run.PublishRunID,
+			RunNumber: int64(run.PublishRunNumber), AfterRevision: started.AfterRevision}, run.PublishRunToken.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := visitorlease.Decode(update)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := policy.Apply(started, decoded); err != nil {
+			t.Fatal(err)
+		}
+		view, _, _ := policy.Current()
+		return view
+	}
+	view := refresh()
+	allowed, err := visitortoken.VerifyBearer(visitortoken.Token(installed.Permission.VisitorToken), view, time.Now())
+	if err != nil {
+		t.Fatal("alias owner permission failed local verification", err)
+	}
+	browser, ok := allowed.Subject.(visitortoken.Browser)
+	if !ok || browser.IdentityID != p.IdentityID || allowed.Scope != scope || !allowed.ExpiresAt.After(f.now) {
+		t.Fatal("alias owner permission changed identity, scope, or deadline")
+	}
+	source, err := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: installed.CookieSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := controlv1.VisitorTokenRequest{Resource: installed.Permission.Resource, Source: source}
+	renewed, err := client.IssueVisitorToken(ctx, input)
+	if err != nil || renewed.Resource != installed.Permission.Resource || renewed.VisitorToken == "" {
+		t.Fatal("alias browser sign-in could not renew its signed visitor permission", err)
 	}
 	if err := client.RevokeBrowserAccess(ctx, run.PublishRunID, run.PublishRunNumber, installed.CookieSecret, run.PublishRunToken); err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.AuthorizeHTTPVisitor(ctx, run.PublishRunID, input, run.PublishRunToken)
+	_, err = client.IssueVisitorToken(ctx, input)
 	var problem *clientcontrol.ProblemError
 	if !errors.As(err, &problem) || problem.Status != 403 || errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatalf("logout must return terminal permission failure: %v", err)
+	}
+	view = refresh()
+	if _, err := visitortoken.VerifyBearer(visitortoken.Token(renewed.VisitorToken), view, time.Now()); !errors.Is(err, visitortoken.ErrToken) {
+		t.Fatal("logout left the previous signed visitor permission usable", err)
 	}
 }

@@ -2883,6 +2883,7 @@ CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FO
 -- delegated portions of one run's configured connection capacity. retirement
 -- never shortens a grant: another owner cannot spend it until valid_until.
 CREATE TABLE control.stream_capacity_allocations (
+    publisher_observed_at timestamptz,
     id text PRIMARY KEY CHECK (id ~ '^salloc_[A-Za-z0-9]{22}$'),
     resource_kind text NOT NULL CHECK (resource_kind IN ('public_url','service')),
     resource_id text NOT NULL,

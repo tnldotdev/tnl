@@ -166,6 +166,17 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 			return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 		}
 	}
+	if route.prepared != nil {
+		reservation, guard, err := route.prepared.reserve(visitorID, source.Addr(), func() { _ = public.Close() })
+		if err != nil {
+			visitorOutcome = observability.VisitorCapacityDenied
+			s.rejectCapacity("stream_reservation")
+			return err
+		}
+		defer reservation.Close()
+		defer guard.Close()
+		backends = reservedBackends(backends, reservation)
+	}
 	if admission != nil && denied {
 		admission.hostname = hello.ServerName
 		remove := s.registerPendingVisitor(visitorID, admission, public)

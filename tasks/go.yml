@@ -63,9 +63,9 @@ tasks:
 
   test:live-authorization:
     dir: "{{.ROOT_DIR}}"
-    desc: Check public HTTP decision caching and live request authorization
+    desc: Check locally verified public HTTP permission, background renewal and request isolation
     vars:
-      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ServiceHTTPGuard)" .RUN}}'
+      RUN: '{{default "Test(BrowserTokens|LocalHTTPPermission|PublicHTTP|ShareHTTP|ShareHeader|ServiceHTTPGuard)" .RUN}}'
     cmds:
       - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
 
@@ -261,7 +261,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Verify signed visitor permissions and local policy deadlines without external infrastructure
     cmds:
-      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(PolicyLease|PolicyKey|PolicyClock|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|Token|NativeProof)' -count=1
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(Policy|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|BrowserTokens|LocalHTTPPermission|BearerRenewalProof|VisitorPolicyRevision|Token|NativeProof)' -count=1
 
   test:fuzz:visitors:
     dir: "{{.ROOT_DIR}}"

@@ -200,6 +200,13 @@ func (d *daemon) startIngressRuntime(
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	var visitorControl ingress.PublicVisitorControl
+	if !runtimeConfig.privateOnly {
+		visitorControl, ok = runtimeConfig.client.(ingress.PublicVisitorControl)
+		if !ok {
+			return errors.New("ingress visitor policy and stream capacity operations are required")
+		}
+	}
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	if runtimeConfig.privateHostname != "" {
 		registration.ConnectorAddress = &runtimeConfig.privateAddress
@@ -211,6 +218,7 @@ func (d *daemon) startIngressRuntime(
 		},
 		LeaseEstablished: runtime.audit.bind,
 		Client:           runtimeConfig.client, RoutingTable: routingTable,
+		VisitorControl:  visitorControl,
 		Registration:    registration,
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		RoutingWait: settings.routingTableWait, Observer: metrics,
@@ -286,16 +294,7 @@ func (d *daemon) startIngressRuntime(
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
 		LookupPool: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
-			entries, reason := controller.LookupAllWithReason(hostname, time.Now())
-			if reason != ingress.LookupCurrent {
-				return nil, reason
-			}
-			routes, err := forwarder.PublicURLs(entries)
-			if err != nil {
-				logOperationalError(ctx, "read ingress public URL", failure.ServerIngressFailed, err)
-				return nil, ingress.LookupInvalidProjection
-			}
-			return routes, ingress.LookupCurrent
+			return controller.LookupPublicURLs(hostname, forwarder, time.Now())
 		},
 		RequireProxyHeader: settings.requireProxyHeader, TrustedProxyPeers: settings.trustedProxyPeers, MaxConnections: publicCapacity,
 		Traffic: settings.traffic, Pending: settings.pending,

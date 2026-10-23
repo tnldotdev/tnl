@@ -24,7 +24,7 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLTestCertificate(t, "route.example"),
 		PreviewID: "pv_0123456789abcdefghijkl", PublicURLID: "url_0123456789abcdefghijkl", PublishRunNumber: 2,
 	})
@@ -61,7 +61,11 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 			}
 			reader := bufio.NewReader(visitor)
 			for _, path := range []string{"/__tnl/access", "/"} {
-				if _, err := fmt.Fprintf(visitor, "GET %s HTTP/1.1\r\nHost: route.example\r\n\r\n", path); err != nil {
+				credential := ""
+				if denied {
+					credential = visitorTokenHeader + ": invalid-visitor-token\r\n"
+				}
+				if _, err := fmt.Fprintf(visitor, "GET %s HTTP/1.1\r\nHost: route.example\r\n%s\r\n", path, credential); err != nil {
 					t.Fatal(err)
 				}
 				response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})

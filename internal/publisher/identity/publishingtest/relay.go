@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,7 +122,10 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		return 0, nil, err
 	}
 	r := selected.ref
-	stream, err := selected.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, nil)
+	sequence := f.visitorSequence.Add(1)
+	reservation := tunnelv1.StreamReservation{ID: "sres_" + strings.TrimPrefix(id, "vc_"), AllocationID: "salloc_" + strings.TrimPrefix(r.PublicURLID, "url_"), Slot: sequence % 1024, Sequence: uint64(sequence),
+		ResourceKind: "public_url", ResourceID: r.PublicURLID, RunID: r.PublishRunID, RunNumber: r.PublishRunNumber, VisitorConnectionID: id, IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1}
+	stream, err := selected.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, Reservation: reservation, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, nil)
 	if err != nil {
 		return 0, nil, err
 	}

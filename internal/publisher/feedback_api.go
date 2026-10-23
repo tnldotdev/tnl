@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,11 +32,19 @@ func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (co
 			result.ShareId, result.ShareSecret = &id, &secret
 		}
 	}
-	if _, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse); verified {
-		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
-			secret := cookie.Value
-			result.BrowserCookieSecret = &secret
+	if suppliedCookieCount(request, browserAccessCookieName) != 0 {
+		cookies := request.CookiesNamed(browserAccessCookieName)
+		if len(cookies) != 1 || suppliedCookieCount(request, browserAccessCookieName) != 1 {
+			return result, false
 		}
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookies[0].Value)
+		if err != nil || len(raw) != 32 {
+			return result, false
+		}
+		// control checks this browser-session fact and derives the author. the
+		// locally verified visitor token supplies no verified identity snapshot.
+		secret := cookies[0].Value
+		result.BrowserCookieSecret = &secret
 	}
 	if result.ShareSecret != nil {
 		return result, true

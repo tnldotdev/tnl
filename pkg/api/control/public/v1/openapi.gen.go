@@ -1440,6 +1440,21 @@ func (e VisitorTokenGrantSourceKind) Valid() bool {
 	}
 }
 
+// Defines values for VisitorTokenShareSessionSourceKind.
+const (
+	VisitorTokenShareSession VisitorTokenShareSessionSourceKind = "share_session"
+)
+
+// Valid indicates whether the value is a known member of the VisitorTokenShareSessionSourceKind enum.
+func (e VisitorTokenShareSessionSourceKind) Valid() bool {
+	switch e {
+	case VisitorTokenShareSession:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorTokenShareSourceKind.
 const (
 	VisitorTokenShare VisitorTokenShareSourceKind = "share"
@@ -1814,11 +1829,12 @@ type BrowserHandoffRequest struct {
 
 // BrowserHandoffResponse defines model for BrowserHandoffResponse.
 type BrowserHandoffResponse struct {
-	Bridge       *bool     `json:"bridge,omitempty"`
-	CookieSecret string    `json:"cookie_secret"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	NextUrl      *string   `json:"next_url,omitempty"`
-	ReturnPath   string    `json:"return_path"`
+	Bridge       *bool                `json:"bridge,omitempty"`
+	CookieSecret string               `json:"cookie_secret"`
+	ExpiresAt    time.Time            `json:"expires_at"`
+	NextUrl      *string              `json:"next_url,omitempty"`
+	Permission   VisitorTokenResponse `json:"permission"`
+	ReturnPath   string               `json:"return_path"`
 }
 
 // CanonicalHostname defines model for CanonicalHostname.
@@ -3011,6 +3027,9 @@ type PublisherShare struct {
 type PublisherVisitorPolicyRequest struct {
 	AfterRevision int64 `json:"after_revision"`
 
+	// ObservedAllocations allocations installed from an earlier successful local policy update.
+	ObservedAllocations []string `json:"observed_allocations"`
+
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource  VisitorResourceScope `json:"resource"`
 	RunId     string               `json:"run_id"`
@@ -3530,10 +3549,11 @@ type SharePage struct {
 
 // ShareRedemption defines model for ShareRedemption.
 type ShareRedemption struct {
-	Bridge       bool      `json:"bridge"`
-	CookieSecret string    `json:"cookie_secret"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	NextUrl      string    `json:"next_url"`
+	Bridge       bool                 `json:"bridge"`
+	CookieSecret string               `json:"cookie_secret"`
+	ExpiresAt    time.Time            `json:"expires_at"`
+	NextUrl      string               `json:"next_url"`
+	Permission   VisitorTokenResponse `json:"permission"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
@@ -3587,6 +3607,7 @@ type StreamCapacityAllocation struct {
 	IngressLeaseRevision int64     `json:"ingress_lease_revision"`
 	IngressRunId         string    `json:"ingress_run_id"`
 	ObservedAt           time.Time `json:"observed_at"`
+	PublisherObserved    bool      `json:"publisher_observed"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource   VisitorResourceScope `json:"resource"`
@@ -3802,6 +3823,16 @@ type VisitorTokenResponse struct {
 	VisitorPolicyRevision int64                `json:"visitor_policy_revision"`
 	VisitorToken          string               `json:"visitor_token"`
 }
+
+// VisitorTokenShareSessionSource defines model for VisitorTokenShareSessionSource.
+type VisitorTokenShareSessionSource struct {
+	Kind    VisitorTokenShareSessionSourceKind `json:"kind"`
+	Secret  string                             `json:"secret"`
+	ShareId ShareID                            `json:"share_id"`
+}
+
+// VisitorTokenShareSessionSourceKind defines model for VisitorTokenShareSessionSource.Kind.
+type VisitorTokenShareSessionSourceKind string
 
 // VisitorTokenShareSource defines model for VisitorTokenShareSource.
 type VisitorTokenShareSource struct {

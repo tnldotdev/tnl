@@ -66,9 +66,9 @@ func promotionSessionPair(t *testing.T, ref tunnelv1.PublisherConnectionRef) (*t
 }
 
 func TestAutomaticPromotionUsesExactCurrentStreamWithoutAck(t *testing.T) {
-	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
+	ref := tunnelv1.PublisherConnectionRef{PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
 	publisher, relay := promotionSessionPair(t, ref)
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, Handler: http.NotFoundHandler()})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, Handler: http.NotFoundHandler()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,8 @@ func TestAutomaticPromotionUsesExactCurrentStreamWithoutAck(t *testing.T) {
 		}
 		worker <- err
 	}()
-	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
+	reservation := testPublicStreamReservation(ref, 0)
+	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: reservation.VisitorConnectionID, Reservation: reservation, PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
 	stream, err := relay.StartVisitorStream(ctx, h, nil, &tunnel.ReturnEvents{Promoted: func(h tunnelv1.AdmissionHeader) error {
 		if h.PublisherConnectionID != ref.PublisherConnectionID || h.PublishRunID != ref.PublishRunID || h.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
 			t.Error("promotion changed stream identity")
@@ -184,12 +185,11 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			accessClient := &shareAccessTestClient{shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true, minted: true}
+			authority := preparedShareAuthority(t, accessClient)
 			access := &shareAccess{client: accessClient, runID: "run-1", version: 1}
-			if err := access.refresh(t.Context()); err != nil {
-				t.Fatal(err)
-			}
 			var promoted atomic.Int32
-			route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+				VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {
@@ -202,7 +202,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 			client := mixedVisitorClient(t, route, h2, true)
 			client.Timeout = 12 * time.Second
 			r, _ := http.NewRequest("GET", "https://route.example/", nil)
-			r.AddCookie(&http.Cookie{Name: shareCookieName, Value: accessClient.shareID + "." + accessClient.cookie})
+			r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: authority.credential(t, accessClient.cookie, true)})
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)
