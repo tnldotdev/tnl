@@ -330,6 +330,8 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
     VisitorTokenShareSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
+    VisitorTokenShareSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSessionSource"
     VisitorTokenGrantSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenGrantSource"
     VisitorTokenRequest:

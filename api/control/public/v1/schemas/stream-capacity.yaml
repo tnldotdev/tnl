@@ -15,6 +15,7 @@ schemas:
         observed_at,
         valid_until,
         retired,
+        publisher_observed,
       ]
     properties:
       id: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
@@ -28,3 +29,4 @@ schemas:
       observed_at: { type: string, format: date-time }
       valid_until: { type: string, format: date-time }
       retired: { type: boolean }
+      publisher_observed: { type: boolean }

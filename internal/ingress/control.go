@@ -46,6 +46,7 @@ type ControllerConfig struct {
 	// renewal never replaces a process run's accounting or audit identity.
 	LeaseEstablished func(ingressv1.IngressLease) error
 	Client           ControlClient
+	VisitorControl   PublicVisitorControl
 	RoutingTable     *RoutingTable
 	Registration     ingressv1.IngressRegistration
 	RenewalInterval  time.Duration
@@ -70,6 +71,8 @@ type Controller struct {
 	report           func(error)
 	observer         OperationObserver
 	leaseEstablished func(ingressv1.IngressLease) error
+	visitorControl   PublicVisitorControl
+	publicVisitors   map[string]*publicVisitorRun
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
@@ -107,12 +110,19 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, routingTable: config.RoutingTable, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
-		observer: config.Observer, leaseEstablished: config.LeaseEstablished,
+		observer: config.Observer, leaseEstablished: config.LeaseEstablished, visitorControl: config.VisitorControl,
+		publicVisitors: make(map[string]*publicVisitorRun),
 	}, nil
 }
 
 func (c *Controller) Run(ctx context.Context) error {
-	err := runUntilEitherStops(ctx, c.run, c.watchLease)
+	run := func(ctx context.Context) error { return runUntilEitherStops(ctx, c.run, c.watchLease) }
+	var err error
+	if c.visitorControl != nil {
+		err = runUntilEitherStops(ctx, run, c.runPublicVisitors)
+	} else {
+		err = run(ctx)
+	}
 	c.clearLease()
 	return err
 }

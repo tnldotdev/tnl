@@ -174,11 +174,13 @@ schemas:
   BrowserHandoffResponse:
     type: object
     additionalProperties: false
-    required: [cookie_secret, return_path, expires_at]
+    required: [cookie_secret, return_path, expires_at, permission]
     properties:
       cookie_secret:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
+      permission:
+        $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse"
       return_path:
         type: string
         pattern: "^/"

@@ -40,7 +40,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var served atomic.Int32
-			server, err := newTestPublicURLServer(PublicURLServerConfig{
+			server, err := newTestPublicURLServer(t, PublicURLServerConfig{
 				Hostname: "route.example", Limits: test.limits,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					served.Add(1)
@@ -57,6 +57,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 				t.Fatalf("first request = %d", first.Code)
 			}
 			denied := newInlineTestRequest()
+			denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
 			denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 			policy := httptest.NewRecorder()
 			server.http.Handler.ServeHTTP(policy, denied)
@@ -86,7 +87,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	server, err := newTestPublicURLServer(PublicURLServerConfig{
+	server, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Limits: ApplicationLimits{Concurrency: 1},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			close(started)
@@ -111,6 +112,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	}
 
 	denied := newInlineTestRequest()
+	denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
 	denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 	response := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(response, denied)
@@ -196,7 +198,7 @@ func TestRouteServerRejectsMisdirectedHTTP2StreamWithRetryableStatus(t *testing.
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(upstream.Close)
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL,
 		Certificate: publicURLTestCertificate(t, "*.example"),
 	})
@@ -364,7 +366,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 // the real public URL server is used, with only its deadline shortened for tests.
 func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout time.Duration) (*PublicURLServer, chan struct{}) {
 	t.Helper()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: target, Limits: ApplicationLimits{Concurrency: limit},
 		Certificate: publicURLTestCertificate(t, "route.example"),
 	})

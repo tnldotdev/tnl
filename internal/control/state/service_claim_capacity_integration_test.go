@@ -13,11 +13,15 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func privateClaimRun(t *testing.T, f publishRunFixture) ServiceRunState {
+func privateClaimRun(t *testing.T, f publishRunFixture, names ...string) ServiceRunState {
 	t.Helper()
 	d, now := f.database, f.now
 	actor := oidcRouteRequest(t, d, now)
-	s, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "claims", "claims", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	name := "claims"
+	if len(names) > 0 {
+		name = names[0]
+	}
+	s, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, name, name, ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}

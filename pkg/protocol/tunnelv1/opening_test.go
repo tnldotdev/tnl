@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +15,37 @@ type openingWriter struct {
 	bytes.Buffer
 	calls int
 	limit int
+}
+
+func TestOpeningPublicReservationKeepsExactBinding(t *testing.T) {
+	h, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.PublicURLID, h.PublishRunID, h.VisitorConnectionID = "url_"+strings.Repeat("A", 22), "pr_"+strings.Repeat("B", 22), "vc_"+strings.Repeat("C", 22)
+	h.Reservation = StreamReservation{ID: "sres_" + strings.Repeat("D", 22), AllocationID: "salloc_" + strings.Repeat("E", 22), Sequence: 1, ResourceKind: "public_url", ResourceID: h.PublicURLID,
+		RunID: h.PublishRunID, RunNumber: h.PublishRunNumber, VisitorConnectionID: h.VisitorConnectionID, IngressID: "ingress", IngressRunID: "process", IngressLeaseRevision: 1}
+	w := &openingWriter{limit: -1}
+	if _, err := WriteVisitorOpening(w, h, []byte("encrypted initial bytes")); err != nil {
+		t.Fatal(err)
+	}
+	got, payload, err := ReadVisitorOpening(bytes.NewReader(w.Bytes()))
+	if err != nil || got != h || string(payload) != "encrypted initial bytes" || w.calls != 1 {
+		t.Fatal("combined opening changed reservation or initial bytes", err)
+	}
+	for _, change := range []func(*StreamReservation){
+		func(r *StreamReservation) { r.ResourceID = "url_" + strings.Repeat("F", 22) },
+		func(r *StreamReservation) { r.RunID = "pr_" + strings.Repeat("F", 22) },
+		func(r *StreamReservation) { r.RunNumber++ },
+		func(r *StreamReservation) { r.VisitorConnectionID = "vc_" + strings.Repeat("F", 22) },
+		func(r *StreamReservation) { r.Sequence = 0 },
+	} {
+		bad := h
+		change(&bad.Reservation)
+		if err := bad.Validate(); !errors.Is(err, ErrInvalidStreamReservation) {
+			t.Fatal("opening accepted a replaced reservation binding", err)
+		}
+	}
 }
 
 func (w *openingWriter) Write(p []byte) (int, error) {

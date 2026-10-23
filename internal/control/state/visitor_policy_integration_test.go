@@ -18,12 +18,17 @@ import (
 
 func policyObservation(t *testing.T, d *Database, scope visitorscope.Scope, after int64) controlv1.VisitorPolicyUpdate {
 	t.Helper()
+	return policyObservationAt(t, d, scope, after, time.Now())
+}
+
+func policyObservationAt(t *testing.T, d *Database, scope visitorscope.Scope, after int64, now time.Time) controlv1.VisitorPolicyUpdate {
+	t.Helper()
 	tx, err := d.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	result, err := d.readVisitorPolicy(t.Context(), tx, scope, after, time.Now())
+	result, err := d.readVisitorPolicy(t.Context(), tx, scope, after, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +36,73 @@ func policyObservation(t *testing.T, d *Database, scope visitorscope.Scope, afte
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestIntegrationVisitorPolicyProjectsCurrentIPAuthority(t *testing.T) {
+	for _, representation := range []string{"encrypted", "hashed", "live-grants"} {
+		t.Run(representation, func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "visitor_policy_ip")
+			request := oidcRouteRequest(t, d, now)
+			request.AccessMode = VisitorAccessAnonymous
+			request.AllowedIPPrefixes = []string{"192.0.2.0/24", "2001:db8::/32"}
+			url := createTestPublicURL(t, d, request, now)
+			if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+				t.Fatal(err)
+			}
+			until := now.Add(5 * time.Second)
+			switch representation {
+			case "hashed":
+				// guest policies retain the keyed projection without recoverable prefixes.
+				if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET allowed_ip_policy_ciphertext=NULL,allowed_ip_policy_storage_key_id=NULL WHERE id=$1`, url.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "live-grants":
+				if _, err := d.MutateVisitorIPs(t.Context(), url.ID, request.ActingIdentityID, "set", "", []VisitorIPGrantInput{{Prefix: "192.0.2.0/24", ExpiresAt: &until}, {Prefix: "2001:db8::/32", ExpiresAt: &until}}, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+			check := func(at time.Time, allowed bool) {
+				t.Helper()
+				wire := policyObservationAt(t, d, scope, 0, at)
+				if representation == "live-grants" && at.Before(until) && !wire.Policy.ValidUntil.Equal(until) {
+					t.Fatal("policy outlived its expiring IP grants")
+				}
+				update, err := visitorlease.Decode(wire)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lease, err := visitorlease.New(scope, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lease.Close()
+				if err := lease.Apply(lease.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
+				for _, source := range []string{"192.0.2.7", "2001:db8::7", "198.51.100.7", "2001:db9::7"} {
+					guard, err := lease.BindAnonymous(netip.MustParseAddr(source), func() {})
+					want := allowed && (source == "192.0.2.7" || source == "2001:db8::7")
+					if (err == nil) != want {
+						t.Fatalf("%s allowed=%v, want %v: %v", source, err == nil, want, err)
+					}
+					if guard != nil {
+						guard.Close()
+					}
+				}
+			}
+			check(now, true)
+			if representation == "live-grants" {
+				check(until, false)
+			} else {
+				// initializing an empty live set must not restore the saved allowlist.
+				if err := controlstatedb.New(d.pool).MarkVisitorIPSet(t.Context(), url.ID); err != nil {
+					t.Fatal(err)
+				}
+				check(now, false)
+			}
+		})
+	}
 }
 
 func policyRevision(t *testing.T, d *Database, scope visitorscope.Scope) int64 {

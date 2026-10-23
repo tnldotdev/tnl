@@ -1,6 +1,8 @@
 package visitorlease
 
 import (
+	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -14,12 +16,31 @@ type reservationSlot struct {
 	slot       uint32
 }
 
+// ObservedAllocations reports only installed, current allocations for this run.
+// publishers send this on background updates before ingress can use new slots.
+func (l *Lease) ObservedAllocations(run string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ids := []string{}
+	if !l.current || !l.now().Before(l.update.View.ValidUntil) {
+		return ids
+	}
+	for id, allocation := range l.update.Allocations {
+		if allocation.RunId == run && !allocation.Retired && allocation.ValidUntil.After(l.update.View.AuthorityTime(l.now())) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // ReservationGuard holds one delegated slot at the publisher. its sequence
 // watermark survives release, so the same reservation cannot be spent again on
 // the other relay connection. the run owner separately enforces its total limit.
 type ReservationGuard struct {
 	lease  *Lease
 	header tunnelv1.StreamReservation
+	source netip.Addr
 	stop   func()
 	once   sync.Once
 	timer  *time.Timer
@@ -33,17 +54,30 @@ func validAllocation(a controlv1.StreamCapacityAllocation, scope visitorscope.Sc
 }
 
 func (l *Lease) BindReservation(header tunnelv1.StreamReservation, stop func()) (*ReservationGuard, error) {
+	return l.bindReservation(header, netip.Addr{}, stop)
+}
+
+// BindReservationFrom also fences the transport when its trusted source no
+// longer passes current IP policy. it does not authorize application requests.
+func (l *Lease) BindReservationFrom(header tunnelv1.StreamReservation, source netip.Addr, stop func()) (*ReservationGuard, error) {
+	if !source.IsValid() || source.Zone() != "" {
+		return nil, ErrUpdate
+	}
+	return l.bindReservation(header, source.Unmap(), stop)
+}
+
+func (l *Lease) bindReservation(header tunnelv1.StreamReservation, source netip.Addr, stop func()) (*ReservationGuard, error) {
 	if stop == nil {
 		return nil, ErrUpdate
 	}
 	l.mu.Lock()
 	now := l.now()
 	key := reservationSlot{header.AllocationID, header.Slot}
-	if l.validateReservationLocked(header, now) != nil || l.reservations[key] != nil || l.visitors[header.VisitorConnectionID] != nil || header.Sequence <= l.sequences[key] {
+	if l.validateReservationLocked(header, now) != nil || source.IsValid() && l.update.IP != nil && !l.update.IP.Allows(source) || l.reservations[key] != nil || l.visitors[header.VisitorConnectionID] != nil || header.Sequence <= l.sequences[key] {
 		l.mu.Unlock()
 		return nil, ErrUpdate
 	}
-	guard := &ReservationGuard{lease: l, header: header, stop: stop}
+	guard := &ReservationGuard{lease: l, header: header, source: source, stop: stop}
 	l.sequences[key], l.reservations[key], l.visitors[header.VisitorConnectionID] = header.Sequence, guard, guard
 	guard.resetLocked(now)
 	l.mu.Unlock()
@@ -61,10 +95,24 @@ func (g *ReservationGuard) resetLocked(now time.Time) {
 	}
 }
 
+// BindSource follows decoding the ingress-owned PROXY v2 header. the earlier
+// reservation claim already fenced replay before any visitor TLS work began.
+func (g *ReservationGuard) BindSource(source netip.Addr) error {
+	l := g.lease
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !source.IsValid() || source.Zone() != "" || l.reservations[reservationSlot{g.header.AllocationID, g.header.Slot}] != g ||
+		l.validateReservationLocked(g.header, l.now()) != nil || g.source.IsValid() && g.source != source.Unmap() || l.update.IP != nil && !l.update.IP.Allows(source.Unmap()) {
+		return ErrUpdate
+	}
+	g.source = source.Unmap()
+	return nil
+}
+
 func (l *Lease) checkReservationsLocked(now time.Time) []*ReservationGuard {
 	var stopped []*ReservationGuard
 	for key, guard := range l.reservations {
-		if l.validateReservationLocked(guard.header, now) != nil {
+		if l.validateReservationLocked(guard.header, now) != nil || guard.source.IsValid() && l.update.IP != nil && !l.update.IP.Allows(guard.source) {
 			delete(l.reservations, key)
 			delete(l.visitors, guard.header.VisitorConnectionID)
 			stopped = append(stopped, guard)

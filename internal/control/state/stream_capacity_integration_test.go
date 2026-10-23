@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func capacityFixture(t *testing.T, capacity int32) (publishRunFixture, ServiceRunState, []IngressLeaseIdentity) {
@@ -26,6 +27,39 @@ func capacityFixture(t *testing.T, capacity int32) (publishRunFixture, ServiceRu
 		owners = append(owners, lease.IngressLeaseIdentity)
 	}
 	return f, run, owners
+}
+
+func TestIntegrationStreamCapacityIncludesIntegrationURLsWithoutVisitorGrants(t *testing.T) {
+	for _, purpose := range []PublicURLPurpose{PublicURLPurposeOAuth, PublicURLPurposeWebhooks} {
+		t.Run(string(purpose), func(t *testing.T) {
+			d, now, runRequest, _ := newPublishRunPrerequisites(t)
+			creation := oidcRouteRequest(t, d, now)
+			creation.Purpose = purpose
+			url := createTestPublicURL(t, d, creation, now)
+			runRequest.PublicURLID, runRequest.TeamID, runRequest.ActingIdentityID, runRequest.MembershipID = url.ID, creation.TeamID, creation.ActingIdentityID, creation.MembershipID
+			runRequest.CertificateCacheKey, runRequest.CertificateIdentifiers = url.CanonicalHostname, []string{url.CanonicalHostname}
+			run, err := d.CreatePublishRun(t.Context(), runRequest, now, time.Minute, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ingress, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: "public-ingress", IngressRunID: "process", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, now, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+			if _, err := d.AllocateStreamCapacity(t.Context(), StreamCapacityRequest{Owner: ingress.IngressLeaseIdentity, Scope: scope, RunID: run.PublishRunID, RunNumber: int64(run.PublishRunNumber), RequestID: "integration-url", Capacity: 2}, now); err != nil {
+				t.Fatal("integration URL could not prepare encrypted transport", err)
+			}
+			if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+				t.Fatal(err)
+			}
+			session := newOIDCSession(t, d, now)
+			ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID})
+			if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now); !errors.Is(err, ErrVisitorPermission) {
+				t.Fatal("transport capacity broadened integration URL visitor grants", err)
+			}
+		})
+	}
 }
 
 func capacityRequest(run ServiceRunState, owner IngressLeaseIdentity, key string, amount int32) StreamCapacityRequest {
@@ -58,6 +92,46 @@ func TestIntegrationStreamCapacityConcurrentOwnersCannotDoubleSpend(t *testing.T
 	}
 	if granted != 4 {
 		t.Fatalf("delegated %d connections from a capacity-4 run", granted)
+	}
+}
+
+func TestIntegrationStreamCapacityPublisherObservationIsRunBound(t *testing.T) {
+	f, run, owners := capacityFixture(t, 4)
+	d := f.database
+	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
+		t.Fatal(err)
+	}
+	request := capacityRequest(run, owners[0], "observed", 2)
+	first, err := d.AllocateStreamCapacity(t.Context(), request, f.now)
+	if err != nil || first.PublisherObserved {
+		t.Fatal("new allocation was usable before publisher preparation", err)
+	}
+	otherRun := privateClaimRun(t, f, "other-claims")
+	otherRequest := capacityRequest(otherRun, owners[1], "other", 1)
+	other, err := d.AllocateStreamCapacity(t.Context(), otherRequest, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now); err != nil {
+		t.Fatal(err)
+	}
+	stillPending, err := d.AllocateStreamCapacity(t.Context(), request, f.now)
+	if err != nil || stillPending.PublisherObserved {
+		t.Fatal("returning a snapshot claimed it was already installed", err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, "wrong-token", 0, []string{first.ID}, f.now); err == nil {
+		t.Fatal("wrong run credential confirmed capacity")
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, 0, []string{first.ID, other.ID}, f.now); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := d.AllocateStreamCapacity(t.Context(), request, f.now)
+	if err != nil || !observed.PublisherObserved {
+		t.Fatal("installed allocation did not become available in background renewal", err)
+	}
+	untouched, err := d.AllocateStreamCapacity(t.Context(), otherRequest, f.now)
+	if err != nil || untouched.PublisherObserved {
+		t.Fatal("publisher confirmed another resource's allocation", err)
 	}
 }
 

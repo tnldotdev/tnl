@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -266,7 +267,17 @@ func (d *Database) ReadIngressVisitorPolicy(ctx context.Context, identity Ingres
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []string, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+	if len(observed) > 2048 {
+		return result, ErrVisitorPolicy
+	}
+	seen := make(map[string]struct{}, len(observed))
+	for _, id := range observed {
+		if _, duplicate := seen[id]; duplicate || !opaqueid.Valid(id, "salloc_") {
+			return result, ErrVisitorPolicy
+		}
+		seen[id] = struct{}{}
+	}
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
@@ -275,6 +286,11 @@ func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitor
 	q := controlstatedb.New(tx)
 	switch scope.Kind {
 	case visitorscope.PublicURL:
+		// match mutation order before publisherRunLive takes identity/grant
+		// guards. a background read must not reverse heartbeat's URL-first order.
+		if _, err := lockVisitorURL(ctx, q, scope.ID); err != nil {
+			return result, err
+		}
 		id, digest, err := credentials.ParsePublishRunToken(credentials.PublishRunToken(token))
 		if err != nil {
 			return result, ErrPublishRunCredential
@@ -306,6 +322,9 @@ func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitor
 		}
 	default:
 		return result, ErrVisitorPolicy
+	}
+	if err := q.ObservePublisherStreamAllocations(ctx, controlstatedb.ObservePublisherStreamAllocationsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, RunID: run, RunNumber: number, Ids: observed, Now: timestamptz(now)}); err != nil {
+		return result, err
 	}
 	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
 	if err != nil {

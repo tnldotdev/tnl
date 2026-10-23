@@ -86,6 +86,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 			return integrations.Snapshot{Config: oauthConfig}, nil
 		}})
 	waitIntegrationURLWorkerReady(t, oauthReady)
+	waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+oauthHost)
 	primary := filepath.Join(t.TempDir(), "main")
 	group := primary + "\x00" + namespace
 	scope := clientstate.AliasScope{Server: server, ProjectKey: primary, TeamID: fixture.identity.teamID, MembershipID: fixture.identity.membershipID, Namespace: namespace, Name: "review"}
@@ -151,6 +152,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	first := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, first.PublicURLID, first.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
+	waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+aliasHost)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -195,6 +197,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	}
 	waitForReadyPublisherConnections(t, fixture.inspect, second.PublicURLID, second.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
+	waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+aliasHost)
 	if _, body := visit("https://" + aliasHost + "/"); body != "feature" {
 		t.Fatal("forced handoff did not reach the selected worktree")
 	}
@@ -208,6 +211,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	third := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, third.PublicURLID, third.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
+	waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+aliasHost)
 	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
 		t.Fatal("release did not restore the primary checkout")
 	}

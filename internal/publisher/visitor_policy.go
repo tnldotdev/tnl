@@ -59,6 +59,7 @@ func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope
 func (p *visitorPolicy) refresh(ctx context.Context) error {
 	request := p.lease.Begin()
 	body := p.request
+	body.ObservedAllocations = p.lease.ObservedAllocations(body.RunId)
 	body.AfterRevision = request.AfterRevision
 	if request.Snapshot {
 		body.AfterRevision = 0

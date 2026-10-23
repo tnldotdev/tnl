@@ -3,12 +3,14 @@ package visitorlease
 import (
 	"errors"
 	"maps"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -26,6 +28,49 @@ func allocationFixture(t *testing.T) (*Lease, Update, tunnelv1.StreamReservation
 		t.Fatal(err)
 	}
 	return l, update, h
+}
+
+func TestReservationSourceFencesOnlyAffectedTransports(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, first := allocationFixture(t)
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		var stopped [2]atomic.Int64
+		for index, source := range []string{"192.0.2.1", "198.51.100.1"} {
+			header := first
+			header.Slot = uint32(index)
+			header.VisitorConnectionID = "vc_" + strings.Repeat(string(rune('D'+index)), 22)
+			guard, err := lease.BindReservation(header, func() { stopped[index].Add(1) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Close()
+			if err := guard.BindSource(netip.MustParseAddr(source)); err != nil {
+				t.Fatal(err)
+			}
+			if err := guard.BindSource(netip.MustParseAddr("203.0.113.1")); err == nil {
+				t.Fatal("reservation changed its trusted source")
+			}
+		}
+		var key [32]byte
+		key[0] = 1
+		entry, err := ippolicy.Hash(key, netip.MustParsePrefix("198.51.100.0/24"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ip, err := ippolicy.New(key, []ippolicy.Entry{entry})
+		if err != nil {
+			t.Fatal(err)
+		}
+		update.IP = &ip
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		if stopped[0].Load() != 1 || stopped[1].Load() != 0 {
+			t.Fatal("IP policy update affected an unrelated transport")
+		}
+	})
 }
 
 func TestReservationSlotsPreventReplayAcrossRelayConnections(t *testing.T) {

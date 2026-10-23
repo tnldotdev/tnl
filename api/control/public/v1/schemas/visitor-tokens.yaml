@@ -19,6 +19,7 @@ schemas:
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSessionSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenGrantSource" }
   VisitorTokenControlSessionSource:
     type: object
@@ -63,6 +64,14 @@ schemas:
     properties:
       kind: { type: string, enum: [grant], x-enum-varnames: [VisitorTokenGrant] }
       credential: { type: string, minLength: 5, maxLength: 128 }
+  VisitorTokenShareSessionSource:
+    type: object
+    additionalProperties: false
+    required: [kind, share_id, secret]
+    properties:
+      kind: { type: string, enum: [share_session], x-enum-varnames: [VisitorTokenShareSession] }
+      share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      secret: { type: string, minLength: 43, maxLength: 43 }
   VisitorTokenRequest:
     type: object
     additionalProperties: false

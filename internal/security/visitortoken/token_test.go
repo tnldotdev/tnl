@@ -87,6 +87,20 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 	}
 }
 
+func TestVisitorTokensKeepSeparateIssuancesOfIdenticalPermission(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	first, second := issueToken(t, key, permission, view, now), issueToken(t, key, permission, view, now)
+	if first == second {
+		t.Fatal("same-second issuances shared a bearer identity")
+	}
+	for _, token := range []Token{first, second} {
+		verified, err := VerifyBearer(token, view, now)
+		if err != nil || verified.Subject != permission.Subject || verified.Scope != permission.Scope {
+			t.Fatal("issuance identity changed permission", err)
+		}
+	}
+}
+
 func TestTokenExpiryIsIndependentOfPolicyFreshness(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	token := issueToken(t, key, permission, view, now)
@@ -106,6 +120,30 @@ func TestTokenExpiryIsIndependentOfPolicyFreshness(t *testing.T) {
 	}
 }
 
+func TestBearerRenewalProofDoesNotAuthorizeSupersededOrExpiredPermission(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	permission.ExpiresAt = now.Add(2 * time.Second)
+	token := issueToken(t, key, permission, view, now)
+	view.VisitorPolicyRevision++
+	proof, err := VerifyBearerRenewalProof(token, view, now)
+	if err != nil || proof.Subject != permission.Subject || proof.Scope != permission.Scope {
+		t.Fatal("unexpired signed bearer did not retain its exact renewal identity", err)
+	}
+	if _, err := VerifyBearer(token, view, now); !errors.Is(err, ErrToken) {
+		t.Fatal("renewal proof bypassed current admission policy", err)
+	}
+	if err := CheckCurrent(proof, view, now); !errors.Is(err, ErrToken) {
+		t.Fatal("superseded proof became a current permission", err)
+	}
+	if _, err := VerifyBearerRenewalProof(token, view, permission.ExpiresAt); !errors.Is(err, ErrToken) {
+		t.Fatal("expired credential became a renewal handle", err)
+	}
+	view.Keys = nil
+	if _, err := VerifyBearerRenewalProof(token, view, now); !errors.Is(err, ErrKey) {
+		t.Fatal("renewal proof trusted a missing verification key", err)
+	}
+}
+
 func TestTokenClaimsAreClosedBoundedAndNeverLegacyCredentials(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	token := issueToken(t, key, permission, view, now)
@@ -116,6 +154,10 @@ func TestTokenClaimsAreClosedBoundedAndNeverLegacyCredentials(t *testing.T) {
 	}
 	payload, err := signed.Verify(key.Public())
 	if err != nil {
+		t.Fatal(err)
+	}
+	var original claims
+	if err := json.Unmarshal(payload, &original); err != nil {
 		t.Fatal(err)
 	}
 	sign := func(payload []byte, tokenType string) Token {
@@ -135,17 +177,19 @@ func TestTokenClaimsAreClosedBoundedAndNeverLegacyCredentials(t *testing.T) {
 		return Token(raw)
 	}
 	for name, invalid := range map[string]Token{
-		"opaque-cookie":   Token(strings.Repeat("A", 43)),
-		"too-large":       Token(strings.Repeat("A", MaxTokenBytes+1)),
-		"signature":       Token(parts[0] + "." + parts[1] + "." + strings.Repeat("A", 86)),
-		"wrong-type":      sign(payload, "JWT"),
-		"unknown-field":   sign(append([]byte(`{"extra":true,`), payload[1:]...), Type),
-		"duplicate":       sign(append([]byte(`{"version":1,`), payload[1:]...), Type),
-		"duplicate-scope": sign([]byte(strings.Replace(string(payload), `"kind":"public_url"`, `"kind":"public_url","kind":"public_url"`, 1)), Type),
-		"unknown-variant": sign([]byte(strings.Replace(string(payload), `"kind":"browser"`, `"kind":"publisher"`, 1)), Type),
-		"mixed-variant":   sign([]byte(strings.Replace(string(payload), `"identity_id":`, `"device_id":"vdev_`+strings.Repeat("A", 22)+`","identity_id":`, 1)), Type),
-		"wrong-subject":   sign([]byte(strings.Replace(string(payload), `"ident_`+strings.Repeat("A", 22)+`"`, `"pub_`+strings.Repeat("A", 22)+`"`, 1)), Type),
-		"trailing":        sign(append(payload, []byte(` {}`)...), Type),
+		"opaque-cookie":    Token(strings.Repeat("A", 43)),
+		"missing-token-id": sign([]byte(strings.Replace(string(payload), `"jti":"`+original.ID+`",`, "", 1)), Type),
+		"invalid-token-id": sign([]byte(strings.Replace(string(payload), `"jti":"`+original.ID+`"`, `"jti":"short"`, 1)), Type),
+		"too-large":        Token(strings.Repeat("A", MaxTokenBytes+1)),
+		"signature":        Token(parts[0] + "." + parts[1] + "." + strings.Repeat("A", 86)),
+		"wrong-type":       sign(payload, "JWT"),
+		"unknown-field":    sign(append([]byte(`{"extra":true,`), payload[1:]...), Type),
+		"duplicate":        sign(append([]byte(`{"version":1,`), payload[1:]...), Type),
+		"duplicate-scope":  sign([]byte(strings.Replace(string(payload), `"kind":"public_url"`, `"kind":"public_url","kind":"public_url"`, 1)), Type),
+		"unknown-variant":  sign([]byte(strings.Replace(string(payload), `"kind":"browser"`, `"kind":"publisher"`, 1)), Type),
+		"mixed-variant":    sign([]byte(strings.Replace(string(payload), `"identity_id":`, `"device_id":"vdev_`+strings.Repeat("A", 22)+`","identity_id":`, 1)), Type),
+		"wrong-subject":    sign([]byte(strings.Replace(string(payload), `"ident_`+strings.Repeat("A", 22)+`"`, `"pub_`+strings.Repeat("A", 22)+`"`, 1)), Type),
+		"trailing":         sign(append(payload, []byte(` {}`)...), Type),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := VerifyBearer(invalid, view, now); !errors.Is(err, ErrToken) {

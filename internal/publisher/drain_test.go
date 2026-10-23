@@ -47,10 +47,10 @@ func TestSessionParentCancellationDrainsAdmittedVisitor(t *testing.T) {
 }
 
 func TestPublicURLStopAdmissionsKeepsVisitorAdmittedBeforeTLS(t *testing.T) {
-	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
+	ref := tunnelv1.PublisherConnectionRef{PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
 	publisher, relay := promotionSessionPair(t, ref)
 	certificate := publicURLTestCertificate(t, "route.example")
-	r, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: 1,
+	r, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: 1,
 		Certificate: certificate, AccessMode: "anonymous", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "finished") })})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,8 @@ func TestPublicURLStopAdmissionsKeepsVisitorAdmittedBeforeTLS(t *testing.T) {
 		}
 		admitted <- err
 	}()
-	stream, err := relay.StartVisitorStream(t.Context(), tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "before-drain",
+	reservation := testPublicStreamReservation(ref, 0)
+	stream, err := relay.StartVisitorStream(t.Context(), tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: reservation.VisitorConnectionID, Reservation: reservation,
 		PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: 1, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: 1}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -210,11 +211,6 @@ func (*drainDecisionControl) RevokeBrowserAccess(context.Context, string, uint64
 	return nil
 }
 
-func (*drainDecisionControl) AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	expires := time.Now().Add(time.Minute)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: &expires}, nil
-}
-
 func (*drainDecisionControl) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
 }
@@ -294,7 +290,8 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 
 func (h *visitorDrainHarness) admit() net.Conn {
 	h.t.Helper()
-	stream, err := h.relay.OpenVisitor(h.ctx, "visitor_drain")
+	reservation := testPublicStreamReservation(h.relay.Ref(), 0)
+	stream, err := h.relay.StartVisitor(h.ctx, reservation.VisitorConnectionID, false, reservation, nil, nil)
 	if err != nil {
 		h.t.Fatal(err)
 	}

@@ -49,3 +49,13 @@ func (r StreamReservation) Validate() error {
 	}
 	return nil
 }
+
+func (r StreamReservation) validatePublicBinding(resource, run string, number uint64, visitor string) error {
+	if r == (StreamReservation{}) {
+		return nil
+	}
+	if r.Validate() != nil || r.ResourceKind != "public_url" || r.ResourceID != resource || r.RunID != run || r.RunNumber != number || r.VisitorConnectionID != visitor {
+		return ErrInvalidStreamReservation
+	}
+	return nil
+}

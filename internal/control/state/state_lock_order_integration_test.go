@@ -10,13 +10,19 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
-	for _, kind := range []string{"identity", "grant"} {
+	for _, kind := range []string{"identity", "grant", "policy-read"} {
 		t.Run(kind, func(t *testing.T) {
 			d, now, r, _ := newPublishRunPrerequisites(t)
+			if kind == "policy-read" {
+				creation := oidcRouteRequest(t, d, now)
+				url := createTestPublicURL(t, d, creation, now)
+				r.PublicURLID, r.TeamID, r.ActingIdentityID, r.MembershipID = url.ID, creation.TeamID, creation.ActingIdentityID, creation.MembershipID
+			}
 			u, err := d.GetPublicURLForAuthorization(t.Context(), r.PublicURLID)
 			if err != nil {
 				t.Fatal(err)
@@ -46,6 +52,11 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 			auth := PublishRunAuthentication{PublicURLID: r.PublicURLID, PublishRunID: setup.PublishRunID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+			if kind == "policy-read" {
+				if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
@@ -65,7 +76,10 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
 			revoked := make(chan error, 1)
 			workers.Go(func() {
-				if kind == "identity" {
+				if kind == "policy-read" {
+					_, err := d.ReadPublisherVisitorPolicy(ctx, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.PublicURLID}, setup.PublishRunID, int64(setup.PublishRunNumber), string(setup.PublishRunToken), 0, nil, now.Add(time.Second))
+					revoked <- err
+				} else if kind == "identity" {
 					revoked <- d.RevokePublisherIdentity(ctx, r.TeamID, p.ID, r.ActingIdentityID, now.Add(2*time.Second))
 				} else {
 					revoked <- d.RevokePublisherGrant(ctx, r.TeamID, p.ID, p.GrantID, r.ActingIdentityID, now.Add(2*time.Second))
@@ -78,6 +92,9 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			heartbeatErr, revokeErr := awaitIntegrationResult(t, ctx, heartbeat), awaitIntegrationResult(t, ctx, revoked)
 			if heartbeatErr != nil || revokeErr != nil {
 				t.Fatalf("heartbeat = %v; revocation = %v", heartbeatErr, revokeErr)
+			}
+			if kind == "policy-read" {
+				return
 			}
 			if _, err = d.HeartbeatPublishRun(ctx, auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrPublishRunStale) {
 				t.Fatalf("revoked run heartbeat = %v", err)

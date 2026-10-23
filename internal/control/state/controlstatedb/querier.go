@@ -490,6 +490,7 @@ type Querier interface {
 	MarkVisitorIPSet(ctx context.Context, publicUrlID string) error
 	NextIngressTransportIssuerRevision(ctx context.Context) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
+	ObservePublisherStreamAllocations(ctx context.Context, arg ObservePublisherStreamAllocationsParams) error
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error)

@@ -65,7 +65,7 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 		client: &feedbackControlStub{}, previewID: "pv_0123456789abcdefghijkl", service: "web",
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
 	}
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, Feedback: runtime})
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, Feedback: runtime})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +158,38 @@ func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
 			}
 		} else if client.page.PagePath != nil {
 			t.Fatalf("all-pages filter = %v", client.page.PagePath)
+		}
+	}
+}
+
+func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) {
+	policy, _, token := httpPermissionFixture(t, false)
+	client := &feedbackControlStub{}
+	runtime := &feedbackRuntime{client: client, runID: "pr_0123456789abcdefghijkl", version: 1, previewID: "pv_0123456789abcdefghijkl"}
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "preview.example.test", PublicURLID: "url_" + strings.Repeat("A", 22), VisitorPolicy: policy, Feedback: runtime,
+		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("feedback reached the app") })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	for _, cookie := range []string{"", browserAccessCookieName + "=" + liveBrowserCookie, browserAccessCookieName + "=invalid", browserAccessCookieName + "=" + liveBrowserCookie + "; " + browserAccessCookieName + "=" + liveBrowserCookie} {
+		r := permissionRequest()
+		r.URL.Path = "/__tnl/feedback"
+		r.Header.Set(visitorTokenHeader, token.Reveal())
+		r.Header.Set("Cookie", cookie)
+		response := httptest.NewRecorder()
+		client.page = controlv1.PreviewPageFeedbackRequest{}
+		route.http.Handler.ServeHTTP(response, r)
+		if cookie == "" {
+			if response.Code != http.StatusOK || client.page.Access.BrowserCookieSecret != nil {
+				t.Fatal("visitor token supplied verified author facts")
+			}
+		} else if cookie == browserAccessCookieName+"="+liveBrowserCookie {
+			if response.Code != http.StatusOK || client.page.Access.BrowserCookieSecret == nil || *client.page.Access.BrowserCookieSecret != liveBrowserCookie {
+				t.Fatal("feedback lost its factual browser sign-in")
+			}
+		} else if response.Code != http.StatusForbidden || client.page.PreviewId != "" {
+			t.Fatal("invalid browser fact fell back to anonymous feedback")
 		}
 	}
 }

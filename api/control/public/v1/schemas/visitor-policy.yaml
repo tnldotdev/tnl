@@ -2,12 +2,18 @@ schemas:
   PublisherVisitorPolicyRequest:
     type: object
     additionalProperties: false
-    required: [resource, run_id, run_number, after_revision]
+    required: [resource, run_id, run_number, after_revision, observed_allocations]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       run_id: { type: string, maxLength: 64 }
       run_number: { type: integer, format: int64, minimum: 1 }
       after_revision: { type: integer, format: int64, minimum: 0 }
+      observed_allocations:
+        description: allocations installed from an earlier successful local policy update.
+        type: array
+        maxItems: 2048
+        uniqueItems: true
+        items: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
   VisitorPolicyUpdate:
     type: object
     additionalProperties: false
