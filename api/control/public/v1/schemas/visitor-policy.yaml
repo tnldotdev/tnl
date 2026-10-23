@@ -37,6 +37,7 @@ schemas:
         anonymous,
         verification_keys,
         workload_leases,
+        stream_allocations,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -58,6 +59,10 @@ schemas:
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+      stream_allocations:
+        type: array
+        maxItems: 2048
+        items: { $ref: "../openapi.yaml#/components/schemas/StreamCapacityAllocation" }
   VisitorVerificationKey:
     type: object
     additionalProperties: false

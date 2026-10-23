@@ -12,12 +12,22 @@ import (
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 {
+	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 || len(policy.StreamAllocations) > 2048 {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
 		ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
+	update.Allocations = make(map[string]controlv1.StreamCapacityAllocation, len(policy.StreamAllocations))
+	for _, allocation := range policy.StreamAllocations {
+		if !validAllocation(allocation, scope) {
+			return Update{}, ErrUpdate
+		}
+		if _, found := update.Allocations[allocation.Id]; found {
+			return Update{}, ErrUpdate
+		}
+		update.Allocations[allocation.Id] = allocation
+	}
 	for _, key := range policy.VerificationKeys {
 		if len(key.PublicKey) != ed25519.PublicKeySize || key.Id == "" || update.View.Keys[key.Id] != nil {
 			return Update{}, ErrUpdate

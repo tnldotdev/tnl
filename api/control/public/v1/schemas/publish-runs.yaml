@@ -50,7 +50,7 @@ schemas:
   TrafficLimits:
     type: object
     additionalProperties: false
-    description: Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+    description: Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
     required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
     properties:
       connections:

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
@@ -32,6 +33,12 @@ type shareConnectionKey struct{}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if config.StreamCapacity == 0 {
+		config.StreamCapacity = trafficlimits.Default().Connections
+	}
+	if config.StreamCapacity < 1 || config.StreamCapacity > 1<<20 {
+		return nil, errors.New("publisher stream capacity must be between 1 and 1048576")
+	}
 	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName
@@ -96,12 +103,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
-		hostname:  hostname,
-		admission: admission,
-		run:       PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
-		promote:   config.PromoteVisitor,
-		guard:     config.AdmitVisitor,
-		life:      life, cancel: cancelLife,
+		hostname:       hostname,
+		admission:      admission,
+		streamCapacity: config.StreamCapacity,
+		run:            PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
+		promote:        config.PromoteVisitor,
+		guard:          config.AdmitVisitor,
+		life:           life, cancel: cancelLife,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
 		bodyTimeout:     httpstream.RequestBodyTimeout,

@@ -11,6 +11,10 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/ingresses/{ingress_id}/stream-capacity:
+    $ref: "./paths/stream-capacity.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1stream-capacity"
+  /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id}:
+    $ref: "./paths/stream-capacity.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1stream-capacity~1{allocation_id}"
   /internal/v1/ingresses/{ingress_id}/visitor-policy:
     $ref: "./paths/visitor-policy.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1visitor-policy"
   /internal/v1/ingresses/{ingress_id}/direct-services/admit:
@@ -66,6 +70,12 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    StreamCapacityRequest:
+      $ref: "./schemas/stream-capacity.yaml#/schemas/StreamCapacityRequest"
+    StreamCapacityRetirement:
+      $ref: "./schemas/stream-capacity.yaml#/schemas/StreamCapacityRetirement"
+    StreamCapacityAllocation:
+      $ref: "../../../public/v1/openapi.yaml#/components/schemas/StreamCapacityAllocation"
     IngressVisitorPolicyRequest:
       $ref: "./schemas/visitor-policy.yaml#/schemas/IngressVisitorPolicyRequest"
     VisitorPolicyUpdate:
