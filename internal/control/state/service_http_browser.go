@@ -14,7 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -22,7 +22,7 @@ import (
 // ServiceHTTPRun carries an exact service/run credential. public URL run tokens
 // and browser/share scopes cannot be interpreted as service permission.
 type ServiceHTTPRun struct {
-	Subject httpsubject.Subject
+	Subject visitorscope.Scope
 	RunID   string
 	Number  int64
 	Token   credentials.ServiceRunToken
@@ -30,7 +30,7 @@ type ServiceHTTPRun struct {
 
 func (a ServiceHTTPRun) valid() bool {
 	_, err := credentials.ParseServiceRunToken(a.Token)
-	return a.Subject.Kind == httpsubject.Service && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.ServiceRunPrefix) && a.Number > 0 && err == nil
+	return a.Subject.Kind == visitorscope.Service && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.ServiceRunPrefix) && a.Number > 0 && err == nil
 }
 
 func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth ServiceHTTPRun, now time.Time) error {
@@ -66,8 +66,8 @@ func serviceHTTPOrigin(endpoint controlstatedb.ServiceHTTPBrowserEndpointRow) (s
 	return "https://" + net.JoinHostPort(endpoint.CertificateHostname, strconv.Itoa(int(endpoint.ServicePort.Int32))), nil
 }
 
-func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject httpsubject.Subject, now time.Time) (string, error) {
-	if subject.Kind != httpsubject.Service || !subject.Valid() {
+func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject visitorscope.Scope, now time.Time) (string, error) {
+	if subject.Kind != visitorscope.Service || !subject.Valid() {
 		return "", ErrServiceAccess
 	}
 	endpoint, err := controlstatedb.New(d.pool).ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: subject.ID, Now: timestamptz(now)})
@@ -80,8 +80,8 @@ func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject httpsubje
 	return endpoint.TeamID, nil
 }
 
-func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject httpsubject.Subject, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
-	if subject.Kind != httpsubject.Service || !subject.Valid() || !validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
+func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
+	if subject.Kind != visitorscope.Service || !subject.Valid() || !validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
 		return "", ErrPreviewAccess
 	}
 	q := controlstatedb.New(d.pool)
@@ -127,7 +127,7 @@ func (d *Database) consumeServiceBrowserLogin(ctx context.Context, digest, bindi
 	if err := json.Unmarshal(plain, &result); err != nil {
 		return result, err
 	}
-	if result.Subject != (httpsubject.Subject{Kind: httpsubject.Service, ID: row.ServiceID}) {
+	if result.Subject != (visitorscope.Scope{Kind: visitorscope.Service, ID: row.ServiceID}) {
 		return BrowserLoginAttempt{}, ErrPreviewAccess
 	}
 	result.ServiceRunIDs, result.ReturnPath, result.Nonce = row.RunIds, row.ReturnPath, row.Nonce

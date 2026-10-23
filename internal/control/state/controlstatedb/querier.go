@@ -131,10 +131,12 @@ type Querier interface {
 	CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrantParams) (ControlVisitorGrant, error)
 	CreateVisitorIPGrant(ctx context.Context, arg CreateVisitorIPGrantParams) error
 	CreateVisitorInvitation(ctx context.Context, arg CreateVisitorInvitationParams) (ControlVisitorInvitation, error)
+	CreateVisitorTokenSigningKey(ctx context.Context, arg CreateVisitorTokenSigningKeyParams) (ControlVisitorTokenKey, error)
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteExpiredVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
 	// caller closes all current runs and publishes a tombstone under this service
@@ -153,6 +155,7 @@ type Querier interface {
 	EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
 	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlVisitorNetworkHashKey, error)
+	EnsureVisitorTokenIssuer(ctx context.Context, issuer string) (string, error)
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ExpireServiceConnectionSlot(ctx context.Context, arg ExpireServiceConnectionSlotParams) (int64, error)
 	ExpireServiceRunPreparation(ctx context.Context, arg ExpireServiceRunPreparationParams) (int64, error)
@@ -306,7 +309,7 @@ type Querier interface {
 	InsertServiceCertificateOrder(ctx context.Context, arg InsertServiceCertificateOrderParams) (ControlAcmeOrder, error)
 	InsertServiceCertificateRequest(ctx context.Context, arg InsertServiceCertificateRequestParams) error
 	InsertServiceConnectionSlot(ctx context.Context, arg InsertServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
-	InsertServiceGrant(ctx context.Context, arg InsertServiceGrantParams) (ControlServiceGrant, error)
+	InsertServiceGrant(ctx context.Context, arg InsertServiceGrantParams) (ControlVisitorGrant, error)
 	InsertServiceHTTPBrowserLogin(ctx context.Context, arg InsertServiceHTTPBrowserLoginParams) error
 	InsertServiceHTTPBrowserSession(ctx context.Context, arg InsertServiceHTTPBrowserSessionParams) error
 	InsertServiceHTTPGrant(ctx context.Context, arg InsertServiceHTTPGrantParams) error
@@ -366,7 +369,7 @@ type Querier interface {
 	// replace expired never-ready claims even with a live relay lease.
 	// ready slots retain ownership and streams while their matching lease is live.
 	ListServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListServiceConnectionSlotsNeedingReplacementParams) ([]ControlServiceConnectionSlot, error)
-	ListServiceGrants(ctx context.Context, arg ListServiceGrantsParams) ([]ControlServiceGrant, error)
+	ListServiceGrants(ctx context.Context, arg ListServiceGrantsParams) ([]ControlVisitorGrant, error)
 	ListServiceHTTPGrants(ctx context.Context, serviceID string) ([]ListServiceHTTPGrantsRow, error)
 	ListServiceInvitations(ctx context.Context, arg ListServiceInvitationsParams) ([]ControlServiceInvitation, error)
 	ListServiceRoutingEvents(ctx context.Context, arg ListServiceRoutingEventsParams) ([]ControlServiceRoutingEvent, error)
@@ -379,7 +382,7 @@ type Querier interface {
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
 	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
-	ListVisitorGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorGrant, error)
+	ListVisitorGrants(ctx context.Context, publicUrlID pgtype.Text) ([]ControlVisitorGrant, error)
 	ListVisitorIPGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorIpGrant, error)
 	ListVisitorInventory(ctx context.Context, arg ListVisitorInventoryParams) ([]ListVisitorInventoryRow, error)
 	ListVisitorInvitations(ctx context.Context, publicUrlID string) ([]ControlVisitorInvitation, error)
@@ -467,6 +470,7 @@ type Querier interface {
 	LockVisitorControlSession(ctx context.Context, accessTokenID string) (ControlControlSession, error)
 	LockVisitorIdentity(ctx context.Context, id string) (ControlIdentity, error)
 	LockVisitorInvitation(ctx context.Context, id string) (ControlVisitorInvitation, error)
+	LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error)
 	LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
@@ -545,7 +549,9 @@ type Querier interface {
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	ResolveLoginTeam(ctx context.Context, selection string) (string, error)
+	RetainVisitorTokenSigningKey(ctx context.Context, arg RetainVisitorTokenSigningKeyParams) (int64, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
+	RetireVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
@@ -564,6 +570,7 @@ type Querier interface {
 	RevokeVisitorGrant(ctx context.Context, arg RevokeVisitorGrantParams) error
 	RevokeVisitorIPGrants(ctx context.Context, arg RevokeVisitorIPGrantsParams) error
 	RevokeVisitorInvitation(ctx context.Context, arg RevokeVisitorInvitationParams) error
+	RevokeVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
 	RotateBrowserAccessSession(ctx context.Context, arg RotateBrowserAccessSessionParams) error
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)
@@ -627,6 +634,7 @@ type Querier interface {
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)
 	VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error)
 	VisitorServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (VisitorServiceConfigurationRow, error)
+	VisitorTokenVerificationKeys(ctx context.Context, now pgtype.Timestamptz) ([]VisitorTokenVerificationKeysRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

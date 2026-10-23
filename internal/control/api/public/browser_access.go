@@ -18,7 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/oauth2"
@@ -68,7 +68,7 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
 		return
 	}
-	h.beginBrowserLogin(response, request, httpsubject.Subject{Kind: httpsubject.PublicURL, ID: publicURL.ID}, publicURL.TeamID, preview.ID, params.ReturnPath, params.SwitchAccount)
+	h.beginBrowserLogin(response, request, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, publicURL.TeamID, preview.ID, params.ReturnPath, params.SwitchAccount)
 }
 
 func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.BeginServiceBrowserLoginParams) {
@@ -78,7 +78,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, 503, controlv1.Unavailable, "browser sign-in is unavailable")
 		return
 	}
-	subject := httpsubject.Subject{Kind: httpsubject.Service, ID: params.ServiceId}
+	subject := visitorscope.Scope{Kind: visitorscope.Service, ID: params.ServiceId}
 	if !subject.Valid() || !validBrowserReturnPath(params.ReturnPath) {
 		writeProblem(response, 400, controlv1.InvalidRequest, "invalid managed browser sign-in")
 		return
@@ -96,7 +96,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 	h.beginBrowserLogin(response, request, subject, team, "", params.ReturnPath, params.SwitchAccount)
 }
 
-func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject httpsubject.Subject, team, preview, path string, switchAccount *bool) {
+func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject visitorscope.Scope, team, preview, path string, switchAccount *bool) {
 	verifier := oauth2.GenerateVerifier()
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
@@ -125,7 +125,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 		}
 	}
 	var state string
-	if subject.Kind == httpsubject.Service {
+	if subject.Kind == visitorscope.Service {
 		state, err = h.store.(serviceHTTPStore).BeginServiceBrowserLogin(request.Context(), subject, path, nonce, verifier, binding, intent, now)
 	} else {
 		state, err = h.browserAccess.BeginBrowserLogin(request.Context(), preview, subject.ID, path, nonce, verifier, binding, intent, now)

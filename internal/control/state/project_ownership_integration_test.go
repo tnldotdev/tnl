@@ -112,7 +112,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	}
 	for _, grant := range []string{configuredGrant, extra.ID} {
 		var revoked bool
-		if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.service_grants WHERE id=$1`, grant).Scan(&revoked); err != nil || !revoked {
+		if err = d.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM control.visitor_grants WHERE id=$1`, grant).Scan(&revoked); err != nil || !revoked {
 			t.Fatal("apply restored revoked or removed access", err)
 		}
 	}

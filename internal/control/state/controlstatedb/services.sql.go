@@ -208,7 +208,7 @@ func (q *Queries) CloseServiceRun(ctx context.Context, arg CloseServiceRunParams
 
 const deleteService = `-- name: DeleteService :one
 UPDATE control.services SET enabled = false, deleted_at = $1, updated_at = $1
-WHERE id = $2 AND team_id = $3 AND deleted_at IS NULL RETURNING id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
+WHERE id = $2 AND team_id = $3 AND deleted_at IS NULL RETURNING id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, visitor_policy_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
 `
 
 type DeleteServiceParams struct {
@@ -233,6 +233,7 @@ func (q *Queries) DeleteService(ctx context.Context, arg DeleteServiceParams) (C
 		&i.TlsMetadata,
 		&i.TrustRevision,
 		&i.VisitorRevision,
+		&i.VisitorPolicyRevision,
 		&i.PublisherPool,
 		&i.DomainID,
 		&i.CertificateHostname,
@@ -428,7 +429,7 @@ func (q *Queries) FindServiceInvitationRequest(ctx context.Context, arg FindServ
 }
 
 const getService = `-- name: GetService :one
-SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 AND deleted_at IS NULL
+SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, visitor_policy_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetService(ctx context.Context, id string) (ControlService, error) {
@@ -445,6 +446,7 @@ func (q *Queries) GetService(ctx context.Context, id string) (ControlService, er
 		&i.TlsMetadata,
 		&i.TrustRevision,
 		&i.VisitorRevision,
+		&i.VisitorPolicyRevision,
 		&i.PublisherPool,
 		&i.DomainID,
 		&i.CertificateHostname,
@@ -545,7 +547,7 @@ func (q *Queries) GetServiceSource(ctx context.Context, serviceID pgtype.Text) (
 const insertService = `-- name: InsertService :one
 INSERT INTO control.services(id, team_id, name, name_scope, created_by_identity_id, idempotency_key, request_digest, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5,
-    $6, $7, $8, $8) RETURNING id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
+    $6, $7, $8, $8) RETURNING id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, visitor_policy_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
 `
 
 type InsertServiceParams struct {
@@ -582,6 +584,7 @@ func (q *Queries) InsertService(ctx context.Context, arg InsertServiceParams) (C
 		&i.TlsMetadata,
 		&i.TrustRevision,
 		&i.VisitorRevision,
+		&i.VisitorPolicyRevision,
 		&i.PublisherPool,
 		&i.DomainID,
 		&i.CertificateHostname,
@@ -666,16 +669,16 @@ func (q *Queries) InsertServiceConnectionSlot(ctx context.Context, arg InsertSer
 }
 
 const insertServiceGrant = `-- name: InsertServiceGrant :one
-INSERT INTO control.service_grants(id, service_id, team_id, kind, identity_id, invitation_id,
+INSERT INTO control.visitor_grants(id, service_id, team_id, kind, identity_id, invitation_id,
     created_by_identity_id, idempotency_key, request_digest, created_at, expires_at)
 VALUES ($1, $2, $3, $4,
     $5, $6, $7, $8,
-    $9, $10, $11) RETURNING id, service_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+    $9, $10, $11) RETURNING id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type InsertServiceGrantParams struct {
 	ID                  string
-	ServiceID           string
+	ServiceID           pgtype.Text
 	TeamID              string
 	Kind                string
 	IdentityID          pgtype.Text
@@ -687,7 +690,7 @@ type InsertServiceGrantParams struct {
 	ExpiresAt           pgtype.Timestamptz
 }
 
-func (q *Queries) InsertServiceGrant(ctx context.Context, arg InsertServiceGrantParams) (ControlServiceGrant, error) {
+func (q *Queries) InsertServiceGrant(ctx context.Context, arg InsertServiceGrantParams) (ControlVisitorGrant, error) {
 	row := q.db.QueryRow(ctx, insertServiceGrant,
 		arg.ID,
 		arg.ServiceID,
@@ -701,10 +704,13 @@ func (q *Queries) InsertServiceGrant(ctx context.Context, arg InsertServiceGrant
 		arg.Now,
 		arg.ExpiresAt,
 	)
-	var i ControlServiceGrant
+	var i ControlVisitorGrant
 	err := row.Scan(
 		&i.ID,
+		&i.PublicURLID,
 		&i.ServiceID,
+		&i.ResourceKind,
+		&i.ResourceID,
 		&i.TeamID,
 		&i.Kind,
 		&i.IdentityID,
@@ -841,7 +847,7 @@ LEFT JOIN control.service_runs r ON r.service_id=s.id AND r.id=(SELECT candidate
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > $3
     AND control.company_subject_session_authorized(s.team_id,i.id,$4::text,$2)
     AND (
-        EXISTS (SELECT 1 FROM control.service_grants g
+        EXISTS (SELECT 1 FROM control.visitor_grants g
             LEFT JOIN control.team_memberships m ON m.team_id = s.team_id
                 AND m.identity_id = i.id AND control.active_membership(m.id,$2)
             WHERE g.service_id = s.id AND g.revoked_at IS NULL
@@ -1023,28 +1029,31 @@ func (q *Queries) ListServiceConnectionSlotsNeedingReplacement(ctx context.Conte
 }
 
 const listServiceGrants = `-- name: ListServiceGrants :many
-SELECT id, service_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.service_grants WHERE service_id = $1
+SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE service_id = $1
 AND id COLLATE "C" > $2
 ORDER BY id COLLATE "C" LIMIT 101
 `
 
 type ListServiceGrantsParams struct {
-	ServiceID string
+	ServiceID pgtype.Text
 	AfterID   string
 }
 
-func (q *Queries) ListServiceGrants(ctx context.Context, arg ListServiceGrantsParams) ([]ControlServiceGrant, error) {
+func (q *Queries) ListServiceGrants(ctx context.Context, arg ListServiceGrantsParams) ([]ControlVisitorGrant, error) {
 	rows, err := q.db.Query(ctx, listServiceGrants, arg.ServiceID, arg.AfterID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ControlServiceGrant
+	var items []ControlVisitorGrant
 	for rows.Next() {
-		var i ControlServiceGrant
+		var i ControlVisitorGrant
 		if err := rows.Scan(
 			&i.ID,
+			&i.PublicURLID,
 			&i.ServiceID,
+			&i.ResourceKind,
+			&i.ResourceID,
 			&i.TeamID,
 			&i.Kind,
 			&i.IdentityID,
@@ -1201,7 +1210,7 @@ func (q *Queries) ListServiceRoutingSnapshot(ctx context.Context, arg ListServic
 }
 
 const listServicesForTeam = `-- name: ListServicesForTeam :many
-SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, visitor_policy_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE team_id = $1 AND deleted_at IS NULL AND id > $2
 ORDER BY id LIMIT 101
 `
@@ -1231,6 +1240,7 @@ func (q *Queries) ListServicesForTeam(ctx context.Context, arg ListServicesForTe
 			&i.TlsMetadata,
 			&i.TrustRevision,
 			&i.VisitorRevision,
+			&i.VisitorPolicyRevision,
 			&i.PublisherPool,
 			&i.DomainID,
 			&i.CertificateHostname,
@@ -1292,7 +1302,7 @@ func (q *Queries) LockPendingServiceInvitation(ctx context.Context, arg LockPend
 }
 
 const lockService = `-- name: LockService :one
-SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 FOR UPDATE
+SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, visitor_policy_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockService(ctx context.Context, id string) (ControlService, error) {
@@ -1309,6 +1319,7 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 		&i.TlsMetadata,
 		&i.TrustRevision,
 		&i.VisitorRevision,
+		&i.VisitorPolicyRevision,
 		&i.PublisherPool,
 		&i.DomainID,
 		&i.CertificateHostname,
@@ -1624,7 +1635,7 @@ WITH permitted AS (
             AND relay.relay_service_id = slot.relay_service_id
             AND relay.lease_expires_at > $1 AND NOT relay.draining
           WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open),
-      CASE WHEN EXISTS (SELECT 1 FROM control.service_grants permanent
+      CASE WHEN EXISTS (SELECT 1 FROM control.visitor_grants permanent
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,$1)
           WHERE permanent.service_id = service.id AND permanent.revoked_at IS NULL
@@ -1633,7 +1644,7 @@ WITH permitted AS (
             AND ((permanent.kind = 'identity' AND permanent.identity_id = person.id)
               OR (permanent.kind = 'team' AND member.id IS NOT NULL)))
       THEN 'infinity'::timestamptz ELSE
-        (SELECT MAX(limited.expires_at) FROM control.service_grants limited
+        (SELECT MAX(limited.expires_at) FROM control.visitor_grants limited
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,$1)
           WHERE limited.service_id = service.id AND limited.revoked_at IS NULL
@@ -1687,7 +1698,7 @@ WITH permitted AS (
             AND relay.relay_service_id = slot.relay_service_id
             AND relay.lease_expires_at > $1 AND NOT relay.draining
           WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open)
-      AND (EXISTS (SELECT 1 FROM control.service_grants grant_record
+      AND (EXISTS (SELECT 1 FROM control.visitor_grants grant_record
           LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
             AND member.identity_id = person.id AND control.active_membership(member.id,$1)
           WHERE grant_record.service_id = service.id
@@ -1834,14 +1845,14 @@ func (q *Queries) RevokeConnectorSession(ctx context.Context, arg RevokeConnecto
 }
 
 const revokeServiceGrant = `-- name: RevokeServiceGrant :execrows
-UPDATE control.service_grants SET revoked_at = $1
+UPDATE control.visitor_grants SET revoked_at = $1
 WHERE id = $2 AND service_id = $3 AND revoked_at IS NULL
 `
 
 type RevokeServiceGrantParams struct {
 	Now       pgtype.Timestamptz
 	ID        string
-	ServiceID string
+	ServiceID pgtype.Text
 }
 
 func (q *Queries) RevokeServiceGrant(ctx context.Context, arg RevokeServiceGrantParams) (int64, error) {
@@ -1872,7 +1883,7 @@ func (q *Queries) RevokeServiceInvitation(ctx context.Context, arg RevokeService
 }
 
 const revokeServiceInvitationGrant = `-- name: RevokeServiceInvitationGrant :execrows
-UPDATE control.service_grants SET revoked_at = $1
+UPDATE control.visitor_grants SET revoked_at = $1
 WHERE invitation_id = $2 AND service_id = $3
     AND revoked_at IS NULL
 `
@@ -1880,7 +1891,7 @@ WHERE invitation_id = $2 AND service_id = $3
 type RevokeServiceInvitationGrantParams struct {
 	Now          pgtype.Timestamptz
 	InvitationID pgtype.Text
-	ServiceID    string
+	ServiceID    pgtype.Text
 }
 
 // caller revokes invitation and accepted grant in the same transaction.
@@ -1893,7 +1904,7 @@ func (q *Queries) RevokeServiceInvitationGrant(ctx context.Context, arg RevokeSe
 }
 
 const selectServiceForPublisher = `-- name: SelectServiceForPublisher :one
-SELECT s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at FROM control.services s
+SELECT s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.visitor_policy_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at FROM control.services s
 JOIN control.teams t ON t.id = s.team_id AND t.deleted_at IS NULL
 JOIN control.publisher_identities p ON p.team_id = s.team_id AND p.revoked_at IS NULL
     AND control.active_publisher(p.id,$1)
@@ -1931,6 +1942,7 @@ func (q *Queries) SelectServiceForPublisher(ctx context.Context, arg SelectServi
 		&i.TlsMetadata,
 		&i.TrustRevision,
 		&i.VisitorRevision,
+		&i.VisitorPolicyRevision,
 		&i.PublisherPool,
 		&i.DomainID,
 		&i.CertificateHostname,

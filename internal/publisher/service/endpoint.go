@@ -11,8 +11,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -145,7 +145,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		if header.Direct != nil && header.Connector == nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				return publisher.PublicHTTPVisitor{Frontend: publisher.ServiceHTTP{
-					Control: control, Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: setup.ServiceId},
+					Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 					RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 					Hostname: prepared.managedHostname, Port: prepared.servicePort, Header: header,
 					Requests: prepared.serviceHTTPRequests,

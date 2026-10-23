@@ -48,7 +48,7 @@ func visitorManager(ctx context.Context, q *controlstatedb.Queries, url controls
 }
 
 func visitorGrantFromRow(row controlstatedb.ControlVisitorGrant) VisitorGrant {
-	return VisitorGrant{ID: row.ID, PublicURLID: row.PublicURLID, Kind: row.Kind, IdentityID: row.IdentityID.String,
+	return VisitorGrant{ID: row.ID, PublicURLID: row.PublicURLID.String, Kind: row.Kind, IdentityID: row.IdentityID.String,
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
 }
 
@@ -101,7 +101,7 @@ func (d *Database) createVisitorGrant(ctx context.Context, urlID, actorID, key, 
 		Expires       *time.Time
 	}{urlID, identityID, expires})
 	digest := sha256.Sum256(encoded)
-	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: urlID, TeamID: url.TeamID,
+	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: text(urlID), TeamID: url.TeamID,
 		Kind: kind, IdentityID: nullableText(identityID), CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	if err != nil {
 		return result, err
@@ -132,7 +132,7 @@ func (d *Database) ListVisitorGrants(ctx context.Context, urlID, actorID string)
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
 		return nil, err
 	}
-	rows, err := q.ListVisitorGrants(ctx, urlID)
+	rows, err := q.ListVisitorGrants(ctx, text(urlID))
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (d *Database) RevokeVisitorGrant(ctx context.Context, urlID, actorID, grant
 		return err
 	}
 	grant, err := q.GetVisitorGrant(ctx, grantID)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && grant.PublicURLID != urlID {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && grant.PublicURLID.String != urlID {
 		return ErrShareNotFound
 	}
 	if err != nil {
@@ -286,12 +286,12 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 	if err = q.AcceptVisitorInvitation(ctx, controlstatedb.AcceptVisitorInvitationParams{ID: id, AcceptedAt: timestamptz(now), AcceptedIdentityID: nullableText(identityID)}); err != nil {
 		return result, err
 	}
-	grant, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: url.ID, TeamID: url.TeamID, Kind: "identity", IdentityID: nullableText(identityID),
+	grant, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: text(url.ID), TeamID: url.TeamID, Kind: "identity", IdentityID: nullableText(identityID),
 		CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: "invitation/" + id, RequestDigest: row.RequestDigest, CreatedAt: timestamptz(now), ExpiresAt: row.ExpiresAt})
 	if err != nil {
 		return result, err
 	}
-	if grant.ID != id || grant.Kind != "identity" || grant.IdentityID.String != identityID || grant.PublicURLID != url.ID || subtle.ConstantTimeCompare(grant.RequestDigest, row.RequestDigest) != 1 {
+	if grant.ID != id || grant.Kind != "identity" || grant.IdentityID.String != identityID || grant.PublicURLID.String != url.ID || subtle.ConstantTimeCompare(grant.RequestDigest, row.RequestDigest) != 1 {
 		return result, ErrShareIdempotency
 	}
 	if err = auditPublicMutation(ctx, tx, url.ID, identityID, "invitation.accept", id, now); err != nil {

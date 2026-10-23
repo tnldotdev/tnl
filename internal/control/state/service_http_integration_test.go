@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -55,7 +55,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		if _, err = d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 			t.Fatal(err)
 		}
-		return ServiceHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: run.ServiceID}, RunID: run.RunID, Number: run.RunNumber, Token: credentials.ServiceRunToken(run.Token)}
+		return ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}, RunID: run.RunID, Number: run.RunNumber, Token: credentials.ServiceRunToken(run.Token)}
 	}
 	a, b := start(0, "a"), start(1, "b")
 	ports := make([]int32, 0, len(applied.Services))
@@ -115,7 +115,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	wrong.RunNumber++
 	deny(a, wrong)
 	wrongAuth := a
-	wrongAuth.Subject.Kind = httpsubject.PublicURL
+	wrongAuth.Subject.Kind = visitorscope.PublicURL
 	deny(wrongAuth, input)
 	wrong = admit(b)
 	wrong.Credential = input.Credential

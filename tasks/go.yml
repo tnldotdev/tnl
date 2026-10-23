@@ -250,6 +250,17 @@ tasks:
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
+      - task: test:fuzz:visitors
+        vars:
+          TIME: "{{.TIME}}"
+
+  test:fuzz:visitors:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz bounded signed visitor token parsing and verification
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./internal/security/visitortoken -run='^$' -fuzz='^FuzzVisitorTokenVerification$' -fuzztime='{{.TIME}}' -parallel=2
 
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"
