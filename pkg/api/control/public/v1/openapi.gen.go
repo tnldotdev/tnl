@@ -1842,6 +1842,7 @@ type ConnectorSessionSetup struct {
 	// IngressAddress Shared ingress infrastructure TLS endpoint
 	IngressAddress    string    `json:"ingress_address"`
 	IngressId         string    `json:"ingress_id"`
+	Region            string    `json:"region"`
 	ServiceId         ServiceID `json:"service_id"`
 	SessionCredential string    `json:"session_credential"`
 
@@ -1931,6 +1932,9 @@ type CreatePublicURLRequest struct {
 
 // CreatePublishRunRequest defines model for CreatePublishRunRequest.
 type CreatePublishRunRequest struct {
+	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+	PreferredRegions *LocationPreferences `json:"preferred_regions,omitempty"`
+
 	// Traffic Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
 	Traffic *TrafficSelection `json:"traffic,omitempty"`
 }
@@ -2340,6 +2344,9 @@ type LocalServiceSource struct {
 	SourceFingerprint string `json:"source_fingerprint"`
 	WorktreeKey       string `json:"worktree_key"`
 }
+
+// LocationPreferences Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+type LocationPreferences = []string
 
 // MaintenanceControl defines model for MaintenanceControl.
 type MaintenanceControl struct {
@@ -3808,6 +3815,7 @@ type WorkloadIngressAssignments struct {
 		Id             string    `json:"id"`
 		IngressAddress string    `json:"ingress_address"`
 		IngressId      string    `json:"ingress_id"`
+		Region         string    `json:"region"`
 		ServiceId      string    `json:"service_id"`
 		TlsServerName  string    `json:"tls_server_name"`
 	} `json:"assignments"`
@@ -4053,12 +4061,18 @@ type CreateVisitorIngressAssignmentJSONBody struct {
 	DeviceId         string         `json:"device_id"`
 	ExcludeIngressId *string        `json:"exclude_ingress_id,omitempty"`
 	IdempotencyKey   IdempotencyKey `json:"idempotency_key"`
+
+	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+	PreferredRegions *LocationPreferences `json:"preferred_regions,omitempty"`
 }
 
 // CreateVisitorIngressAssignmentsJSONBody defines parameters for CreateVisitorIngressAssignments.
 type CreateVisitorIngressAssignmentsJSONBody struct {
 	DeviceId       string         `json:"device_id"`
 	IdempotencyKey IdempotencyKey `json:"idempotency_key"`
+
+	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+	PreferredRegions *LocationPreferences `json:"preferred_regions,omitempty"`
 }
 
 // ListServiceInvitationsParams defines parameters for ListServiceInvitations.
@@ -4083,7 +4097,9 @@ type CreateServiceCertificateIssuanceParams struct {
 
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
 type StartServiceRunJSONBody struct {
-	RunNumber int64 `json:"run_number"`
+	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+	PreferredRegions *LocationPreferences `json:"preferred_regions,omitempty"`
+	RunNumber        int64                `json:"run_number"`
 }
 
 // SelectServiceRunJSONBody defines parameters for SelectServiceRun.
@@ -4137,6 +4153,9 @@ type CreateWorkloadIngressAssignmentsJSONBody struct {
 	Count            *int    `json:"count,omitempty"`
 	ExcludeIngressId *string `json:"exclude_ingress_id,omitempty"`
 	IdempotencyKey   string  `json:"idempotency_key"`
+
+	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+	PreferredRegions *LocationPreferences `json:"preferred_regions,omitempty"`
 }
 
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.

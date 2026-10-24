@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -109,14 +110,14 @@ func (d *Database) RevokeVisitorDevice(ctx context.Context, identityID, deviceID
 
 // both assignments authenticate the same enrolled identity, but each has an
 // independent session credential and ingress claim. neither grants a service.
-func (d *Database) CreateVisitorIngressAssignments(ctx context.Context, identityID, deviceID, serviceID, key string, now time.Time) (result []ConnectorSession, retErr error) {
-	return d.createVisitorIngressAssignments(ctx, identityID, deviceID, serviceID, 2, "", key, now)
+func (d *Database) CreateVisitorIngressAssignments(ctx context.Context, identityID, deviceID, serviceID, key string, now time.Time, preferred ...string) (result []ConnectorSession, retErr error) {
+	return d.createVisitorIngressAssignments(ctx, identityID, deviceID, serviceID, 2, "", key, now, preferred)
 }
 
 // single-slot renewal reserves only one other ingress. exclusion narrows
 // placement; it never grants access or revokes an existing session.
-func (d *Database) CreateVisitorIngressAssignment(ctx context.Context, identityID, deviceID, serviceID, excludeIngressID, key string, now time.Time) (ConnectorSession, error) {
-	assignments, err := d.createVisitorIngressAssignments(ctx, identityID, deviceID, serviceID, 1, excludeIngressID, key, now)
+func (d *Database) CreateVisitorIngressAssignment(ctx context.Context, identityID, deviceID, serviceID, excludeIngressID, key string, now time.Time, preferred ...string) (ConnectorSession, error) {
+	assignments, err := d.createVisitorIngressAssignments(ctx, identityID, deviceID, serviceID, 1, excludeIngressID, key, now, preferred)
 	if err != nil {
 		return ConnectorSession{}, err
 	}
@@ -127,8 +128,12 @@ func connectorIngressAssignmentContext(scope string) string {
 	return "connector-ingress-assignment/" + scope
 }
 
-func (d *Database) createVisitorIngressAssignments(ctx context.Context, identityID, deviceID, serviceID string, count int, excludeIngressID, key string, now time.Time) (result []ConnectorSession, retErr error) {
+func (d *Database) createVisitorIngressAssignments(ctx context.Context, identityID, deviceID, serviceID string, count int, excludeIngressID, key string, now time.Time, preferred []string) (result []ConnectorSession, retErr error) {
 	if !validIdempotencyKey(key) || len(excludeIngressID) > 128 || strings.ContainsAny(excludeIngressID, "\x00\r\n") {
+		return nil, ErrServiceAccess
+	}
+	preferences, err := region.Preferences(preferred)
+	if err != nil {
 		return nil, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -155,7 +160,7 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 	if _, _, err = privateVisitorAccess(ctx, tx, serviceID, identityID, now); err != nil {
 		return nil, err
 	}
-	request, err := json.Marshal([]any{identityID, deviceID, serviceID, count, excludeIngressID})
+	request, err := json.Marshal([]any{identityID, deviceID, serviceID, count, excludeIngressID, preferences})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +203,7 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	placements, err := privateIngressPlacements(ctx, tx, now, count, excludeIngressID)
+	placements, err := privateIngressPlacements(ctx, tx, now, count, excludeIngressID, preferences)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +224,7 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 			return nil, err
 		}
 		result = append(result, ConnectorSession{ID: id, ServiceID: serviceID, IdentityID: identityID, DeviceID: deviceID, Subject: VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identityID, DeviceID: deviceID}, Credential: credential, ExpiresAt: expires,
+			Region:    placement.region,
 			IngressID: placement.id, IngressAddress: placement.address, TLSServerName: placement.serverName})
 	}
 	plaintext, err := json.Marshal(result)

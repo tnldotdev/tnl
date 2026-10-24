@@ -6,6 +6,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -32,6 +33,11 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{CloudProvider, CloudRegion, CloudAvailabilityZone} {
 		add(k, PolicyResource, "known operator-declared cloud fact; no metadata discovery")
 	}
+	locations := []string{string(region.Local)}
+	for _, location := range region.All() {
+		locations = append(locations, string(location.Code))
+	}
+	add(RegionKey, PolicyTraceLog, "validated tnl location code; never a provider region or high-cardinality metric label", locations...)
 	for _, k := range []attributeKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID} {
 		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive")
 	}

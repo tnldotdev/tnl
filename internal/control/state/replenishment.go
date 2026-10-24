@@ -174,7 +174,11 @@ func replenishPublishRunConnections(
 		if service := serviceConfigurations[row.RelayServiceID]; service.assignments < service.capacity {
 			placements[index] = service
 		} else {
-			for _, candidate := range availableServices {
+			nearby, err := nearbyRelayServices(ctx, queries, row.RelayServiceID, availableServices)
+			if err != nil {
+				return result, err
+			}
+			for _, candidate := range nearby {
 				service := serviceConfigurations[candidate.relayServiceID]
 				if !reservedServices[service.relayServiceID] && service.assignments < service.capacity {
 					placements[index] = service

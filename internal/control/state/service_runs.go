@@ -8,12 +8,17 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 // publisher authentication authorizes the exact prepared run and captured
 // endpoint. the service's WebPKI certificate authenticates native visitor TLS.
-func (d *Database) StartServiceRun(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, now time.Time) (result ServiceRunState, retErr error) {
+func (d *Database) StartServiceRun(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, now time.Time, preferred ...string) (result ServiceRunState, retErr error) {
+	preferences, err := region.Preferences(preferred)
+	if err != nil {
+		return result, ErrRegionPreference
+	}
 	if _, err := checkedServiceRunBinding(service, id, number); err != nil || !servicePublisherMatches(publisher, service) {
 		return result, ErrServiceAccess
 	}
@@ -60,7 +65,7 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(now) {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
-		placements, err := selectRelayServicePlacements(ctx, q, now)
+		placements, err := selectRelayServicePlacements(ctx, q, now, preferences)
 		if err != nil {
 			return result, err
 		}

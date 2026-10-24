@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEligibleIngressesByPool = `-- name: CountEligibleIngressesByPool :one
+SELECT count(*) FROM control.ingress_leases
+WHERE ingress_pool_id=$1 AND lease_expires_at>$2
+    AND NOT draining AND protocol_version=$3 AND connection_capacity>0
+`
+
+type CountEligibleIngressesByPoolParams struct {
+	IngressPoolID   string
+	Now             pgtype.Timestamptz
+	ProtocolVersion int64
+}
+
+func (q *Queries) CountEligibleIngressesByPool(ctx context.Context, arg CountEligibleIngressesByPoolParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countEligibleIngressesByPool, arg.IngressPoolID, arg.Now, arg.ProtocolVersion)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countStreamCapacityAllocations = `-- name: CountStreamCapacityAllocations :one
 SELECT count(*) FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND valid_until>$3
@@ -268,6 +287,38 @@ func (q *Queries) RetireStreamCapacityAllocation(ctx context.Context, arg Retire
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const sumOwnedStreamCapacityAllocations = `-- name: SumOwnedStreamCapacityAllocations :one
+SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations
+WHERE resource_kind=$1 AND resource_id=$2 AND run_id=$3
+    AND ingress_id=$4 AND ingress_run_id=$5
+    AND ingress_lease_revision=$6 AND valid_until>$7
+`
+
+type SumOwnedStreamCapacityAllocationsParams struct {
+	ResourceKind         string
+	ResourceID           string
+	RunID                string
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+	Now                  pgtype.Timestamptz
+}
+
+func (q *Queries) SumOwnedStreamCapacityAllocations(ctx context.Context, arg SumOwnedStreamCapacityAllocationsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumOwnedStreamCapacityAllocations,
+		arg.ResourceKind,
+		arg.ResourceID,
+		arg.RunID,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.IngressLeaseRevision,
+		arg.Now,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const sumStreamCapacityAllocations = `-- name: SumStreamCapacityAllocations :one

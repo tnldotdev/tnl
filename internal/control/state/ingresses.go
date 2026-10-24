@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/region"
 )
 
 var (
@@ -26,6 +27,7 @@ var (
 type IngressRegistration struct {
 	IngressID                                string
 	IngressRunID                             string
+	Region                                   region.Code
 	ProtocolVersion                          uint64
 	ConnectionCapacity                       uint64
 	IngressPoolID                            string
@@ -50,6 +52,7 @@ type IngressRenewal struct {
 // IngressLease is the control-issued lease for one ingress process.
 type IngressLease struct {
 	IngressLeaseIdentity
+	Region                 region.Code
 	ProtocolVersion        uint64
 	ConnectionCapacity     uint64
 	ReportedConnections    uint64
@@ -78,6 +81,9 @@ func (d *Database) RegisterIngress(
 	if err := validateIngressRegistration(registration, leaseDuration); err != nil {
 		return IngressLease{}, err
 	}
+	if registration.Region == "" {
+		registration.Region = region.Local
+	}
 	if err := d.requireOpen(); err != nil {
 		return IngressLease{}, err
 	}
@@ -91,6 +97,7 @@ func (d *Database) RegisterIngress(
 	queries := controlstatedb.New(tx)
 	row, err := queries.RegisterIngress(ctx, controlstatedb.RegisterIngressParams{
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
+		Region:          string(registration.Region),
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
 		ConnectorAddress: registration.ConnectorAddress, ConnectorTlsServerName: registration.ConnectorTLSServerName,
@@ -281,6 +288,12 @@ func ensureIngressUsageRun(
 }
 
 func validateIngressRegistration(registration IngressRegistration, leaseDuration time.Duration) error {
+	if registration.Region != "" {
+		code, ok := region.Parse(string(registration.Region))
+		if !ok || code != registration.Region {
+			return errors.New("controlstate: ingress region is invalid")
+		}
+	}
 	if len(registration.ServicePorts) > 256 || len(registration.ServicePorts) > 0 && !validStateText(registration.IngressPoolID) {
 		return errors.New("ingress service port inventory is invalid")
 	}
@@ -371,6 +384,9 @@ func lockCurrentIngressLease(
 }
 
 func ingressLease(row controlstatedb.ControlIngressLease, visitorNetworkHashKeys [2]VisitorNetworkHashKey) (IngressLease, error) {
+	if code, ok := region.Parse(row.Region); !ok || code != region.Code(row.Region) {
+		return IngressLease{}, errors.New("controlstate: ingress region is invalid")
+	}
 	if row.IngressLeaseRevision <= 0 || row.ProtocolVersion <= 0 || row.ConnectionCapacity < 0 ||
 		row.ReportedConnections < 0 || row.RoutingTableRevision < 0 || !row.RegisteredAt.Valid ||
 		!row.RenewedAt.Valid || !row.LeaseExpiresAt.Valid {
@@ -382,6 +398,7 @@ func ingressLease(row controlstatedb.ControlIngressLease, visitorNetworkHashKeys
 		drainDeadline = &value
 	}
 	return IngressLease{
+		Region: region.Code(row.Region),
 		IngressLeaseIdentity: IngressLeaseIdentity{
 			IngressID: row.IngressID, IngressRunID: row.IngressRunID,
 			IngressLeaseRevision: uint64(row.IngressLeaseRevision),

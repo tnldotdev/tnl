@@ -266,7 +266,9 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 		var events *tunnel.ReturnEvents
 		if denied {
 			events = &tunnel.ReturnEvents{Promoted: func(h tunnelv1.AdmissionHeader) error {
-				result := b.forwarder.promoteAdmission(ctx, session, h)
+				// opening ends as soon as the stream is ready; promotion arrives
+				// later on that stream and belongs to the forwarder's lifetime.
+				result := b.forwarder.promoteAdmission(b.forwarder.context, session, h)
 				if result.Type != tunnelv1.StreamAccepted {
 					return &tunnel.ProtocolError{Code: result.Code}
 				}

@@ -325,7 +325,7 @@ func (h *handler) CreatePublishRun(
 		return
 	}
 	idempotencyKey := request.Header.Get("Idempotency-Key")
-	traffic, ok := publishRunTrafficSelection(response, request)
+	traffic, regions, ok := publishRunOptions(response, request)
 	if !ok {
 		return
 	}
@@ -367,7 +367,7 @@ func (h *handler) CreatePublishRun(
 		ExpectedMutationRevision: publicURL.MutationRevision,
 		PublisherIdentityID:      publisher.ID, PublisherGrantID: publisher.GrantID, PublisherKeyID: publisher.KeyID,
 		PublisherRunProof: request.Header.Get("Publisher-Run-Proof"), PublisherSourceIP: source,
-		TrafficSelection: traffic, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling,
+		TrafficSelection: traffic, PreferredRegions: regions, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
 		publisherProblem(response, "create publish run", err)

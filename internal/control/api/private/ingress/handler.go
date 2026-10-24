@@ -276,6 +276,7 @@ func ingressLease(lease controlstate.IngressLease) ingressv1.IngressLease {
 	}
 	return ingressv1.IngressLease{
 		IngressId: lease.IngressID, IngressRunId: lease.IngressRunID,
+		Region:               string(lease.Region),
 		IngressLeaseRevision: int64(lease.IngressLeaseRevision), ProtocolVersion: int64(lease.ProtocolVersion),
 		ConnectionCapacity: int64(lease.ConnectionCapacity), ReportedConnections: int64(lease.ReportedConnections),
 		RoutingTableRevision: int64(lease.RoutingTableRevision), VisitorNetworkHashKeys: visitorNetworkHashKeys,

@@ -62,6 +62,7 @@ tasks:
       QUIC_MAX_INCOMING_STREAMS: '{{default "" .QUIC_MAX_INCOMING_STREAMS}}'
       SCENARIO: "{{.SCENARIO}}"
       NETWORK_PATH: "{{.NETWORK_PATH}}"
+      CONTROL_DELAY: '{{default "0ms" .CONTROL_DELAY}}'
       RTT: "{{.RTT}}"
       LOSS: "{{.LOSS}}"
       SEED: "{{.SEED}}"
@@ -89,6 +90,7 @@ tasks:
           HELD_STREAMS: "0"
           SCENARIO: '{{default "relay-restart" .SCENARIO}}'
           NETWORK_PATH: '{{default "publisher" .NETWORK_PATH}}'
+          CONTROL_DELAY: '{{default "0ms" .CONTROL_DELAY}}'
           RTT: '{{default "20ms" .RTT}}'
           LOSS: '{{default "0.1" .LOSS}}'
           SEED: '{{default "0" .SEED}}'
@@ -116,6 +118,7 @@ tasks:
           HELD_STREAMS: "0"
           SCENARIO: '{{default "relay-restart" .SCENARIO}}'
           NETWORK_PATH: '{{default "publisher" .NETWORK_PATH}}'
+          CONTROL_DELAY: '{{default "0ms" .CONTROL_DELAY}}'
           RTT: '{{default "20ms" .RTT}}'
           LOSS: '{{default "0.1" .LOSS}}'
           SEED: '{{default "0" .SEED}}'

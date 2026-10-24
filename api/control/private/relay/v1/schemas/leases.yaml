@@ -6,6 +6,7 @@ schemas:
       - relay_service_id
       - relay_id
       - relay_run_id
+      - region
       - protocol_version
       - relay_address
       - tls_server_name
@@ -14,6 +15,10 @@ schemas:
       - connection_capacity
       - stream_capacity
     properties:
+      region:
+        type: string
+        pattern: "^(local|[a-z]{3})$"
+        description: Stable tnl region code shared by processes in this relay service.
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_id:
@@ -94,6 +99,7 @@ schemas:
       - relay_id
       - relay_run_id
       - relay_lease_revision
+      - region
       - protocol_version
       - relay_address
       - tls_server_name
@@ -108,6 +114,9 @@ schemas:
       - renewed_at
       - lease_expires_at
     properties:
+      region:
+        type: string
+        pattern: "^(local|[a-z]{3})$"
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_id:

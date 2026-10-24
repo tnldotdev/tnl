@@ -45,6 +45,7 @@ type splitPublishOptions struct {
 	processContext       func(string) context.Context
 	dns                  *integrationRoute53
 	proxyIngress         bool
+	selectIngress        func(string) string
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*daemonconfig.Config)
 }
@@ -158,7 +159,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	serveIntegrationControlProxy(t, owner, controlProxyListener, controlConfig.ControlListen, controlTLS)
 	if options.proxyIngress {
-		startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress)
+		startSplitIngressProxy(t, owner, publicIngressListener, ingressAddress, options.selectIngress)
 	}
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner, listeners: controlSockets}
 	if options.processContext != nil {
@@ -206,7 +207,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 // a disposable front address writes trusted PROXY v2 metadata for ordinary
 // HTTPS visitors. database test clients supply their own original port
 // through the separate private ingress listener.
-func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string) {
+func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.Listener, backend string, selectBackend func(string) string) {
 	t.Helper()
 	var active sync.WaitGroup
 	acceptDone := make(chan struct{})
@@ -227,7 +228,11 @@ func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, listener net.L
 				defer active.Done()
 				defer visitor.Close()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", backend)
+				address := backend
+				if selectBackend != nil {
+					address = selectBackend(backend)
+				}
+				upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
 				cancel()
 				if err != nil {
 					return

@@ -16,8 +16,17 @@ func (c *Client) CreateServiceCertificateIssuance(ctx context.Context, service, 
 }
 
 func (c *Client) StartServiceRun(ctx context.Context, service, run, access string, number int64) (controlv1.ServiceRunSetup, error) {
+	return c.StartServiceRunInRegions(ctx, service, run, access, number, nil)
+}
+
+func (c *Client) StartServiceRunInRegions(ctx context.Context, service, run, access string, number int64, preferred []string) (controlv1.ServiceRunSetup, error) {
+	body := controlv1.StartServiceRunJSONRequestBody{RunNumber: number}
+	if len(preferred) > 0 {
+		values := controlv1.LocationPreferences(append([]string(nil), preferred...))
+		body.PreferredRegions = &values
+	}
 	return request[controlv1.ServiceRunSetup](ctx, c, access, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.StartServiceRun(ctx, service, run, controlv1.StartServiceRunJSONRequestBody{RunNumber: number}, editors...)
+		return c.api.StartServiceRun(ctx, service, run, body, editors...)
 	})
 }
 

@@ -132,6 +132,17 @@ func TestConnectModeMatrix(t *testing.T) {
 	}
 }
 
+func TestConnectRegionPreferencesFailBeforeStarting(t *testing.T) {
+	if err := ValidateMode(StartOptions{PreferredRegions: []string{"aws:us-west-1", "iad"}}); err != nil {
+		t.Fatal("known locations were rejected", err)
+	}
+	for _, preferred := range [][]string{{"sjc", "fly:sjc"}, {"aws:unknown"}} {
+		if err := ValidateMode(StartOptions{PreferredRegions: preferred}); err == nil {
+			t.Fatal("invalid location reached the connector", preferred)
+		}
+	}
+}
+
 func TestNativeMySQLRequiresExplicitServerRoots(t *testing.T) {
 	roots, err := nativeMySQLRoots()
 	if err != nil {

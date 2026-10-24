@@ -9,6 +9,7 @@ import (
 )
 
 var ErrTrafficUnsupported = errors.New("publisher control client cannot select traffic limits")
+var ErrRegionUnsupported = errors.New("publisher control client cannot select regional placement")
 
 // TrafficControl is optional so NativeControl's existing proof-bearing method
 // keeps its exact signature. a selection is never silently discarded.

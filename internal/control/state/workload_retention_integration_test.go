@@ -241,7 +241,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.connector_sessions(id,workload_session_id,credential_digest,service_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at) VALUES($1,$2,$3,$4,'retention','old-run',1,$5,$6)`, connector, s.ID, cert[:], service.ID, at, s.ExpiresAt); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_ingress_requests VALUES($1,'retry',$2,'ciphertext','key');`, s.ID, service.ID); err != nil {
+		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_ingress_requests(workload_session_id,idempotency_key,service_id,request_digest,result_ciphertext,storage_key_id) VALUES($1,'retry',$2,$3,'ciphertext','key');`, s.ID, service.ID, cert[:]); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_client_certificates VALUES($1,$2,$3,$1,'certificate',$4)`, cert[:], s.ID, service.ID, s.ExpiresAt); err != nil {

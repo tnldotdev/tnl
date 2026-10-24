@@ -174,6 +174,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
+	publisherConfig.PreferredRegions = append([]string(nil), flags.PreferredRegions...)
 	if policy.explicit {
 		publisherConfig.AccessMode = policy.access
 	}

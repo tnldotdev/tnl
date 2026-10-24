@@ -12,6 +12,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -21,6 +22,7 @@ type controlAdapter struct {
 	client     *clientcontrol.Client
 	profile    *clientstate.Store
 	identityID string
+	preferred  []string
 	deviceMu   sync.Mutex
 	mu         sync.Mutex
 	pairs      map[assignmentKey]*assignmentPair
@@ -49,11 +51,19 @@ func (*controlAdapter) GoString() string { return "private connector control" }
 // NewControl uses the signed-in identity's protected, server-scoped device key.
 // construction does not enroll or replace a key; enrollment is retryable using
 // the key durably saved before its first HTTP request.
-func NewControl(client *clientcontrol.Client, profile *clientstate.Store, identityID string) (Control, error) {
+func NewControl(client *clientcontrol.Client, profile *clientstate.Store, identityID string, preferred ...string) (Control, error) {
 	if client == nil || profile == nil || !opaqueid.Valid(identityID, opaqueid.IdentityPrefix) {
 		return nil, ErrServiceConnection
 	}
-	return &controlAdapter{client: client, profile: profile, identityID: identityID, pairs: make(map[assignmentKey]*assignmentPair), owned: make(map[string]bool)}, nil
+	codes, err := region.Preferences(preferred)
+	if err != nil {
+		return nil, errors.Join(ErrServiceConnection, err)
+	}
+	selected := make([]string, len(codes))
+	for index, code := range codes {
+		selected[index] = string(code)
+	}
+	return &controlAdapter{client: client, profile: profile, identityID: identityID, preferred: selected, pairs: make(map[assignmentKey]*assignmentPair), owned: make(map[string]bool)}, nil
 }
 
 func (c *controlAdapter) ConnectorSigner(ctx context.Context, identity string) (Signer, error) {
@@ -118,7 +128,7 @@ func (c *controlAdapter) ConnectorAssignment(ctx context.Context, service string
 				return Assignment{}, err
 			}
 		}
-		setups, err := c.client.CreateVisitorIngressAssignments(ctx, service, device, pair.initialKey)
+		setups, err := c.client.CreateVisitorIngressAssignments(ctx, service, device, pair.initialKey, c.preferred...)
 		if err != nil {
 			if errors.Is(err, clientcontrol.ErrNotFound) {
 				pair.initialKey = ""
@@ -153,7 +163,7 @@ func (c *controlAdapter) ConnectorAssignment(ctx context.Context, service string
 				retry.exclude = pending.IngressId
 			}
 		}
-		setup, err := c.client.CreateVisitorIngressAssignment(ctx, service, device, retry.exclude, retry.key)
+		setup, err := c.client.CreateVisitorIngressAssignment(ctx, service, device, retry.exclude, retry.key, c.preferred...)
 		if err != nil {
 			if errors.Is(err, clientcontrol.ErrNotFound) {
 				*retry = assignmentRetry{}

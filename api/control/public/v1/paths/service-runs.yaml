@@ -22,6 +22,8 @@ paths:
               required: [run_number]
               properties:
                 run_number: { type: integer, format: int64, minimum: 1 }
+                preferred_regions:
+                  { $ref: "../openapi.yaml#/components/schemas/LocationPreferences" }
       responses:
         "200":
           description: Run token and two independent relay assignments

@@ -51,6 +51,7 @@ var (
 	runtimeLoadBandwidthMeasure   = flag.Duration("tnl-runtime-load-bandwidth-measure", 0, "optional bandwidth measurement per path (0s-5m)")
 	runtimeLoadScenario           = flag.String("tnl-runtime-load-scenario", "relay-restart", "relay-restart, relay-kill, control-restart, forwarding-blackhole, publisher-blackhole, udp-fallback, latency, or packet-loss")
 	runtimeLoadNetworkPath        = flag.String("tnl-runtime-load-network-path", "forwarding", "forwarding or publisher impairment path")
+	runtimeLoadControlDelay       = flag.Duration("tnl-runtime-load-control-delay", 0, "control-only request-path delay in the local topology")
 	runtimeLoadRTT                = flag.Duration("tnl-runtime-load-rtt", 20*time.Millisecond, "added round-trip latency")
 	runtimeLoadLoss               = flag.Float64("tnl-runtime-load-loss", 0.1, "packet loss percent in each direction")
 	runtimeLoadTrace              = flag.Bool("tnl-runtime-load-trace", false, "trace certificate provisioning")
@@ -77,7 +78,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close(); <-serverDone })
 	separatedWrite(t, "coordinator.ready", true)
 	database := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
-	t.Logf("separated_load routes=%d rps=%d held=%d held_warmup=%s held_measure=%s sources=4 workers=%d queue=%d payload=32768 phase_duration=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadHeldWarmup, *runtimeLoadHeldMeasure, *runtimeLoadWorkers, *runtimeLoadQueue, duration)
+	t.Logf("separated_load routes=%d rps=%d held=%d held_warmup=%s held_measure=%s sources=4 workers=%d queue=%d payload=32768 phase_duration=%s control_request_delay=%s", routes, rate, *runtimeLoadHeldStreams, *runtimeLoadHeldWarmup, *runtimeLoadHeldMeasure, *runtimeLoadWorkers, *runtimeLoadQueue, duration, *runtimeLoadControlDelay)
 	defer func() {
 		if !t.Failed() {
 			return

@@ -229,11 +229,12 @@ func summarizeSetupSpans(spans map[string][]setupSpan, start, end time.Time) set
 	return result
 }
 
-func reportSeparatedSetupEvidence(t *testing.T, name string, start, end time.Time) {
+func reportSeparatedSetupEvidence(t *testing.T, name string, start, end time.Time) setupEvidence {
 	t.Helper()
 	spans := captureSeparatedSetupTraces(t, name)
 	evidence := summarizeSetupSpans(spans, start, end)
 	separatedResult(t, name+"-setup-evidence", evidence)
+	return evidence
 }
 
 func TestSetupEvidenceSeparatesVisitorRPCsFromUnattributedTraffic(t *testing.T) {

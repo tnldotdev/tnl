@@ -330,7 +330,7 @@ func unusedUDPAddress(t *testing.T) string {
 
 func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig.Config {
 	return daemonconfig.Config{
-		Role: role, MetricsListen: metricsAddress,
+		Role: role, MetricsListen: metricsAddress, IngressConnectorPort: 443,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		PublicURLCertificateWorkers:      4,
 		ClientHelloConnectionLimit:       1024,

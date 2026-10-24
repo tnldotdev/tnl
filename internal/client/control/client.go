@@ -316,9 +316,18 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 }
 
 func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string) (controlv1.PublishRunSetup, error) {
+	return c.CreatePublishRunInRegions(ctx, publicURLID, idempotencyKey, nil)
+}
+
+func (c *Client) CreatePublishRunInRegions(ctx context.Context, publicURLID, idempotencyKey string, preferred []string) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
+	body := controlv1.CreatePublishRunRequest{}
+	if len(preferred) > 0 {
+		values := controlv1.LocationPreferences(append([]string(nil), preferred...))
+		body.PreferredRegions = &values
+	}
 	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, controlv1.CreatePublishRunRequest{}, editors...)
+		return c.api.CreatePublishRun(ctx, publicURLID, params, body, editors...)
 	})
 }
 

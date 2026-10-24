@@ -79,7 +79,7 @@ func (q *Queries) ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimR
 }
 
 const claimRelayServiceForCertificateOrder = `-- name: ClaimRelayServiceForCertificateOrder :one
-SELECT services.id, services.relay_service_id, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
+SELECT services.id, services.relay_service_id, services.region, services.relay_address, services.tls_server_name, services.transport_certificate_pem, services.transport_private_key_ciphertext, services.transport_private_key_storage_key_id, services.transport_certificate_serial, services.transport_certificate_expires_at, services.enabled, services.created_at, services.updated_at
 FROM control.relay_services AS services
 WHERE services.enabled
   AND (
@@ -122,6 +122,7 @@ func (q *Queries) ClaimRelayServiceForCertificateOrder(ctx context.Context, arg 
 	err := row.Scan(
 		&i.ID,
 		&i.RelayServiceID,
+		&i.Region,
 		&i.RelayAddress,
 		&i.TlsServerName,
 		&i.TransportCertificatePem,

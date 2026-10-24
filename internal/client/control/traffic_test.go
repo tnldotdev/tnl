@@ -38,11 +38,14 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof"); err != nil {
 		t.Fatal(err)
 	}
-	if len(bodies) != 2 || bodies[0].Traffic == nil || *bodies[0].Traffic.Connections != 48 || *bodies[0].Traffic.RatePer != "2s" || *bodies[0].Traffic.UploadBytes != upload || bodies[0].Traffic.DownloadBytes != nil || bodies[1].Traffic != nil {
+	if _, err := client.CreatePublisherRunWithOptions(t.Context(), "url", "retry", "publisher-access", "signed-proof", selection, []string{"aws:us-west-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 3 || bodies[0].Traffic == nil || *bodies[0].Traffic.Connections != 48 || *bodies[0].Traffic.RatePer != "2s" || *bodies[0].Traffic.UploadBytes != upload || bodies[0].Traffic.DownloadBytes != nil || bodies[1].Traffic != nil || bodies[2].PreferredRegions == nil || len(*bodies[2].PreferredRegions) != 1 || (*bodies[2].PreferredRegions)[0] != "aws:us-west-1" || bodies[2].Traffic == nil {
 		t.Fatalf("typed traffic selections: %+v", bodies)
 	}
 	invalid := 0
-	if _, err := client.CreatePublisherRunWithTraffic(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Rate: &invalid}); err == nil || len(bodies) != 2 {
+	if _, err := client.CreatePublisherRunWithTraffic(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Rate: &invalid}); err == nil || len(bodies) != 3 {
 		t.Fatal("invalid selection reached the server")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -72,11 +74,15 @@ func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings 
 	if cfg.IngressID != "" && domain != "" {
 		hostname = cfg.IngressID + "." + domain
 	}
+	port := cfg.IngressConnectorPort
+	if port == 0 {
+		port = 443
+	}
 	return ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
 		clusterSecret: cfg.ClusterSecret,
 		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
-		privateHostname: hostname, privateAddress: net.JoinHostPort(hostname, "443"),
+		privateHostname: hostname, privateAddress: net.JoinHostPort(hostname, strconv.Itoa(port)),
 		privateUDPListen: cfg.IngressUDPListen,
 	}
 }
@@ -121,6 +127,7 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
+	region                           region.Code
 	clientHelloConnectionLimit       int
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
@@ -144,6 +151,7 @@ func ingressSettingsFrom(cfg daemonconfig.Config) ingressSettings {
 	}
 	peers, _ := proxyproto.TrustedPeers(cfg.IngressTrustedProxies)
 	return ingressSettings{
+		region:                           cfg.ServingRegion(),
 		clientHelloConnectionLimit:       cfg.ClientHelloConnectionLimit,
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
@@ -166,6 +174,7 @@ func (d *daemon) startIngressRuntime(
 	metrics *observability.Metrics,
 	runtimeConfig ingressRuntimeConfig,
 ) error {
+	ctx = observability.WithRegion(ctx, settings.region)
 	runtime := &ingressRuntime{privateOnly: runtimeConfig.privateOnly}
 	auditClient, ok := runtimeConfig.client.(ingressServiceObservationClient)
 	if !ok {
@@ -199,7 +208,7 @@ func (d *daemon) startIngressRuntime(
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
-	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, Region: string(settings.region), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
 	var visitorControl ingress.VisitorPreparationControl
 	if !runtimeConfig.privateOnly {
 		visitorControl, ok = runtimeConfig.client.(ingress.VisitorPreparationControl)
@@ -311,6 +320,13 @@ func (d *daemon) startIngressRuntime(
 				publicURLID, version, visitorID, reason, attempts)
 		},
 	}
+	if settings.requireProxyHeader {
+		ingressConfig.CheckReady = func() bool {
+			now := time.Now()
+			return !d.draining.Load() && controller.Ready(now) && publicServer != nil && publicServer.Ready() &&
+				(runtime.serviceCertificate == nil || runtime.serviceCertificate.ready(now))
+		}
+	}
 	if usage != nil {
 		ingressConfig.OpenUsage = usage.Open
 	}
@@ -322,6 +338,15 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig.AuditSink = runtime.audit
 	if runtimeConfig.privateHostname != "" {
+		_, port, err := net.SplitHostPort(runtimeConfig.privateAddress)
+		if err != nil {
+			return err
+		}
+		number, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || number == 0 {
+			return errors.New("private ingress connector port is invalid")
+		}
+		ingressConfig.ConnectorPort = uint16(number)
 		privateControl, ok := runtimeConfig.client.(ingress.PrivateControl)
 		if !ok {
 			return errors.New("private ingress control operations are required")

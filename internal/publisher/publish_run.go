@@ -9,6 +9,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -16,12 +17,26 @@ import (
 const activationRetry = 2 * time.Second
 
 func createPublishRun(ctx context.Context, config Config, publicURL controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
+	if _, err := region.Preferences(config.PreferredRegions); err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
 	idempotencyKey, err := opaqueID(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
 	for {
-		setup, err := config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey)
+		var setup controlv1.PublishRunSetup
+		if len(config.PreferredRegions) > 0 {
+			control, ok := config.Control.(interface {
+				CreatePublishRunInRegions(context.Context, string, string, []string) (controlv1.PublishRunSetup, error)
+			})
+			if !ok {
+				return setup, region.ErrPreference
+			}
+			setup, err = control.CreatePublishRunInRegions(ctx, publicURL.Id, idempotencyKey, config.PreferredRegions)
+		} else {
+			setup, err = config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey)
+		}
 		if err == nil {
 			return setup, nil
 		}

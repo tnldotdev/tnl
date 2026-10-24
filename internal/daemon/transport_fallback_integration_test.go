@@ -121,6 +121,13 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	fixture.visitor.transport.CloseIdleConnections()
+	// the routing acknowledgment precedes background visitor-policy and stream
+	// capacity installation. use a new idempotent GET until that local path can
+	// reach the app; the interrupted /held request must never be replayed.
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		response, body, err := fixture.visitor.requestURLContext(ctx, http.MethodGet, ready.PublicURL+"/after", nil)
+		return err == nil && response.StatusCode == http.StatusOK && string(body) == "after recovery", nil
+	})
 	after, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after", nil)
 	if err != nil || after.StatusCode != http.StatusOK || string(body) != "after recovery" {
 		t.Fatalf("visitor after recovery = %v, %q, %v", after, body, err)

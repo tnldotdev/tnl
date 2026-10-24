@@ -154,6 +154,10 @@ func (n *Native) GetPublicURLByHostname(ctx context.Context, team, hostname stri
 }
 
 func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+	return n.CreatePublishRunInRegions(ctx, id, retry, nil)
+}
+
+func (n *Native) CreatePublishRunInRegions(ctx context.Context, id, retry string, preferred []string) (controlv1.PublishRunSetup, error) {
 	if n.publicURL.Id == "" || n.publicURL.Id != id {
 		return controlv1.PublishRunSetup{}, ErrScope
 	}
@@ -169,6 +173,15 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	proof, err := publisherproof.SignRun(n.private, id, retry)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
+	}
+	if len(preferred) > 0 {
+		control, ok := n.NativeControl.(interface {
+			CreatePublisherRunWithOptions(context.Context, string, string, string, string, *trafficlimits.Selection, []string) (controlv1.PublishRunSetup, error)
+		})
+		if !ok {
+			return controlv1.PublishRunSetup{}, ErrRegionUnsupported
+		}
+		return control.CreatePublisherRunWithOptions(ctx, id, retry, token, proof, n.traffic.Clone(), preferred)
 	}
 	if n.traffic != nil {
 		control, ok := n.NativeControl.(TrafficControl)
