@@ -388,7 +388,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				JOIN control.services s ON s.id=c.service_id
 				WHERE c.id=$1 AND c.service_id=$2 AND c.ingress_id=$3 AND c.ingress_run_id=$4 AND c.ingress_lease_revision=$5
 				AND host(c.source_ip)=$6 AND c.bound_at IS NOT NULL AND c.bound_at<=$7::timestamptz+interval '1 minute'
-				AND NOT EXISTS(SELECT 1 FROM control.connector_visitor_streams WHERE visitor_connection_id=$8)`,
+				AND NOT EXISTS(SELECT 1 FROM control.service_audit_events WHERE visitor_connection_id=$8 AND service_id=$2 AND event_type='connection.open' AND outcome='allowed')`,
 				o.ConnectorSessionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.OccurredAt, o.VisitorConnectionID).
 				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
 		} else if o.ConnectorSessionID == "" {
@@ -400,14 +400,22 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
 				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		} else {
-			// the admitted stream is the source of identity and IP. a current
-			// ingress lease cannot report another ingress's private visitor.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.connector_visitor_streams v
-				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
-				JOIN control.connector_sessions c ON c.id=v.connector_session_id
-				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
-				AND c.ingress_id=$5 AND c.ingress_run_id=$6 AND c.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND c.id=$9`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+			// immutable session facts supply identity and source; the authenticated
+			// allocation binds the reported run to this exact ingress process. a
+			// visitor-chosen actor, run, or another ingress's allocation cannot
+			// manufacture private audit scope, including after revocation.
+			err = tx.QueryRow(ctx, `SELECT s.team_id,c.identity_id,c.device_id,r.publisher_identity_id
+				FROM control.connector_sessions c JOIN control.services s ON s.id=c.service_id
+				JOIN control.service_runs r ON r.service_id=s.id AND r.id=$3 AND r.run_number=$4
+				JOIN control.stream_capacity_allocations a ON a.resource_kind='service' AND a.resource_id=s.id AND a.run_id=r.id AND a.run_number=r.run_number
+				WHERE c.service_id=$2 AND c.id=$9 AND host(c.source_ip)=$8 AND c.bound_at IS NOT NULL
+				AND c.ingress_id=$5 AND c.ingress_run_id=$6 AND c.ingress_lease_revision=$7
+				AND a.id=$1 AND a.ingress_id=$5 AND a.ingress_run_id=$6 AND a.ingress_lease_revision=$7
+				AND a.publisher_observed_at IS NOT NULL AND a.issued_at<=$10::timestamptz+interval '1 minute'
+				AND c.bound_at<=$10::timestamptz+interval '1 minute' AND r.created_at<=$10::timestamptz+interval '1 minute'
+				AND ($11<>'connection.open' OR $12<>'allowed' OR ($10<=a.valid_until AND $10<=c.expires_at AND $10<=r.publisher_expires_at AND (r.closed_at IS NULL OR $10<=r.closed_at)))`,
+				o.StreamAllocationID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID, o.OccurredAt, o.EventType, o.Outcome).
+				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess

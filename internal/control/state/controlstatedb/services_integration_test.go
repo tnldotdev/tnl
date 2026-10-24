@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -190,12 +191,12 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		t.Fatalf("authorized trust snapshot: %+v %v", selected, err)
 	}
 	var wg sync.WaitGroup
-	results := make(chan controlstate.ServiceStreamAuthorization, 2)
+	results := make(chan controlstate.StreamCapacityAllocation, 2)
 	problems := make(chan error, 2)
 	for range 2 {
 		wg.Go(func() {
-			streamID, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-			admitted, err := d.AuthorizeServiceStream(ctx, ingress, service.ID, runs[0].RunID, assignments[0].ID, streamID, runs[0].RunNumber, source, now)
+			requestID, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
+			admitted, err := d.AllocateStreamCapacity(ctx, controlstate.StreamCapacityRequest{Owner: ingress, Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}, RunID: runs[0].RunID, RunNumber: runs[0].RunNumber, RequestID: requestID, Capacity: 1}, now)
 			results <- admitted
 			problems <- err
 		})
@@ -207,43 +208,49 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	for err := range problems {
 		if err == nil {
 			allowed++
-		} else if !errors.Is(err, controlstate.ErrServiceAccess) {
+		} else if !errors.Is(err, controlstate.ErrStreamCapacity) {
 			t.Fatal(err)
 		}
 	}
 	if allowed != 1 {
-		t.Fatalf("concurrent capacity admissions=%d, want one", allowed)
+		t.Fatalf("concurrent capacity allocations=%d, want one", allowed)
 	}
-	var active controlstate.ServiceStreamAuthorization
+	var active controlstate.StreamCapacityAllocation
 	for result := range results {
-		if result.VisitorConnectionID != "" {
+		if result.ID != "" {
 			active = result
 		}
+	}
+	if _, err := d.HeartbeatServiceRun(ctx, service.ID, runs[0].RunID, runs[0].Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1, ActiveStreams: 1}); err != nil {
+		t.Fatal(err)
 	}
 	selected, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now)
 	if err != nil || selected.ServiceRunID != runs[1].RunID {
 		t.Fatalf("full run selected: %+v %v", selected, err)
 	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, runs[1].RunID, assignments[0].ID, id(opaqueid.VisitorConnectionPrefix), runs[1].RunNumber, netip.MustParseAddr("192.0.2.11"), now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("connector supplied another source: %v", err)
+	if err = d.RetireStreamCapacity(ctx, ingress, active.ID, now); err != nil {
+		t.Fatal(err)
 	}
-	if err = d.CloseServiceStream(ctx, ingress, assignments[0].ID, active.VisitorConnectionID, now); err != nil {
+	if _, err := d.AllocateStreamCapacity(ctx, controlstate.StreamCapacityRequest{Owner: otherIngress, Scope: active.Scope, RunID: active.RunID, RunNumber: active.RunNumber, RequestID: "still-accounted", Capacity: 1}, now); !errors.Is(err, controlstate.ErrStreamCapacity) {
+		t.Fatal("retired capacity was reissued before its deadline", err)
+	}
+	if _, err := d.HeartbeatServiceRun(ctx, service.ID, runs[0].RunID, runs[0].Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil {
 		t.Fatal(err)
 	}
 	selected, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now)
 	if err != nil || selected.ServiceRunID != runs[0].RunID {
-		t.Fatalf("closed stream held capacity: %+v %v", selected, err)
-	}
-	active, err = d.AuthorizeServiceStream(ctx, otherIngress, service.ID, runs[1].RunID, assignments[1].ID, id(opaqueid.VisitorConnectionPrefix), runs[1].RunNumber, source, now)
-	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reported closed stream held selection capacity: %+v %v", selected, err)
 	}
 	if err = d.RevokeVisitorDevice(ctx, person, device.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	validity, err := d.RecheckServiceVisitor(ctx, otherIngress, service.ID, runs[1].RunID, assignments[1].ID, person, active.VisitorConnectionID, runs[1].RunNumber, source, now)
-	if err != nil || validity.Allowed {
-		t.Fatalf("revoked device kept active stream: %+v %v", validity, err)
+	const issuer = "https://control.example.test"
+	if err := d.PrepareVisitorSigningKeys(ctx, issuer, now); err != nil {
+		t.Fatal(err)
+	}
+	principal := controlstate.WithControlPrincipal(ctx, controlstate.ControlPrincipal{IdentityID: person, SessionID: owner.SessionID})
+	if _, err := d.IssueVisitorToken(principal, issuer, active.Scope, controlstate.DeviceTokenSource{DeviceID: device.ID}, now); !errors.Is(err, controlstate.ErrVisitorPermission) {
+		t.Fatal("revoked device renewed native permission", err)
 	}
 	if _, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked device selected a run: %v", err)

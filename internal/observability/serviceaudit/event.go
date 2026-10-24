@@ -51,6 +51,7 @@ type Observation struct {
 	RunID               string    `json:"run_id"`
 	RunNumber           int64     `json:"run_number"`
 	ConnectorSessionID  string    `json:"connector_session_id,omitempty"`
+	StreamAllocationID  string    `json:"stream_allocation_id,omitempty"`
 	VisitorConnectionID string    `json:"visitor_connection_id"`
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`
@@ -127,6 +128,9 @@ func (o Observation) Validate() error {
 		return ErrInvalid
 	}
 	if o.ConnectorSessionID != "" && !opaqueid.Valid(o.ConnectorSessionID, opaqueid.ConnectorSessionPrefix) {
+		return ErrInvalid
+	}
+	if o.StreamAllocationID != "" && (!opaqueid.Valid(o.StreamAllocationID, "salloc_") || o.ServiceKind != "service" || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&

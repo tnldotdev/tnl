@@ -135,6 +135,27 @@ func TestIntegrationStreamCapacityPublisherObservationIsRunBound(t *testing.T) {
 	}
 }
 
+func TestIntegrationStreamCapacityRetentionKeepsDelayedAuditAttribution(t *testing.T) {
+	f, run, owners := capacityFixture(t, 1)
+	d := f.database
+	allocation, err := d.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "audit-retention", 1), f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		at       time.Time
+		retained bool
+	}{{allocation.ValidUntil.Add(time.Second), true}, {allocation.ValidUntil.Add(24 * time.Hour), true}, {allocation.ValidUntil.Add(24*time.Hour + time.Second), false}} {
+		if _, err := d.ExpireServiceRuns(t.Context(), test.at); err != nil {
+			t.Fatal(err)
+		}
+		var retained bool
+		if err := d.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM control.stream_capacity_allocations WHERE id=$1)`, allocation.ID).Scan(&retained); err != nil || retained != test.retained {
+			t.Fatalf("allocation audit attribution retained=%t want=%t: %v", retained, test.retained, err)
+		}
+	}
+}
+
 func TestIntegrationStreamCapacityRetirementWaitsForGrantedDeadline(t *testing.T) {
 	f, run, owners := capacityFixture(t, 2)
 	request := capacityRequest(run, owners[0], "first", 2)

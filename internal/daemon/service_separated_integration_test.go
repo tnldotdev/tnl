@@ -76,18 +76,6 @@ func connectorReadinessObservation(t *testing.T, opened <-chan privateObservatio
 	}
 }
 
-// shorten only the server's scheduling hint for this smoke workload. every
-// authorization, denial and hard validity deadline still comes from control.
-type acceleratedPrivateRecheck struct{ ingress.PrivateControl }
-
-func (c acceleratedPrivateRecheck) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	result, err := c.PrivateControl.RecheckServiceVisitor(ctx, id, body)
-	if err == nil {
-		result.RecheckAt = minTime(result.RecheckAt, time.Now().Add(100*time.Millisecond))
-	}
-	return result, err
-}
-
 type observingServiceForwarder struct {
 	ingress.ServiceForwarder
 	id     string
@@ -136,7 +124,6 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		configurePrivate: func(config *ingress.ConnectorConfig) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			if f.configurePrivate != nil {
 				f.configurePrivate(config)

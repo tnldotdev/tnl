@@ -287,22 +287,6 @@ type ControlConnectorSession struct {
 	RevokedAt                    pgtype.Timestamptz
 }
 
-type ControlConnectorVisitorStream struct {
-	WorkloadSessionID   pgtype.Text
-	VisitorConnectionID string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	ConnectorSessionID  string
-	IdentityID          pgtype.Text
-	DeviceID            pgtype.Text
-	SourceIp            netip.Addr
-	GrantRevision       int64
-	ValidUntil          pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	ClosedAt            pgtype.Timestamptz
-}
-
 type ControlControlSession struct {
 	ID                      string
 	IdentityID              string
@@ -1439,13 +1423,6 @@ type ControlServiceRun struct {
 	ReadyAt                    pgtype.Timestamptz
 	ClosedAt                   pgtype.Timestamptz
 	AssignmentsOpen            pgtype.Bool
-}
-
-type ControlServiceVisitorCapacity struct {
-	VisitorConnectionID string
-	ServiceRunID        string
-	ValidUntil          pgtype.Timestamptz
-	ClosedAt            pgtype.Timestamptz
 }
 
 type ControlShare struct {

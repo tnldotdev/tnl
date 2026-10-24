@@ -235,9 +235,12 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 				t.Fatal("visitor did not join")
 			}
 			privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
-				var count int
-				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.connector_visitor_streams WHERE service_id=$1 AND closed_at IS NOT NULL`, service.Id).Scan(&count)
-				return count == 3, err
+				for _, runtime := range runtimes {
+					if runtime.private.Load() != 0 {
+						return false, nil
+					}
+				}
+				return true, nil
 			})
 			for _, runtime := range runtimes {
 				flush, cancel := context.WithTimeout(t.Context(), 5*time.Second)

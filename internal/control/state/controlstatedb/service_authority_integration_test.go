@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"net/netip"
 	"testing"
@@ -12,6 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -308,35 +312,64 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err = authenticate(other); err != nil {
 		t.Fatal(err)
 	}
+	const issuer = "https://control.example.test"
+	if err := d.PrepareVisitorSigningKeys(ctx, issuer, now); err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	parents := map[string]string{}
+	for _, identity := range []string{visitorID, wrongEmailID, identityID} {
+		parent := newID(opaqueid.ControlSessionPrefix)
+		digest := sha256.Sum256([]byte(parent))
+		exec(`INSERT INTO control.control_sessions(id,identity_id,access_token_id,access_token_digest,access_expires_at,refresh_token_id,refresh_token_digest,retry_secret_ciphertext,retry_secret_storage_key_id,refresh_expires_at,created_at,last_refreshed_at)
+		    VALUES($1,$2,$1,$3,$5,$1,$3,$4,'fixture',$5,$6,$6)`, parent, identity, digest[:], bytes.Repeat([]byte{1}, 32), now.Add(time.Hour), now)
+		parents[identity] = parent
+	}
+	issue := func(identity string, at time.Time) (controlstate.IssuedVisitorToken, error) {
+		principal := controlstate.WithControlPrincipal(ctx, controlstate.ControlPrincipal{IdentityID: identity, SessionID: parents[identity]})
+		return d.IssueVisitorToken(principal, issuer, scope, controlstate.DeviceTokenSource{DeviceID: deviceIDs[identity]}, at)
+	}
+	permission, err := issue(visitorID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := d.ReadIngressVisitorPolicy(ctx, ingress, scope, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := visitorlease.Decode(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	admittedVisitorID := newID(opaqueid.VisitorConnectionPrefix)
-	claim := func(sessionID string, ip netip.Addr) error {
-		_, err := d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, sessionID,
-			admittedVisitorID, prepared.RunNumber, ip, now)
+	message, err := visitortoken.NativeProofMessage(permission.Token, session.ID, admittedVisitorID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := ed25519.Sign(deviceKeys[visitorID], message)
+	verify := func(subject tunnelv1.VisitorSubject, sessionID, connectionID string) error {
+		_, err := visitortoken.VerifyNativeSession(permission.Token, decoded.View, subject, sessionID, connectionID, 1, nil, deviceKeys[visitorID].Public().(ed25519.PublicKey), signature, now)
 		return err
 	}
-	if err := claim(newID(opaqueid.ConnectorSessionPrefix), source); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("unbound session admitted: %v", err)
-	}
-	if err := claim(session.ID, netip.MustParseAddr("192.0.2.11")); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("admission crossed sources: %v", err)
-	}
-	if err := claim(session.ID, source); err != nil {
-		t.Fatalf("valid stream authorization rejected: %v", err)
-	}
-	if err := claim(session.ID, source); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("visitor connection ID admitted twice: %v", err)
-	}
 	subject := tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: visitorID, DeviceID: deviceIDs[visitorID]}
-	if decision, err := d.RecheckVisitorServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID, admittedVisitorID, subject, prepared.RunNumber, source, now); err != nil || !decision.Allowed {
-		t.Fatal("tagged human recheck lost the actual device path", err)
+	if err := verify(subject, session.ID, admittedVisitorID); err != nil {
+		t.Fatal("signed native permission did not retain the actual device", err)
 	}
-	subject.DeviceID = newID(opaqueid.VisitorDevicePrefix)
-	if _, err := d.RecheckVisitorServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID, admittedVisitorID, subject, prepared.RunNumber, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatal("tagged human recheck accepted another device", err)
+	wrongSubject := subject
+	wrongSubject.DeviceID = newID(opaqueid.VisitorDevicePrefix)
+	if verify(wrongSubject, session.ID, admittedVisitorID) == nil || verify(subject, other.ID, admittedVisitorID) == nil || verify(subject, session.ID, newID(opaqueid.VisitorConnectionPrefix)) == nil {
+		t.Fatal("native proof crossed device, session, or visitor connection")
 	}
-	var admittedBefore int
-	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.connector_visitor_streams WHERE service_run_id=$1`, prepared.RunID).Scan(&admittedBefore); err != nil {
-		t.Fatal(err)
+	canPrepare := func(identity string, at time.Time) bool {
+		t.Helper()
+		if _, err := d.SelectServiceRun(ctx, service.ID, identity, deviceIDs[identity], at); err != nil {
+			return false
+		}
+		if _, err := d.ReadIngressVisitorPolicy(ctx, ingress, scope, 0, at); err != nil {
+			return false
+		}
+		_, err := issue(identity, at)
+		return err == nil
 	}
 	lost := retried.Connections[0]
 	survivor := retried.Connections[1]
@@ -352,39 +385,12 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		len(events.Entries[0].ConnectedRelays) != 1 || events.Entries[0].ConnectedRelays[0].PublisherConnectionID != survivor.PublisherConnectionID {
 		t.Fatalf("disconnect must publish the surviving relay: %+v, %v", events, err)
 	}
-	survivorSelection, err := d.SelectServiceRun(ctx, service.ID, visitorID, deviceIDs[visitorID], now)
-	if err != nil {
+	if !canPrepare(visitorID, now) {
 		t.Fatalf("surviving relay did not admit visitor: %v", err)
 	}
-	liveVisitorID := newID(opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, survivorSelection.ServiceRunID, session.ID,
-		liveVisitorID, prepared.RunNumber, source, now); err != nil {
-		t.Fatalf("one-relay stream authorization: %v", err)
-	}
-	recheckVisitor := func(sessionID, identity, connectionID string, observed netip.Addr, at time.Time) bool {
-		t.Helper()
-		decision, err := d.RecheckServiceVisitor(ctx, ingress, service.ID, prepared.RunID,
-			sessionID, identity, connectionID, prepared.RunNumber, observed, at)
-		if err != nil {
-			t.Fatalf("private live visitor recheck: %v", err)
-		}
-		if decision.Allowed && (!decision.ValidUntil.After(at) || decision.ValidUntil.After(at.Add(2*time.Minute))) {
-			t.Fatalf("unbounded active visitor decision: %+v", decision)
-		}
-		return decision.Allowed
-	}
-	if !recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("current consumed visitor was denied")
-	}
-	if recheckVisitor(other.ID, visitorID, liveVisitorID, source, now) ||
-		recheckVisitor(session.ID, identityID, liveVisitorID, source, now) ||
-		recheckVisitor(session.ID, visitorID, liveVisitorID, netip.MustParseAddr("192.0.2.11"), now) ||
-		recheckVisitor(session.ID, visitorID, newID(opaqueid.VisitorConnectionPrefix), source, now) {
-		t.Fatal("cross-session, identity, source, or visitor ID passed live recheck")
-	}
 	exec(`UPDATE control.ingress_leases SET registered_at=$2, renewed_at=$2, lease_expires_at=$3 WHERE ingress_id=$1`, "ingress-a", now.Add(-10*time.Minute), now.Add(-time.Second))
-	if recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("stale ingress lease kept active visitor")
+	if canPrepare(visitorID, now) {
+		t.Fatal("stale ingress lease renewed prepared visitor policy")
 	}
 	exec(`UPDATE control.ingress_leases SET registered_at=$2, renewed_at=$2, lease_expires_at=$3 WHERE ingress_id=$1`, "ingress-a", now, now.Add(10*time.Minute))
 	shortExpiry := now.Add(5 * time.Second)
@@ -399,36 +405,23 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shortVisitor := newID(opaqueid.VisitorConnectionPrefix)
-	shortClaim, err := d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, shortSession.ID,
-		shortVisitor, prepared.RunNumber, source, now)
+	shortPermission, err := issue(wrongEmailID, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !shortClaim.ValidUntil.After(now) || shortClaim.ValidUntil.After(shortExpiry) {
-		t.Fatalf("initial visitor claim ignored expiring grant: %v, grant %v", shortClaim.ValidUntil, shortExpiry)
+	if !shortPermission.Permission.ExpiresAt.After(now) || shortPermission.Permission.ExpiresAt.After(shortExpiry) {
+		t.Fatalf("native permission ignored expiring grant: %v, grant %v", shortPermission.Permission.ExpiresAt, shortExpiry)
 	}
-	shortValidity, err := d.RecheckServiceVisitor(ctx, ingress, service.ID, prepared.RunID,
-		shortSession.ID, wrongEmailID, shortVisitor, prepared.RunNumber, source, now)
-	if err != nil || !shortValidity.Allowed || shortValidity.ValidUntil.After(shortExpiry) {
-		t.Fatalf("active recheck ignored expiring grant: %+v, grant %v: %v", shortValidity, shortExpiry, err)
-	}
-	if !recheckVisitor(shortSession.ID, wrongEmailID, shortVisitor, source, now) ||
-		recheckVisitor(shortSession.ID, wrongEmailID, shortVisitor, source, now.Add(6*time.Second)) {
-		t.Fatal("grant expiry did not end exactly admitted visitor")
-	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID,
-		liveVisitorID, prepared.RunNumber, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("one-relay visitor connection ID admitted twice: %v", err)
+	if !canPrepare(wrongEmailID, now) || canPrepare(wrongEmailID, now.Add(6*time.Second)) {
+		t.Fatal("grant expiry did not end native permission renewal")
 	}
 	exec(`UPDATE control.relay_leases SET draining=true WHERE relay_id=$1`, lost.RelayServiceID)
 	waiting, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now)
 	if err != nil || waiting.State != "ready" || waiting.Connections[1].PublisherConnectionID != survivor.PublisherConnectionID || waiting.Connections[1].Revision != survivor.Revision {
 		t.Fatalf("waiting for replacement harmed surviving slot: %+v, %v", waiting, err)
 	}
-	var admittedAfter int
-	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.connector_visitor_streams WHERE service_run_id=$1`, prepared.RunID).Scan(&admittedAfter); err != nil || admittedAfter != admittedBefore+2 {
-		t.Fatalf("existing visitor admissions changed during relay recovery: before=%d after=%d: %v", admittedBefore, admittedAfter, err)
+	if !canPrepare(visitorID, now) {
+		t.Fatal("waiting for a relay replacement lost prepared visitor permission")
 	}
 	exec(`UPDATE control.relay_leases SET draining=false WHERE relay_id=$1`, lost.RelayServiceID)
 	repaired, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now)
@@ -472,8 +465,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`UPDATE control.publisher_grants SET revoked_at=$2 WHERE id=$1`, publisherGrantID, now)
-	if recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("revoked publisher grant kept active visitor")
+	if canPrepare(visitorID, now) {
+		t.Fatal("revoked publisher grant allowed native preparation")
 	}
 	if _, err = d.SelectServiceRun(ctx, service.ID, visitorID, deviceIDs[visitorID], now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant selected a run: %v", err)
@@ -481,42 +474,37 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant renewed run: %v", err)
 	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID,
-		newID(opaqueid.VisitorConnectionPrefix), prepared.RunNumber, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("revoked publisher grant admitted a new stream: %v", err)
-	}
 	exec(`UPDATE control.publisher_grants SET revoked_at=NULL WHERE id=$1`, publisherGrantID)
-	if !recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("restored publisher grant lost current visitor")
+	if !canPrepare(visitorID, now) {
+		t.Fatal("restored publisher grant lost prepared visitor permission")
 	}
 	exec(`UPDATE control.publisher_identities SET revoked_at=$2 WHERE id=$1`, publisherIdentityID, now)
-	if recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("revoked publisher identity kept active visitor")
+	if canPrepare(visitorID, now) {
+		t.Fatal("revoked publisher identity allowed native preparation")
 	}
 	exec(`UPDATE control.publisher_identities SET revoked_at=NULL WHERE id=$1`, publisherIdentityID)
 	exec(`UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, visitorID, now)
-	if recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("disabled identity kept active visitor")
+	if canPrepare(visitorID, now) {
+		t.Fatal("disabled identity renewed native permission")
 	}
 	exec(`UPDATE control.identities SET disabled_at=NULL WHERE id=$1`, visitorID)
 	if err = d.RevokeServiceInvitation(ctx, service.ID, identityID, invite.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if recheckVisitor(session.ID, visitorID, liveVisitorID, source, now) {
-		t.Fatal("revoked visitor grant kept active visitor")
+	if canPrepare(visitorID, now) {
+		t.Fatal("revoked visitor grant renewed native permission")
 	}
 	if list, _, err := d.ListAvailableServices(ctx, visitorID, "", now); err != nil || len(list) != 0 {
 		t.Fatalf("revoked visitor still authorized: %+v, %v", list, err)
 	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID,
-		newID(opaqueid.VisitorConnectionPrefix), prepared.RunNumber, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("revoked visitor grant admitted a new stream: %v", err)
+	if _, err := issue(visitorID, now); err == nil {
+		t.Fatal("revoked visitor grant issued a new native token")
 	}
 	ownerSession := newSession(identityID)
 	if err = authenticate(ownerSession); err != nil {
 		t.Fatal(err)
 	}
-	oldSelection, err := d.SelectServiceRun(ctx, service.ID, identityID, deviceIDs[identityID], now)
+	_, err = d.SelectServiceRun(ctx, service.ID, identityID, deviceIDs[identityID], now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,13 +512,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerVisitorID := newID(opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, prepared.RunID, ownerSession.ID,
-		ownerVisitorID, prepared.RunNumber, source, now); err != nil {
-		t.Fatal(err)
-	}
-	if !recheckVisitor(ownerSession.ID, identityID, ownerVisitorID, source, now) {
-		t.Fatal("owner live visitor denied")
+	if !canPrepare(identityID, now) {
+		t.Fatal("owner native permission denied")
 	}
 	zeroCursor := snapshot.Revision
 	if _, err = d.DisconnectServicePublisherConnection(ctx, newSlot.PublisherConnectionID, prepared.RunID,
@@ -544,12 +527,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != "" {
 		t.Fatalf("zero live relays still available: %+v, %v", inventory, err)
 	}
-	if recheckVisitor(ownerSession.ID, identityID, ownerVisitorID, source, now) {
-		t.Fatal("zero ready slots kept owner visitor")
-	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, oldSelection.ServiceRunID, ownerSession.ID,
-		newID(opaqueid.VisitorConnectionPrefix), oldSelection.RunNumber, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("zero live relays accepted visitor before forwarding: %v", err)
+	if canPrepare(identityID, now) {
+		t.Fatal("zero ready slots allowed native preparation")
 	}
 	events, err = d.ReadServiceEvents(ctx, ingress, zeroCursor, now)
 	if err != nil || len(events.Entries) != 2 || events.Entries[0].Kind != "upsert" ||
@@ -573,23 +552,22 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if inventory, _, err := d.ListAvailableServices(ctx, identityID, "", now); err != nil || len(inventory) != 1 || inventory[0].ServiceRunID != prepared.RunID {
 		t.Fatalf("historically ready run did not recover on one relay: %+v, %v", inventory, err)
 	}
-	if !recheckVisitor(ownerSession.ID, identityID, ownerVisitorID, source, now) {
-		t.Fatal("recovered run lost owner visitor")
+	if !canPrepare(identityID, now) {
+		t.Fatal("recovered run lost owner native permission")
 	}
 	if err = d.CloseServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); err != nil {
 		t.Fatal(err)
 	}
-	if recheckVisitor(ownerSession.ID, identityID, ownerVisitorID, source, now) {
-		t.Fatal("closed run kept active visitor")
+	if canPrepare(identityID, now) {
+		t.Fatal("closed run allowed native preparation")
 	}
 	p.KeyID = newKeyID
 	replacement, err := d.PrepareServiceRun(ctx, service.ID, p, "replacement", now.Add(time.Second), controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil || replacement.RunNumber != prepared.RunNumber+1 {
 		t.Fatalf("replacement: %+v, %v", replacement, err)
 	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, oldSelection.ServiceRunID, ownerSession.ID,
-		newID(opaqueid.VisitorConnectionPrefix), oldSelection.RunNumber, source, now.Add(time.Second)); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("closed run selection survived replacement: %v", err)
+	if canPrepare(identityID, now.Add(time.Second)) {
+		t.Fatal("closed run selection survived replacement")
 	}
 	if err = d.RevokePublisherGrant(ctx, teamID, publisherIdentityID, publisherGrantID, identityID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)

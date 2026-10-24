@@ -2106,26 +2106,6 @@ CREATE TABLE control.connector_ingress_assignment_requests (
 );
 CREATE INDEX connector_ingress_assignment_requests_expiring ON control.connector_ingress_assignment_requests(expires_at);
 
-CREATE TABLE control.connector_visitor_streams (
-    workload_session_id text REFERENCES control.workload_sessions(id),
-    visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
-    service_id text NOT NULL,
-    service_run_id text NOT NULL,
-    run_number bigint NOT NULL,
-    connector_session_id text NOT NULL REFERENCES control.connector_sessions(id) ON DELETE RESTRICT,
-    identity_id text,
-    device_id text,
-    source_ip inet NOT NULL,
-    grant_revision bigint NOT NULL CHECK (grant_revision>=1),
-    valid_until timestamptz NOT NULL,
-    created_at timestamptz NOT NULL,
-    closed_at timestamptz,
-    CHECK ((workload_session_id IS NOT NULL AND identity_id IS NULL AND device_id IS NULL)
-        OR (workload_session_id IS NULL AND identity_id IS NOT NULL AND device_id IS NOT NULL)),
-    FOREIGN KEY (service_run_id, service_id, run_number)
-        REFERENCES control.service_runs(id, service_id, run_number) ON DELETE RESTRICT,
-    FOREIGN KEY (device_id, identity_id) REFERENCES control.visitor_devices(id, identity_id) ON DELETE RESTRICT
-);
 CREATE TABLE control.service_certificate_requests (
     service_run_id text NOT NULL REFERENCES control.service_runs(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
@@ -2133,10 +2113,6 @@ CREATE TABLE control.service_certificate_requests (
     issuance_id text NOT NULL REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
     PRIMARY KEY (service_run_id,idempotency_key)
 );
-CREATE INDEX connector_visitor_streams_capacity ON control.connector_visitor_streams(service_run_id, valid_until) WHERE closed_at IS NULL;
-CREATE INDEX connector_visitor_streams_connector ON control.connector_visitor_streams(connector_session_id);
-CREATE INDEX connector_visitor_streams_workload ON control.connector_visitor_streams(workload_session_id) WHERE workload_session_id IS NOT NULL;
-CREATE INDEX connector_visitor_streams_workload_retention ON control.connector_visitor_streams(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 
 -- direct admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
@@ -2173,10 +2149,6 @@ CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors
 CREATE INDEX direct_service_visitors_workload ON control.direct_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE INDEX direct_service_visitors_certificate ON control.direct_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
 CREATE INDEX direct_service_visitors_workload_retention ON control.direct_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
-CREATE VIEW control.service_visitor_capacity AS
-SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.connector_visitor_streams
-UNION ALL
-SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.direct_service_visitors;
 
 -- managed HTTP credentials are never public URL/preview credentials. runs are
 -- captured at login, so a later replacement cannot redeem an earlier handoff.

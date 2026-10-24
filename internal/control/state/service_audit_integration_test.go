@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -181,12 +182,19 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	setup, err := d.StartServiceRun(t.Context(), service.ID, run.RunID, run.RunNumber, publisher, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	public, _, _ = ed25519.GenerateKey(rand.Reader)
 	device, err := d.EnrollVisitorDevice(t.Context(), creation.ActingIdentityID, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := registerTestIngress(t, d, now)
+	lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: "audit-native", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), IngressPoolID: PrimaryIngressPoolID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 100}, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
 	session, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	// seed the already-authenticated admission facts; the transport suite owns
@@ -196,12 +204,19 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_visitor_streams(visitor_connection_id,service_id,service_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'192.0.2.9',1,$8,$9)`, visitor, service.ID, run.RunID, run.RunNumber, session, creation.ActingIdentityID, device.ID, now.Add(time.Minute), now)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	allocation, err := d.AllocateStreamCapacity(t.Context(), StreamCapacityRequest{Owner: lease.IngressLeaseIdentity, Scope: scope, RunID: setup.RunID, RunNumber: setup.RunNumber, RequestID: "audit-native", Capacity: 1}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now, ConnectorSessionID: session}
+	prepareVisitorTokenKeys(t, d, now)
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), scope, setup.RunID, setup.RunNumber, setup.Token, 0, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), scope, setup.RunID, setup.RunNumber, setup.Token, 0, []string{allocation.ID}, now); err != nil {
+		t.Fatal(err)
+	}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now, ConnectorSessionID: session, StreamAllocationID: allocation.ID}
 	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{o}}
 	if result, err := d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, batch, now); err != nil || result.Accepted != 1 {
 		t.Fatalf("valid private scope: %+v %v", result, err)
@@ -221,12 +236,20 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	if _, err = d.IngestIngressServiceObservations(t.Context(), other.IngressLeaseIdentity, batch, now); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatalf("another ingress manufactured private visitor: %v", err)
 	}
+	for _, id := range []string{"", "salloc_0123456789ABCDEFGHIJKL"} {
+		bad := o
+		bad.StreamAllocationID = id
+		if _, err := d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{bad}}, now); !errors.Is(err, ErrServiceAuditAccess) {
+			t.Fatal("missing or another allocation manufactured native audit scope", err)
+		}
+	}
 	// denial before admission still requires the authenticated connector's source.
 	o.EventID = serviceaudit.NewID()
 	o.VisitorConnectionID, _ = opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	o.Outcome = "denied"
 	o.Reason = "authorization"
 	o.RunID, o.RunNumber = "", 0
+	o.StreamAllocationID = ""
 	batch.Events = []serviceaudit.Observation{o}
 	if _, err = d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, batch, now); err != nil {
 		t.Fatal("lost pre-admission denial", err)

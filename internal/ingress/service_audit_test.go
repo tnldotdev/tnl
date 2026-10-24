@@ -8,6 +8,7 @@ import (
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 )
 
 type auditSinkFunc func(serviceaudit.Observation) bool
@@ -42,9 +43,7 @@ func TestPrivateVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) 
 	if opened.Validate() != nil || opened.EventType != "connection.open" || opened.Outcome != "allowed" || opened.RunID != control.run || opened.ConnectorSessionID != control.session {
 		t.Fatalf("private admission scope: %+v", opened)
 	}
-	control.mu.Lock()
-	control.deny = true
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) { update.Enabled = false; update.View.VisitorPolicyRevision++ })
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
 	_, _ = stream.Read(one[:])

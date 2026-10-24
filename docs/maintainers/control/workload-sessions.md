@@ -279,17 +279,14 @@ it does not revoke a shared workload session.
 the baseline stores a workload session foreign key separately from nullable
 human identity/device foreign keys and enforces the exclusive variants.
 
-the state APIs available to transport adapters are `AuthenticateVisitorConnector`,
-`SelectVisitorServiceRun`, `AuthorizeServiceStream`,
-`RecheckVisitorServiceStream`, and `AuthorizeVisitorServiceConnector`.
-`VisitorSubjectAccess` and `AuthenticateVisitorSubjectKey` share current permission
-and key checks across both variants. protocol version 2 carries the tagged
-subject through private hello, acceptance, ingress HTTP projections, relay
-forwarding, and the publisher's control request. removed human-only fields are
-rejected. ingress binds the observed source and one-use assignment; the
-publisher rechecks that subject, source, admitted grant revision, exact service
-and run before opening the target. human visitors use the same transport path
-with their actual enrolled device subject.
+`AuthenticateVisitorConnector` binds the observed source and one-use ingress
+assignment. `SelectVisitorServiceRun` and `IssueVisitorToken` prepare run metadata
+and signed permission independently of visitor arrivals. ingress and publisher
+verify the signed native proof against current local visitor policy, then hold
+run- and ingress-bound stream reservations. permission renewals travel outside
+visitor TLS and application bytes; they cannot extend an unconfirmed policy
+deadline. neither serving process calls control to authorize a prepared stream.
+human visitors use the same path with their actual enrolled device subject.
 
 workload audit rows identify the session; its durable execution references identify
 the run, attempt, and check-run. authenticated trace-only attributes carry the
@@ -301,7 +298,7 @@ are excluded.
 control and standalone run workload cleanup immediately at startup, drain
 available batches, then wait one minute after an empty or failed sweep. each
 iteration has a five-second deadline and removes at most 1,000 rows from each
-of nine relations. phases commit separately, in dependency order; retries keep
+of eight relations. phases commit separately, in dependency order; retries keep
 committed progress. concurrent workers skip locked rows. cleanup counts and
 failures use the existing cleanup metrics with kind `workloads` and worker log.
 
@@ -312,16 +309,18 @@ workload history follows service audit's 30-day retention:
 - certificates remain for 30 days after certificate expiry and until no direct
   visitor references them;
 - connector handles remain until both their fixed expiry and any revocation
-  are over 30 days old, and until no private stream references them;
+  are over 30 days old;
 - ingress retry results remain until their session's absolute expiry, lease
   expiry, and any revocation are over 30 days old;
 - sessions and their exact service snapshot remain until their absolute expiry,
   lease expiry, any revocation, and original assertion expiry are over 30 days
   old, and until all other session references have been removed.
 
-private streams and direct visitors keep their existing 24-hour history after
-their decision expires or they close. cleanup never deletes a live decision or
-cascades through a subject, stream, certificate, or admission reference. rows
+native streams have no control-owned admission row. immutable connector handles
+and capacity allocations supply delayed audit attribution; allocations remain
+for 24 hours after expiry. direct visitors retain 24-hour history after their
+decision expires or they close. cleanup never deletes a live decision or
+cascades through a subject, certificate, or admission reference. rows
 blocked by references are excluded before each batch limit, so they cannot
 prevent later eligible rows from being collected. retained references can extend
 the history window; retention is a minimum age, not an exact deletion deadline.

@@ -72,19 +72,22 @@ func VerifyNativeRenewalProof(token Token, view View, expected tunnelv1.VisitorS
 	if err != nil {
 		return Permission{}, err
 	}
-	switch subject := permission.Subject.(type) {
-	case Device:
-		if expected.Kind != tunnelv1.VisitorHumanDevice || expected.IdentityID != subject.IdentityID || expected.DeviceID != subject.DeviceID {
-			return Permission{}, ErrBinding
-		}
-	case Workload:
-		if expected.Kind != tunnelv1.VisitorWorkloadSession || expected.WorkloadSessionID != subject.SessionID {
-			return Permission{}, ErrBinding
-		}
-	default:
+	peer, err := NativeSubject(permission.Subject)
+	if err != nil || peer != expected {
 		return Permission{}, ErrBinding
 	}
 	return verifyNativePossession(token, permission, session, connection, metadataRevision, initial, public, signature)
+}
+
+func NativeSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
+	switch subject := subject.(type) {
+	case Device:
+		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: subject.IdentityID, DeviceID: subject.DeviceID}, nil
+	case Workload:
+		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: subject.SessionID}, nil
+	default:
+		return tunnelv1.VisitorSubject{}, ErrBinding
+	}
 }
 
 func verifyNativePossession(token Token, permission Permission, session, connection string, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte) (Permission, error) {

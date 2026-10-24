@@ -3374,6 +3374,7 @@ type ServiceObservation struct {
 	ServiceId           string                        `json:"service_id"`
 	ServiceKind         ServiceObservationServiceKind `json:"service_kind"`
 	SourceIp            *string                       `json:"source_ip,omitempty"`
+	StreamAllocationId  *string                       `json:"stream_allocation_id,omitempty"`
 	VisitorConnectionId string                        `json:"visitor_connection_id"`
 }
 
