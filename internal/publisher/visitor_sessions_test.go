@@ -189,7 +189,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 			access := &shareAccess{client: accessClient, runID: "run-1", version: 1}
 			var promoted atomic.Int32
 			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
-				VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
+				VisitorPolicy: authority.policy.Lease, VisitorTokens: authority.tokens,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {

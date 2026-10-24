@@ -240,6 +240,15 @@ func TestControlSelectionBindsDeviceServiceProtocolAndRevision(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		if r.URL.Path == "/v1/visitor-tokens" {
+			var request controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenDeviceSource
+			if json.NewDecoder(r.Body).Decode(&request) != nil || json.Unmarshal(request.Source, &source) != nil || source.Kind != controlv1.VisitorTokenDevice || source.DeviceId != device || request.Resource.Kind != "service" || request.Resource.Id != service {
+				t.Error("native permission lost its exact service/device source")
+			}
+			_ = json.NewEncoder(w).Encode(fixtureVisitorPermission(Run{ServiceID: service, Endpoint: selected.Endpoint}))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(selected)
 	})
 	run, err := control.ResolveService(t.Context(), service)

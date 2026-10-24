@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -75,18 +76,6 @@ func connectorReadinessObservation(t *testing.T, opened <-chan privateObservatio
 	}
 }
 
-// shorten only the server's scheduling hint for this smoke workload. every
-// authorization, denial and hard validity deadline still comes from control.
-type acceleratedPrivateRecheck struct{ ingress.PrivateControl }
-
-func (c acceleratedPrivateRecheck) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	result, err := c.PrivateControl.RecheckServiceVisitor(ctx, id, body)
-	if err == nil {
-		result.RecheckAt = minTime(result.RecheckAt, time.Now().Add(100*time.Millisecond))
-	}
-	return result, err
-}
-
 type observingServiceForwarder struct {
 	ingress.ServiceForwarder
 	id     string
@@ -135,7 +124,6 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		configurePrivate: func(config *ingress.ConnectorConfig) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			if f.configurePrivate != nil {
 				f.configurePrivate(config)
@@ -225,7 +213,9 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			f := newServiceRuntimeFixture(t, standalone, opened)
 			ingressIDs := [2]string{"private-ingress-0", "private-ingress-1"}
 			var stopIngress func()
+			var ingressRuntimes []*ingressRuntime
 			if standalone {
+				ingressRuntimes = f.composed.ingresses
 				ingressIDs = [2]string{standaloneIngressID, standalonePrivateIngressID}
 				stopIngress = func() {
 					for _, runtime := range f.composed.ingresses {
@@ -236,6 +226,9 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 				}
 			} else {
 				ingresses := [2]*daemon{startSeparatedPrivateIngress(t, f, 0, transport, opened), startSeparatedPrivateIngress(t, f, 1, transport, opened)}
+				for _, process := range ingresses {
+					ingressRuntimes = append(ingressRuntimes, process.ingresses...)
+				}
 				stopIngress = func() { _ = ingresses[0].ingresses[0].private.Close() }
 			}
 			target := startPrivateEchoTarget(t)
@@ -338,24 +331,27 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			}
 			visitorCtx, stopVisitor := context.WithCancel(t.Context())
 			visitorReady, visitorDone := make(chan struct{}), make(chan error, 1)
+			visitorStopped := false
 			go func() {
 				visitorDone <- connectorstream.Serve(visitorCtx, visitor, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopVisitor()
-				select {
-				case err := <-visitorDone:
-					if err != nil {
-						t.Errorf("visitor shutdown: %v", err)
+				if !visitorStopped {
+					select {
+					case err := <-visitorDone:
+						if err != nil {
+							t.Errorf("visitor shutdown: %v", err)
+						}
+					case <-time.After(5 * time.Second):
+						t.Error("visitor did not join")
 					}
-					finish, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					defer cancel()
-					var reservations int
-					if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.Subject.DeviceID).Scan(&reservations); err != nil || reservations != 0 {
-						t.Errorf("connector shutdown retained assignments: count=%d err=%v", reservations, err)
-					}
-				case <-time.After(5 * time.Second):
-					t.Error("visitor did not join")
+				}
+				finish, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				var reservations int
+				if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.Subject.DeviceID).Scan(&reservations); err != nil || reservations != 0 {
+					t.Errorf("connector shutdown retained assignments: count=%d err=%v", reservations, err)
 				}
 			})
 			select {
@@ -507,7 +503,18 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 				var n int
 				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.service_connection_slots WHERE service_run_id=$1 AND state='ready' AND session_open`, selected.ServiceRunID).Scan(&n)
-				return n == 1, err
+				if err != nil || n != 1 {
+					return false, err
+				}
+				// the next cohort starts after the surviving ingress has prepared
+				// the one-relay projection; it cannot refresh routing on arrival.
+				for _, runtime := range ingressRuntimes {
+					if runtime.controller.Lease().IngressId == ingressIDs[1] {
+						route, ok := runtime.private.ServiceRoute(service.Id, selected.ServiceRunID, int64(selected.RunNumber), time.Now())
+						return ok && len(*route.ConnectedRelays) == 1, nil
+					}
+				}
+				return false, nil
 			})
 			fresh = open(101)
 			_ = fresh.conn.Close()
@@ -532,6 +539,15 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 				t.Fatal(err)
 			}
 			assertClosed(survivor.conn)
+			select {
+			case err := <-visitorDone:
+				visitorStopped = true
+				if !errors.Is(err, clientcontrol.ErrNotFound) {
+					t.Fatalf("revocation did not stop prepared connector: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("revocation left prepared connector running")
+			}
 			if _, err := control.ResolveService(t.Context(), service.Id); err == nil {
 				t.Fatal("revoked device selected another run")
 			}

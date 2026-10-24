@@ -46,7 +46,7 @@ type ControllerConfig struct {
 	// renewal never replaces a process run's accounting or audit identity.
 	LeaseEstablished func(ingressv1.IngressLease) error
 	Client           ControlClient
-	VisitorControl   PublicVisitorControl
+	VisitorControl   VisitorPreparationControl
 	RoutingTable     *RoutingTable
 	Registration     ingressv1.IngressRegistration
 	RenewalInterval  time.Duration
@@ -71,8 +71,8 @@ type Controller struct {
 	report           func(error)
 	observer         OperationObserver
 	leaseEstablished func(ingressv1.IngressLease) error
-	visitorControl   PublicVisitorControl
-	publicVisitors   map[string]*publicVisitorRun
+	visitorControl   VisitorPreparationControl
+	publicVisitors   map[string]*preparedVisitorRun
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
@@ -111,7 +111,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		routingWait: config.RoutingWait.String(), load: config.Load, now: config.Now, report: config.Report,
 		observer: config.Observer, leaseEstablished: config.LeaseEstablished, visitorControl: config.VisitorControl,
-		publicVisitors: make(map[string]*publicVisitorRun),
+		publicVisitors: make(map[string]*preparedVisitorRun),
 	}, nil
 }
 

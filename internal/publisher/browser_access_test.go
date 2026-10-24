@@ -57,7 +57,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	}}
 	prepareLiveHTTPControl(t, authority)
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: access.publicURLID, Target: upstream.URL,
-		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens})
+		BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: authority.policy.Lease, VisitorTokens: authority.tokens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	authority.mu.Lock()
 	client.member = false
 	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	authority.tokens.refresh(t.Context(), nil)
@@ -123,7 +123,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	authority.mu.Lock()
 	client.invited = true
 	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	visitorCookie = "app_session=ok; " + visitorTokenCookie + "=" + authority.credential(t, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA", false)
@@ -136,7 +136,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	authority.mu.Lock()
 	client.invited = false
 	authority.mu.Unlock()
-	if err := authority.policy.refresh(t.Context()); err != nil {
+	if err := authority.policy.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	authority.tokens.refresh(t.Context(), nil)

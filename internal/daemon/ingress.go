@@ -200,9 +200,9 @@ func (d *daemon) startIngressRuntime(
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
-	var visitorControl ingress.PublicVisitorControl
+	var visitorControl ingress.VisitorPreparationControl
 	if !runtimeConfig.privateOnly {
-		visitorControl, ok = runtimeConfig.client.(ingress.PublicVisitorControl)
+		visitorControl, ok = runtimeConfig.client.(ingress.VisitorPreparationControl)
 		if !ok {
 			return errors.New("ingress visitor policy and stream capacity operations are required")
 		}
@@ -338,7 +338,14 @@ func (d *daemon) startIngressRuntime(
 		})
 		privateConfig := ingress.ConnectorConfig{Hostname: runtimeConfig.privateHostname, TLSConfig: transportTLS, IngressPoolID: string(settings.ingressPoolID),
 			Control: privateControl, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: controller.Lease, AuditSink: runtime.audit}
+		privateConfig.Report = func(err error) {
+			logOperationalError(ctx, "prepare private visitors", failure.ServerControlConnectionFailed, err)
+		}
 		privateConfig.DirectControl, _ = runtimeConfig.client.(ingress.DirectControl)
+		privateConfig.VisitorControl, _ = runtimeConfig.client.(ingress.VisitorPreparationControl)
+		if privateConfig.VisitorControl == nil {
+			return errors.New("private ingress visitor preparation operations are required")
+		}
 		if runtimeConfig.configurePrivate != nil {
 			runtimeConfig.configurePrivate(&privateConfig)
 		}
@@ -348,6 +355,7 @@ func (d *daemon) startIngressRuntime(
 			return err
 		}
 		runtime.private = private
+		d.start("prepare private visitors", func() error { return private.Run(ctx) })
 		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges.Ranges()
 		ingressConfig.PrivateHostname, ingressConfig.Connector = runtimeConfig.privateHostname, private
 		if !runtimeConfig.disableConnectorQUIC {

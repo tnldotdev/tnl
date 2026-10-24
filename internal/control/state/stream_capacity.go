@@ -105,6 +105,12 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 			return result, ErrStreamCapacity
 		}
 		capacity, expires = int64(run.StreamCapacity), run.PublisherExpiresAt.Time
+		if run.State == "ready" && (!run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now)) {
+			return result, ErrStreamCapacity
+		}
+		if run.CertificateExpiresAt.Valid {
+			expires = minTime(expires, run.CertificateExpiresAt.Time)
+		}
 	}
 	if !resourceExpiry.IsZero() {
 		expires = minTime(expires, resourceExpiry)

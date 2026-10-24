@@ -60,6 +60,7 @@ func stateTestVisitorView(permission visitortoken.Permission, keys map[string]ed
 
 func TestIntegrationVisitorSigningKeysAreEncryptedSharedAndIssuerBound(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_keys")
+	prepareVisitorTokenKeys(t, d, now)
 	other, err := Open(t.Context(), url, testStorageKey, "")
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +116,7 @@ func TestIntegrationVisitorSigningKeysAreEncryptedSharedAndIssuerBound(t *testin
 
 func TestIntegrationVisitorSigningKeyRotationRetainsLongCredentialsAndRevokesEmergency(t *testing.T) {
 	d, _, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_rotation")
+	prepareVisitorTokenKeys(t, d, now)
 	permission := signingTestPermission(now)
 	permission.ExpiresAt = now.Add(24 * time.Hour)
 	token, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now)
@@ -149,6 +151,7 @@ func TestIntegrationVisitorSigningKeyRotationRetainsLongCredentialsAndRevokesEme
 
 func TestIntegrationStorageRotationIncludesVisitorSigningKeys(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_storage_rotation")
+	prepareVisitorTokenKeys(t, d, now)
 	permission := signingTestPermission(now)
 	first, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now)
 	if err != nil {

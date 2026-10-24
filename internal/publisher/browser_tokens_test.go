@@ -18,6 +18,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,11 +41,11 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				policy, key, subject := browserTokensFixture(t)
+				policy, _, key, subject := browserTokensFixture(t)
 				client := &browserTokenClientFixture{issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 					return controlv1.VisitorTokenResponse{VisitorToken: "malformed"}, test.err
 				}}
-				tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+				tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -56,12 +57,12 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 				token := visitortoken.Token(initial.VisitorToken)
 				r := permissionRequest()
 				r.Header.Set(visitorTokenHeader, token.Reveal())
-				permission, err := localHTTPPermission(r, policy.lease, tokens)
+				permission, err := localHTTPPermission(r, policy.Lease, tokens)
 				if err != nil {
 					t.Fatal(err)
 				}
 				var stopped atomic.Int64
-				guard, err := permission.bind(policy.lease, func() { stopped.Add(1) })
+				guard, err := permission.bind(policy.Lease, func() { stopped.Add(1) })
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -80,7 +81,7 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 					if stopped.Load() != 1 {
 						t.Fatal("explicit denial retained its active request")
 					}
-					if _, err := localHTTPPermission(r, policy.lease, tokens); err == nil {
+					if _, err := localHTTPPermission(r, policy.Lease, tokens); err == nil {
 						t.Fatal("denied source reused its still-signed token")
 					}
 					if !tokens.rejects(token) {
@@ -98,7 +99,7 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 				if stopped.Load() != 1 {
 					t.Fatal("renewal failure extended the token deadline")
 				}
-				if _, err := localHTTPPermission(r, policy.lease, tokens); err == nil {
+				if _, err := localHTTPPermission(r, policy.Lease, tokens); err == nil {
 					t.Fatal("expired token became a replacement handle")
 				}
 			})
@@ -108,7 +109,7 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 
 func TestBrowserTokensRequestCancellationIsLocalAndCloseJoinsRenewal(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		policy, key, subject := browserTokensFixture(t)
+		policy, _, key, subject := browserTokensFixture(t)
 		started, cleanup, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		client := &browserTokenClientFixture{issue: func(ctx context.Context, _ controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			close(started)
@@ -117,7 +118,7 @@ func TestBrowserTokensRequestCancellationIsLocalAndCloseJoinsRenewal(t *testing.
 			<-release
 			return controlv1.VisitorTokenResponse{}, ctx.Err()
 		}}
-		tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+		tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,11 +131,11 @@ func TestBrowserTokensRequestCancellationIsLocalAndCloseJoinsRenewal(t *testing.
 		for range 2 {
 			r := permissionRequest()
 			r.Header.Set(visitorTokenHeader, initial.VisitorToken)
-			permission, err := localHTTPPermission(r, policy.lease, tokens)
+			permission, err := localHTTPPermission(r, policy.Lease, tokens)
 			if err != nil {
 				t.Fatal(err)
 			}
-			guard, bound, err := guardLocalHTTPRequest(httptest.NewRecorder(), r, policy.lease, permission)
+			guard, bound, err := guardLocalHTTPRequest(httptest.NewRecorder(), r, policy.Lease, permission)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +174,7 @@ func TestBrowserTokensRequestCancellationIsLocalAndCloseJoinsRenewal(t *testing.
 
 func TestBrowserTokensLateRenewalCannotReplaceNewRedemption(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		policy, key, subject := browserTokensFixture(t)
+		policy, _, key, subject := browserTokensFixture(t)
 		started, release := make(chan struct{}), make(chan struct{})
 		initial := signedBrowserPermission(t, policy, key, subject, time.Now().Add(4*time.Minute))
 		client := &browserTokenClientFixture{issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
@@ -181,7 +182,7 @@ func TestBrowserTokensLateRenewalCannotReplaceNewRedemption(t *testing.T) {
 			<-release
 			return initial, nil
 		}}
-		tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+		tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,22 +215,44 @@ func (f *browserTokenClientFixture) IssueVisitorToken(ctx context.Context, body 
 	return f.issue(ctx, body)
 }
 
-func browserTokensFixture(t *testing.T) (*visitorPolicy, ed25519.PrivateKey, visitortoken.Browser) {
+func browserTokensFixture(t *testing.T) (*visitorpolicy.Policy, *browserPolicyClient, ed25519.PrivateKey, visitortoken.Browser) {
 	t.Helper()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))
-	client := &policyClientFixture{key: key}
+	client := &browserPolicyClient{key: key}
 	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
-	policy, err := prepareVisitorPolicy(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
+	policy, err := visitorpolicy.Prepare(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(policy.Close)
-	return policy, key, visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("C", 22), SessionID: "cs_" + strings.Repeat("D", 22)}
+	return policy, client, key, visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("C", 22), SessionID: "cs_" + strings.Repeat("D", 22)}
 }
 
-func signedBrowserPermission(t *testing.T, policy *visitorPolicy, key ed25519.PrivateKey, subject visitortoken.Browser, until time.Time) controlv1.VisitorTokenResponse {
+type browserPolicyClient struct {
+	key      ed25519.PrivateKey
+	revision atomic.Int64
+}
+
+func (f *browserPolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
+	if credential != "run-secret" {
+		return controlv1.VisitorPolicyUpdate{}, errors.New("wrong browser-policy run credential")
+	}
+	now := time.Now()
+	revision := max(int64(1), f.revision.Load())
+	events := []int64{}
+	if body.AfterRevision != 0 {
+		for next := body.AfterRevision + 1; next <= revision; next++ {
+			events = append(events, next)
+		}
+	}
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: revision, KeyRevision: 1,
+			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "test-key", PublicKey: f.key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
+}
+
+func signedBrowserPermission(t *testing.T, policy *visitorpolicy.Policy, key ed25519.PrivateKey, subject visitortoken.Browser, until time.Time) controlv1.VisitorTokenResponse {
 	t.Helper()
-	view, enabled, _ := policy.lease.Current()
+	view, enabled, _ := policy.Lease.Current()
 	if !enabled {
 		t.Fatal("browser token fixture lost policy")
 	}
@@ -249,14 +272,14 @@ func browserSourceFixture(secret string) json.RawMessage {
 
 func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		policy, key, subject := browserTokensFixture(t)
+		policy, _, key, subject := browserTokensFixture(t)
 		client := &browserTokenClientFixture{issue: func(_ context.Context, body controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			if strings.Contains(string(body.Source), "control_session") {
 				return controlv1.VisitorTokenResponse{}, errors.New("renewal tried a management identity")
 			}
 			return signedBrowserPermission(t, policy, key, subject, time.Now().Add(5*time.Minute)), nil
 		}}
-		tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+		tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,13 +298,13 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 		if client.calls.Load() != 0 {
 			t.Fatal("using a prepared browser token made an issuer request")
 		}
-		view, _, _ := policy.lease.Current()
+		view, _, _ := policy.Lease.Current()
 		permission, err := visitortoken.VerifyBearer(visitortoken.Token(initial.VisitorToken), view, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 		var stopped atomic.Int64
-		guard, err := policy.lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+		guard, err := policy.Lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -299,7 +322,7 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 			t.Fatal("browser token did not renew in the background")
 		}
 		var laterStopped atomic.Int64
-		laterGuard, err := policy.lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { laterStopped.Add(1) })
+		laterGuard, err := policy.Lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { laterStopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +351,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 	}{{"different-subjects", false}, {"same-subject", true}} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				policy, key, first := browserTokensFixture(t)
+				policy, reader, key, first := browserTokensFixture(t)
 				second := first
 				if !test.sameSubject {
 					second.IdentityID, second.SessionID = "ident_"+strings.Repeat("E", 22), "cs_"+strings.Repeat("F", 22)
@@ -340,7 +363,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 					}
 					return signedBrowserPermission(t, policy, key, second, time.Now().Add(5*time.Minute)), nil
 				}}
-				tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+				tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -357,12 +380,12 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 					if err := tokens.install(browserSourceFixture(secret), response, time.Now().Add(30*time.Minute)); err != nil {
 						t.Fatal(err)
 					}
-					view, _, _ := policy.lease.Current()
+					view, _, _ := policy.Lease.Current()
 					permission, err := visitortoken.VerifyBearer(visitortoken.Token(response.VisitorToken), view, time.Now())
 					if err != nil {
 						t.Fatal(err)
 					}
-					guard, err := policy.lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped[index].Add(1) })
+					guard, err := policy.Lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped[index].Add(1) })
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -373,7 +396,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 					}
 					defer release()
 				}
-				policy.client.(*policyClientFixture).revision.Store(2)
+				reader.revision.Store(2)
 				time.Sleep(4*time.Second + time.Millisecond)
 				synctest.Wait()
 				if stopped[0].Load() != 1 || stopped[1].Load() != 0 {
@@ -382,7 +405,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 				for index, response := range supplied {
 					request := permissionRequest()
 					request.Header.Set(visitorTokenHeader, response.VisitorToken)
-					permission, err := localHTTPPermission(request, policy.lease, tokens)
+					permission, err := localHTTPPermission(request, policy.Lease, tokens)
 					if index == 0 && err == nil {
 						t.Fatal("revoked browser selected another prepared credential")
 					}
@@ -397,12 +420,12 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 
 func TestBrowserTokensBoundSourcesAndAliasesWithoutEvictingLiveCredentials(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		policy, key, subject := browserTokensFixture(t)
+		policy, _, key, subject := browserTokensFixture(t)
 		client := &browserTokenClientFixture{issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			t.Error("install or bound rejection triggered an issuer request")
 			return controlv1.VisitorTokenResponse{}, clientcontrol.ErrUnavailable
 		}}
-		tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+		tokens, err := startBrowserTokens(t.Context(), client, policy.Lease, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

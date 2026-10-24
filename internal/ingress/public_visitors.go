@@ -2,104 +2,16 @@ package ingress
 
 import (
 	"context"
-	"net/netip"
 	"sort"
 	"sync"
 	"time"
 
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-// PublicVisitorControl prepares permission policy and capacity independently of
-// visitor connections. the controller owns these exact-run lifetimes.
-type PublicVisitorControl interface {
-	visitorPolicyClient
-	streamCapacityClient
-}
-
-type publicVisitorRun struct {
-	policy        *visitorPolicy
-	capacity      *streamCapacity
-	mu            sync.Mutex
-	additional    []*streamCapacity
-	limit         int
-	nextExpansion time.Time
-}
-
-func (r *publicVisitorRun) close(ctx context.Context) {
-	r.policy.Close()
-	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-	defer cancel()
-	for _, capacity := range r.capacities() {
-		_ = capacity.Close(cleanup)
-	}
-}
-
-func (r *publicVisitorRun) active() bool {
-	for _, capacity := range r.capacities() {
-		capacity.pool.mu.Lock()
-		active := len(capacity.pool.active) != 0
-		capacity.pool.mu.Unlock()
-		if active {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *publicVisitorRun) capacities() []*streamCapacity {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]*streamCapacity{r.capacity}, r.additional...)
-}
-
-func (r *publicVisitorRun) expand(ctx context.Context, report func(error)) {
-	var used, delegated int
-	for _, capacity := range r.capacities() {
-		capacity.pool.mu.Lock()
-		used += len(capacity.pool.active)
-		for _, slots := range capacity.pool.allocations {
-			if !slots.allocation.Retired && slots.allocation.ValidUntil.After(time.Now()) {
-				delegated += slots.allocation.Capacity
-			}
-		}
-		capacity.pool.mu.Unlock()
-	}
-	if used < max(1, delegated*3/4) || delegated >= r.limit || len(r.additional) >= 31 || time.Now().Before(r.nextExpansion) {
-		return
-	}
-	r.nextExpansion = time.Now().Add(2 * time.Second)
-	body := ingressv1.StreamCapacityRequest{Resource: r.capacity.body.Resource, RunId: r.capacity.body.RunId, RunNumber: r.capacity.body.RunNumber, Capacity: r.capacity.body.Capacity}
-	body.Capacity = min(body.Capacity, r.limit-delegated)
-	extra, err := prepareStreamCapacity(ctx, r.capacity.client, r.capacity.owner, body, report)
-	if err != nil {
-		return
-	}
-	r.mu.Lock()
-	r.additional = append(r.additional, extra)
-	r.mu.Unlock()
-}
-
-func (r *publicVisitorRun) reserve(visitor string, source netip.Addr, stop func()) (*streamReservation, *visitorlease.ReservationGuard, error) {
-	for _, capacity := range r.capacities() {
-		reservation, err := capacity.reserve(visitor, stop)
-		if err != nil {
-			continue
-		}
-		guard, err := r.policy.lease.BindReservationFrom(reservation.header, source, stop)
-		if err != nil {
-			reservation.Close()
-			continue
-		}
-		return reservation, guard, nil
-	}
-	return nil, nil, ErrStreamReservation
-}
 
 // LookupPublicURLs reads prepared state only. routing publication wakes the
 // background owner; a missing policy or allocation never starts request-time I/O.
@@ -151,24 +63,13 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 	defer func() {
 		c.mu.Lock()
 		runs := c.publicVisitors
-		c.publicVisitors = make(map[string]*publicVisitorRun)
+		c.publicVisitors = make(map[string]*preparedVisitorRun)
 		c.mu.Unlock()
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		jobs := make(chan *publicVisitorRun)
-		var workers sync.WaitGroup
-		for range min(8, len(runs)) {
-			workers.Go(func() {
-				for run := range jobs {
-					run.close(cleanup)
-				}
-			})
-		}
+		retired := make([]*preparedVisitorRun, 0, len(runs))
 		for _, run := range runs {
-			jobs <- run
+			retired = append(retired, run)
 		}
-		close(jobs)
-		workers.Wait()
+		retirePreparedVisitors(ctx, retired)
 	}()
 	// discovery is independent of visitor arrivals and control's long-poll wait.
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -199,7 +100,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		}
 		c.routingTable.mu.RUnlock()
 		c.mu.Lock()
-		var retired []*publicVisitorRun
+		var retired []*preparedVisitorRun
 		for id, run := range c.publicVisitors {
 			_, present := current[id]
 			owner := run.capacity.owner
@@ -209,7 +110,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 			}
 		}
 		var pending []string
-		var existing []*publicVisitorRun
+		var existing []*preparedVisitorRun
 		for id := range current {
 			if c.publicVisitors[id] == nil {
 				pending = append(pending, id)
@@ -219,9 +120,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		}
 		remaining := max(0, 4096-len(c.publicVisitors))
 		c.mu.Unlock()
-		for _, run := range retired {
-			run.close(ctx)
-		}
+		retirePreparedVisitors(ctx, retired)
 		// expansion observes local occupancy in this background loop. even a
 		// full pool never turns a visitor into an allocation request.
 		var expanding sync.WaitGroup
@@ -258,7 +157,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 					_ = capacity.Close(ctx)
 					return
 				}
-				run := &publicVisitorRun{policy: policy, capacity: capacity, limit: limits.Connections}
+				run := &preparedVisitorRun{policy: policy, capacity: capacity, limit: limits.Connections}
 				c.mu.Lock()
 				c.publicVisitors[entry.PublishRunId] = run
 				c.mu.Unlock()

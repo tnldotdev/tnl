@@ -4,7 +4,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // NewPrivateSessionDenial records only the bound control session's scope. a
@@ -22,20 +24,19 @@ func NewPrivateSessionDenial(bound ingressv1.ConnectorSessionResult, visitorID s
 	return o, nil
 }
 
-// NewPrivateStreamObservation takes run facts only from control's admitted
-// stream result. a device session may admit another service when authorized;
-// its session, identity, device and observed source must still match exactly.
-func NewPrivateStreamObservation(bound ingressv1.ConnectorSessionResult, admitted ingressv1.ServiceStreamResult, eventType, outcome, reason string) (Observation, error) {
-	o, err := NewPrivateSessionDenial(bound, admitted.VisitorConnectionId)
-	if err != nil || admitted.ConnectorSessionId != bound.ConnectorSessionId || !visitorsubject.Same(admitted.Subject, bound.Subject) ||
-		admitted.ObservedSourceIp != bound.ObservedSourceIp ||
-		admitted.GrantRevision < 1 || admitted.ExpiresAt.IsZero() || admitted.ValidUntil.IsZero() {
+// NewNativeStreamObservation takes run facts only after local permission and
+// reservation verification. control derives actor/source scope from immutable
+// session facts and this exact ingress-owned allocation, not stream claim rows.
+func NewNativeStreamObservation(bound ingressv1.ConnectorSessionResult, entry tunnelv1.ConnectorVisitorEntry, reservation tunnelv1.StreamReservation, permission visitortoken.Permission, eventType, outcome, reason string) (Observation, error) {
+	o, err := NewPrivateSessionDenial(bound, entry.VisitorConnectionID)
+	subject, subjectErr := visitortoken.NativeSubject(permission.Subject)
+	if err != nil || subjectErr != nil || !visitorsubject.Equal(bound.Subject, subject) || permission.Scope.ID != entry.ServiceID || string(permission.Scope.Kind) != "service" || entry.Validate() != nil || entry.ServiceID != bound.ServiceId || reservation.Validate() != nil || reservation.ResourceKind != "service" || reservation.ResourceID != entry.ServiceID || reservation.RunID != entry.ServiceRunID || reservation.RunNumber != entry.RunNumber || reservation.VisitorConnectionID != entry.VisitorConnectionID {
 		return Observation{}, ErrInvalid
 	}
-	o.ServiceID, o.RunID, o.RunNumber = admitted.ServiceId, admitted.ServiceRunId, admitted.RunNumber
+	o.RunID, o.RunNumber, o.StreamAllocationID = entry.ServiceRunID, int64(entry.RunNumber), reservation.AllocationID
 	o.EventType, o.Outcome, o.Reason = eventType, outcome, reason
-	if o.RunID == "" || o.Validate() != nil {
-		return Observation{}, ErrInvalid
+	if err := o.Validate(); err != nil {
+		return Observation{}, err
 	}
 	return o, nil
 }

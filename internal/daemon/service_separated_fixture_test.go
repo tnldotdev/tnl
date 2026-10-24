@@ -109,6 +109,11 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"
+	// mirror control startup: publishers need the issuer and verification keys
+	// before their first policy snapshot, including in separated fixtures.
+	if err := database.PrepareVisitorSigningKeys(t.Context(), config.ControlOrigin(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	publicControlAddress := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, nil, publicControlAddress, config.ControlListen, controlTLS)
 	pebble, dnsProvider := privateFixtureACME(t, database, &config)
@@ -163,7 +168,6 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		settings.configurePrivate = func(id string, config *ingress.ConnectorConfig) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		}

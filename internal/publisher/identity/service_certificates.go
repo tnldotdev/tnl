@@ -75,16 +75,3 @@ func (n *Native) AuthorizeServiceClientCertificate(ctx context.Context, service,
 	}
 	return control.AuthorizeServiceClientCertificate(ctx, service, run, token, body)
 }
-
-func (n *Native) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	if _, err := n.serviceCertificates(service); err != nil {
-		return controlv1.ServiceClientCertificateDecision{}, err
-	}
-	control, ok := n.NativeControl.(interface {
-		AuthorizeServiceConnector(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error)
-	})
-	if !ok {
-		return controlv1.ServiceClientCertificateDecision{}, ErrScope
-	}
-	return control.AuthorizeServiceConnector(ctx, service, run, token, body)
-}

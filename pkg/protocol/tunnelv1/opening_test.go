@@ -48,6 +48,50 @@ func TestOpeningPublicReservationKeepsExactBinding(t *testing.T) {
 	}
 }
 
+func TestOpeningNativePermissionAndInitialBytesStayBoundedAndSeparate(t *testing.T) {
+	entry := nativeTestEntry()
+	initial := []byte{0x16, 3, 1, 0, 2, 1, 0}
+	writer := &openingWriter{limit: -1}
+	if committed, err := WriteConnectorVisitorOpening(writer, entry, initial); err != nil || !committed || writer.calls != 1 {
+		t.Fatal("native opening did not combine permission and initial bytes", err)
+	}
+	wire := bytes.Clone(writer.Bytes())
+	reader := bytes.NewReader(append(wire, []byte("subsequent native bytes")...))
+	got, payload, err := ReadConnectorVisitorOpening(reader)
+	if err != nil || got != entry || !bytes.Equal(payload, initial) {
+		t.Fatal("native opening changed signed proof or initial bytes", err)
+	}
+	rest, _ := io.ReadAll(reader)
+	if string(rest) != "subsequent native bytes" {
+		t.Fatal("native opening consumed following protocol bytes")
+	}
+	for length := range len(wire) {
+		if _, _, err := ReadConnectorVisitorOpening(bytes.NewReader(wire[:length])); err == nil {
+			t.Fatalf("native opening accepted truncation at %d", length)
+		}
+	}
+	writer.Reset()
+	writer.calls = 0
+	if _, err := WriteConnectorVisitorOpening(writer, entry, make([]byte, MaxInitialBytes+1)); err == nil || writer.calls != 0 {
+		t.Fatal("oversized native initial bytes reached the stream")
+	}
+	for _, change := range []func(*ConnectorVisitorEntry){
+		func(e *ConnectorVisitorEntry) { e.MetadataRevision = 0 },
+		func(e *ConnectorVisitorEntry) { e.VisitorConnectionID = "" },
+		func(e *ConnectorVisitorEntry) { e.Permission.Token = strings.Repeat("a", 2049) },
+		func(e *ConnectorVisitorEntry) { e.Permission.PublicKey = "invalid" },
+		func(e *ConnectorVisitorEntry) { e.Permission.Signature = "invalid" },
+	} {
+		bad := entry
+		change(&bad)
+		writer.Reset()
+		writer.calls = 0
+		if _, err := WriteConnectorVisitorOpening(writer, bad, nil); err == nil || writer.calls != 0 {
+			t.Fatal("incomplete native proof reached the stream")
+		}
+	}
+}
+
 func (w *openingWriter) Write(p []byte) (int, error) {
 	w.calls++
 	if w.limit >= 0 && len(p) > w.limit {
@@ -200,12 +244,20 @@ func TestReturnFrameRejectsUnknownAndOversizedPayloadBeforeReading(t *testing.T)
 func FuzzReadOpeningsAndReturnFrames(f *testing.F) {
 	f.Add(uint8(0), append(goldenWire(f, "visitor-stream-header"), 0, 0, 0, 0))
 	f.Add(uint8(1), []byte{1, 0, 0, 0, 0})
+	var native bytes.Buffer
+	if _, err := WriteConnectorVisitorOpening(&native, nativeTestEntry(), []byte{0x16, 3, 1}); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(uint8(2), native.Bytes())
 	f.Fuzz(func(t *testing.T, kind uint8, wire []byte) {
 		r := bytes.NewReader(wire)
-		if kind%2 == 0 {
+		switch kind % 3 {
+		case 0:
 			_, _, _ = ReadVisitorOpening(r)
-		} else {
+		case 1:
 			_, _ = ReadReturnFrame(r)
+		case 2:
+			_, _, _ = ReadConnectorVisitorOpening(r)
 		}
 	})
 }

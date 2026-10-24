@@ -33,6 +33,8 @@ import (
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
@@ -218,6 +220,11 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	var clientPublic ed25519.PublicKey
 	var exchangeAttempts atomic.Int32
 	var authorityMu sync.Mutex
+	_, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var server string
 	issuer := githubtest.New(t)
 	var verifier *oidc.GitHubWorkloadVerifier
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +308,32 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
+		case r.URL.Path == "/v1/visitor-tokens" && r.Method == http.MethodPost:
+			var request controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if json.NewDecoder(r.Body).Decode(&request) != nil || json.Unmarshal(request.Source, &source) != nil ||
+				request.Resource.Kind != "service" || request.Resource.Id != service || source.Kind != controlv1.VisitorTokenWorkload ||
+				source.Credential != current.Credential || revoked.Load() || !current.LeaseExpiresAt.After(time.Now()) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			digest, err := visitortoken.KeyDigest(clientPublic)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			now := time.Now()
+			permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, Hostname: managedHostname,
+				Port: uint16(port), VisitorPolicyRevision: 1, Subject: visitortoken.Workload{SessionID: sessionID, KeySHA256: digest}, ExpiresAt: now.Add(time.Minute)}
+			token, err := visitortoken.Sign(server, "fixture-signing-key", signingKey, permission, now)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: request.Resource, Hostname: managedHostname, Port: port,
+				VisitorPolicyRevision: 1, ExpiresAt: permission.ExpiresAt, VisitorToken: token.Reveal()})
 		case strings.HasSuffix(r.URL.Path, "/run"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
 		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
@@ -323,7 +356,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	authority.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
 	authority.StartTLS()
 	defer authority.Close()
-	server := strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
+	server = strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
 	verifier, err = oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
 	if err != nil {
 		t.Fatal(err)

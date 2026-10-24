@@ -36,6 +36,7 @@ schemas:
         port,
         issuer,
         visitor_policy_revision,
+        metadata_revision,
         key_revision,
         observed_at,
         valid_until,
@@ -51,6 +52,11 @@ schemas:
       port: { type: integer, minimum: 1, maximum: 65535 }
       issuer: { type: string, format: uri, maxLength: 256 }
       visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      metadata_revision:
+        description: current service metadata revision; zero for public URLs.
+        type: integer
+        format: int64
+        minimum: 0
       key_revision: { type: integer, format: int64, minimum: 1 }
       observed_at: { type: string, format: date-time }
       valid_until: { type: string, format: date-time }

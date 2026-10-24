@@ -15,8 +15,11 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 || len(policy.StreamAllocations) > 2048 {
 		return Update{}, ErrUpdate
 	}
+	if scope.Kind == visitorscope.PublicURL && policy.MetadataRevision != 0 || scope.Kind == visitorscope.Service && policy.MetadataRevision < 1 {
+		return Update{}, ErrUpdate
+	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
-		ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
+		MetadataRevision: policy.MetadataRevision, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
 	update.Allocations = make(map[string]controlv1.StreamCapacityAllocation, len(policy.StreamAllocations))
 	for _, allocation := range policy.StreamAllocations {

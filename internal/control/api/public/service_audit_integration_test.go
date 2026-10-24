@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
@@ -131,7 +132,11 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	}
 	ingressServer := httptest.NewTLSServer(ingressHandler)
 	t.Cleanup(ingressServer.Close)
-	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-ingress", IngressRunID: "audit-process", ProtocolVersion: 1, ConnectionCapacity: 10,
+	processID, err := opaqueid.New(opaqueid.IngressRunPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-ingress", IngressRunID: processID, IngressPoolID: controlstate.PrimaryIngressPoolID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10,
 		ConnectorAddress: "127.0.0.1:9441", ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)

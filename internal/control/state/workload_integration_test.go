@@ -18,6 +18,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -370,21 +373,48 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("workload bound as a fake person", bound, err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	stream, err := d.AuthorizeServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, run.RunNumber, source, now)
-	if err != nil || !stream.ValidUntil.Equal(session.ExpiresAt) {
-		t.Fatal("private admission deadline", stream, err)
+	prepareVisitorTokenKeys(t, d, now)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	permission, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, now)
+	if err != nil || !permission.Permission.ExpiresAt.Equal(session.ExpiresAt.Truncate(time.Second)) {
+		t.Fatal("private permission deadline", permission.Permission.ExpiresAt, err)
 	}
-	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, now.Add(time.Second)); err != nil || !decision.Allowed {
-		t.Fatal("private workload recheck", decision, err)
+	message, err := visitortoken.NativeProofMessage(permission.Token, assignment.ID, visitor, uint64(service.TrustRevision), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if decision, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); err != nil || !decision.Allowed {
-		t.Fatal("publisher did not recheck workload connector", decision, err)
+	signature := ed25519.Sign(key, message)
+	nativeAllowed := func(at time.Time) bool {
+		t.Helper()
+		policy, err := d.ReadIngressVisitorPolicy(ctx, lease.IngressLeaseIdentity, scope, 0, at)
+		if err != nil {
+			return false
+		}
+		update, err := visitorlease.Decode(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = visitortoken.VerifyNativeSession(permission.Token, update.View, session.Subject, assignment.ID, visitor, uint64(service.TrustRevision), nil, key.Public().(ed25519.PublicKey), signature, at)
+		return err == nil
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); !errors.Is(err, ErrServiceAccess) {
+	if !nativeAllowed(now.Add(time.Second)) {
+		t.Fatal("prepared native workload permission was denied")
+	}
+	allocation, err := d.AllocateStreamCapacity(ctx, StreamCapacityRequest{Owner: lease.IngressLeaseIdentity, Scope: scope, RunID: run.RunID, RunNumber: run.RunNumber, RequestID: "workload", Capacity: 1}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, run.Token, 0, []string{allocation.ID}, now); err != nil {
+		t.Fatal(err)
+	}
+	if policy, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, run.Token, 0, nil, now); err != nil || !policy.Policy.Enabled {
+		t.Fatal("publisher could not prepare local workload policy", err)
+	}
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, session.Credential, 0, nil, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision + 1}, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("spoofed grant revision", err)
+	if _, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber+1, run.Token, 0, nil, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("publisher policy accepted a replaced run number", err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, session.Credential, service.ID, csr, now)
@@ -422,13 +452,14 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
 		if connector {
 			observation.VisitorConnectionID, observation.ConnectorSessionID = visitor, assignment.ID
+			observation.StreamAllocationID = allocation.ID
 		}
 		if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, now); err != nil {
 			t.Fatal("audit scanned workload as a human", err)
 		}
 	}
-	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, session.ExpiresAt); err != nil || decision.Allowed {
-		t.Fatal("private stream outlived job", decision, err)
+	if nativeAllowed(session.ExpiresAt) {
+		t.Fatal("private permission outlived job")
 	}
 	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public stream outlived job", err)
@@ -439,8 +470,8 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, now.Add(2*time.Second)); err != nil || decision.Allowed {
-		t.Fatal("private stream survived policy removal", decision, err)
+	if nativeAllowed(now.Add(2 * time.Second)) {
+		t.Fatal("private permission survived policy removal")
 	}
 	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
 		t.Fatal("public stream survived policy removal", decision, err)

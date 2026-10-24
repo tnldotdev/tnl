@@ -3,8 +3,10 @@ package tunnelv1
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io"
+	"math"
 	"net/netip"
 	"time"
 
@@ -99,12 +101,32 @@ func ReadConnectorSessionAccepted(r io.Reader) (ConnectorSessionAccepted, error)
 // session identity and trusted source before forwarding any bytes.
 // no client-supplied IP or untrusted SNI selects a service.
 type ConnectorVisitorEntry struct {
-	TraceContext    TraceContext `json:"trace_context,omitzero"`
-	ProtocolVersion uint32       `json:"protocol_version"`
-	Kind            StreamKind   `json:"kind"`
-	ServiceID       string       `json:"service_id"`
-	ServiceRunID    string       `json:"service_run_id"`
-	RunNumber       uint64       `json:"run_number"`
+	TraceContext        TraceContext            `json:"trace_context,omitzero"`
+	ProtocolVersion     uint32                  `json:"protocol_version"`
+	Kind                StreamKind              `json:"kind"`
+	ServiceID           string                  `json:"service_id"`
+	ServiceRunID        string                  `json:"service_run_id"`
+	RunNumber           uint64                  `json:"run_number"`
+	VisitorConnectionID string                  `json:"visitor_connection_id"`
+	MetadataRevision    uint64                  `json:"metadata_revision"`
+	Permission          NativeVisitorPermission `json:"permission"`
+}
+
+// NativeVisitorPermission carries a signed visit and proof for one opening.
+// its key must match the signed subject and the authenticated connector session.
+type NativeVisitorPermission struct {
+	Token     string `json:"visitor_token"`
+	PublicKey string `json:"public_key"`
+	Signature string `json:"signature"`
+}
+
+func (NativeVisitorPermission) String() string   { return "native visitor permission" }
+func (NativeVisitorPermission) GoString() string { return "native visitor permission" }
+
+func (p NativeVisitorPermission) valid() bool {
+	public, keyErr := base64.RawURLEncoding.Strict().DecodeString(p.PublicKey)
+	signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(p.Signature)
+	return len(p.Token) > 0 && len(p.Token) <= 2048 && validCredential(p.Token) && keyErr == nil && signatureErr == nil && len(public) == ed25519.PublicKeySize && len(signature) == ed25519.SignatureSize
 }
 
 func (e ConnectorVisitorEntry) Validate() error {
@@ -114,55 +136,11 @@ func (e ConnectorVisitorEntry) Validate() error {
 	if e.ProtocolVersion != Version || e.Kind != ConnectorVisitorStream ||
 		!opaqueid.Valid(e.ServiceID, opaqueid.ServicePrefix) ||
 		!opaqueid.Valid(e.ServiceRunID, opaqueid.ServiceRunPrefix) ||
-		e.RunNumber == 0 {
+		e.RunNumber == 0 || e.RunNumber > math.MaxInt64 ||
+		!opaqueid.Valid(e.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || e.MetadataRevision == 0 || e.MetadataRevision > math.MaxInt64 || !e.Permission.valid() {
 		return errors.New("tunnelv1: invalid private visitor entry")
 	}
 	return nil
-}
-
-// ConnectorVisitorAccepted carries ingress's trusted, claimed stream identity
-// back to the connector before inner TLS. the connector compares session and
-// source with the authenticated session. the publisher receives the
-// same admitted identity in ServiceStreamHeader and rechecks it with control.
-type ConnectorVisitorAccepted struct {
-	ProtocolVersion              uint32         `json:"protocol_version"`
-	Kind                         string         `json:"kind"`
-	ConnectorSessionID           string         `json:"connector_session_id"`
-	Subject                      VisitorSubject `json:"subject"`
-	SourceIP                     string         `json:"source_ip"`
-	VisitorConnectionID          string         `json:"visitor_connection_id"`
-	GrantRevision                uint64         `json:"grant_revision"`
-	PublisherConnectionID        string         `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64         `json:"connection_assignment_revision"`
-}
-
-func (a ConnectorVisitorAccepted) Validate() error {
-	if a.ProtocolVersion != Version || a.Kind != "connector_visitor_accepted" ||
-		!opaqueid.Valid(a.ConnectorSessionID, opaqueid.ConnectorSessionPrefix) ||
-		a.Subject.Validate() != nil || !validPrivateSourceIP(a.SourceIP) ||
-		!opaqueid.Valid(a.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || a.GrantRevision == 0 ||
-		!opaqueid.Valid(a.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || a.ConnectionAssignmentRevision == 0 {
-		return errors.New("tunnelv1: invalid private visitor acceptance")
-	}
-	return nil
-}
-
-func WriteConnectorVisitorAccepted(w io.Writer, a ConnectorVisitorAccepted) error {
-	if err := a.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(w, a, MaxServiceHeaderBytes)
-}
-
-func ReadConnectorVisitorAccepted(r io.Reader) (ConnectorVisitorAccepted, error) {
-	var a ConnectorVisitorAccepted
-	if err := readJSONFrame(r, &a, MaxServiceHeaderBytes); err != nil {
-		return ConnectorVisitorAccepted{}, err
-	}
-	if err := a.Validate(); err != nil {
-		return ConnectorVisitorAccepted{}, err
-	}
-	return a, nil
 }
 
 func WriteConnectorVisitorEntry(w io.Writer, e ConnectorVisitorEntry) error {
@@ -200,6 +178,7 @@ type ServiceStreamHeader struct {
 	PublisherConnectionID        string              `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64              `json:"connection_assignment_revision"`
 	ExpiresAt                    time.Time           `json:"expires_at"`
+	Reservation                  StreamReservation   `json:"reservation,omitzero"`
 }
 
 // ConnectorAdmission is an authenticated identity selected by ingress. direct
@@ -233,6 +212,9 @@ func (h ServiceStreamHeader) Validate() error {
 func (h ServiceStreamHeader) validate(kind StreamKind) error {
 	if err := h.TraceContext.Validate(); err != nil {
 		return err
+	}
+	if h.Reservation != (StreamReservation{}) && (h.Reservation.Validate() != nil || h.Reservation.ResourceKind != "service" || h.Reservation.ResourceID != h.ServiceID || h.Reservation.RunID != h.ServiceRunID || h.Reservation.RunNumber != h.RunNumber || h.Reservation.VisitorConnectionID != h.VisitorConnectionID) {
+		return ErrInvalidStreamReservation
 	}
 	if h.ProtocolVersion != Version || h.Kind != kind ||
 		!opaqueid.Valid(h.ServiceID, opaqueid.ServicePrefix) ||

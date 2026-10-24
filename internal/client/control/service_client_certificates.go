@@ -19,9 +19,3 @@ func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, service,
 		return c.api.AuthorizeServiceClientCertificate(ctx, service, run, body, editors...)
 	})
 }
-
-func (c *Client) AuthorizeServiceConnector(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	return request[controlv1.ServiceClientCertificateDecision](ctx, c, string(token), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AuthorizeServiceConnector(ctx, service, run, body, editors...)
-	})
-}

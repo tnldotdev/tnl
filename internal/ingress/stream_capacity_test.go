@@ -51,7 +51,7 @@ func TestStreamCapacityBackgroundExpansionUsesLocalOccupancy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := &capacityClientFixture{}
 		capacity := prepareCapacityFixture(t, client)
-		run := &publicVisitorRun{capacity: capacity, limit: 4}
+		run := &preparedVisitorRun{capacity: capacity, limit: 4}
 		defer func() {
 			for _, extra := range run.additional {
 				_ = extra.Close(t.Context())

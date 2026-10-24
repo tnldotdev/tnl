@@ -261,7 +261,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Verify signed visitor permissions and local policy deadlines without external infrastructure
     cmds:
-      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(Policy|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|BrowserTokens|LocalHTTPPermission|BearerRenewalProof|VisitorPolicyRevision|Token|NativeProof)' -count=1
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/publisher/visitorpolicy ./internal/ingress -run='^Test(Policy|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|BrowserTokens|LocalHTTPPermission|BearerRenewalProof|VisitorPolicyRevision|Token|NativeProof)' -count=1
 
   test:fuzz:visitors:
     dir: "{{.ROOT_DIR}}"
@@ -281,7 +281,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check combined openings, exact byte commitment, ordered notifications, TLS isolation, and drain
     cmds:
-      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions)' -count=1
+      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|NativeOpening|NativeRequest|NativeAdmission|ConnectorOpening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions)' -count=1
 
   test:fuzz:stream-opening:
     dir: "{{.ROOT_DIR}}"
@@ -290,6 +290,7 @@ tasks:
       TIME: '{{default "15s" .TIME}}'
     cmds:
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadOpeningsAndReturnFrames$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzNativeRequestFrames$' -fuzztime='{{.TIME}}' -parallel=2
 
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"

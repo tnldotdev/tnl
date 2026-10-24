@@ -8,8 +8,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"errors"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/netip"
@@ -19,39 +21,36 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type privateControlFixture struct {
-	mu                sync.Mutex
-	outerStarted      chan struct{}
-	outerGate         chan struct{}
-	claimStarted      chan struct{}
-	allowClaim        chan struct{}
-	claims            int
-	recheckStarted    chan struct{}
-	recheckGate       chan struct{}
-	recheckErr        error
-	deny              bool
-	rechecks          int
-	recheckActive     atomic.Int32
-	sessionDuration   time.Duration
-	nextSession       string
-	initialValidUntil time.Time
-	recheckValidUntil time.Time
-	session           string
-	service           string
-	identity          string
-	device            string
-	sourceIP          string
-	run               string
-	revision          int64
-	projection        ingressv1.ServiceProjection
+	outerStarted    chan struct{}
+	outerGate       chan struct{}
+	sessionClaims   atomic.Int64
+	sessionDuration time.Duration
+	nextSession     string
+	session         string
+	service         string
+	identity        string
+	device          string
+	sourceIP        string
+	run             string
+	revision        int64
+	projection      ingressv1.ServiceProjection
+	routingReads    atomic.Int64
+	permission      visitortoken.Token
+	key             ed25519.PrivateKey
+	policyUpdate    visitorlease.Update
 }
 
 const privateTestSessionCredential = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -69,6 +68,7 @@ func (f *privateControlFixture) expectedSourceIP() string {
 }
 
 func (f *privateControlFixture) ClaimConnectorSession(_ context.Context, id string, body ingressv1.ConnectorSessionClaim) (ingressv1.ConnectorSessionResult, error) {
+	f.sessionClaims.Add(1)
 	if f.outerStarted != nil {
 		select {
 		case f.outerStarted <- struct{}{}:
@@ -89,81 +89,12 @@ func (f *privateControlFixture) ClaimConnectorSession(_ context.Context, id stri
 	}
 	return ingressv1.ConnectorSessionResult{ConnectorSessionId: body.ConnectorSessionId, ServiceId: f.service, Subject: visitorsubject.Wire(f.subject()), ObservedSourceIp: body.ObservedSourceIp, ExpiresAt: time.Now().Add(duration)}, nil
 }
-func (f *privateControlFixture) AuthorizeServiceStream(ctx context.Context, id string, body ingressv1.ServiceStreamClaim) (ingressv1.ServiceStreamResult, error) {
-	if body.ServiceId != f.service {
-		return ingressv1.ServiceStreamResult{}, ErrServiceAdmission
-	}
-	f.mu.Lock()
-	f.claims++
-	started := f.claimStarted
-	gate := f.allowClaim
-	f.mu.Unlock()
-	if started != nil {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-	}
-	if gate != nil {
-		select {
-		case <-gate:
-		case <-ctx.Done():
-			return ingressv1.ServiceStreamResult{}, ctx.Err()
-		}
-	}
-	validSession := body.ConnectorSessionId == f.session || f.nextSession != "" && body.ConnectorSessionId == f.nextSession
-	if id != "ingress-a" || body.ServiceId != f.service || body.ServiceRunId != f.run || !validSession || body.ObservedSourceIp != f.expectedSourceIP() || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) {
-		return ingressv1.ServiceStreamResult{}, ErrServiceAdmission
-	}
-	validUntil := f.initialValidUntil
-	if validUntil.IsZero() {
-		validUntil = time.Now().Add(2 * time.Minute)
-	}
-	return ingressv1.ServiceStreamResult{ServiceId: body.ServiceId, ServiceRunId: body.ServiceRunId, ConnectorSessionId: body.ConnectorSessionId, Subject: visitorsubject.Wire(f.subject()), GrantRevision: 1, ObservedSourceIp: body.ObservedSourceIp, VisitorConnectionId: body.VisitorConnectionId, RunNumber: body.RunNumber, ExpiresAt: time.Now().Add(time.Minute), ValidUntil: validUntil}, nil
-}
-
-func (f *privateControlFixture) CloseServiceStream(context.Context, string, string, ingressv1.CloseServiceStreamJSONRequestBody) error {
-	return nil
-}
-
-func (f *privateControlFixture) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	f.recheckActive.Add(1)
-	defer f.recheckActive.Add(-1)
-	f.mu.Lock()
-	f.rechecks++
-	gate, started, denied, problem := f.recheckGate, f.recheckStarted, f.deny, f.recheckErr
-	f.mu.Unlock()
-	if started != nil {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-	}
-	if gate != nil {
-		select {
-		case <-gate:
-		case <-ctx.Done():
-			return ingressv1.ServiceVisitorRecheckResult{}, ctx.Err()
-		}
-	}
-	if id != "ingress-a" || body.ServiceId != f.service || body.ServiceRunId != f.run ||
-		(body.ConnectorSessionId != f.session && body.ConnectorSessionId != f.nextSession) || !visitorsubject.Equal(body.Subject, f.subject()) || body.RunNumber != 1 ||
-		!opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedSourceIp != f.expectedSourceIP() || body.IngressLeaseRevision != 1 {
-		return ingressv1.ServiceVisitorRecheckResult{}, ErrServiceAdmission
-	}
-	if problem != nil {
-		return ingressv1.ServiceVisitorRecheckResult{}, problem
-	}
-	validUntil := f.recheckValidUntil
-	if validUntil.IsZero() {
-		validUntil = time.Now().Add(2 * time.Minute)
-	}
-	return ingressv1.ServiceVisitorRecheckResult{Allowed: !denied, RecheckAt: time.Now().Add(10 * time.Millisecond), ValidUntil: validUntil}, nil
-}
 func (f *privateControlFixture) GetServiceSnapshot(_ context.Context, _ string, _ ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error) {
+	f.routingReads.Add(1)
 	return ingressv1.ServiceSnapshot{Revision: f.revision, Entries: []ingressv1.ServiceProjection{f.projection}}, nil
 }
 func (f *privateControlFixture) GetServiceEvents(_ context.Context, _ string, params ingressv1.GetServiceEventsParams) (ingressv1.ServiceSnapshot, error) {
+	f.routingReads.Add(1)
 	return ingressv1.ServiceSnapshot{Revision: params.After, Entries: []ingressv1.ServiceProjection{}}, nil
 }
 
@@ -200,6 +131,13 @@ func (f *privateForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1
 		}
 		if err != nil || meta.Source.Addr().String() != wantSource {
 			return
+		}
+		if h.Connector != nil {
+			_, initial, err := tunnelv1.ReadConnectorVisitorOpening(remaining)
+			if err != nil {
+				return
+			}
+			remaining = tunnel.NewNativeRequestReader(&testReaderConn{Conn: upstream, reader: remaining}, initial, func(tunnelv1.NativeVisitorPermission) error { return nil })
 		}
 		f.observed <- h
 		if f.closeAfterByte {
@@ -270,7 +208,53 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 	if err != nil {
 		t.Fatal(err)
 	}
+	control.key = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{31}, ed25519.SeedSize))
+	public := control.key.Public().(ed25519.PublicKey)
+	digest, err := visitortoken.KeyDigest(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service}
+	now := time.Now()
+	permission := visitortoken.Permission{Scope: scope, Hostname: "service.example.test", Port: 25443, VisitorPolicyRevision: 1, Subject: visitortoken.Device{IdentityID: identity, DeviceID: control.device, SessionID: privateTestID(t, opaqueid.ControlSessionPrefix), KeySHA256: digest}, ExpiresAt: now.Add(time.Minute)}
+	control.permission, err = visitortoken.Sign("https://control.example.test", "test-key", control.key, permission, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := visitorlease.New(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(policy.Close)
+	allocation := controlv1.StreamCapacityAllocation{Id: privateTestID(t, "salloc_"), Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, RunId: run, RunNumber: 1, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, Capacity: 64, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}
+	control.policyUpdate = visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}
+	if err := policy.Apply(policy.Begin(), control.policyUpdate); err != nil {
+		t.Fatal(err)
+	}
+	pool := newStreamReservations(nil)
+	t.Cleanup(pool.Close)
+	if err := pool.apply(streamAllocation{ID: allocation.Id, ResourceKind: "service", ResourceID: service, RunID: run, RunNumber: 1, IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), Capacity: 64, ObservedAt: now, ValidUntil: allocation.ValidUntil}, now); err != nil {
+		t.Fatal(err)
+	}
+	connector.prepared[run] = &preparedVisitorRun{policy: &visitorPolicy{lease: policy}, capacity: &streamCapacity{owner: lease, pool: pool, id: allocation.Id, ready: true}}
+	if err := connector.refreshRouting(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
 	return connector, control, forwarder, clientTLS, lease, func() {}
+}
+
+func updateNativePolicy(t *testing.T, connector *Connector, control *privateControlFixture, change func(*visitorlease.Update)) {
+	t.Helper()
+	update := control.policyUpdate
+	update.Allocations = maps.Clone(update.Allocations)
+	now := time.Now()
+	update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+	change(&update)
+	lease := connector.prepared[control.run].policy.lease
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	control.policyUpdate = update
 }
 
 func privateTestConnect(t *testing.T, connector *Connector, control *privateControlFixture, clientTLS *tls.Config) (muxsession.Session, func()) {
@@ -306,7 +290,7 @@ func privateTestConnectAs(t *testing.T, connector *Connector, control *privateCo
 		_ = listener.Close()
 		t.Fatal(err)
 	}
-	return session, func() {
+	return nativeTestSession{Session: session}, func() {
 		_ = session.Close()
 		cancel()
 		_ = listener.Close()
@@ -318,8 +302,132 @@ func privateTestConnectAs(t *testing.T, connector *Connector, control *privateCo
 	}
 }
 
-func privateEntry(control *privateControlFixture) tunnelv1.ConnectorVisitorEntry {
-	return tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1}
+type nativeTestSession struct{ muxsession.Session }
+
+func (s nativeTestSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.OpenStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return wrapNativeTestStream(stream), nil
+}
+
+type nativeTestStream struct {
+	muxsession.Stream
+	writer *tunnel.NativeRequestWriter
+	opened bool
+}
+
+func wrapNativeTestStream(stream muxsession.Stream) muxsession.Stream {
+	return &nativeTestStream{Stream: stream, writer: tunnel.NewNativeRequestWriter(stream)}
+}
+
+func (s *nativeTestStream) Write(p []byte) (int, error) {
+	if !s.opened {
+		s.opened = true
+		return s.Stream.Write(p)
+	}
+	return s.writer.Write(p)
+}
+
+func (s *nativeTestStream) CloseWrite() error { return s.writer.CloseWrite() }
+
+func privateEntry(control *privateControlFixture, selectedSession ...string) tunnelv1.ConnectorVisitorEntry {
+	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+	if err != nil {
+		panic(err)
+	}
+	session := control.session
+	if len(selectedSession) != 0 {
+		session = selectedSession[0]
+	}
+	message, err := visitortoken.NativeProofMessage(control.permission, session, visitor, 1, nil)
+	if err != nil {
+		panic(err)
+	}
+	return tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
+		VisitorConnectionID: visitor, MetadataRevision: 1, Permission: tunnelv1.NativeVisitorPermission{Token: control.permission.Reveal(), PublicKey: base64.RawURLEncoding.EncodeToString(control.key.Public().(ed25519.PublicKey)), Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(control.key, message))}}
+}
+
+func TestConnectorOpeningRejectsUnboundPermissionBeforeOnlineAuthority(t *testing.T) {
+	for _, name := range []string{"signature", "key", "visitor", "metadata", "token", "initial", "another-session"} {
+		t.Run(name, func(t *testing.T) {
+			connector, control, forwarder, roots, _, _ := privateTestSetup(t)
+			peer, stop := privateTestConnect(t, connector, control, roots)
+			defer stop()
+			entry := privateEntry(control)
+			var initial []byte
+			switch name {
+			case "signature":
+				entry.Permission.Signature = base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+			case "key":
+				entry.Permission.PublicKey = base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+			case "visitor":
+				entry.VisitorConnectionID = privateTestID(t, opaqueid.VisitorConnectionPrefix)
+			case "metadata":
+				entry.MetadataRevision++
+			case "token":
+				entry.Permission.Token = "invalid.signed.permission"
+			case "initial":
+				initial = []byte("changed opening bytes")
+			case "another-session":
+				entry = privateEntry(control, privateTestID(t, opaqueid.ConnectorSessionPrefix))
+			}
+			stream, err := peer.OpenStream(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, entry, initial); err != nil {
+				t.Fatal(err)
+			}
+			_ = stream.SetReadDeadline(time.Now().Add(time.Second))
+			if _, err := stream.Read(make([]byte, 1)); err == nil {
+				t.Fatal("unbound native permission admitted a stream")
+			}
+			if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 || forwarder.count() != 0 {
+				t.Fatal("invalid opening reached online authority or relay")
+			}
+		})
+	}
+}
+
+func TestConnectorOpeningForwardsProofBoundInitialBytesExactlyOnce(t *testing.T) {
+	connector, control, forwarder, roots, _, _ := privateTestSetup(t)
+	peer, stop := privateTestConnect(t, connector, control, roots)
+	defer stop()
+	entry := privateEntry(control)
+	initial := []byte("ping")
+	message, err := visitortoken.NativeProofMessage(control.permission, control.session, entry.VisitorConnectionID, entry.MetadataRevision, initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(control.key, message))
+	stream, err := peer.OpenStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	_ = stream.SetDeadline(time.Now().Add(time.Second))
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, entry, initial); err != nil {
+		t.Fatal(err)
+	}
+	var response [4]byte
+	if _, err := io.ReadFull(stream, response[:]); err != nil || string(response[:]) != "pong" {
+		t.Fatalf("initial bytes were not carried before further client writes: %q %v", response, err)
+	}
+	select {
+	case data := <-forwarder.data:
+		if !bytes.Equal(data, initial) || forwarder.count() != 1 {
+			t.Fatal("initial visitor bytes changed or replayed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial visitor bytes did not reach the target")
+	}
+	header := <-forwarder.observed
+	if header.VisitorConnectionID != entry.VisitorConnectionID {
+		t.Fatal("opening changed the proof-bound visitor")
+	}
 }
 
 func TestConnectorSNIMapSelectsIndependentMuxHandlers(t *testing.T) {
@@ -327,12 +435,14 @@ func TestConnectorSNIMapSelectsIndependentMuxHandlers(t *testing.T) {
 	second, secondControl, _, _, _, _ := privateTestSetup(t)
 	secondTLS, secondRoots := serviceCertificate(t, "ingress-b.test")
 	configuration := second.config
+	prepared := second.prepared
 	configuration.Hostname, configuration.TLSConfig = "ingress-b.test", secondTLS
 	var err error
 	second, err = NewConnector(configuration)
 	if err != nil {
 		t.Fatal(err)
 	}
+	second.prepared = prepared
 	firstControl.sourceIP, secondControl.sourceIP = "127.0.0.1", "127.0.0.1"
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -439,16 +549,13 @@ func TestConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	stream = wrapNativeTestStream(stream)
 	defer stream.Close()
 	if err = stream.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
-	}
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
-	if err != nil || accepted.SourceIP != control.sourceIP {
-		t.Fatalf("QUIC visitor metadata: %+v %v", accepted, err)
 	}
 	if _, err = stream.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
@@ -456,6 +563,10 @@ func TestConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *testing.T) 
 	var reply [4]byte
 	if _, err = io.ReadFull(stream, reply[:]); err != nil || string(reply[:]) != "pong" {
 		t.Fatalf("QUIC visitor stream: %q %v", reply, err)
+	}
+	header := <-forwarder.observed
+	if header.SourceIP != control.sourceIP || header.Connector.Subject != control.subject() {
+		t.Fatal("QUIC forwarding changed source or subject")
 	}
 }
 
@@ -467,8 +578,6 @@ func privateTestHello(control *privateControlFixture, session, credential string
 func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
 	forwarder.failFirst = true
-	control.claimStarted = make(chan struct{}, 1)
-	control.allowClaim = make(chan struct{})
 	session, stop := privateTestConnect(t, connector, control, tlsConfig)
 	defer stop()
 	stream, err := session.OpenStream(t.Context())
@@ -478,7 +587,7 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	defer stream.Close()
 	wrong := privateEntry(control)
 	wrong.ServiceID = privateTestID(t, opaqueid.ServicePrefix)
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream, wrong); err != nil {
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, wrong, nil); err != nil {
 		t.Fatal(err)
 	}
 	var one [1]byte
@@ -494,23 +603,11 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream2.Close()
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream2, privateEntry(control)); err != nil {
+	entry := privateEntry(control)
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream2, entry, nil); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-control.claimStarted:
-	case <-time.After(time.Second):
-		t.Fatal("stream authorization not reached")
-	}
-	if forwarder.count() != 0 {
-		t.Fatal("forwarded before stream authorization")
-	}
-	close(control.allowClaim)
 	_ = stream2.SetReadDeadline(time.Now().Add(2 * time.Second))
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream2)
-	if err != nil || accepted.Subject != control.subject() || accepted.SourceIP != "192.0.2.4" {
-		t.Fatalf("claimed visitor acceptance: %+v, %v", accepted, err)
-	}
 	if _, err := stream2.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +621,7 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	}
 	select {
 	case header := <-forwarder.observed:
-		if header.VisitorConnectionID != accepted.VisitorConnectionID || header.Connector.SessionID != control.session || header.Connector.Subject != control.subject() || header.Connector.GrantRevision != 1 {
+		if header.VisitorConnectionID != entry.VisitorConnectionID || header.SourceIP != "192.0.2.4" || header.Connector.SessionID != control.session || header.Connector.Subject != control.subject() || header.Connector.GrantRevision != 1 {
 			t.Fatalf("forwarded binding=%+v", header)
 		}
 	case <-time.After(time.Second):
@@ -532,6 +629,12 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	}
 	if forwarder.count() != 2 {
 		t.Fatalf("failover before first visitor byte = %d opens, want 2", forwarder.count())
+	}
+	if got := control.routingReads.Load(); got != 2 {
+		t.Fatalf("visitor triggered routing RPCs: reads=%d, want two startup reads", got)
+	}
+	if control.sessionClaims.Load() != 1 {
+		t.Fatal("prepared visitor contacted online admission")
 	}
 }
 
@@ -545,13 +648,10 @@ func TestConnectorNeverReplaysAfterVisitorByte(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-		t.Fatal(err)
-	}
 	_, _ = stream.Write([]byte("ping"))
 	select {
 	case <-forwarder.data:
@@ -605,7 +705,7 @@ func TestConnectorBlocksVisitorStreamsBeforeDeviceAuthentication(t *testing.T) {
 		t.Fatal("outer credential not checked")
 	}
 	// the session control stream must authenticate before a visitor is served.
-	if forwarder.count() != 0 || control.claims != 0 {
+	if forwarder.count() != 0 {
 		t.Fatal("visitor reached forwarding before outer authentication")
 	}
 	close(control.outerGate)
@@ -670,7 +770,7 @@ func TestConnectorRefusesPublicTunnelALPN(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("unmatched ALPN blocked ingress")
 	}
-	if control.claims != 0 || forwarder.count() != 0 {
+	if control.sessionClaims.Load() != 0 || forwarder.count() != 0 {
 		t.Fatal("unmatched ALPN reached private control or relay")
 	}
 }
@@ -685,7 +785,6 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 		}
 		return current
 	}
-	control.claimStarted, control.allowClaim = make(chan struct{}, 1), make(chan struct{})
 	session, stop := privateTestConnect(t, connector, control, tlsConfig)
 	defer stop()
 	stream, err := session.OpenStream(t.Context())
@@ -693,18 +792,18 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+	var opening bytes.Buffer
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(&opening, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-control.claimStarted:
-	case <-time.After(time.Second):
-		t.Fatal("stream authorization never started")
+	raw := stream.(*nativeTestStream).Stream
+	if _, err := raw.Write(opening.Bytes()[:opening.Len()-4]); err != nil {
+		t.Fatal(err)
 	}
 	lost.Store(true)
-	close(control.allowClaim)
+	_, _ = raw.Write(opening.Bytes()[opening.Len()-4:])
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
+	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("accepted a visitor on a stale ingress lease")
 	}
 	if forwarder.count() != 0 {
@@ -715,7 +814,12 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 func TestConnectorRejectsStaleRunProjectionAfterAuthorization(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
 	other := privateTestID(t, opaqueid.ServiceRunPrefix)
-	control.projection.ServiceRunId = &other
+	projection := clonePrivateProjection(control.projection)
+	projection.ServiceRunId = &other
+	projection.Revision = 2
+	if err := connector.config.Routing.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{projection}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	session, stop := privateTestConnect(t, connector, control, tlsConfig)
 	defer stop()
 	stream, err := session.OpenStream(t.Context())
@@ -723,11 +827,11 @@ func TestConnectorRejectsStaleRunProjectionAfterAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
+	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("accepted stale private run")
 	}
 	if forwarder.count() != 0 {
@@ -745,15 +849,11 @@ func privateActiveStream(t *testing.T, connector *Connector, control *privateCon
 		stop()
 		t.Fatal(err)
 	}
-	if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 		stop()
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-		stop()
-		t.Fatal(err)
-	}
 	if _, err := stream.Write([]byte("ping")); err != nil {
 		stop()
 		t.Fatal(err)
@@ -769,14 +869,9 @@ func privateActiveStream(t *testing.T, connector *Connector, control *privateCon
 
 func TestPrivateLiveVisitorClosesOnExplicitDenial(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 150 * time.Millisecond
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	control.mu.Lock()
-	control.deny = true
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) { update.Enabled = false; update.View.VisitorPolicyRevision++ })
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
 	if _, err := stream.Read(one[:]); err == nil {
@@ -787,21 +882,15 @@ func TestPrivateLiveVisitorClosesOnExplicitDenial(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay copy not joined after denial")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("recheck worker remained active after denial")
-	}
 }
 
 func TestPrivateLiveVisitorHardDeadlineOnControlOutage(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 125 * time.Millisecond
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	control.mu.Lock()
-	control.recheckErr = errors.New("control is unavailable")
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		update.View.ValidUntil = update.View.ObservedAt.Add(125 * time.Millisecond)
+	})
 	started := time.Now()
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
@@ -811,40 +900,20 @@ func TestPrivateLiveVisitorHardDeadlineOnControlOutage(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < 35*time.Millisecond || elapsed > 300*time.Millisecond {
 		t.Fatalf("outage stream closed after %v, want bounded grace period", elapsed)
 	}
-	control.mu.Lock()
-	checks := control.rechecks
-	control.mu.Unlock()
-	if checks < 2 {
-		t.Fatalf("outage did not retry live authorization: %d checks", checks)
+	if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 {
+		t.Fatal("active native visitor polled control during outage")
 	}
 	select {
 	case <-forwarder.relayDone:
 	case <-time.After(time.Second):
 		t.Fatal("relay copy not joined at hard deadline")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("outage left a recheck worker running")
-	}
 }
 
-func TestPrivateLiveVisitorCancellationJoinsBlockedRecheckAndCopy(t *testing.T) {
+func TestPrivateLiveVisitorCancellationJoinsBlockedFrameReaderAndCopy(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 120 * time.Millisecond
-	connector.config.RecheckTimeout = 100 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 350 * time.Millisecond
-	control.recheckStarted = make(chan struct{}, 1)
-	control.recheckGate = make(chan struct{})
 	_, _, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		stop()
-		t.Fatal("recheck never started")
-	}
 	stop()
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("blocked recheck survived connector close")
-	}
 	select {
 	case <-forwarder.relayDone:
 	case <-time.After(time.Second):
@@ -854,9 +923,6 @@ func TestPrivateLiveVisitorCancellationJoinsBlockedRecheckAndCopy(t *testing.T) 
 
 func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 250 * time.Millisecond
 	control.sessionDuration = 120 * time.Millisecond
 	control.nextSession = privateTestID(t, opaqueid.ConnectorSessionPrefix)
 	oldSession, oldStream, stopOld := privateActiveStream(t, connector, control, forwarder, tlsConfig)
@@ -880,8 +946,8 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 	}
 	defer newOnOld.Close()
 	_ = newOnOld.SetDeadline(time.Now().Add(time.Second))
-	if err := tunnelv1.WriteConnectorVisitorEntry(newOnOld, privateEntry(control)); err == nil {
-		if _, err := tunnelv1.ReadConnectorVisitorAccepted(newOnOld); err == nil {
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(newOnOld, privateEntry(control), nil); err == nil {
+		if _, err := newOnOld.Read(make([]byte, 1)); err == nil {
 			t.Fatal("expired session admitted new visitor stream")
 		}
 	}
@@ -892,21 +958,21 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 		t.Fatal(err)
 	}
 	defer newStream.Close()
-	entry := privateEntry(control)
-	if err := tunnelv1.WriteConnectorVisitorEntry(newStream, entry); err != nil {
+	entry := privateEntry(control, control.nextSession)
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(newStream, entry, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = newStream.SetReadDeadline(time.Now().Add(time.Second))
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(newStream)
-	if err != nil || accepted.ConnectorSessionID != control.nextSession || accepted.VisitorConnectionID == oldHeader.VisitorConnectionID {
-		t.Fatalf("rotated session reused old visitor: %+v: %v", accepted, err)
-	}
 	if _, err := newStream.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
 	var reply [4]byte
 	if _, err := io.ReadFull(newStream, reply[:]); err != nil || string(reply[:]) != "pong" {
 		t.Fatalf("new session did not serve new visitor: %q: %v", reply, err)
+	}
+	header := <-forwarder.observed
+	if header.Connector.SessionID != control.nextSession || header.VisitorConnectionID == oldHeader.VisitorConnectionID {
+		t.Fatal("rotated session reused old visitor")
 	}
 	if _, err := oldStream.Write([]byte("more")); err != nil {
 		t.Fatalf("new session migrated or closed old visitor: %v", err)
@@ -929,28 +995,21 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 	}
 }
 
-func TestPrivateLiveVisitorOutageEndsAtEarlierGrantDeadline(t *testing.T) {
+func TestPrivateLiveVisitorOutageEndsAtEarlierAllocationDeadline(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 250 * time.Millisecond
-	control.recheckStarted = make(chan struct{}, 1)
-	control.recheckValidUntil = time.Now().Add(135 * time.Millisecond)
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		t.Fatal("soon-expiring grant was not rechecked")
-	}
-	control.mu.Lock()
-	control.recheckErr = errors.New("control unavailable after last grant check")
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		for id, allocation := range update.Allocations {
+			allocation.ValidUntil = time.Now().Add(135 * time.Millisecond)
+			update.Allocations[id] = allocation
+		}
+	})
 	started := time.Now()
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
 	if _, err := stream.Read(one[:]); err == nil {
-		t.Fatal("visitor survived grant hard deadline during outage")
+		t.Fatal("visitor survived allocation hard deadline during outage")
 	}
 	if elapsed := time.Since(started); elapsed > 190*time.Millisecond {
 		t.Fatalf("grant hard deadline ignored for %v", elapsed)
@@ -960,15 +1019,16 @@ func TestPrivateLiveVisitorOutageEndsAtEarlierGrantDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stream worker survived grant expiry")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("recheck survived grant expiry")
-	}
 }
 
-func TestPrivateLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) {
+func TestPrivateLiveVisitorOutageHonorsInitialAllocationDeadline(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	control.initialValidUntil = time.Now().Add(175 * time.Millisecond)
-	control.recheckErr = errors.New("control unavailable immediately after stream authorization")
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		for id, allocation := range update.Allocations {
+			allocation.ValidUntil = time.Now().Add(175 * time.Millisecond)
+			update.Allocations[id] = allocation
+		}
+	})
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
 	started := time.Now()
@@ -985,32 +1045,26 @@ func TestPrivateLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay copy remained after initial deadline")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("initial grant expiry left a recheck running")
-	}
-	control.mu.Lock()
-	defer control.mu.Unlock()
-	if control.rechecks < 2 {
-		t.Fatalf("default scheduling did not retry before the initial deadline: %d", control.rechecks)
+	if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 {
+		t.Fatal("native allocation expiry polled control")
 	}
 }
 
 func TestPrivateLiveVisitorDefaultsRefreshShortInitialLease(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	control.initialValidUntil = time.Now().Add(250 * time.Millisecond)
-	control.recheckStarted = make(chan struct{}, 1)
+	initialDeadline := time.Now().Add(250 * time.Millisecond)
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) { update.View.ValidUntil = initialDeadline })
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		t.Fatal("default interval missed the initial lease deadline")
-	}
-	_ = stream.SetReadDeadline(control.initialValidUntil.Add(100 * time.Millisecond))
+	time.Sleep(100 * time.Millisecond)
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		update.View.ValidUntil = update.View.ObservedAt.Add(2 * time.Second)
+	})
+	_ = stream.SetReadDeadline(initialDeadline.Add(100 * time.Millisecond))
 	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("unexpected bytes")
 	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
-		t.Fatalf("successful recheck did not preserve the original stream: %v", err)
+		t.Fatalf("background policy refresh did not preserve the original stream: %v", err)
 	}
 }
 

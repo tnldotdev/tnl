@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -129,7 +130,35 @@ func (r visitorResource) permission(subject visitortoken.Subject, until, now tim
 // scoped permission model and current authentication facts, then records signing
 // key retention in the same transaction. serving processes never call this while
 // admitting a prepared visitor connection or request.
-func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (IssuedVisitorToken, error) {
+	for attempt := range 8 {
+		if attempt > 0 {
+			now = time.Now()
+		}
+		issued, err := d.issueVisitorTokenTransaction(ctx, issuer, scope, source, now)
+		if err == nil || !retryableVisitorTokenTransaction(err) || attempt == 7 {
+			return issued, err
+		}
+		// retry the entire repeatable-read decision against fresh authority facts.
+		// sharing one signing key with other preparers cannot turn a safe
+		// serialization conflict into a visitor-facing internal error.
+		timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return IssuedVisitorToken{}, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
+	return IssuedVisitorToken{}, ErrVisitorSigningKey
+}
+
+func retryableVisitorTokenTransaction(err error) bool {
+	var postgres *pgconn.PgError
+	return errors.As(err, &postgres) && (postgres.Code == "40001" || postgres.Code == "40P01")
+}
+
+func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err

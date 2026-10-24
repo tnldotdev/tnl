@@ -28,6 +28,93 @@ func fixture(t *testing.T) (*Lease, Update, ed25519.PrivateKey) {
 	return lease, update, key
 }
 
+func TestPolicyFutureRenewalWaitsForCoverageWithoutExtendingPriorDeadline(t *testing.T) {
+	for _, covered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "uncovered", true: "covered"}[covered], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				lease, update, key := fixture(t)
+				if err := lease.Apply(lease.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
+				permission := admission(t, lease, key, "first", time.Now().Add(time.Minute))
+				var stopped atomic.Int64
+				guard, err := lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer guard.Close()
+				if err := guard.AllowRenewal(); err != nil {
+					t.Fatal(err)
+				}
+				prior, err := guard.Deadline()
+				if err != nil {
+					t.Fatal(err)
+				}
+				future := permission
+				future.VisitorPolicyRevision = 2
+				future.ExpiresAt = time.Now().Add(2 * time.Minute)
+				if err := guard.Renew(future); err != nil {
+					t.Fatal("verified future permission could not wait for policy", err)
+				}
+				if got, err := guard.Deadline(); err != nil || !got.Equal(prior) {
+					t.Fatal("pending renewal extended old authority", err)
+				}
+				time.Sleep(2 * time.Second)
+				update.View.ObservedAt, update.View.ValidUntil = time.Now(), time.Now().Add(10*time.Second)
+				if covered {
+					update.View.VisitorPolicyRevision = 2
+				}
+				if err := lease.Apply(lease.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
+				deadline, err := guard.Deadline()
+				if err != nil || covered && !deadline.After(prior) || !covered && !deadline.Equal(prior) {
+					t.Fatal("policy coverage did not govern renewal activation", err)
+				}
+				time.Sleep(8*time.Second + time.Millisecond)
+				synctest.Wait()
+				if (stopped.Load() == 0) != covered {
+					t.Fatal("future permission revived or extended an uncovered admission")
+				}
+				if !covered && guard.Renew(future) == nil {
+					t.Fatal("late renewal revived expired traffic")
+				}
+			})
+		})
+	}
+}
+
+func TestPolicyNativeMetadataFenceRejectsPendingRenewal(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, key := fixture(t)
+		update.View.MetadataRevision = 1
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		permission := admission(t, lease, key, "first", time.Now().Add(time.Minute))
+		var stopped atomic.Int64
+		guard, err := lease.BindNative(permission, netip.MustParseAddr("192.0.2.1"), 1, func() { stopped.Add(1) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		if err := guard.AllowRenewal(); err != nil {
+			t.Fatal(err)
+		}
+		permission.VisitorPolicyRevision = 2
+		if err := guard.Renew(permission); err != nil {
+			t.Fatal(err)
+		}
+		update.View.MetadataRevision, update.View.VisitorPolicyRevision = 2, 2
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		if stopped.Load() != 1 {
+			t.Fatal("permission renewal moved an active stream to changed service metadata")
+		}
+	})
+}
+
 func admission(t *testing.T, lease *Lease, key ed25519.PrivateKey, id string, expires time.Time) visitortoken.Permission {
 	t.Helper()
 	view, enabled, _ := lease.Current()

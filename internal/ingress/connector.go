@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -14,10 +15,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -29,9 +30,6 @@ var ErrServiceAdmission = errors.New("ingress: private connector admission denie
 
 type PrivateControl interface {
 	ClaimConnectorSession(context.Context, string, ingressv1.ConnectorSessionClaim) (ingressv1.ConnectorSessionResult, error)
-	AuthorizeServiceStream(context.Context, string, ingressv1.ServiceStreamClaim) (ingressv1.ServiceStreamResult, error)
-	CloseServiceStream(context.Context, string, string, ingressv1.CloseServiceStreamJSONRequestBody) error
-	RecheckServiceVisitor(context.Context, string, ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error)
 	GetServiceSnapshot(context.Context, string, ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error)
 	GetServiceEvents(context.Context, string, ingressv1.GetServiceEventsParams) (ingressv1.ServiceSnapshot, error)
 }
@@ -44,12 +42,14 @@ type ServiceForwarder interface {
 }
 
 type ConnectorConfig struct {
+	Report                                                       func(error)
 	AuditSink                                                    serviceaudit.Sink
 	Hostname                                                     string
 	IngressPoolID                                                string
 	TLSConfig                                                    *tls.Config
 	Transport                                                    muxsession.TLSYamuxConfig
 	Control                                                      PrivateControl
+	VisitorControl                                               VisitorPreparationControl
 	DirectControl                                                DirectControl
 	Forwarder                                                    ServiceForwarder
 	Routing                                                      *ServiceRoutingTable
@@ -73,6 +73,11 @@ type Connector struct {
 	changed                   chan struct{}
 	closed                    bool
 	nextRelay                 atomic.Uint64
+	prepared                  map[string]*preparedVisitorRun
+	lastPreparationReport     time.Time
+	preparationStarted        bool
+	stopPreparation           context.CancelFunc
+	preparationDone           chan struct{}
 }
 
 func NewConnector(config ConnectorConfig) (*Connector, error) {
@@ -126,7 +131,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 		config.IngressPoolID = "ingress-a"
 	}
 	return &Connector{config: config, services: make(map[string]int), sources: make(map[netip.Addr]int),
-		transports: make(map[muxsession.Session]struct{}), admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
+		transports: make(map[muxsession.Session]struct{}), prepared: make(map[string]*preparedVisitorRun), admissions: admissions, stopAdmissions: stop, changed: make(chan struct{})}, nil
 }
 
 func (p *Connector) lease(now time.Time) (ingressv1.IngressLease, error) {
@@ -193,14 +198,21 @@ func (p *Connector) Close() error {
 	p.stopAdmissions()
 	p.mu.Lock()
 	p.closed = true
+	stopPreparation, preparationDone := p.stopPreparation, p.preparationDone
 	sessions := make([]muxsession.Session, 0, len(p.transports))
 	for session := range p.transports {
 		sessions = append(sessions, session)
 	}
 	p.mu.Unlock()
+	if stopPreparation != nil {
+		stopPreparation()
+	}
 	var result error
 	for _, session := range sessions {
 		result = errors.Join(result, session.Close())
+	}
+	if preparationDone != nil {
+		<-preparationDone
 	}
 	return result
 }
@@ -392,6 +404,17 @@ func (p *Connector) AcceptSession(ctx context.Context, transport muxsession.Sess
 			!bound.ExpiresAt.After(time.Now()) {
 			return tunnelv1.ConnectorSessionAccepted{}, ErrServiceAdmission
 		}
+		// the background owner is already discovering service runs. session
+		// startup may wait for it, but stream arrivals cannot initiate fetching.
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for !p.servicePolicyReady(bound.ServiceId, hello.Subject) {
+			select {
+			case <-authCtx.Done():
+				return tunnelv1.ConnectorSessionAccepted{}, context.Cause(authCtx)
+			case <-ticker.C:
+			}
+		}
 		authenticated = lease
 		return tunnelv1.ConnectorSessionAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_session_accepted", ServiceID: bound.ServiceId,
 			SessionID: bound.ConnectorSessionId, Subject: hello.Subject, SourceIP: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt}, nil
@@ -561,17 +584,14 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if err := visitor.SetDeadline(deadline); err != nil {
 		return err
 	}
-	entry, err := tunnelv1.ReadConnectorVisitorEntry(visitor)
+	entry, initial, err := tunnelv1.ReadConnectorVisitorOpening(visitor)
 	if err != nil {
 		return ErrServiceAdmission
 	}
 	ctx = observability.ExtractWireTrace(ctx, entry.TraceContext)
 	ctx, finishConnection := observability.Start(ctx, "ingress.connector_visitor_connection")
 	defer func() { finishConnection(retErr) }()
-	visitorID, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	if err != nil {
-		return err
-	}
+	visitorID := entry.VisitorConnectionID
 	ctx = observability.WithVisitor(ctx, visitorID)
 	observability.Visitor(ctx, visitorID)
 	audit, auditErr := serviceaudit.NewPrivateSessionDenial(bound, visitorID)
@@ -587,6 +607,62 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if !bound.ExpiresAt.After(time.Now()) || entry.RunNumber > uint64(^uint64(0)>>1) {
 		return ErrServiceAdmission
 	}
+	if entry.ServiceID != bound.ServiceId {
+		return ErrServiceAdmission
+	}
+	p.mu.Lock()
+	prepared := p.prepared[entry.ServiceRunID]
+	p.mu.Unlock()
+	if prepared == nil {
+		return ErrServiceAdmission
+	}
+	view, enabled, _ := prepared.policy.lease.Current()
+	subject, subjectErr := visitorsubject.Parse(bound.Subject)
+	public, keyErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.PublicKey)
+	signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
+	if !enabled || view.Scope.ID != entry.ServiceID || subjectErr != nil || keyErr != nil || signatureErr != nil {
+		return ErrServiceAdmission
+	}
+	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, initial, public, signature, time.Now())
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	ctx, stopNative := context.WithCancel(ctx)
+	defer stopNative()
+	guard, err := prepared.policy.lease.BindNative(permission, source.Addr().Unmap(), int64(entry.MetadataRevision), stopNative)
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	defer guard.Close()
+	if err := guard.AllowRenewal(); err != nil {
+		return ErrServiceAdmission
+	}
+	var backendRequests *tunnel.NativeRequestWriter
+	request := tunnel.NewNativeRequestReader(visitor, nil, func(proof tunnelv1.NativeVisitorPermission) error {
+		view, enabled, _ := prepared.policy.lease.Current()
+		public, keyErr := base64.RawURLEncoding.Strict().DecodeString(proof.PublicKey)
+		signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(proof.Signature)
+		if !enabled || keyErr != nil || signatureErr != nil {
+			return ErrServiceAdmission
+		}
+		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, nil, public, signature, time.Now())
+		if err != nil || next.Subject != permission.Subject {
+			return ErrServiceAdmission
+		}
+		if err := guard.Renew(next); err != nil {
+			return err
+		}
+		if backendRequests == nil {
+			return ErrServiceAdmission
+		}
+		return backendRequests.Renew(proof)
+	})
+	reservation, reservationGuard, err := prepared.reserve(visitorID, source.Addr().Unmap(), stopNative)
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	defer reservation.Close()
+	defer reservationGuard.Close()
 	if !admission.selectService(entry.ServiceID) {
 		audit.Reason = "capacity"
 		return ErrServiceAdmission
@@ -597,51 +673,24 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	}
 	streamCtx, stop := context.WithDeadline(ctx, deadline)
 	defer stop()
-	authorizationCtx, endAuthorization := observability.Start(streamCtx, "ingress.visitor_authorization")
-	claimed, err := p.config.Control.AuthorizeServiceStream(authorizationCtx, lease.IngressId, ingressv1.ServiceStreamClaim{
-		IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
-		ServiceId: entry.ServiceID, ServiceRunId: entry.ServiceRunID, RunNumber: int64(entry.RunNumber),
-		ConnectorSessionId: bound.ConnectorSessionId, ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitorID,
-	})
-	endAuthorization(err)
-	if err != nil {
-		return err
-	}
-	claimedAt := time.Now()
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), p.config.RecheckTimeout)
-		defer cancel()
-		_ = p.config.Control.CloseServiceStream(closeCtx, lease.IngressId, visitorID, ingressv1.CloseServiceStreamJSONRequestBody{
-			IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, ConnectorSessionId: bound.ConnectorSessionId})
-	}()
-	if claimed.ServiceId != entry.ServiceID || claimed.ServiceRunId != entry.ServiceRunID || !visitorsubject.Same(claimed.Subject, bound.Subject) || claimed.GrantRevision < 1 ||
-		claimed.RunNumber != int64(entry.RunNumber) || claimed.ConnectorSessionId != bound.ConnectorSessionId ||
-		claimed.ObservedSourceIp != source.Addr().Unmap().String() ||
-		claimed.VisitorConnectionId != visitorID || !claimed.ExpiresAt.After(time.Now()) ||
-		!claimed.ValidUntil.After(time.Now()) || claimed.ValidUntil.After(claimedAt.Add(2*time.Minute+time.Second)) {
+	audit, auditErr = serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission, "connection.open", "denied", "authorization")
+	current, err = p.lease(time.Now())
+	if err != nil || !samePrivateLease(current, lease) {
 		return ErrServiceAdmission
 	}
-	audit, auditErr = serviceaudit.NewPrivateStreamObservation(bound, claimed, "connection.open", "denied", "authorization")
-	routingCtx, endRouting := observability.Start(streamCtx, "ingress.routing_refresh")
-	err = p.refreshRouting(routingCtx, lease)
-	endRouting(err)
-	if err != nil {
-		audit.Outcome, audit.Reason = "failed", "unavailable"
-		return err
-	}
-	projection, ok := p.config.Routing.Lookup(entry.ServiceID, entry.ServiceRunID, int64(entry.RunNumber), time.Now())
+	projection, ok := p.ServiceRoute(entry.ServiceID, entry.ServiceRunID, int64(entry.RunNumber), time.Now())
 	if !ok {
 		return ErrServiceAdmission
 	}
+	validUntil, err := guard.Deadline()
+	if err != nil {
+		return ErrServiceAdmission
+	}
+	validUntil = privateMinTime(validUntil, projection.ExpiresAt)
 	if !bound.ExpiresAt.After(time.Now()) || !admission.promote() {
 		audit.Reason = "capacity"
 		return ErrServiceAdmission
 	}
-	accepted := tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted",
-		ConnectorSessionID: bound.ConnectorSessionId,
-		SourceIP:           claimed.ObservedSourceIp, VisitorConnectionID: visitorID}
-	accepted.Subject, _ = visitorsubject.Parse(claimed.Subject)
-	accepted.GrantRevision = uint64(claimed.GrantRevision)
 	proxy, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
 	if err != nil {
 		return err
@@ -649,16 +698,17 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	first := int((p.nextRelay.Add(1) - 1) % uint64(len(*projection.ConnectedRelays)))
 	for attempt := range *projection.ConnectedRelays {
 		relay := (*projection.ConnectedRelays)[(first+attempt)%len(*projection.ConnectedRelays)]
-		if !relay.LeaseExpiresAt.After(time.Now()) || !claimed.ExpiresAt.After(time.Now()) {
+		if !relay.LeaseExpiresAt.After(time.Now()) || !validUntil.After(time.Now()) {
 			continue
 		}
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 			ServiceID: entry.ServiceID, ServiceRunID: entry.ServiceRunID, RunNumber: entry.RunNumber,
-			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, Subject: accepted.Subject, GrantRevision: uint64(claimed.GrantRevision)}, SourceIP: claimed.ObservedSourceIp,
+			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, Subject: subject, GrantRevision: uint64(permission.VisitorPolicyRevision)}, SourceIP: bound.ObservedSourceIp,
 			VisitorConnectionID: visitorID, PublisherConnectionID: relay.PublisherConnectionId,
 			ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
-			ExpiresAt:                    claimed.ExpiresAt,
+			ExpiresAt:                    validUntil,
+			Reservation:                  reservation.header,
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId,
 			RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		if err := header.Validate(); err != nil {
@@ -670,15 +720,24 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if err != nil {
 			continue
 		}
-		if !claimed.ValidUntil.After(time.Now()) {
+		if !validUntil.After(time.Now()) {
 			_ = candidate.Close()
 			return ErrServiceAdmission
 		}
-		accepted.PublisherConnectionID, accepted.ConnectionAssignmentRevision = relay.PublisherConnectionId, uint64(relay.ConnectionAssignmentRevision)
-		if err := tunnelv1.WriteConnectorVisitorAccepted(visitor, accepted); err != nil {
+		// the exact signed opening reaches the publisher unchanged. native
+		// renewals and data stay framed after it until publisher verification.
+		var opening bytes.Buffer
+		if _, err := tunnelv1.WriteConnectorVisitorOpening(&opening, entry, initial); err != nil {
 			_ = candidate.Close()
 			return err
 		}
+		_, openingErr := writeSetup(streamCtx, candidate, opening.Bytes(), nil)
+		clear(opening.Bytes())
+		if openingErr != nil {
+			_ = candidate.Close()
+			return openingErr
+		}
+		backendRequests = tunnel.NewNativeRequestWriter(candidate)
 		if err := visitor.SetDeadline(time.Time{}); err != nil {
 			_ = candidate.Close()
 			return err
@@ -696,12 +755,12 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if auditErr == nil {
 			serviceaudit.Emit(p.config.AuditSink, audit)
 		}
-		err = p.copyLivePrivateVisitor(ctx, visitor, candidate, lease, bound, claimed, source, claimedAt)
+		err = copyLiveNativeVisitor(ctx, request, backendRequests)
 		outcome, reason := "closed", "closed"
 		if err != nil {
 			outcome, reason = "failed", "authorization"
 		}
-		if closed, auditErr := serviceaudit.NewPrivateStreamObservation(bound, claimed, "connection.close", outcome, reason); auditErr == nil {
+		if closed, auditErr := serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission, "connection.close", outcome, reason); auditErr == nil {
 			serviceaudit.Emit(p.config.AuditSink, closed)
 		}
 		return err

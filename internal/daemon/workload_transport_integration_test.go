@@ -1,11 +1,11 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -694,11 +695,24 @@ func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, t
 	}
 	defer stream.Close()
 	run, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service, ServiceRunID: run, RunNumber: 1}); err != nil {
+	permission, err := job.PrepareVisitorToken(t.Context(), service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(permission.VisitorToken), hello.SessionID, visitor, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service, ServiceRunID: run, RunNumber: 1, VisitorConnectionID: visitor, MetadataRevision: 1,
+		Permission: tunnelv1.NativeVisitorPermission{Token: permission.VisitorToken, PublicKey: base64.RawURLEncoding.EncodeToString(signer.PublicKey), Signature: base64.RawURLEncoding.EncodeToString(job.Sign(message))}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
-	if _, err = tunnelv1.ReadConnectorVisitorAccepted(bufio.NewReader(stream)); err == nil {
+	if _, err = stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("spoofed run admitted")
 	}
 }

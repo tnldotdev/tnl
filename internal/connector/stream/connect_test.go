@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -48,6 +50,7 @@ type connectorFixture struct {
 	finished         chan struct{}
 	serveErr         error
 	wantStartupError bool
+	wantStopReason   failure.Reason
 	config           Config
 	reuseIDs         [2]string
 	assignments      [2]atomic.Int64
@@ -116,6 +119,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		run:     Run{ServiceID: connectorID(t, opaqueid.ServicePrefix), ServiceRunID: connectorID(t, opaqueid.ServiceRunPrefix), RunNumber: 3, ValidUntil: now.Add(time.Minute), Protocol: "tcp", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example", Port: 25443}},
 		expires: now.Add(time.Minute)}
 	f.target = target
+	f.run.Permission = fixtureVisitorPermission(f.run)
 	root, certificate := providerCertificate(t)
 	f.certificate = certificate
 	_, f.badCertificate = testCertificateForUses(t, []string{"other.example"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
@@ -204,6 +208,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	if configure != nil {
 		configure(f, &configuration)
 	}
+	f.run.Permission = fixtureVisitorPermission(f.run)
 	f.config = configuration
 	go func() {
 		f.serveErr = Serve(ctx, listener, configuration)
@@ -214,7 +219,8 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		select {
 		case <-f.finished:
 			var reload *MetadataReloadError
-			if f.serveErr != nil && !f.wantStartupError && !errors.As(f.serveErr, &reload) {
+			reason, _ := failure.ReasonOf(f.serveErr)
+			if f.serveErr != nil && !f.wantStartupError && !errors.As(f.serveErr, &reload) && (f.wantStopReason == "" || reason != f.wantStopReason) {
 				t.Errorf("connector shutdown: %v", f.serveErr)
 			}
 		case <-time.After(3 * time.Second):
@@ -286,7 +292,7 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 
 func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream, session tunnelv1.ConnectorSessionAccepted) {
 	_ = stream.SetDeadline(time.Now().Add(3 * time.Second))
-	entry, err := tunnelv1.ReadConnectorVisitorEntry(stream)
+	entry, initial, err := tunnelv1.ReadConnectorVisitorOpening(stream)
 	if err != nil {
 		return
 	}
@@ -297,24 +303,33 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		return
 	}
 	f.opened.Add(1)
-	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	connection, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-	accepted := tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted", ConnectorSessionID: session.SessionID, Subject: session.Subject,
-		SourceIP: session.SourceIP, VisitorConnectionID: visitor, GrantRevision: 7, PublisherConnectionID: connection, ConnectionAssignmentRevision: 2}
-	if f.wrongAdmission.Load() {
-		accepted.Subject.DeviceID = "vdev_bbbbbbbbbbbbbbbbbbbbbb"
-	}
-	if tunnelv1.WriteConnectorVisitorAccepted(stream, accepted) != nil {
+	if f.wrongAdmission.Load() || session.Subject != f.device.Subject {
 		return
 	}
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(entry.Permission.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, initial)
+	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
+	if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
+		return
+	}
+	if run.Protocol == "tcp" && len(initial) == 0 {
+		return
+	}
+	request := tunnel.NewNativeRequestReader(stream, initial, func(p tunnelv1.NativeVisitorPermission) error {
+		message, err := visitortoken.NativeProofMessage(visitortoken.Token(p.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+		signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(p.Signature)
+		if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
+			return ErrServiceConnection
+		}
+		return nil
+	})
 	certificate := f.certificate
 	if f.wrongCertificate.Load() {
 		certificate = f.badCertificate
 	}
 	switch run.Protocol {
 	case "postgres":
-		var request [8]byte
-		if _, err := io.ReadFull(stream, request[:]); err != nil || request != targettransport.PostgresSSLRequest {
+		var requestBytes [8]byte
+		if _, err := io.ReadFull(request, requestBytes[:]); err != nil || requestBytes != targettransport.PostgresSSLRequest {
 			return
 		}
 		if _, err := stream.Write([]byte{'S'}); err != nil {
@@ -333,11 +348,11 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		if _, err := stream.Write(greeting); err != nil {
 			return
 		}
-		if _, err := targettransport.ReadMySQLPacket(stream, 64<<10); err != nil {
+		if _, err := targettransport.ReadMySQLPacket(request, 64<<10); err != nil {
 			return
 		}
 	}
-	secure := tls.Server(stream, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
+	secure := tls.Server(request, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
 	if secure.HandshakeContext(ctx) != nil {
 		return
 	}
@@ -419,7 +434,11 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 							f.wrongCertificate.Store(outcome == "wrong-tls")
 							f.denied.Store(outcome == "denied")
 						})
-						if f.application.Load() != 0 || f.assignments[0].Load() != 1 || f.assignments[1].Load() != 1 {
+						wantAssignments := int64(1)
+						if outcome == "denied" {
+							wantAssignments = 0
+						}
+						if f.application.Load() != 0 || f.assignments[0].Load() != wantAssignments || f.assignments[1].Load() != wantAssignments {
 							t.Fatal("readiness sent application bytes or bypassed the two assigned paths")
 						}
 						if outcome != "ready" {
@@ -438,15 +457,24 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 						if _, err := io.ReadFull(local, got); err != nil || string(got) != "native" {
 							t.Fatal("native bytes", err)
 						}
-						// a new local stream must recheck access after readiness.
+						// background preparation fences the listener and its active work;
+						// a later socket cannot initiate another control check.
 						f.denied.Store(true)
-						denied, err := net.DialTimeout("tcp", f.localAddress, time.Second)
-						if err != nil {
-							t.Fatal(err)
+						f.wantStopReason = failure.ServerDenied
+						select {
+						case <-f.finished:
+						case <-time.After(3 * time.Second):
+							t.Fatal("background denial retained a ready listener")
 						}
-						defer denied.Close()
-						_ = denied.SetDeadline(time.Now().Add(time.Second))
-						if _, err := denied.Read(make([]byte, 1)); err == nil || f.opened.Load() != 1 {
+						if reason, _ := failure.ReasonOf(f.serveErr); reason != failure.ServerDenied || !errors.Is(f.serveErr, io.ErrClosedPipe) {
+							t.Fatal("background denial lost its failure boundary", f.serveErr)
+						}
+						denied, err := net.DialTimeout("tcp", f.localAddress, time.Second)
+						if err == nil {
+							_ = denied.Close()
+							t.Fatal("revoked access retained a local listener")
+						}
+						if _, err := local.Read(make([]byte, 1)); err == nil || f.opened.Load() != 1 {
 							t.Fatal("revoked access opened a stream")
 						}
 					})
@@ -631,11 +659,6 @@ func TestConnectorRejectsStaleApprovedRevisionBeforeOpeningStream(t *testing.T) 
 			f.mu.Lock()
 			f.run.TrustRevision++
 			f.mu.Unlock()
-			local := f.local(t)
-			_, _ = local.Write([]byte("must-not-reach-target"))
-			if _, err := local.Read(make([]byte, 1)); err == nil || f.opened.Load() != 1 {
-				t.Fatal("stale approved metadata opened an application stream")
-			}
 			select {
 			case <-f.finished:
 				var reload *MetadataReloadError
@@ -644,6 +667,13 @@ func TestConnectorRejectsStaleApprovedRevisionBeforeOpeningStream(t *testing.T) 
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("stale runner remained ready")
+			}
+			if local, err := net.DialTimeout("tcp", f.localAddress, time.Second); err == nil {
+				_ = local.Close()
+				t.Fatal("stale approved metadata retained a ready listener")
+			}
+			if f.opened.Load() != 1 {
+				t.Fatal("background metadata reload opened an application stream")
 			}
 			if _, err := active.Read(make([]byte, 1)); err == nil {
 				t.Fatal("old runner kept an active stream")

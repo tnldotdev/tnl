@@ -8,7 +8,6 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -64,40 +63,5 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		return
 	}
 	observability.AuthorizationAdmission(r.Context(), "service_client_certificate", decision.Allowed, decision.Admitted)
-	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
-}
-
-func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
-	w.Header().Set("Cache-Control", "no-store")
-	token, ok := requestBearerToken(r)
-	if !ok {
-		writeBearerProblem(w)
-		return
-	}
-	var body controlv1.AuthorizeServiceConnectorRequest
-	if decodeJSONLimited(w, r, &body, 4096) != nil || body.RunNumber < 1 || body.GrantRevision < 1 || !validVisitorSource(body.SourceIp) {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service connector decision")
-		return
-	}
-	store, ok := h.store.(interface {
-		AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.ServiceVisitorValidity, error)
-	})
-	if !ok {
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service connector authorization is unavailable")
-		return
-	}
-	source, _ := netip.ParseAddr(body.SourceIp)
-	subject, err := visitorsubject.Parse(body.Subject)
-	if err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor subject")
-		return
-	}
-	visitor := controlstate.SubjectConnectorVisitor{SessionID: body.ConnectorSessionId, Subject: subject, ConnectionID: body.VisitorConnectionId, Source: source, GrantRevision: body.GrantRevision}
-	decision, err := store.AuthorizeVisitorServiceConnector(r.Context(), service, run, token, body.RunNumber, visitor, time.Now())
-	if err != nil {
-		writeManagedCertificateProblem(w, "authorize service connector", err)
-		return
-	}
-	observability.AuthorizationAdmission(r.Context(), "service_connector", decision.Allowed, decision.Admitted)
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }

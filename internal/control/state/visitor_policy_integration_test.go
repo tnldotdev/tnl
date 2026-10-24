@@ -157,6 +157,7 @@ func TestIntegrationVisitorPolicyMutationsCommitWithTheirScopeHistory(t *testing
 
 func TestIntegrationVisitorPolicyIdentityRevocationCancelsPreparedTraffic(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_revoke")
+	prepareVisitorTokenKeys(t, d, now)
 	request := oidcRouteRequest(t, d, now)
 	url := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
@@ -267,5 +268,24 @@ func TestIntegrationIngressVisitorPolicyRequiresExactLeaseAndPool(t *testing.T) 
 	}
 	if _, err := d.ReadIngressVisitorPolicy(context.Background(), lease.IngressLeaseIdentity, scope, 0, now.Add(time.Minute)); err == nil {
 		t.Fatal("expired process lease read fresh visitor policy")
+	}
+}
+
+func TestIntegrationServicePolicyNeedsPreparedIssuerBeforePublisherStartup(t *testing.T) {
+	f := newPublishRunFixture(t)
+	run := privateClaimRun(t, f)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}
+	read := func() (controlv1.VisitorPolicyUpdate, error) {
+		return f.database.ReadPublisherVisitorPolicy(t.Context(), scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now)
+	}
+	if _, err := read(); !errors.Is(err, ErrVisitorPolicy) {
+		t.Fatalf("missing startup keys did not report an unavailable policy: %v", err)
+	}
+	if err := f.database.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
+		t.Fatal(err)
+	}
+	update, err := read()
+	if err != nil || update.Policy.Issuer != testVisitorIssuer || update.Policy.MetadataRevision < 1 || len(update.Policy.VerificationKeys) == 0 {
+		t.Fatalf("prepared service run did not publish a key-bearing policy: %v", err)
 	}
 }

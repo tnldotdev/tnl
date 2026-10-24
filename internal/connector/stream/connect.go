@@ -53,6 +53,7 @@ func (Assignment) GoString() string { return "private connector assignment" }
 // Run is a current control-selected publisher and its approved TLS metadata.
 // selection never grants a stream: ingress checks the live grant separately.
 type Run struct {
+	Permission              controlv1.VisitorTokenResponse `json:"-"`
 	ServiceID, ServiceRunID string
 	RunNumber               uint64
 	ValidUntil              time.Time
@@ -92,6 +93,7 @@ func (Config) GoString() string { return "private connector configuration" }
 
 type connectorPath struct {
 	*tunnel.ConnectorSession
+	signer    Signer
 	transport tunnel.Transport
 	mu        sync.Mutex
 	active    int
@@ -238,6 +240,11 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
 		return ErrServiceConnection
 	}
+	prepared, err := prepareSelection(serveCtx, config, cancel)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
 	attempted := make(map[string]bool)
@@ -332,7 +339,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			return nil, ErrServiceConnection
 		}
 		lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
-		path := &connectorPath{ConnectorSession: session, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
+		path := &connectorPath{ConnectorSession: session, signer: signer, transport: transport, changed: make(chan struct{}), lifetime: lifetime, cancel: cancel, watchDone: make(chan struct{}), release: release}
 		go func() {
 			defer close(path.watchDone)
 			select {
@@ -375,28 +382,12 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	forward := func(forwardCtx context.Context, local net.Conn) (retErr error) {
 		forwardCtx, endConnection := observability.Start(observability.Independent(forwardCtx), "connector.visitor_connection")
 		defer func() { endConnection(retErr) }()
-		// resolve approved metadata before opening one publisher stream. native
-		// clients negotiate TLS through it; opaque clients use tnl's TLS helper.
-		selectionCtx, endSelection := observability.Start(forwardCtx, "connector.run_selection")
-		run, err := config.Control.ResolveService(selectionCtx, config.ServiceID)
-		endSelection(err)
+		// only the preparation owner can select metadata or contact control.
+		// native protocols still negotiate through this exact prepared stream.
+		run, err := prepared.current()
 		if err != nil {
 			return err
 		}
-		if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 ||
-			run.Endpoint == nil || !run.ValidUntil.After(time.Now()) {
-			return ErrServiceConnection
-		}
-		protocol := run.Protocol
-		if !validProtocol(protocol) || run.TrustRevision < 1 {
-			return ErrServiceConnection
-		}
-		if protocol != config.Protocol || run.TrustRevision != config.TrustRevision || !sameEndpoint(run.Endpoint, config.Endpoint) {
-			err := metadataReload(config.ServiceID, config.TrustRevision, run.TrustRevision)
-			cancel(err)
-			return err
-		}
-		run.ServiceTLS = config.ServiceTLS
 		if forwardCtx.Err() != nil {
 			return context.Cause(forwardCtx)
 		}
@@ -407,7 +398,7 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			if !ok {
 				continue
 			}
-			provider, committed, err := openPrivate(forwardCtx, path, run)
+			provider, committed, err := openPrivate(forwardCtx, path, run, prepared)
 			if err != nil {
 				if committed {
 					return err
@@ -455,14 +446,18 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		next.Store(0)
 	}
 	finishStartup(nil)
-	return consume(observability.LinkContext(serveCtx, startupCtx), forward)
+	err = consume(observability.LinkContext(serveCtx, startupCtx), forward)
+	if serveCtx.Err() != nil && ctx.Err() == nil {
+		return context.Cause(serveCtx)
+	}
+	return err
 }
 
 func validProtocol(protocol string) bool {
 	return protocol == "http" || protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 
-func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.Conn, committed bool, err error) {
+func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *preparedSelection) (result net.Conn, committed bool, err error) {
 	ctx, endSetup := observability.Start(ctx, "connector.visitor_setup")
 	defer func() { endSetup(err) }()
 	release, err := path.acquire()
@@ -495,32 +490,45 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	defer stop()
 	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream,
 		ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber}
-	entry.TraceContext = observability.WireTrace(ctx)
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, entry); err != nil {
-		return nil, false, err
-	}
-	_, endAcceptance := observability.Start(ctx, "connector.acceptance")
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
-	endAcceptance(err)
+	entry.VisitorConnectionID, err = opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
 		return nil, false, err
 	}
-	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP {
-		return nil, true, ErrServiceConnection
-	}
+	entry.MetadataRevision = uint64(run.TrustRevision)
+	entry.TraceContext = observability.WireTrace(ctx)
 	if run.Endpoint == nil {
 		return nil, false, ErrServiceConnection
+	}
+	opening := func(initial []byte) error {
+		permission, proofErr := nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, run.Permission.VisitorToken, initial)
+		if proofErr != nil {
+			return proofErr
+		}
+		entry.Permission = permission
+		// even an empty native opening can start server-first target work.
+		// an uncertain write cannot create a second target on the sibling path.
+		committed = true
+		_, writeErr := tunnelv1.WriteConnectorVisitorOpening(stream, entry, initial)
+		return writeErr
+	}
+	var request *tunnel.NativeRequestWriter
+	if run.Protocol == "tcp" {
+		request = tunnel.NewNativeOpeningWriter(stream, opening)
+	} else {
+		if err := opening(nil); err != nil {
+			return nil, committed, err
+		}
+		request = tunnel.NewNativeRequestWriter(stream)
 	}
 	{
 		if run.Protocol == "tcp" {
 			if run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify {
-				return nil, false, ErrServiceConnection
+				return nil, committed, ErrServiceConnection
 			}
 			verification := run.ServiceTLS.Clone()
 			verification.ServerName = run.Endpoint.Hostname
 			verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
-			secured := tls.Client(stream, verification)
-			committed = true
+			secured := tls.Client(request, verification)
 			tlsCtx, endTLS := observability.Start(setup, "connector.visitor_tls")
 			err = secured.HandshakeContext(tlsCtx)
 			endTLS(err)
@@ -530,18 +538,21 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 			if err = stream.SetDeadline(time.Time{}); err != nil {
 				return nil, true, err
 			}
-			return &privateConn{Conn: secured, release: release}, true, nil
+			stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
+			return &privateConn{Conn: secured, release: release, stop: stopRenewal}, true, nil
 		}
 		if err = stream.SetDeadline(time.Time{}); err != nil {
-			return nil, false, err
+			return nil, committed, err
 		}
-		return &privateConn{Conn: stream, release: release}, true, nil
+		stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
+		return &privateConn{Conn: request, release: release, stop: stopRenewal}, true, nil
 	}
 }
 
 type privateConn struct {
 	net.Conn
 	release func()
+	stop    func() error
 }
 
 func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
@@ -551,7 +562,13 @@ func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	return left.Hostname == right.Hostname && left.Port == right.Port && left.Public == right.Public
 }
 
-func (c *privateConn) Close() error { defer c.release(); return c.Conn.Close() }
+func (c *privateConn) Close() error {
+	defer c.release()
+	if c.stop != nil {
+		return c.stop()
+	}
+	return c.Conn.Close()
+}
 func (c *privateConn) CloseWrite() error {
 	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return writer.CloseWrite()
