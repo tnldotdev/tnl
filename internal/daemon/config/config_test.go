@@ -213,6 +213,30 @@ func TestSplitIngressUDPListener(t *testing.T) {
 	}
 }
 
+func TestSplitIngressConnectorPort(t *testing.T) {
+	for _, port := range []int{443, 4443, 4444} {
+		config := validCertificateConfig(t, RoleIngress)
+		config.IngressConnectorPort = port
+		if err := config.Validate(); err != nil {
+			t.Fatalf("port %d: %v", port, err)
+		}
+	}
+	for _, port := range []int{-1, 0, 65536, 20000} {
+		config := validCertificateConfig(t, RoleIngress)
+		config.ServicePortRanges = []string{"20000-20015"}
+		config.IngressConnectorPort = port
+		if err := config.Validate(); err == nil {
+			t.Fatalf("invalid connector port %d accepted", port)
+		} else if classified, ok := failure.Of(err); !ok || classified.Reason() != failure.ServerConfigInvalid || classified.Unwrap() == nil {
+			t.Fatalf("connector port failure was not classified with its cause: %v", err)
+		}
+	}
+	t.Setenv("TNLD_INGRESS_CONNECTOR_PORT", "4444")
+	if config := validCertificateConfig(t, RoleIngress); config.IngressConnectorPort != 4444 {
+		t.Fatal("connector port was not parsed from the environment")
+	}
+}
+
 func TestParseDNSAutomation(t *testing.T) {
 	config, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",

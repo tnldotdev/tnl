@@ -48,6 +48,7 @@ type Config struct {
 	PrivateControlListen  string   `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
 	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
 	IngressUDPListen      string   `name:"ingress-udp-listen" env:"TNLD_INGRESS_UDP_LISTEN" help:"Private connector QUIC listen address for split ingress; defaults to the ingress TCP bind address."`
+	IngressConnectorPort  int      `name:"ingress-connector-port" env:"TNLD_INGRESS_CONNECTOR_PORT" default:"443" help:"Public TCP and QUIC port selecting this exact ingress process for connectors."`
 	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
 	RelayUDPListen        string   `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
 	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
@@ -234,6 +235,16 @@ func (c Config) Validate() (retErr error) {
 		return errors.New("ingress ID is required and must be canonical")
 	}
 	if c.Role == RoleIngress {
+		if c.IngressConnectorPort < 1 || c.IngressConnectorPort > 65535 {
+			return failure.Wrap("validate ingress connector port", failure.ServerConfigInvalid, errors.New("ingress connector port must be between 1 and 65535"))
+		}
+		ports, err := c.ServicePortInventory()
+		if err != nil {
+			return err
+		}
+		if ports.Contains(c.IngressConnectorPort) {
+			return failure.Wrap("validate ingress connector port", failure.ServerConfigInvalid, errors.New("ingress connector port overlaps the service port inventory"))
+		}
 		domain := strings.TrimPrefix(c.ControlHostname, "control.")
 		if err := validateCanonicalHostname(c.IngressID+"."+domain, "private ingress hostname"); err != nil {
 			return err

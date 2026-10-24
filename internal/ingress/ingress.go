@@ -78,14 +78,18 @@ type Metrics interface {
 }
 
 type Config struct {
-	AuditSink                 serviceaudit.Sink
-	Lookup                    LookupFunc
-	LookupPool                func(string) ([]PublicURL, LookupReason)
-	ServerHostname            string
-	HandleControl             func(net.Conn) bool
-	RelayHostname             string
-	HandleRelay               func(net.Conn) bool
-	PrivateHostname           string
+	AuditSink       serviceaudit.Sink
+	Lookup          LookupFunc
+	LookupPool      func(string) ([]PublicURL, LookupReason)
+	ServerHostname  string
+	HandleControl   func(net.Conn) bool
+	RelayHostname   string
+	HandleRelay     func(net.Conn) bool
+	PrivateHostname string
+	ConnectorPort   uint16
+	// CheckReady serves only an unproxied GET /ready from a trusted proxy peer.
+	// normal visitor connections still require their outer PROXY v2 metadata.
+	CheckReady                func() bool
 	Connector                 *Connector
 	Connectors                map[string]*Connector
 	DirectConnector           *Connector
@@ -144,6 +148,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.RequireProxyHeader && len(config.TrustedProxyPeers) == 0 {
 		return nil, errors.New("PROXY metadata requires explicit trusted ingress peers")
 	}
+	if config.ConnectorPort == 0 {
+		config.ConnectorPort = 443
+	}
 	if err := admissionDefaults(&config); err != nil {
 		return nil, err
 	}
@@ -154,6 +161,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if servicePorts.Contains(int(config.ConnectorPort)) {
+		return nil, errors.New("connector port overlaps the service port inventory")
 	}
 	// retain no caller-owned inventory slices after construction.
 	config.ServicePortRanges = nil
@@ -302,7 +312,11 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		return nil
 	}
-	source, destination, reader, err := s.connectionMetadata(public)
+	probe, metadataConnection := s.readinessProbe(public)
+	if probe {
+		return nil
+	}
+	source, destination, reader, err := s.connectionMetadata(metadataConnection)
 	if err != nil {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("metadata")
@@ -322,7 +336,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.DirectOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+	if s.config.DirectOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 && destination.Port() != s.config.ConnectorPort {
 		if s.config.DirectConnector == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
@@ -353,7 +367,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	hello.ServerName = serverName
 	finishInspection()
 	if connector, reserved := s.config.Connectors[hello.ServerName]; reserved {
-		if connector == nil {
+		if connector == nil || s.config.RequireProxyHeader && destination.Port() != s.config.ConnectorPort {
 			return nil
 		}
 		release, rejected := s.admitClass(serviceConnection, "")
@@ -363,6 +377,9 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		defer release()
 		return connector.Accept(s.openContext, &readerConn{Conn: &addressConn{Conn: public, remote: source, local: destination}, reader: hello.Replay()}, source, destination)
+	}
+	if s.config.RequireProxyHeader && destination.Port() == s.config.ConnectorPort && destination.Port() != 443 {
+		return nil
 	}
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
