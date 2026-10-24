@@ -114,7 +114,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			t.Fatal(err)
 		}
 		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayID: id, RelayServiceID: id, RelayRunID: runID, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test",
-			InternalRelayAddress: "127.0.0.1:9443", ProtocolVersion: 1, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
+			InternalRelayAddress: "127.0.0.1:9443", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
