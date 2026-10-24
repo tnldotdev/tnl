@@ -168,7 +168,6 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		settings.configurePrivate = func(id string, config *ingress.ConnectorConfig) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		}

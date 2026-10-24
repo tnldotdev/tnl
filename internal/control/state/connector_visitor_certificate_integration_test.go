@@ -7,10 +7,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -64,7 +66,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ingress, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: "certificate-run", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8,
+	ingress, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: "certificate-run", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID,
 		ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "ingress.example.test"}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -88,10 +90,6 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if _, err := d.AuthenticateVisitorConnector(ctx, ingress.IngressLeaseIdentity, hello.Claim(), source, now); err != nil {
 		t.Fatal(err)
 	}
-	visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
 	selection, err := d.SelectServiceRun(ctx, run.ServiceID, identity, device.ID, now)
 	if err != nil {
 		t.Fatal(err)
@@ -99,24 +97,54 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if selection.ExpiresAt.After(expires) {
 		t.Errorf("selection outlived service certificate: %v > %v", selection.ExpiresAt, expires)
 	}
-	initial, err := d.AuthorizeServiceStream(ctx, ingress.IngressLeaseIdentity, run.ServiceID, run.RunID, session.ID, visitor, run.RunNumber, source, now)
+	request := StreamCapacityRequest{Owner: ingress.IngressLeaseIdentity, Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}, RunID: run.RunID, RunNumber: run.RunNumber, RequestID: "certificate", Capacity: 1}
+	initial, err := d.AllocateStreamCapacity(ctx, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if initial.ValidUntil.After(expires) {
-		t.Errorf("initial admission outlived service certificate: %v > %v", initial.ValidUntil, expires)
+		t.Errorf("prepared capacity outlived service certificate: %v > %v", initial.ValidUntil, expires)
 	}
-	rechecked, err := d.RecheckServiceVisitor(ctx, ingress.IngressLeaseIdentity, run.ServiceID, run.RunID, session.ID, identity, visitor, run.RunNumber, source, now)
-	if err != nil || !rechecked.Allowed || rechecked.ValidUntil.After(expires) {
-		t.Errorf("human recheck ignored service certificate deadline: %+v %v", rechecked, err)
+	renewed, err := d.AllocateStreamCapacity(ctx, request, now.Add(time.Second))
+	if err != nil || renewed.ValidUntil.After(expires) {
+		t.Errorf("background capacity renewal ignored certificate deadline: %+v %v", renewed, err)
+	}
+	prepareVisitorTokenKeys(t, d, now)
+	policy, err := d.ReadIngressVisitorPolicy(ctx, ingress.IngressLeaseIdentity, request.Scope, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := visitorlease.Decode(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clock atomic.Pointer[time.Time]
+	clock.Store(&now)
+	local, err := visitorlease.New(request.Scope, func() time.Time { return *clock.Load() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	if err := local.Apply(local.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	header := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: initial.ID, Sequence: 1, ResourceKind: "service", ResourceID: run.ServiceID, RunID: run.RunID, RunNumber: uint64(run.RunNumber), VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", IngressID: ingress.IngressID, IngressRunID: ingress.IngressRunID, IngressLeaseRevision: ingress.IngressLeaseRevision}
+	if err := local.ValidateReservation(header); err != nil {
+		t.Fatal("current prepared reservation denied", err)
+	}
+	clock.Store(&expires)
+	if err := local.ValidateReservation(header); err == nil {
+		t.Fatal("current policy allowed capacity beyond the publisher certificate")
 	}
 	for _, expiry := range []any{nil, now} {
 		if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET certificate_expires_at=$2,certificate_issuance_id=CASE WHEN $2::timestamptz IS NULL THEN NULL ELSE $3 END WHERE id=$1`, run.RunID, expiry, issuance.ID); err != nil {
 			t.Fatal(err)
 		}
-		decision, err := d.RecheckServiceVisitor(ctx, ingress.IngressLeaseIdentity, run.ServiceID, run.RunID, session.ID, identity, visitor, run.RunNumber, source, now)
-		if err != nil || decision.Allowed {
-			t.Errorf("missing/expired certificate kept admitted human stream: %+v %v", decision, err)
+		if _, err := d.SelectServiceRun(ctx, run.ServiceID, identity, device.ID, now); err == nil {
+			t.Error("missing/expired certificate retained native selection")
+		}
+		if _, err := d.AllocateStreamCapacity(ctx, request, now); err == nil {
+			t.Error("missing/expired certificate renewed native capacity")
 		}
 	}
 }

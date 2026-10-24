@@ -29,18 +29,12 @@ paths:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
   /internal/v1/ingresses/{ingress_id}/transport-certificate:
     $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1transport-certificate"
-  /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id}:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1streams~1{visitor_connection_id}"
   /internal/v1/ingresses/{ingress_id}/connector-sessions/claim:
     $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1connector-sessions~1claim"
   /internal/v1/ingresses/{ingress_id}/services/snapshot:
     $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1snapshot"
   /internal/v1/ingresses/{ingress_id}/services/events:
     $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1events"
-  /internal/v1/ingresses/{ingress_id}/services/claim:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1claim"
-  /internal/v1/ingresses/{ingress_id}/services/recheck:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1recheck"
   /internal/v1/ingresses/register:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1register"
   /internal/v1/ingresses/{ingress_id}/renew:
@@ -108,14 +102,6 @@ components:
       $ref: "./schemas/admission.yaml#/schemas/ServiceRelay"
     ServiceSnapshot:
       $ref: "./schemas/admission.yaml#/schemas/ServiceSnapshot"
-    ServiceStreamClaim:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamClaim"
-    ServiceStreamResult:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamResult"
-    ServiceVisitorRecheck:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheck"
-    ServiceVisitorRecheckResult:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheckResult"
     Identifier:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     IngressRegistration:

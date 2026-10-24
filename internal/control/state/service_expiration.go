@@ -83,11 +83,12 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			count++
 		}
 	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.connector_visitor_streams WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.connector_visitor_streams
-	    WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
+	// retain allocation and session attribution for delayed native audit batches.
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.stream_capacity_allocations WHERE id IN(
+	    SELECT id FROM control.stream_capacity_allocations WHERE valid_until<$1 ORDER BY valid_until,id LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
-	if err = controlstatedb.New(d.pool).CleanupConnectorSessions(ctx, timestamptz(now)); err != nil {
+	if err = controlstatedb.New(d.pool).CleanupConnectorSessions(ctx, timestamptz(now.Add(-24*time.Hour))); err != nil {
 		return count, err
 	}
 	if err = controlstatedb.New(d.pool).CleanupConnectorIngressAssignmentRequests(ctx, timestamptz(now)); err != nil {

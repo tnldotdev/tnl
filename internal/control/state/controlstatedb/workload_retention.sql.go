@@ -82,7 +82,6 @@ DELETE FROM control.connector_sessions WHERE id IN (
     WHERE session.workload_session_id IS NOT NULL
       AND session.expires_at < $1
       AND (session.revoked_at IS NULL OR session.revoked_at < $1)
-      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams stream WHERE stream.connector_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
@@ -102,6 +101,7 @@ func (q *Queries) CleanupWorkloadConnectors(ctx context.Context, arg CleanupWork
 }
 
 const cleanupWorkloadDirectVisitors = `-- name: CleanupWorkloadDirectVisitors :execrows
+
 DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
     SELECT visitor.visitor_connection_id FROM control.direct_service_visitors visitor
     WHERE visitor.workload_session_id IS NOT NULL
@@ -116,6 +116,8 @@ type CleanupWorkloadDirectVisitorsParams struct {
 	BatchSize  int32
 }
 
+// each phase has its own budget so a busy leaf cannot starve its parents.
+// select only unreferenced candidates before LIMIT; never cascade subject state.
 func (q *Queries) CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, cleanupWorkloadDirectVisitors, arg.BeforeTime, arg.BatchSize)
 	if err != nil {
@@ -160,7 +162,6 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, servic
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT $2
     FOR UPDATE OF rights SKIP LOCKED
@@ -193,7 +194,6 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
@@ -207,32 +207,6 @@ type CleanupWorkloadSessionsParams struct {
 
 func (q *Queries) CleanupWorkloadSessions(ctx context.Context, arg CleanupWorkloadSessionsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, cleanupWorkloadSessions, arg.BeforeTime, arg.BatchSize)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const cleanupWorkloadStreams = `-- name: CleanupWorkloadStreams :execrows
-
-DELETE FROM control.connector_visitor_streams WHERE visitor_connection_id IN (
-    SELECT stream.visitor_connection_id FROM control.connector_visitor_streams stream
-    WHERE stream.workload_session_id IS NOT NULL
-      AND (stream.valid_until < $1 OR stream.closed_at < $1)
-    ORDER BY stream.valid_until, stream.visitor_connection_id LIMIT $2
-    FOR UPDATE SKIP LOCKED
-)
-`
-
-type CleanupWorkloadStreamsParams struct {
-	BeforeTime pgtype.Timestamptz
-	BatchSize  int32
-}
-
-// each phase has its own budget so a busy leaf cannot starve its parents.
-// select only unreferenced candidates before LIMIT; never cascade subject state.
-func (q *Queries) CleanupWorkloadStreams(ctx context.Context, arg CleanupWorkloadStreamsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupWorkloadStreams, arg.BeforeTime, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}

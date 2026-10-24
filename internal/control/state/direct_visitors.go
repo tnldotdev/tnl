@@ -62,8 +62,8 @@ func (d *Database) AdmitDirectServiceVisitor(ctx context.Context, lease IngressL
 		    WHERE service.id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL AND service.ingress_pool_id=$2 AND service.service_port=$3
 		    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
 		    AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$4) AND p.revoked_at IS NULL
-		    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))<run.stream_capacity
-		    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))::numeric/run.stream_capacity,run.run_number LIMIT 1`, result.ServiceID, pool, port, now).Scan(&result.RunID, &result.RunNumber)
+		    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.direct_service_visitors v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))<run.stream_capacity
+		    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.direct_service_visitors v WHERE v.service_run_id=run.id AND v.closed_at IS NULL AND v.valid_until>$4))::numeric/run.stream_capacity,run.run_number LIMIT 1`, result.ServiceID, pool, port, now).Scan(&result.RunID, &result.RunNumber)
 	}
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)

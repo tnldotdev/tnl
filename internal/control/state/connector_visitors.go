@@ -8,13 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -29,8 +26,8 @@ type VisitorDevice struct {
 }
 
 // release is idempotent for this person's exact device assignment. pending
-// reservations stop counting immediately; bound sessions and their streams are
-// revoked so active rechecks close them. no sibling assignment is touched.
+// reservations stop counting immediately. the connector closes its bound path;
+// visitor policy and permission deadlines fence any retained streams.
 func (d *Database) ReleaseVisitorIngressAssignment(ctx context.Context, identityID, sessionID string, now time.Time) (retErr error) {
 	if !opaqueid.Valid(sessionID, opaqueid.ConnectorSessionPrefix) {
 		return ErrServiceAccess
@@ -49,9 +46,6 @@ func (d *Database) ReleaseVisitorIngressAssignment(ctx context.Context, identity
 		return ErrServiceAccess
 	}
 	if err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE control.connector_visitor_streams SET closed_at=COALESCE(closed_at,$2) WHERE connector_session_id=$1`, sessionID, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -291,8 +285,8 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	if err != nil {
 		return result, err
 	}
-	// count only admitted streams with a current hard deadline. dead ingress
-	// processes cannot hold capacity forever, and no established stream moves.
+	// publisher-reported occupancy ranks native runs. direct admissions retain
+	// their pending capacity until that path also uses local reservations.
 	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
 	    FROM control.publisher_service_runs runtime JOIN control.service_runs run ON run.id=runtime.id
 	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
@@ -304,8 +298,8 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	        AND lease.relay_run_id=slot.connected_relay_run_id AND lease.relay_lease_revision=slot.connected_relay_lease_revision
 	        AND lease.relay_service_id=slot.relay_service_id
 	        WHERE slot.run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
-	    AND GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<runtime.stream_capacity
-	    ORDER BY GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
+	    AND GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.direct_service_visitors stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<runtime.stream_capacity
+	    ORDER BY GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.direct_service_visitors stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
 		Scan(&result.ServiceRunID, &result.RunNumber, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
@@ -324,127 +318,4 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 		return result, err
 	}
 	return result, nil
-}
-
-type ServiceStreamAuthorization struct {
-	ServiceSelection
-	ConnectorSessionID, VisitorConnectionID string
-	SourceIP                                netip.Addr
-	GrantRevision                           int64
-	ValidUntil                              time.Time
-}
-
-func (d *Database) AuthorizeServiceStream(ctx context.Context, lease IngressLeaseIdentity, serviceID, runID, sessionID, visitorID string, number int64, source netip.Addr, now time.Time) (result ServiceStreamAuthorization, retErr error) {
-	if !opaqueid.Valid(visitorID, opaqueid.VisitorConnectionPrefix) || number < 1 || !source.IsValid() || source.Zone() != "" {
-		return result, ErrServiceAccess
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "authorize service stream", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
-		return result, err
-	}
-	q := controlstatedb.New(tx)
-	current, err := lockCurrentIngressLease(ctx, q, lease, now)
-	if err != nil {
-		return result, err
-	}
-	if current.Draining {
-		return result, ErrServiceAccess
-	}
-	var identity, device, controlSession, workload string
-	var sessionExpires, ingressExpires time.Time
-	err = tx.QueryRow(ctx, `SELECT COALESCE(session.identity_id,''),COALESCE(session.device_id,''),session.expires_at,ingress.lease_expires_at,COALESCE(session.control_session_id,''),COALESCE(session.workload_session_id,'') FROM control.connector_sessions session
-	    JOIN control.ingress_leases ingress ON ingress.ingress_id=session.ingress_id AND ingress.ingress_run_id=session.ingress_run_id AND ingress.ingress_lease_revision=session.ingress_lease_revision
-	    WHERE session.id=$1 AND session.bound_at IS NOT NULL AND session.revoked_at IS NULL AND session.expires_at>$2
-	    AND session.source_ip=$3 AND session.ingress_id=$4 AND session.ingress_run_id=$5 AND session.ingress_lease_revision=$6 AND session.service_id=$7
-	    FOR SHARE OF session`, sessionID, now, source.Unmap(), lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), serviceID).Scan(&identity, &device, &sessionExpires, &ingressExpires, &controlSession, &workload)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
-	}
-	if err != nil {
-		return result, err
-	}
-	ctx = WithControlPrincipal(ctx, ControlPrincipal{IdentityID: identity, SessionID: controlSession})
-	subject := VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device}
-	if workload != "" {
-		subject = workloadSubject(workload)
-	}
-	until, revision, err := VisitorSubjectAccess(ctx, tx, serviceID, subject, now)
-	if err != nil {
-		return result, err
-	}
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
-	}
-	if err != nil {
-		return result, err
-	}
-	if run.State != "ready" || !run.Healthy || run.ClosedAt.Valid || run.RunNumber != number || !run.PublisherExpiresAt.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
-		return result, ErrServiceAccess
-	}
-	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{ID: run.ID, ServiceID: serviceID, RunNumber: number, PublisherIdentityID: run.PublisherIdentityID, PublisherGrantID: run.PublisherGrantID, PublisherKeyID: run.PublisherKeyID, Now: timestamptz(now)}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrServiceAccess
-		}
-		return result, err
-	}
-	var grantExpiry pgtype.Timestamptz
-	if err = tx.QueryRow(ctx, `SELECT expires_at FROM control.publisher_grants WHERE id=$1`, run.PublisherGrantID).Scan(&grantExpiry); err != nil {
-		return result, err
-	}
-	if grantExpiry.Valid && grantExpiry.Time.Before(until) {
-		until = grantExpiry.Time
-	}
-	var capacity int
-	var relayExpires time.Time
-	err = tx.QueryRow(ctx, `SELECT count(*),max(lease.lease_expires_at) FROM control.service_connection_slots slot JOIN control.relay_leases lease
-	    ON lease.relay_id=slot.relay_id AND lease.relay_run_id=slot.relay_run_id AND lease.relay_lease_revision=slot.relay_lease_revision AND lease.relay_service_id=slot.relay_service_id
-	    WHERE slot.service_run_id=$1 AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity`, runID, now).Scan(&capacity, &relayExpires)
-	if err != nil {
-		return result, ErrServiceAccess
-	}
-	if capacity < 1 {
-		return result, ErrServiceAccess
-	}
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.service_visitor_capacity WHERE service_run_id=$1 AND valid_until>$2 AND closed_at IS NULL`, runID, now).Scan(&capacity); err != nil {
-		return result, err
-	}
-	if max(capacity, int(run.ReportedStreams)) >= int(run.StreamCapacity) {
-		return result, ErrServiceAccess
-	}
-	for _, deadline := range []time.Time{sessionExpires, ingressExpires, run.PublisherExpiresAt.Time, run.CertificateExpiresAt.Time, relayExpires} {
-		if deadline.Before(until) {
-			until = deadline
-		}
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.connector_visitor_streams(visitor_connection_id,service_id,service_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at,workload_session_id)
-	    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, visitorID, serviceID, runID, number, sessionID, nullableText(identity), nullableText(device), source.Unmap(), revision, until, now, nullableText(workload))
-	var constraint *pgconn.PgError
-	if errors.As(err, &constraint) && constraint.Code == "23505" {
-		return result, ErrServiceAccess
-	}
-	if err != nil {
-		return result, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return result, err
-	}
-	result.ServiceSelection = ServiceSelection{ServiceID: serviceID, ServiceRunID: runID, IdentityID: identity, DeviceID: device, RunNumber: number, ExpiresAt: until}
-	result.Subject = subject
-	result.ConnectorSessionID, result.VisitorConnectionID, result.SourceIP, result.GrantRevision, result.ValidUntil = sessionID, visitorID, source.Unmap(), revision, until
-	return result, nil
-}
-
-func (d *Database) CloseServiceStream(ctx context.Context, lease IngressLeaseIdentity, sessionID, visitorID string, now time.Time) error {
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitorID, opaqueid.VisitorConnectionPrefix) {
-		return ErrServiceAccess
-	}
-	_, err := d.pool.Exec(ctx, `UPDATE control.connector_visitor_streams stream SET closed_at=COALESCE(stream.closed_at,$3)
-	    FROM control.connector_sessions session WHERE stream.visitor_connection_id=$1 AND stream.connector_session_id=$2 AND session.id=stream.connector_session_id
-	    AND session.ingress_id=$4 AND session.ingress_run_id=$5 AND session.ingress_lease_revision=$6`, visitorID, sessionID, now, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision))
-	return err
 }

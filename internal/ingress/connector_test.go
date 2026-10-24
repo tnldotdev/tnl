@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/netip"
@@ -33,33 +34,23 @@ import (
 )
 
 type privateControlFixture struct {
-	mu                sync.Mutex
-	outerStarted      chan struct{}
-	outerGate         chan struct{}
-	claimStarted      chan struct{}
-	allowClaim        chan struct{}
-	claims            int
-	recheckStarted    chan struct{}
-	recheckGate       chan struct{}
-	recheckErr        error
-	deny              bool
-	rechecks          int
-	recheckActive     atomic.Int32
-	sessionDuration   time.Duration
-	nextSession       string
-	initialValidUntil time.Time
-	recheckValidUntil time.Time
-	session           string
-	service           string
-	identity          string
-	device            string
-	sourceIP          string
-	run               string
-	revision          int64
-	projection        ingressv1.ServiceProjection
-	routingReads      atomic.Int64
-	permission        visitortoken.Token
-	key               ed25519.PrivateKey
+	outerStarted    chan struct{}
+	outerGate       chan struct{}
+	sessionClaims   atomic.Int64
+	sessionDuration time.Duration
+	nextSession     string
+	session         string
+	service         string
+	identity        string
+	device          string
+	sourceIP        string
+	run             string
+	revision        int64
+	projection      ingressv1.ServiceProjection
+	routingReads    atomic.Int64
+	permission      visitortoken.Token
+	key             ed25519.PrivateKey
+	policyUpdate    visitorlease.Update
 }
 
 const privateTestSessionCredential = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -77,6 +68,7 @@ func (f *privateControlFixture) expectedSourceIP() string {
 }
 
 func (f *privateControlFixture) ClaimConnectorSession(_ context.Context, id string, body ingressv1.ConnectorSessionClaim) (ingressv1.ConnectorSessionResult, error) {
+	f.sessionClaims.Add(1)
 	if f.outerStarted != nil {
 		select {
 		case f.outerStarted <- struct{}{}:
@@ -96,77 +88,6 @@ func (f *privateControlFixture) ClaimConnectorSession(_ context.Context, id stri
 		duration = time.Minute
 	}
 	return ingressv1.ConnectorSessionResult{ConnectorSessionId: body.ConnectorSessionId, ServiceId: f.service, Subject: visitorsubject.Wire(f.subject()), ObservedSourceIp: body.ObservedSourceIp, ExpiresAt: time.Now().Add(duration)}, nil
-}
-func (f *privateControlFixture) AuthorizeServiceStream(ctx context.Context, id string, body ingressv1.ServiceStreamClaim) (ingressv1.ServiceStreamResult, error) {
-	if body.ServiceId != f.service {
-		return ingressv1.ServiceStreamResult{}, ErrServiceAdmission
-	}
-	f.mu.Lock()
-	f.claims++
-	started := f.claimStarted
-	gate := f.allowClaim
-	f.mu.Unlock()
-	if started != nil {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-	}
-	if gate != nil {
-		select {
-		case <-gate:
-		case <-ctx.Done():
-			return ingressv1.ServiceStreamResult{}, ctx.Err()
-		}
-	}
-	validSession := body.ConnectorSessionId == f.session || f.nextSession != "" && body.ConnectorSessionId == f.nextSession
-	if id != "ingress-a" || body.ServiceId != f.service || body.ServiceRunId != f.run || !validSession || body.ObservedSourceIp != f.expectedSourceIP() || !opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) {
-		return ingressv1.ServiceStreamResult{}, ErrServiceAdmission
-	}
-	validUntil := f.initialValidUntil
-	if validUntil.IsZero() {
-		validUntil = time.Now().Add(2 * time.Minute)
-	}
-	return ingressv1.ServiceStreamResult{ServiceId: body.ServiceId, ServiceRunId: body.ServiceRunId, ConnectorSessionId: body.ConnectorSessionId, Subject: visitorsubject.Wire(f.subject()), GrantRevision: 1, ObservedSourceIp: body.ObservedSourceIp, VisitorConnectionId: body.VisitorConnectionId, RunNumber: body.RunNumber, ExpiresAt: time.Now().Add(time.Minute), ValidUntil: validUntil}, nil
-}
-
-func (f *privateControlFixture) CloseServiceStream(context.Context, string, string, ingressv1.CloseServiceStreamJSONRequestBody) error {
-	return nil
-}
-
-func (f *privateControlFixture) RecheckServiceVisitor(ctx context.Context, id string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	f.recheckActive.Add(1)
-	defer f.recheckActive.Add(-1)
-	f.mu.Lock()
-	f.rechecks++
-	gate, started, denied, problem := f.recheckGate, f.recheckStarted, f.deny, f.recheckErr
-	f.mu.Unlock()
-	if started != nil {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-	}
-	if gate != nil {
-		select {
-		case <-gate:
-		case <-ctx.Done():
-			return ingressv1.ServiceVisitorRecheckResult{}, ctx.Err()
-		}
-	}
-	if id != "ingress-a" || body.ServiceId != f.service || body.ServiceRunId != f.run ||
-		(body.ConnectorSessionId != f.session && body.ConnectorSessionId != f.nextSession) || !visitorsubject.Equal(body.Subject, f.subject()) || body.RunNumber != 1 ||
-		!opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedSourceIp != f.expectedSourceIP() || body.IngressLeaseRevision != 1 {
-		return ingressv1.ServiceVisitorRecheckResult{}, ErrServiceAdmission
-	}
-	if problem != nil {
-		return ingressv1.ServiceVisitorRecheckResult{}, problem
-	}
-	validUntil := f.recheckValidUntil
-	if validUntil.IsZero() {
-		validUntil = time.Now().Add(2 * time.Minute)
-	}
-	return ingressv1.ServiceVisitorRecheckResult{Allowed: !denied, RecheckAt: time.Now().Add(10 * time.Millisecond), ValidUntil: validUntil}, nil
 }
 func (f *privateControlFixture) GetServiceSnapshot(_ context.Context, _ string, _ ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error) {
 	f.routingReads.Add(1)
@@ -306,7 +227,8 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 	}
 	t.Cleanup(policy.Close)
 	allocation := controlv1.StreamCapacityAllocation{Id: privateTestID(t, "salloc_"), Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, RunId: run, RunNumber: 1, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, Capacity: 64, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}
-	if err := policy.Apply(policy.Begin(), visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}); err != nil {
+	control.policyUpdate = visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}
+	if err := policy.Apply(policy.Begin(), control.policyUpdate); err != nil {
 		t.Fatal(err)
 	}
 	pool := newStreamReservations(nil)
@@ -319,6 +241,20 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 		t.Fatal(err)
 	}
 	return connector, control, forwarder, clientTLS, lease, func() {}
+}
+
+func updateNativePolicy(t *testing.T, connector *Connector, control *privateControlFixture, change func(*visitorlease.Update)) {
+	t.Helper()
+	update := control.policyUpdate
+	update.Allocations = maps.Clone(update.Allocations)
+	now := time.Now()
+	update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+	change(&update)
+	lease := connector.prepared[control.run].policy.lease
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	control.policyUpdate = update
 }
 
 func privateTestConnect(t *testing.T, connector *Connector, control *privateControlFixture, clientTLS *tls.Config) (muxsession.Session, func()) {
@@ -449,10 +385,7 @@ func TestConnectorOpeningRejectsUnboundPermissionBeforeOnlineAuthority(t *testin
 			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
 				t.Fatal("unbound native permission admitted a stream")
 			}
-			control.mu.Lock()
-			claims := control.claims
-			control.mu.Unlock()
-			if claims != 0 || forwarder.count() != 0 {
+			if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 || forwarder.count() != 0 {
 				t.Fatal("invalid opening reached online authority or relay")
 			}
 		})
@@ -645,8 +578,6 @@ func privateTestHello(control *privateControlFixture, session, credential string
 func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
 	forwarder.failFirst = true
-	control.claimStarted = make(chan struct{}, 1)
-	control.allowClaim = make(chan struct{})
 	session, stop := privateTestConnect(t, connector, control, tlsConfig)
 	defer stop()
 	stream, err := session.OpenStream(t.Context())
@@ -675,15 +606,6 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream2, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-control.claimStarted:
-	case <-time.After(time.Second):
-		t.Fatal("stream authorization not reached")
-	}
-	if forwarder.count() != 0 {
-		t.Fatal("forwarded before stream authorization")
-	}
-	close(control.allowClaim)
 	_ = stream2.SetReadDeadline(time.Now().Add(2 * time.Second))
 	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream2)
 	if err != nil || accepted.Subject != control.subject() || accepted.SourceIP != "192.0.2.4" {
@@ -713,6 +635,9 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	}
 	if got := control.routingReads.Load(); got != 2 {
 		t.Fatalf("visitor triggered routing RPCs: reads=%d, want two startup reads", got)
+	}
+	if control.sessionClaims.Load() != 1 {
+		t.Fatal("prepared visitor contacted online admission")
 	}
 }
 
@@ -786,7 +711,7 @@ func TestConnectorBlocksVisitorStreamsBeforeDeviceAuthentication(t *testing.T) {
 		t.Fatal("outer credential not checked")
 	}
 	// the session control stream must authenticate before a visitor is served.
-	if forwarder.count() != 0 || control.claims != 0 {
+	if forwarder.count() != 0 {
 		t.Fatal("visitor reached forwarding before outer authentication")
 	}
 	close(control.outerGate)
@@ -851,7 +776,7 @@ func TestConnectorRefusesPublicTunnelALPN(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("unmatched ALPN blocked ingress")
 	}
-	if control.claims != 0 || forwarder.count() != 0 {
+	if control.sessionClaims.Load() != 0 || forwarder.count() != 0 {
 		t.Fatal("unmatched ALPN reached private control or relay")
 	}
 }
@@ -866,7 +791,6 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 		}
 		return current
 	}
-	control.claimStarted, control.allowClaim = make(chan struct{}, 1), make(chan struct{})
 	session, stop := privateTestConnect(t, connector, control, tlsConfig)
 	defer stop()
 	stream, err := session.OpenStream(t.Context())
@@ -874,16 +798,16 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
+	var opening bytes.Buffer
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(&opening, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-control.claimStarted:
-	case <-time.After(time.Second):
-		t.Fatal("stream authorization never started")
+	raw := stream.(*nativeTestStream).Stream
+	if _, err := raw.Write(opening.Bytes()[:opening.Len()-4]); err != nil {
+		t.Fatal(err)
 	}
 	lost.Store(true)
-	close(control.allowClaim)
+	_, _ = raw.Write(opening.Bytes()[opening.Len()-4:])
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
 		t.Fatal("accepted a visitor on a stale ingress lease")
@@ -955,14 +879,9 @@ func privateActiveStream(t *testing.T, connector *Connector, control *privateCon
 
 func TestPrivateLiveVisitorClosesOnExplicitDenial(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 150 * time.Millisecond
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	control.mu.Lock()
-	control.deny = true
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) { update.Enabled = false; update.View.VisitorPolicyRevision++ })
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
 	if _, err := stream.Read(one[:]); err == nil {
@@ -973,21 +892,15 @@ func TestPrivateLiveVisitorClosesOnExplicitDenial(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay copy not joined after denial")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("recheck worker remained active after denial")
-	}
 }
 
 func TestPrivateLiveVisitorHardDeadlineOnControlOutage(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 125 * time.Millisecond
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	control.mu.Lock()
-	control.recheckErr = errors.New("control is unavailable")
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		update.View.ValidUntil = update.View.ObservedAt.Add(125 * time.Millisecond)
+	})
 	started := time.Now()
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
@@ -997,40 +910,20 @@ func TestPrivateLiveVisitorHardDeadlineOnControlOutage(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < 35*time.Millisecond || elapsed > 300*time.Millisecond {
 		t.Fatalf("outage stream closed after %v, want bounded grace period", elapsed)
 	}
-	control.mu.Lock()
-	checks := control.rechecks
-	control.mu.Unlock()
-	if checks < 2 {
-		t.Fatalf("outage did not retry live authorization: %d checks", checks)
+	if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 {
+		t.Fatal("active native visitor polled control during outage")
 	}
 	select {
 	case <-forwarder.relayDone:
 	case <-time.After(time.Second):
 		t.Fatal("relay copy not joined at hard deadline")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("outage left a recheck worker running")
-	}
 }
 
-func TestPrivateLiveVisitorCancellationJoinsBlockedRecheckAndCopy(t *testing.T) {
+func TestPrivateLiveVisitorCancellationJoinsBlockedFrameReaderAndCopy(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 120 * time.Millisecond
-	connector.config.RecheckTimeout = 100 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 350 * time.Millisecond
-	control.recheckStarted = make(chan struct{}, 1)
-	control.recheckGate = make(chan struct{})
 	_, _, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		stop()
-		t.Fatal("recheck never started")
-	}
 	stop()
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("blocked recheck survived connector close")
-	}
 	select {
 	case <-forwarder.relayDone:
 	case <-time.After(time.Second):
@@ -1040,9 +933,6 @@ func TestPrivateLiveVisitorCancellationJoinsBlockedRecheckAndCopy(t *testing.T) 
 
 func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 250 * time.Millisecond
 	control.sessionDuration = 120 * time.Millisecond
 	control.nextSession = privateTestID(t, opaqueid.ConnectorSessionPrefix)
 	oldSession, oldStream, stopOld := privateActiveStream(t, connector, control, forwarder, tlsConfig)
@@ -1115,28 +1005,21 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 	}
 }
 
-func TestPrivateLiveVisitorOutageEndsAtEarlierGrantDeadline(t *testing.T) {
+func TestPrivateLiveVisitorOutageEndsAtEarlierAllocationDeadline(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	connector.config.RecheckInterval = 20 * time.Millisecond
-	connector.config.RecheckTimeout = 10 * time.Millisecond
-	connector.config.HardAuthorizationTTL = 250 * time.Millisecond
-	control.recheckStarted = make(chan struct{}, 1)
-	control.recheckValidUntil = time.Now().Add(135 * time.Millisecond)
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		t.Fatal("soon-expiring grant was not rechecked")
-	}
-	control.mu.Lock()
-	control.recheckErr = errors.New("control unavailable after last grant check")
-	control.mu.Unlock()
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		for id, allocation := range update.Allocations {
+			allocation.ValidUntil = time.Now().Add(135 * time.Millisecond)
+			update.Allocations[id] = allocation
+		}
+	})
 	started := time.Now()
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
 	var one [1]byte
 	if _, err := stream.Read(one[:]); err == nil {
-		t.Fatal("visitor survived grant hard deadline during outage")
+		t.Fatal("visitor survived allocation hard deadline during outage")
 	}
 	if elapsed := time.Since(started); elapsed > 190*time.Millisecond {
 		t.Fatalf("grant hard deadline ignored for %v", elapsed)
@@ -1146,15 +1029,16 @@ func TestPrivateLiveVisitorOutageEndsAtEarlierGrantDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stream worker survived grant expiry")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("recheck survived grant expiry")
-	}
 }
 
-func TestPrivateLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) {
+func TestPrivateLiveVisitorOutageHonorsInitialAllocationDeadline(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	control.initialValidUntil = time.Now().Add(175 * time.Millisecond)
-	control.recheckErr = errors.New("control unavailable immediately after stream authorization")
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		for id, allocation := range update.Allocations {
+			allocation.ValidUntil = time.Now().Add(175 * time.Millisecond)
+			update.Allocations[id] = allocation
+		}
+	})
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
 	started := time.Now()
@@ -1171,32 +1055,26 @@ func TestPrivateLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay copy remained after initial deadline")
 	}
-	if control.recheckActive.Load() != 0 {
-		t.Fatal("initial grant expiry left a recheck running")
-	}
-	control.mu.Lock()
-	defer control.mu.Unlock()
-	if control.rechecks < 2 {
-		t.Fatalf("default scheduling did not retry before the initial deadline: %d", control.rechecks)
+	if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 {
+		t.Fatal("native allocation expiry polled control")
 	}
 }
 
 func TestPrivateLiveVisitorDefaultsRefreshShortInitialLease(t *testing.T) {
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
-	control.initialValidUntil = time.Now().Add(250 * time.Millisecond)
-	control.recheckStarted = make(chan struct{}, 1)
+	initialDeadline := time.Now().Add(250 * time.Millisecond)
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) { update.View.ValidUntil = initialDeadline })
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
-	select {
-	case <-control.recheckStarted:
-	case <-time.After(time.Second):
-		t.Fatal("default interval missed the initial lease deadline")
-	}
-	_ = stream.SetReadDeadline(control.initialValidUntil.Add(100 * time.Millisecond))
+	time.Sleep(100 * time.Millisecond)
+	updateNativePolicy(t, connector, control, func(update *visitorlease.Update) {
+		update.View.ValidUntil = update.View.ObservedAt.Add(2 * time.Second)
+	})
+	_ = stream.SetReadDeadline(initialDeadline.Add(100 * time.Millisecond))
 	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("unexpected bytes")
 	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
-		t.Fatalf("successful recheck did not preserve the original stream: %v", err)
+		t.Fatalf("background policy refresh did not preserve the original stream: %v", err)
 	}
 }
 

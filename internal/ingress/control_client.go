@@ -49,48 +49,6 @@ func (c *HTTPControlClient) ClaimConnectorSession(ctx context.Context, ingressID
 	return *response.JSON200, nil
 }
 
-func (c *HTTPControlClient) AuthorizeServiceStream(ctx context.Context, ingressID string, body ingressv1.ServiceStreamClaim) (ingressv1.ServiceStreamResult, error) {
-	response, err := c.client.AuthorizeServiceStreamWithResponse(ctx, ingressID, body)
-	if err != nil {
-		return ingressv1.ServiceStreamResult{}, err
-	}
-	if response == nil {
-		return ingressv1.ServiceStreamResult{}, ingressHTTPProblem(0, nil)
-	}
-	if response.JSON200 == nil {
-		return ingressv1.ServiceStreamResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return *response.JSON200, nil
-}
-
-func (c *HTTPControlClient) CloseServiceStream(ctx context.Context, ingressID, visitorID string, body ingressv1.CloseServiceStreamJSONRequestBody) error {
-	response, err := c.client.CloseServiceStreamWithResponse(ctx, ingressID, visitorID, body)
-	if err != nil {
-		return err
-	}
-	if response == nil {
-		return ingressHTTPProblem(0, nil)
-	}
-	if response.StatusCode() != http.StatusNoContent {
-		return ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return nil
-}
-
-func (c *HTTPControlClient) RecheckServiceVisitor(ctx context.Context, ingressID string, body ingressv1.ServiceVisitorRecheck) (ingressv1.ServiceVisitorRecheckResult, error) {
-	response, err := c.client.RecheckServiceVisitorWithResponse(ctx, ingressID, body)
-	if err != nil {
-		return ingressv1.ServiceVisitorRecheckResult{}, err
-	}
-	if response == nil {
-		return ingressv1.ServiceVisitorRecheckResult{}, ingressHTTPProblem(0, nil)
-	}
-	if response.JSON200 == nil {
-		return ingressv1.ServiceVisitorRecheckResult{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return *response.JSON200, nil
-}
-
 func (c *HTTPControlClient) GetServiceSnapshot(ctx context.Context, ingressID string, params ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error) {
 	response, err := c.client.GetServiceSnapshotWithResponse(ctx, ingressID, &params)
 	if err != nil {

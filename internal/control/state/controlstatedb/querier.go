@@ -77,14 +77,13 @@ type Querier interface {
 	CleanupWorkloadAudit(ctx context.Context, arg CleanupWorkloadAuditParams) (int64, error)
 	CleanupWorkloadCertificates(ctx context.Context, arg CleanupWorkloadCertificatesParams) (int64, error)
 	CleanupWorkloadConnectors(ctx context.Context, arg CleanupWorkloadConnectorsParams) (int64, error)
+	// each phase has its own budget so a busy leaf cannot starve its parents.
+	// select only unreferenced candidates before LIMIT; never cascade subject state.
 	CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error)
 	CleanupWorkloadIngressRequests(ctx context.Context, arg CleanupWorkloadIngressRequestsParams) (int64, error)
 	// keep the exact service snapshot until all other session references are gone.
 	CleanupWorkloadServiceRights(ctx context.Context, arg CleanupWorkloadServiceRightsParams) (int64, error)
 	CleanupWorkloadSessions(ctx context.Context, arg CleanupWorkloadSessionsParams) (int64, error)
-	// each phase has its own budget so a busy leaf cannot starve its parents.
-	// select only unreferenced candidates before LIMIT; never cascade subject state.
-	CleanupWorkloadStreams(ctx context.Context, arg CleanupWorkloadStreamsParams) (int64, error)
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CloseServiceRun(ctx context.Context, arg CloseServiceRunParams) (int64, error)
@@ -524,9 +523,6 @@ type Querier interface {
 	ReadyServiceConnectionSlot(ctx context.Context, arg ReadyServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
-	// revalidate the admitted stream, live device, grant and exact run. identity
-	// and source are bound by ingress, and an outage never extends the deadline.
-	RecheckServiceVisitor(ctx context.Context, arg RecheckServiceVisitorParams) (RecheckServiceVisitorRow, error)
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
 	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) error
 	RedeemServiceHTTPBrowserSession(ctx context.Context, arg RedeemServiceHTTPBrowserSessionParams) (RedeemServiceHTTPBrowserSessionRow, error)

@@ -79,8 +79,5 @@ func (d *Database) ReleaseWorkloadIngressAssignment(ctx context.Context, credent
 	if err != nil {
 		return publisherLookupError(err, ErrServiceAccess)
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.connector_visitor_streams SET closed_at=COALESCE(closed_at,$2) WHERE connector_session_id=$1`, session, now); err != nil {
-		return err
-	}
 	return tx.Commit(ctx)
 }

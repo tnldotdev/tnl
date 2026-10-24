@@ -15,7 +15,7 @@ const WorkloadHistoryRetention = serviceaudit.Retention
 
 const workloadVisitorRetention = 24 * time.Hour
 
-// CleanupWorkloads prunes at most limit rows from each of nine relations, in
+// CleanupWorkloads prunes at most limit rows from each of eight relations, in
 // dependency order. each statement commits separately: later phases see removed
 // children, and a timeout does not discard progress. blocked parents are filtered
 // before selection so retained/live references cannot starve unrelated history.
@@ -33,9 +33,6 @@ func (d *Database) CleanupWorkloads(ctx context.Context, now time.Time, limit in
 		name string
 		run  func() (int64, error)
 	}{
-		{"streams", func() (int64, error) {
-			return q.CleanupWorkloadStreams(ctx, controlstatedb.CleanupWorkloadStreamsParams{BeforeTime: visitorsBefore, BatchSize: batch})
-		}},
 		{"direct visitors", func() (int64, error) {
 			return q.CleanupWorkloadDirectVisitors(ctx, controlstatedb.CleanupWorkloadDirectVisitorsParams{BeforeTime: visitorsBefore, BatchSize: batch})
 		}},
