@@ -2668,6 +2668,11 @@
           "type": "string",
           "description": "Private connector QUIC listen address for split ingress; defaults to the ingress TCP bind address."
         },
+        "ingress_connector_port": {
+          "type": "integer",
+          "description": "Public TCP and QUIC port selecting this exact ingress process for connectors.",
+          "default": 443
+        },
         "relay_tcp_listen": {
           "type": "string",
           "description": "Public TLS/TCP publisher-connection listen address."

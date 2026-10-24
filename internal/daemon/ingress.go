@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,11 +74,15 @@ func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings 
 	if cfg.IngressID != "" && domain != "" {
 		hostname = cfg.IngressID + "." + domain
 	}
+	port := cfg.IngressConnectorPort
+	if port == 0 {
+		port = 443
+	}
 	return ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
 		clusterSecret: cfg.ClusterSecret,
 		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
-		privateHostname: hostname, privateAddress: net.JoinHostPort(hostname, "443"),
+		privateHostname: hostname, privateAddress: net.JoinHostPort(hostname, strconv.Itoa(port)),
 		privateUDPListen: cfg.IngressUDPListen,
 	}
 }
@@ -315,6 +320,13 @@ func (d *daemon) startIngressRuntime(
 				publicURLID, version, visitorID, reason, attempts)
 		},
 	}
+	if settings.requireProxyHeader {
+		ingressConfig.CheckReady = func() bool {
+			now := time.Now()
+			return !d.draining.Load() && controller.Ready(now) && publicServer != nil && publicServer.Ready() &&
+				(runtime.serviceCertificate == nil || runtime.serviceCertificate.ready(now))
+		}
+	}
 	if usage != nil {
 		ingressConfig.OpenUsage = usage.Open
 	}
@@ -326,6 +338,15 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig.AuditSink = runtime.audit
 	if runtimeConfig.privateHostname != "" {
+		_, port, err := net.SplitHostPort(runtimeConfig.privateAddress)
+		if err != nil {
+			return err
+		}
+		number, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || number == 0 {
+			return errors.New("private ingress connector port is invalid")
+		}
+		ingressConfig.ConnectorPort = uint16(number)
 		privateControl, ok := runtimeConfig.client.(ingress.PrivateControl)
 		if !ok {
 			return errors.New("private ingress control operations are required")
