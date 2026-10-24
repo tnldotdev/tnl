@@ -43,9 +43,13 @@ locks.
 Preparation checks approved protocol, service/run, assignment, trust revision,
 and accepted transport peer before bytes. The connector authenticates two
 ingress paths; ingress observes the source and authorizes each visitor stream.
-The publisher verifies that admission before opening a target. The connector
-does not interpret publisher-to-target CA trust. Stream failure, metadata reload,
-and listener replacement never replay an admitted application stream.
+ingress and publisher verify signed permission and exact reservations locally.
+the connector sends its proof-bound opening with bounded initial TLS bytes,
+without waiting for a per-stream acceptance. server-first protocols send an
+empty opening immediately. an ambiguous opening write cannot create another
+target connection on the sibling path. the connector does not interpret
+publisher-to-target CA trust. stream failure, metadata reload, and listener
+replacement never replay an admitted application stream.
 
 ## process and request lifetime
 

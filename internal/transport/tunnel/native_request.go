@@ -14,13 +14,30 @@ import (
 // on the outer native request stream. return bytes remain owned by its caller.
 type NativeRequestWriter struct {
 	net.Conn
-	mu    sync.Mutex
-	ended bool
-	err   error
+	mu      sync.Mutex
+	ended   bool
+	err     error
+	opening func([]byte) error
 }
 
 func NewNativeRequestWriter(conn net.Conn) *NativeRequestWriter {
 	return &NativeRequestWriter{Conn: conn}
+}
+
+// NewNativeOpeningWriter sends one signed opening with the first bounded data
+// block. it never waits for return bytes before forwarding the request. callers
+// with server-first protocols send an empty opening before constructing a writer.
+func NewNativeOpeningWriter(conn net.Conn, opening func([]byte) error) *NativeRequestWriter {
+	return &NativeRequestWriter{Conn: conn, opening: opening}
+}
+
+func (s *NativeRequestWriter) startLocked(initial []byte) error {
+	if s.opening != nil && s.err == nil {
+		opening := s.opening
+		s.opening = nil
+		s.err = opening(initial)
+	}
+	return s.err
 }
 
 func (s *NativeRequestWriter) Write(p []byte) (int, error) {
@@ -33,6 +50,13 @@ func (s *NativeRequestWriter) Write(p []byte) (int, error) {
 		return 0, s.err
 	}
 	written := 0
+	if s.opening != nil && len(p) > 0 {
+		n := min(len(p), tunnelv1.MaxInitialBytes)
+		if err := s.startLocked(p[:n]); err != nil {
+			return 0, err
+		}
+		written, p = n, p[n:]
+	}
 	for len(p) > 0 {
 		n := min(len(p), tunnelv1.MaxInitialBytes)
 		s.err = tunnelv1.WriteNativeRequestFrame(s.Conn, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestData, Data: p[:n]})
@@ -51,8 +75,8 @@ func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission)
 	if s.ended {
 		return io.ErrClosedPipe
 	}
-	if s.err != nil {
-		return s.err
+	if err := s.startLocked(nil); err != nil {
+		return err
 	}
 	s.err = tunnelv1.WriteNativeRequestFrame(s.Conn, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestPermission, Permission: permission})
 	return s.err
@@ -65,6 +89,7 @@ func (s *NativeRequestWriter) CloseWrite() error {
 		return s.err
 	}
 	s.ended = true
+	_ = s.startLocked(nil)
 	if s.err == nil {
 		s.err = tunnelv1.WriteNativeRequestFrame(s.Conn, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestEnded})
 	}

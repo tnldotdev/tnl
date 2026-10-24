@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -713,7 +712,7 @@ func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, t
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
-	if _, err = tunnelv1.ReadConnectorVisitorAccepted(bufio.NewReader(stream)); err == nil {
+	if _, err = stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("spoofed run admitted")
 	}
 }

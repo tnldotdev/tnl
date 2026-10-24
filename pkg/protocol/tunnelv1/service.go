@@ -143,51 +143,6 @@ func (e ConnectorVisitorEntry) Validate() error {
 	return nil
 }
 
-// ConnectorVisitorAccepted carries ingress's trusted, claimed stream identity
-// back to the connector before inner TLS. the connector compares session and
-// source with the authenticated session. the publisher receives the
-// same admitted identity in ServiceStreamHeader and rechecks it with control.
-type ConnectorVisitorAccepted struct {
-	ProtocolVersion              uint32         `json:"protocol_version"`
-	Kind                         string         `json:"kind"`
-	ConnectorSessionID           string         `json:"connector_session_id"`
-	Subject                      VisitorSubject `json:"subject"`
-	SourceIP                     string         `json:"source_ip"`
-	VisitorConnectionID          string         `json:"visitor_connection_id"`
-	GrantRevision                uint64         `json:"grant_revision"`
-	PublisherConnectionID        string         `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64         `json:"connection_assignment_revision"`
-}
-
-func (a ConnectorVisitorAccepted) Validate() error {
-	if a.ProtocolVersion != Version || a.Kind != "connector_visitor_accepted" ||
-		!opaqueid.Valid(a.ConnectorSessionID, opaqueid.ConnectorSessionPrefix) ||
-		a.Subject.Validate() != nil || !validPrivateSourceIP(a.SourceIP) ||
-		!opaqueid.Valid(a.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || a.GrantRevision == 0 ||
-		!opaqueid.Valid(a.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || a.ConnectionAssignmentRevision == 0 {
-		return errors.New("tunnelv1: invalid private visitor acceptance")
-	}
-	return nil
-}
-
-func WriteConnectorVisitorAccepted(w io.Writer, a ConnectorVisitorAccepted) error {
-	if err := a.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(w, a, MaxServiceHeaderBytes)
-}
-
-func ReadConnectorVisitorAccepted(r io.Reader) (ConnectorVisitorAccepted, error) {
-	var a ConnectorVisitorAccepted
-	if err := readJSONFrame(r, &a, MaxServiceHeaderBytes); err != nil {
-		return ConnectorVisitorAccepted{}, err
-	}
-	if err := a.Validate(); err != nil {
-		return ConnectorVisitorAccepted{}, err
-	}
-	return a, nil
-}
-
 func WriteConnectorVisitorEntry(w io.Writer, e ConnectorVisitorEntry) error {
 	if err := e.Validate(); err != nil {
 		return err

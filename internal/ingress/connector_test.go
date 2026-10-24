@@ -382,7 +382,7 @@ func TestConnectorOpeningRejectsUnboundPermissionBeforeOnlineAuthority(t *testin
 				t.Fatal(err)
 			}
 			_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
+			if _, err := stream.Read(make([]byte, 1)); err == nil {
 				t.Fatal("unbound native permission admitted a stream")
 			}
 			if control.sessionClaims.Load() != 1 || control.routingReads.Load() != 2 || forwarder.count() != 0 {
@@ -412,10 +412,6 @@ func TestConnectorOpeningForwardsProofBoundInitialBytesExactlyOnce(t *testing.T)
 	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, entry, initial); err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
-	if err != nil || accepted.VisitorConnectionID != entry.VisitorConnectionID {
-		t.Fatal("opening changed the proof-bound visitor", err)
-	}
 	var response [4]byte
 	if _, err := io.ReadFull(stream, response[:]); err != nil || string(response[:]) != "pong" {
 		t.Fatalf("initial bytes were not carried before further client writes: %q %v", response, err)
@@ -427,6 +423,10 @@ func TestConnectorOpeningForwardsProofBoundInitialBytesExactlyOnce(t *testing.T)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("initial visitor bytes did not reach the target")
+	}
+	header := <-forwarder.observed
+	if header.VisitorConnectionID != entry.VisitorConnectionID {
+		t.Fatal("opening changed the proof-bound visitor")
 	}
 }
 
@@ -557,16 +557,16 @@ func TestConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *testing.T) 
 	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
-	if err != nil || accepted.SourceIP != control.sourceIP {
-		t.Fatalf("QUIC visitor metadata: %+v %v", accepted, err)
-	}
 	if _, err = stream.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
 	var reply [4]byte
 	if _, err = io.ReadFull(stream, reply[:]); err != nil || string(reply[:]) != "pong" {
 		t.Fatalf("QUIC visitor stream: %q %v", reply, err)
+	}
+	header := <-forwarder.observed
+	if header.SourceIP != control.sourceIP || header.Connector.Subject != control.subject() {
+		t.Fatal("QUIC forwarding changed source or subject")
 	}
 }
 
@@ -603,14 +603,11 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream2.Close()
-	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream2, privateEntry(control), nil); err != nil {
+	entry := privateEntry(control)
+	if _, err := tunnelv1.WriteConnectorVisitorOpening(stream2, entry, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = stream2.SetReadDeadline(time.Now().Add(2 * time.Second))
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream2)
-	if err != nil || accepted.Subject != control.subject() || accepted.SourceIP != "192.0.2.4" {
-		t.Fatalf("claimed visitor acceptance: %+v, %v", accepted, err)
-	}
 	if _, err := stream2.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +621,7 @@ func TestConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
 	}
 	select {
 	case header := <-forwarder.observed:
-		if header.VisitorConnectionID != accepted.VisitorConnectionID || header.Connector.SessionID != control.session || header.Connector.Subject != control.subject() || header.Connector.GrantRevision != 1 {
+		if header.VisitorConnectionID != entry.VisitorConnectionID || header.SourceIP != "192.0.2.4" || header.Connector.SessionID != control.session || header.Connector.Subject != control.subject() || header.Connector.GrantRevision != 1 {
 			t.Fatalf("forwarded binding=%+v", header)
 		}
 	case <-time.After(time.Second):
@@ -655,9 +652,6 @@ func TestConnectorNeverReplaysAfterVisitorByte(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-		t.Fatal(err)
-	}
 	_, _ = stream.Write([]byte("ping"))
 	select {
 	case <-forwarder.data:
@@ -809,7 +803,7 @@ func TestConnectorRejectsLeaseLostDuringStreamAuthorization(t *testing.T) {
 	lost.Store(true)
 	_, _ = raw.Write(opening.Bytes()[opening.Len()-4:])
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
+	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("accepted a visitor on a stale ingress lease")
 	}
 	if forwarder.count() != 0 {
@@ -837,7 +831,7 @@ func TestConnectorRejectsStaleRunProjectionAfterAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err == nil {
+	if _, err := stream.Read(make([]byte, 1)); err == nil {
 		t.Fatal("accepted stale private run")
 	}
 	if forwarder.count() != 0 {
@@ -860,10 +854,6 @@ func privateActiveStream(t *testing.T, connector *Connector, control *privateCon
 		t.Fatal(err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-		stop()
-		t.Fatal(err)
-	}
 	if _, err := stream.Write([]byte("ping")); err != nil {
 		stop()
 		t.Fatal(err)
@@ -957,7 +947,7 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 	defer newOnOld.Close()
 	_ = newOnOld.SetDeadline(time.Now().Add(time.Second))
 	if _, err := tunnelv1.WriteConnectorVisitorOpening(newOnOld, privateEntry(control), nil); err == nil {
-		if _, err := tunnelv1.ReadConnectorVisitorAccepted(newOnOld); err == nil {
+		if _, err := newOnOld.Read(make([]byte, 1)); err == nil {
 			t.Fatal("expired session admitted new visitor stream")
 		}
 	}
@@ -973,16 +963,16 @@ func TestPrivateOuterExpiryAllowsOldStreamAndFreshSessionForNewStreams(t *testin
 		t.Fatal(err)
 	}
 	_ = newStream.SetReadDeadline(time.Now().Add(time.Second))
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(newStream)
-	if err != nil || accepted.ConnectorSessionID != control.nextSession || accepted.VisitorConnectionID == oldHeader.VisitorConnectionID {
-		t.Fatalf("rotated session reused old visitor: %+v: %v", accepted, err)
-	}
 	if _, err := newStream.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
 	var reply [4]byte
 	if _, err := io.ReadFull(newStream, reply[:]); err != nil || string(reply[:]) != "pong" {
 		t.Fatalf("new session did not serve new visitor: %q: %v", reply, err)
+	}
+	header := <-forwarder.observed
+	if header.Connector.SessionID != control.nextSession || header.VisitorConnectionID == oldHeader.VisitorConnectionID {
+		t.Fatal("rotated session reused old visitor")
 	}
 	if _, err := oldStream.Write([]byte("more")); err != nil {
 		t.Fatalf("new session migrated or closed old visitor: %v", err)

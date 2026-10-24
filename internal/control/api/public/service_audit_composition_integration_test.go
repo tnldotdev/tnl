@@ -338,7 +338,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if _, err = tunnelv1.WriteConnectorVisitorOpening(denied, entry, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tunnelv1.ReadConnectorVisitorAccepted(denied); err == nil {
+	if _, err = denied.Read(make([]byte, 1)); err == nil {
 		t.Fatal("nonexistent run was admitted")
 	}
 	_ = denied.Close()
@@ -359,9 +359,6 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	_ = valid.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err = tunnelv1.WriteConnectorVisitorOpening(valid, entry, nil); err != nil {
 		t.Fatal(err)
-	}
-	if _, err = tunnelv1.ReadConnectorVisitorAccepted(valid); err != nil {
-		t.Fatal("valid private stream denied", err)
 	}
 	const secretPayload = "private-query-target-and-command-never-audit"
 	if _, err = io.WriteString(tunnel.NewNativeRequestWriter(valid), secretPayload); err != nil {
