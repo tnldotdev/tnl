@@ -33,7 +33,7 @@ func kubeFrontend(t *testing.T, target, targetName string, targetRoots *x509.Cer
 	}
 	var auth publisher.ServiceVisitorAuthentication = publisher.ConnectorVisitor{Check: check}
 	if public {
-		auth = publisher.CertificateVisitor{Check: func(ctx context.Context, _ *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
+		auth = publisher.CertificateVisitor{Check: func(ctx context.Context, _ tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
 			return check(ctx)
 		}}
 	}

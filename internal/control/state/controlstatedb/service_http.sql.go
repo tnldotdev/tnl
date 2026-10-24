@@ -7,33 +7,9 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const bindServiceHTTPDirectCredential = `-- name: BindServiceHTTPDirectCredential :exec
-UPDATE control.direct_service_visitors SET http_credential_kind=$1,http_credential_digest=$2,
-    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=$3
-WHERE visitor_connection_id=$4
-`
-
-type BindServiceHTTPDirectCredentialParams struct {
-	Kind                pgtype.Text
-	Digest              []byte
-	ValidUntil          pgtype.Timestamptz
-	VisitorConnectionID string
-}
-
-func (q *Queries) BindServiceHTTPDirectCredential(ctx context.Context, arg BindServiceHTTPDirectCredentialParams) error {
-	_, err := q.db.Exec(ctx, bindServiceHTTPDirectCredential,
-		arg.Kind,
-		arg.Digest,
-		arg.ValidUntil,
-		arg.VisitorConnectionID,
-	)
-	return err
-}
 
 const cleanupServiceHTTPLogins = `-- name: CleanupServiceHTTPLogins :exec
 DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
@@ -386,94 +362,6 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 		&i.ControlSessionID,
 		&i.DisplayName,
 		&i.ExpiresAt,
-	)
-	return i, err
-}
-
-const serviceHTTPDirectBinding = `-- name: ServiceHTTPDirectBinding :one
-SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
-    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
-     JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-     AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-     AND relay.lease_expires_at>$1 AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.direct_service_visitors v
-JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
-JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
-    AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
-JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
-    AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$1
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
-    AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$1)
-JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
-WHERE v.visitor_connection_id=$2 AND v.service_id=$3
-AND v.service_run_id=$4 AND v.run_number=$5
-AND v.source_ip=$6 AND v.destination_port=$7
-AND v.closed_at IS NULL AND v.valid_until>$1
-AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay
-    ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-    AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-    WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-    AND relay.lease_expires_at>$1 AND NOT relay.draining)
-`
-
-type ServiceHTTPDirectBindingParams struct {
-	Now                 pgtype.Timestamptz
-	VisitorConnectionID string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	SourceIp            netip.Addr
-	DestinationPort     int32
-}
-
-type ServiceHTTPDirectBindingRow struct {
-	Admitted   bool
-	ValidUntil pgtype.Timestamptz
-}
-
-func (q *Queries) ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPDirectBindingParams) (ServiceHTTPDirectBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectBinding,
-		arg.Now,
-		arg.VisitorConnectionID,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.SourceIp,
-		arg.DestinationPort,
-	)
-	var i ServiceHTTPDirectBindingRow
-	err := row.Scan(&i.Admitted, &i.ValidUntil)
-	return i, err
-}
-
-const serviceHTTPDirectCredential = `-- name: ServiceHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
-WHERE visitor_connection_id=$1
-`
-
-type ServiceHTTPDirectCredentialRow struct {
-	HttpCredentialKind   pgtype.Text
-	HttpCredentialDigest []byte
-	DestinationPort      int32
-	IdentityID           pgtype.Text
-	DeviceID             pgtype.Text
-	WorkloadSessionID    pgtype.Text
-}
-
-func (q *Queries) ServiceHTTPDirectCredential(ctx context.Context, visitorConnectionID string) (ServiceHTTPDirectCredentialRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectCredential, visitorConnectionID)
-	var i ServiceHTTPDirectCredentialRow
-	err := row.Scan(
-		&i.HttpCredentialKind,
-		&i.HttpCredentialDigest,
-		&i.DestinationPort,
-		&i.IdentityID,
-		&i.DeviceID,
-		&i.WorkloadSessionID,
 	)
 	return i, err
 }

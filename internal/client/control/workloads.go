@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -45,7 +46,11 @@ func (c *Client) ReleaseWorkloadIngressAssignment(ctx context.Context, credentia
 	return err
 }
 func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, credential, service string, csr []byte) (controlv1.ServiceClientCertificate, error) {
-	return request[controlv1.ServiceClientCertificate](ctx, c, credential, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.IssueWorkloadServiceClientCertificate(ctx, service, controlv1.IssueWorkloadServiceClientCertificateJSONRequestBody{Csr: csr}, editors...)
+	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: credential})
+	if err != nil {
+		return controlv1.ServiceClientCertificate{}, err
+	}
+	return request[controlv1.ServiceClientCertificate](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.IssueVisitorClientCertificate(ctx, controlv1.VisitorCertificateRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Source: source, Csr: csr}, editors...)
 	})
 }

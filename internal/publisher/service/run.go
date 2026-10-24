@@ -38,11 +38,12 @@ type Prepared struct {
 	managedProtocol     config.ProtocolName
 	metadataRevision    int64
 	managedTargetTLS    *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication
+	managedVisitor      func(tunnelv1.ServiceForwardingHeader, func(tunnelv1.ServiceVisitorReference) error) publisher.ServiceVisitorAuthentication
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *publisher.ServiceHTTPRequestLimits
 	policy              *visitorlease.Lease
+	serviceHTTP         *publisher.ServiceHTTPRuntime
 }
 
 // mutable certificate state stays behind a pointer so redacted value
@@ -423,7 +424,14 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		}
 		defer finish()
 	} else {
-		visitor = b.prepared.managedVisitor(header)
+		var finish func()
+		ctx, visitor, finish, err = b.admitDirect(ctx, stream, header, func(reference tunnelv1.ServiceVisitorReference) error {
+			return tunnel.PromoteServiceVisitorStream(stream, reference)
+		})
+		if err != nil {
+			return err
+		}
+		defer finish()
 	}
 	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
 	if b.prepared.targetResolver != nil {
@@ -444,6 +452,9 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
 		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+	if header.Direct != nil {
+		managed.TLS.ClientCAs = b.prepared.policy.ClientAuthorities()
+	}
 	return managed.Forward(ctx, body)
 }
 

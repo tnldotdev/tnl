@@ -173,6 +173,16 @@ func PromoteVisitorStream(connection net.Conn) error {
 	return stream.Promote(stream.promotion)
 }
 
+func PromoteServiceVisitorStream(connection net.Conn, visitor tunnelv1.ServiceVisitorReference) error {
+	stream, ok := connection.(*replyStream)
+	if !ok || !visitor.Valid() || stream.promotion.ServiceID == "" {
+		return tunnelv1.ErrReturnFrame
+	}
+	header := stream.promotion
+	header.Visitor = visitor
+	return stream.Promote(header)
+}
+
 func (s *replyStream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,35 @@ func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context,
 		return result, err
 	}
 	origin := permission.Subject
+	csrDigest := sha256.Sum256(csrDER)
+	// uncertain delivery and ordinary revalidation recover the exact current
+	// issued leaf. renew only after expiry or an explicitly changed parent.
+	var priorCertificate []byte
+	var priorExpiry time.Time
+	switch parent := origin.(type) {
+	case visitortoken.Device:
+		var revoked bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_client_certificates WHERE service_id=$1 AND device_id=$2 AND csr_digest=$3 AND revoked_at IS NOT NULL)`, scope.ID, parent.DeviceID, csrDigest[:]).Scan(&revoked); err != nil {
+			return result, err
+		}
+		if revoked {
+			return result, ErrVisitorPermission
+		}
+		err = tx.QueryRow(ctx, `SELECT current.certificate_pem,current.expires_at FROM control.service_client_certificates current
+		    JOIN control.visitor_certificate_facts fact ON fact.certificate_digest=current.certificate_digest AND fact.service_id=current.service_id
+		    WHERE current.service_id=$1 AND current.identity_id=$2 AND current.device_id=$3 AND current.csr_digest=$4 AND current.control_session_id=$5 AND current.revoked_at IS NULL AND current.expires_at>$6`, scope.ID, parent.IdentityID, parent.DeviceID, csrDigest[:], parent.SessionID, now).Scan(&priorCertificate, &priorExpiry)
+	case visitortoken.Workload:
+		err = tx.QueryRow(ctx, `SELECT current.certificate_pem,current.expires_at FROM control.workload_client_certificates current
+		    JOIN control.visitor_certificate_facts fact ON fact.certificate_digest=current.certificate_digest AND fact.service_id=current.service_id
+		    WHERE current.service_id=$1 AND current.workload_session_id=$2 AND current.csr_digest=$3 AND current.expires_at>$4`, scope.ID, parent.SessionID, csrDigest[:], now).Scan(&priorCertificate, &priorExpiry)
+	}
+	if err == nil && len(priorCertificate) > 0 {
+		result = ServiceClientCertificate{ServiceID: scope.ID, CertificatePEM: string(priorCertificate), IssuerPEM: string(issuer.CertificatePEM()), ExpiresAt: priorExpiry}
+		return result, tx.Commit(ctx)
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return result, err
+	}
 	if workload, ok := origin.(visitortoken.Workload); ok {
 		digest, err := visitortoken.KeyDigest(csr.PublicKey)
 		if err != nil || digest != workload.KeySHA256 {
@@ -77,7 +107,7 @@ func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context,
 	if err != nil {
 		return result, ErrCertificateIssuanceInvalid
 	}
-	certificateDigest, csrDigest := sha256.Sum256(leaf.Raw), sha256.Sum256(csrDER)
+	certificateDigest := sha256.Sum256(leaf.Raw)
 	switch parent := origin.(type) {
 	case visitortoken.Device:
 		tag, writeErr := tx.Exec(ctx, `INSERT INTO control.service_client_certificates(certificate_digest,service_id,identity_id,device_id,csr_digest,certificate_pem,created_at,expires_at,control_session_id)
@@ -107,6 +137,21 @@ func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context,
 		return result, ErrVisitorPermission
 	}
 	if err != nil {
+		return result, err
+	}
+	identity, device, workload, controlSession := "", "", "", ""
+	switch parent := origin.(type) {
+	case visitortoken.Device:
+		identity, device, controlSession = parent.IdentityID, parent.DeviceID, parent.SessionID
+	case visitortoken.Workload:
+		workload = parent.SessionID
+	}
+	_, subjectDigest, err := visitortoken.CredentialBinding(permission.Subject)
+	if err != nil {
+		return result, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO control.visitor_certificate_facts(certificate_digest,service_id,identity_id,device_id,workload_session_id,issued_at,expires_at,control_session_id,csr_digest,serial,subject_sha256)
+	    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, certificateDigest[:], scope.ID, nullableText(identity), nullableText(device), nullableText(workload), now, leaf.NotAfter, nullableText(controlSession), csrDigest[:], leaf.SerialNumber.Text(16), subjectDigest); err != nil {
 		return result, err
 	}
 	result = ServiceClientCertificate{ServiceID: scope.ID, CertificatePEM: string(material), IssuerPEM: string(issuer.CertificatePEM()), ExpiresAt: leaf.NotAfter}

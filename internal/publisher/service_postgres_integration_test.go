@@ -84,7 +84,7 @@ func TestIntegrationManagedPostgresCancelOwnership(t *testing.T) {
 	for _, mode := range []string{"plaintext", "other-principal", "other-service"} {
 		t.Run(mode, func(t *testing.T) {
 			server, certificates := postgresManagedFixture(t)
-			server.Visitor = publisher.CertificateVisitor{Check: func(_ context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
+			server.Visitor = publisher.CertificateVisitor{Check: func(_ context.Context, _ tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
 				// each leaf represents an independently admitted principal. possession
 				// of either leaf must not authorize the other principal's cancel key.
 				return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil

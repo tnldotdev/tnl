@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,108 @@ import (
 type observedLocal struct {
 	net.Conn
 	reads *atomic.Int64
+}
+
+func TestServiceHTTP2CanceledStreamKeepsSiblingAndExactTargetDial(t *testing.T) {
+	first := make(chan struct{})
+	var targetDials, visitorDials atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wait" {
+			_, _ = io.WriteString(w, "data: ready\n\n")
+			w.(http.Flusher).Flush()
+			close(first)
+			<-r.Context().Done()
+			return
+		}
+		_, _ = io.WriteString(w, "sibling")
+	}))
+	t.Cleanup(target.Close)
+	url, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, certificate := providerCertificate(t)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(root) {
+		t.Fatal("missing visitor trust")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		secure := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{certificate}, NextProtos: []string{"h2", "http/1.1"}, MinVersion: tls.VersionTLS12})
+		if err := secure.HandshakeContext(ctx); err != nil {
+			_ = secure.Close()
+			done <- err
+			return
+		}
+		done <- httpstream.Serve(ctx, secure, url, func(ctx context.Context) (net.Conn, error) {
+			targetDials.Add(1)
+			return (&net.Dialer{}).DialContext(ctx, "tcp", url.Host)
+		}, nil)
+	}()
+	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "db.example", MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		visitorDials.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	waitCtx, stopWait := context.WithCancel(t.Context())
+	defer stopWait()
+	waitRequest, err := http.NewRequestWithContext(waitCtx, "GET", "https://db.example/wait", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(waitRequest)
+	if err != nil || response.ProtoMajor != 2 {
+		t.Fatal("visitor did not negotiate HTTP/2", err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadFull(response.Body, make([]byte, len("data: ready\n\n"))); err != nil {
+		t.Fatal("first stream did not reach its target", err)
+	}
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("first target did not retain its request")
+	}
+	for index := range 2 {
+		if index == 1 {
+			stopWait()
+		}
+		sibling, err := client.Get("https://db.example/ready")
+		if err != nil {
+			t.Fatal("HTTP/2 sibling was closed with an unrelated request", err)
+		}
+		body, err := io.ReadAll(sibling.Body)
+		_ = sibling.Body.Close()
+		if err != nil || sibling.ProtoMajor != 2 || string(body) != "sibling" {
+			t.Fatal("HTTP/2 sibling crossed its independent target", err)
+		}
+	}
+	if visitorDials.Load() != 1 || targetDials.Load() != 3 {
+		t.Fatalf("HTTP/2 requests reused the wrong connection: visitor=%d target=%d", visitorDials.Load(), targetDials.Load())
+	}
+	cancel()
+	transport.CloseIdleConnections()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTP/2 selected connection did not join on shutdown")
+	}
 }
 
 func (c *observedLocal) Read(p []byte) (int, error) { c.reads.Add(1); return c.Conn.Read(p) }

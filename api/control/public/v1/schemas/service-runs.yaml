@@ -5,15 +5,6 @@ schemas:
   ServiceRunID:
     type: string
     pattern: "^srun_[A-Za-z0-9]{22}$"
-  AuthorizeServiceClientCertificateRequest:
-    type: object
-    additionalProperties: false
-    required: [run_number, visitor_connection_id, source_ip, certificate]
-    properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
-      visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
-      source_ip: { type: string, maxLength: 64 }
-      certificate: { type: string, format: byte, maxLength: 21848 }
   CreateServiceCertificateIssuanceRequest:
     type: object
     additionalProperties: false

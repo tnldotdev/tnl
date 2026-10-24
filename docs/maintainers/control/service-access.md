@@ -132,6 +132,13 @@ belong only in request bodies/headers, never query strings or logs. all bridge
 responses are `no-store`. website handlers still own session authentication,
 same-origin/CSRF checks, bounded input, and secret delivery.
 
+the website's signed service actor creates the same signed service visitor
+credential as the CLI at `POST /v1/service/services/{service_id}/http-grants`.
+the request includes the matching service resource; the response separates the
+visitor token from its authority-only refresh credential. browser sign-in and
+share redemption remain separate operations. the existing service grant list
+and revoke endpoints manage these same grant IDs without returning secrets.
+
 ## qualification
 
 run `mise exec -- task go:test:integration:service-access` for real PostgreSQL and
@@ -141,4 +148,3 @@ request conflicts, explicit CLI revoke/reissue, exact request binding, JWT/JTI r
 website-only rejection, current roles and company sources, disabled identities,
 issuer-verified recipient email, preview without acceptance, exact grant/deadline
 and revocation lifecycle, service HTTP inventory and resource-scope rejection.
-no database schema or tunnel protocol change is needed.

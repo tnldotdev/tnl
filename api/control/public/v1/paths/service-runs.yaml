@@ -1,30 +1,4 @@
 paths:
-  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
-    post:
-      operationId: authorizeServiceHTTPVisitor
-      security: [{ bearerAuth: [] }]
-      description: Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
-        - {
-            name: service_run_id,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
-          }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPVisitorRequest" }
-      responses:
-        "200":
-          description: Current request and ingress promotion decision
-          content:
-            application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/start:
     post:
       operationId: startServiceRun
@@ -54,35 +28,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunSetup" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
-    post:
-      operationId: authorizeServiceClientCertificate
-      description: Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
-        - {
-            name: service_run_id,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
-          }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              {
-                $ref: "../openapi.yaml#/components/schemas/AuthorizeServiceClientCertificateRequest",
-              }
-      responses:
-        "200":
-          description: Live permission for an exact admitted connection after TLS proved client key possession
-          content:
-            application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
     parameters:

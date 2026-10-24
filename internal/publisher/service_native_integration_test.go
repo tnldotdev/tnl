@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +24,8 @@ func TestIntegrationManagedPostgresNativeCredentialLifetime(t *testing.T) {
 			replacement := serviceCertificates(t).client
 			var originalDeadline atomic.Int64
 			var originalChecks, replacementChecks atomic.Int64
-			server.Visitor = publisher.CertificateVisitor{Check: func(_ context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
+			server.Visitor = publisher.CertificateVisitor{Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+				leaf := state.PeerCertificates[0]
 				switch {
 				case bytes.Equal(leaf.Raw, certificates.client.Certificate[0]):
 					originalDeadline.CompareAndSwap(0, time.Now().Add(1200*time.Millisecond).UnixNano())

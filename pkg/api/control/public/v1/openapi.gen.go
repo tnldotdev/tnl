@@ -19,6 +19,7 @@ import (
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	tunnelv1 "github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // Defines values for AdminServerStatusRole.
@@ -219,24 +220,6 @@ func (e CreateServiceGrantRequestKind) Valid() bool {
 	case CreateServiceGrantRequestKindIdentity:
 		return true
 	case CreateServiceGrantRequestKindTeam:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CreateServiceHTTPGrantRequestKind.
-const (
-	CreateServiceHTTPGrantRequestKindShare CreateServiceHTTPGrantRequestKind = "share"
-	CreateServiceHTTPGrantRequestKindToken CreateServiceHTTPGrantRequestKind = "token"
-)
-
-// Valid indicates whether the value is a known member of the CreateServiceHTTPGrantRequestKind enum.
-func (e CreateServiceHTTPGrantRequestKind) Valid() bool {
-	switch e {
-	case CreateServiceHTTPGrantRequestKindShare:
-		return true
-	case CreateServiceHTTPGrantRequestKindToken:
 		return true
 	default:
 		return false
@@ -1044,51 +1027,6 @@ func (e ServiceGrantKind) Valid() bool {
 	}
 }
 
-// Defines values for ServiceHTTPCredentialKind.
-const (
-	ServiceHTTPCredentialKindBrowser     ServiceHTTPCredentialKind = "browser"
-	ServiceHTTPCredentialKindCertificate ServiceHTTPCredentialKind = "certificate"
-	ServiceHTTPCredentialKindNone        ServiceHTTPCredentialKind = "none"
-	ServiceHTTPCredentialKindShare       ServiceHTTPCredentialKind = "share"
-	ServiceHTTPCredentialKindToken       ServiceHTTPCredentialKind = "token"
-)
-
-// Valid indicates whether the value is a known member of the ServiceHTTPCredentialKind enum.
-func (e ServiceHTTPCredentialKind) Valid() bool {
-	switch e {
-	case ServiceHTTPCredentialKindBrowser:
-		return true
-	case ServiceHTTPCredentialKindCertificate:
-		return true
-	case ServiceHTTPCredentialKindNone:
-		return true
-	case ServiceHTTPCredentialKindShare:
-		return true
-	case ServiceHTTPCredentialKindToken:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ServiceHTTPGrantKind.
-const (
-	ServiceHTTPGrantKindShare ServiceHTTPGrantKind = "share"
-	ServiceHTTPGrantKindToken ServiceHTTPGrantKind = "token"
-)
-
-// Valid indicates whether the value is a known member of the ServiceHTTPGrantKind enum.
-func (e ServiceHTTPGrantKind) Valid() bool {
-	switch e {
-	case ServiceHTTPGrantKindShare:
-		return true
-	case ServiceHTTPGrantKindToken:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ServiceHTTPGrantSummaryKind.
 const (
 	ServiceHTTPGrantSummaryKindShare ServiceHTTPGrantSummaryKind = "share"
@@ -1320,6 +1258,24 @@ func (e VisitorAccessMode) Valid() bool {
 	case Anonymous:
 		return true
 	case Restricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VisitorCredentialLeaseKind.
+const (
+	Certificate VisitorCredentialLeaseKind = "certificate"
+	Grant       VisitorCredentialLeaseKind = "grant"
+)
+
+// Valid indicates whether the value is a known member of the VisitorCredentialLeaseKind enum.
+func (e VisitorCredentialLeaseKind) Valid() bool {
+	switch e {
+	case Certificate:
+		return true
+	case Grant:
 		return true
 	default:
 		return false
@@ -1768,14 +1724,6 @@ type AuthenticationFacts struct {
 // AuthenticationFactsMethods defines model for AuthenticationFacts.Methods.
 type AuthenticationFactsMethods string
 
-// AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
-type AuthorizeServiceClientCertificateRequest struct {
-	Certificate         []byte              `json:"certificate"`
-	RunNumber           int64               `json:"run_number"`
-	SourceIp            string              `json:"source_ip"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
 // AvailablePublicURL defines model for AvailablePublicURL.
 type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
@@ -2039,15 +1987,6 @@ type CreateServiceGrantRequest struct {
 
 // CreateServiceGrantRequestKind defines model for CreateServiceGrantRequest.Kind.
 type CreateServiceGrantRequestKind string
-
-// CreateServiceHTTPGrantRequest defines model for CreateServiceHTTPGrantRequest.
-type CreateServiceHTTPGrantRequest struct {
-	ExpiresAt time.Time                         `json:"expires_at"`
-	Kind      CreateServiceHTTPGrantRequestKind `json:"kind"`
-}
-
-// CreateServiceHTTPGrantRequestKind defines model for CreateServiceHTTPGrantRequest.Kind.
-type CreateServiceHTTPGrantRequestKind string
 
 // CreateServiceInvitationRequest defines model for CreateServiceInvitationRequest.
 type CreateServiceInvitationRequest struct {
@@ -2372,12 +2311,6 @@ type IngressTransportTrust struct {
 
 // IssuanceID defines model for IssuanceID.
 type IssuanceID = ResourceID
-
-// IssueServiceClientCertificateRequest defines model for IssueServiceClientCertificateRequest.
-type IssueServiceClientCertificateRequest struct {
-	Csr      []byte `json:"csr"`
-	DeviceId string `json:"device_id"`
-}
 
 // KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
 type KubernetesAuth struct {
@@ -3228,14 +3161,6 @@ type ServiceClientCertificate struct {
 	ServiceId      ServiceID `json:"service_id"`
 }
 
-// ServiceClientCertificateDecision defines model for ServiceClientCertificateDecision.
-type ServiceClientCertificateDecision struct {
-	// Admitted Ingress has reserved ordinary capacity. The publisher must wait for this before sending application bytes to the target.
-	Admitted   bool      `json:"admitted"`
-	Allowed    bool      `json:"allowed"`
-	ValidUntil time.Time `json:"valid_until"`
-}
-
 // ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
 type ServiceEndpoint struct {
 	Hostname string `json:"hostname"`
@@ -3267,31 +3192,6 @@ type ServiceGrantPage struct {
 	NextCursor *ServiceGrantID `json:"next_cursor,omitempty"`
 }
 
-// ServiceHTTPCredential Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
-type ServiceHTTPCredential struct {
-	Certificate *[]byte                   `json:"certificate,omitempty"`
-	Kind        ServiceHTTPCredentialKind `json:"kind"`
-	Secret      *string                   `json:"secret,omitempty"`
-}
-
-// ServiceHTTPCredentialKind defines model for ServiceHTTPCredential.Kind.
-type ServiceHTTPCredentialKind string
-
-// ServiceHTTPGrant defines model for ServiceHTTPGrant.
-type ServiceHTTPGrant struct {
-	ExpiresAt time.Time            `json:"expires_at"`
-	Id        string               `json:"id"`
-	Kind      ServiceHTTPGrantKind `json:"kind"`
-	Secret    string               `json:"secret"`
-	ShareUrl  *string              `json:"share_url,omitempty"`
-
-	// Subject An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Subject VisitorResourceScope `json:"subject"`
-}
-
-// ServiceHTTPGrantKind defines model for ServiceHTTPGrant.Kind.
-type ServiceHTTPGrantKind string
-
 // ServiceHTTPGrantSummary defines model for ServiceHTTPGrantSummary.
 type ServiceHTTPGrantSummary struct {
 	ExpiresAt time.Time                   `json:"expires_at"`
@@ -3305,16 +3205,6 @@ type ServiceHTTPGrantSummary struct {
 
 // ServiceHTTPGrantSummaryKind defines model for ServiceHTTPGrantSummary.Kind.
 type ServiceHTTPGrantSummaryKind string
-
-// ServiceHTTPVisitorRequest defines model for ServiceHTTPVisitorRequest.
-type ServiceHTTPVisitorRequest struct {
-	// Credential Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
-	Credential          ServiceHTTPCredential `json:"credential"`
-	DestinationPort     int                   `json:"destination_port"`
-	RunNumber           int64                 `json:"run_number"`
-	SourceIp            string                `json:"source_ip"`
-	VisitorConnectionId string                `json:"visitor_connection_id"`
-}
 
 // ServiceID defines model for ServiceID.
 type ServiceID = string
@@ -3376,6 +3266,7 @@ type ServiceObservation struct {
 	SourceIp            *string                       `json:"source_ip,omitempty"`
 	StreamAllocationId  *string                       `json:"stream_allocation_id,omitempty"`
 	VisitorConnectionId string                        `json:"visitor_connection_id"`
+	VisitorReference    *ServiceVisitorReference      `json:"visitor_reference,omitempty"`
 }
 
 // ServiceObservationEventType defines model for ServiceObservation.EventType.
@@ -3495,6 +3386,9 @@ type ServiceTargetTLS struct {
 	Pem      *string `json:"pem,omitempty"`
 	System   bool    `json:"system"`
 }
+
+// ServiceVisitorReference defines model for ServiceVisitorReference.
+type ServiceVisitorReference = tunnelv1.ServiceVisitorReference
 
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
@@ -3666,15 +3560,23 @@ type VisitorCertificateRequest struct {
 	Source   json.RawMessage      `json:"source"`
 }
 
-// VisitorConnectionID defines model for VisitorConnectionID.
-type VisitorConnectionID = string
-
 // VisitorCredential defines model for VisitorCredential.
 type VisitorCredential struct {
 	GrantId           string               `json:"grant_id"`
 	Permission        VisitorTokenResponse `json:"permission"`
 	RefreshCredential string               `json:"refresh_credential"`
 }
+
+// VisitorCredentialLease defines model for VisitorCredentialLease.
+type VisitorCredentialLease struct {
+	ExpiresAt     time.Time                  `json:"expires_at"`
+	Id            string                     `json:"id"`
+	Kind          VisitorCredentialLeaseKind `json:"kind"`
+	SubjectSha256 string                     `json:"subject_sha256"`
+}
+
+// VisitorCredentialLeaseKind defines model for VisitorCredentialLease.Kind.
+type VisitorCredentialLeaseKind string
 
 // VisitorDevice defines model for VisitorDevice.
 type VisitorDevice struct {
@@ -3720,12 +3622,13 @@ type VisitorPolicySnapshot struct {
 	Anonymous bool `json:"anonymous"`
 
 	// ClientIssuerPem public trust for service client certificates; absent until the issuer is prepared.
-	ClientIssuerPem *string          `json:"client_issuer_pem,omitempty"`
-	Enabled         bool             `json:"enabled"`
-	Hostname        string           `json:"hostname"`
-	Ip              *VisitorPolicyIP `json:"ip,omitempty"`
-	Issuer          string           `json:"issuer"`
-	KeyRevision     int64            `json:"key_revision"`
+	ClientIssuerPem  *string                  `json:"client_issuer_pem,omitempty"`
+	CredentialLeases []VisitorCredentialLease `json:"credential_leases"`
+	Enabled          bool                     `json:"enabled"`
+	Hostname         string                   `json:"hostname"`
+	Ip               *VisitorPolicyIP         `json:"ip,omitempty"`
+	Issuer           string                   `json:"issuer"`
+	KeyRevision      int64                    `json:"key_revision"`
 
 	// MetadataRevision current service metadata revision; zero for public URLs.
 	MetadataRevision int64     `json:"metadata_revision"`
@@ -4234,11 +4137,6 @@ type ListAvailableServicesParams struct {
 	Cursor *ServiceCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// IssueWorkloadServiceClientCertificateJSONBody defines parameters for IssueWorkloadServiceClientCertificate.
-type IssueWorkloadServiceClientCertificateJSONBody struct {
-	Csr []byte `json:"csr"`
-}
-
 // CreateWorkloadIngressAssignmentsJSONBody defines parameters for CreateWorkloadIngressAssignments.
 type CreateWorkloadIngressAssignmentsJSONBody struct {
 	Count            *int    `json:"count,omitempty"`
@@ -4393,14 +4291,8 @@ type CreateServiceJSONRequestBody = CreateServiceRequest
 // ConfigureServiceJSONRequestBody defines body for ConfigureService for application/json ContentType.
 type ConfigureServiceJSONRequestBody = ServiceMetadata
 
-// IssueServiceClientCertificateJSONRequestBody defines body for IssueServiceClientCertificate for application/json ContentType.
-type IssueServiceClientCertificateJSONRequestBody = IssueServiceClientCertificateRequest
-
 // CreateServiceGrantJSONRequestBody defines body for CreateServiceGrant for application/json ContentType.
 type CreateServiceGrantJSONRequestBody = CreateServiceGrantRequest
-
-// CreateServiceHTTPGrantJSONRequestBody defines body for CreateServiceHTTPGrant for application/json ContentType.
-type CreateServiceHTTPGrantJSONRequestBody = CreateServiceHTTPGrantRequest
 
 // CreateVisitorIngressAssignmentJSONRequestBody defines body for CreateVisitorIngressAssignment for application/json ContentType.
 type CreateVisitorIngressAssignmentJSONRequestBody CreateVisitorIngressAssignmentJSONBody
@@ -4417,9 +4309,6 @@ type PrepareServiceRunJSONRequestBody = ServiceRunDeclaration
 // HeartbeatServiceRunJSONRequestBody defines body for HeartbeatServiceRun for application/json ContentType.
 type HeartbeatServiceRunJSONRequestBody = ServiceRunHeartbeat
 
-// AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
-type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
-
 // RedeemServiceBrowserHandoffJSONRequestBody defines body for RedeemServiceBrowserHandoff for application/json ContentType.
 type RedeemServiceBrowserHandoffJSONRequestBody = ServiceBrowserRequest
 
@@ -4434,9 +4323,6 @@ type MarkServiceCertificateInstalledJSONRequestBody = ServiceCertificateInstalle
 
 // CreateServiceCertificateIssuanceJSONRequestBody defines body for CreateServiceCertificateIssuance for application/json ContentType.
 type CreateServiceCertificateIssuanceJSONRequestBody = CreateServiceCertificateIssuanceRequest
-
-// AuthorizeServiceHTTPVisitorJSONRequestBody defines body for AuthorizeServiceHTTPVisitor for application/json ContentType.
-type AuthorizeServiceHTTPVisitorJSONRequestBody = ServiceHTTPVisitorRequest
 
 // StartServiceRunJSONRequestBody defines body for StartServiceRun for application/json ContentType.
 type StartServiceRunJSONRequestBody StartServiceRunJSONBody
@@ -4464,9 +4350,6 @@ type ReadPublisherVisitorPolicyJSONRequestBody = PublisherVisitorPolicyRequest
 
 // IssueVisitorTokenJSONRequestBody defines body for IssueVisitorToken for application/json ContentType.
 type IssueVisitorTokenJSONRequestBody = VisitorTokenRequest
-
-// IssueWorkloadServiceClientCertificateJSONRequestBody defines body for IssueWorkloadServiceClientCertificate for application/json ContentType.
-type IssueWorkloadServiceClientCertificateJSONRequestBody IssueWorkloadServiceClientCertificateJSONBody
 
 // CreateWorkloadIngressAssignmentsJSONRequestBody defines body for CreateWorkloadIngressAssignments for application/json ContentType.
 type CreateWorkloadIngressAssignmentsJSONRequestBody CreateWorkloadIngressAssignmentsJSONBody
@@ -5407,14 +5290,6 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	ConfigureService(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	IssueServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueServiceClientCertificate performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type.
-	IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -5435,18 +5310,6 @@ type ClientInterface interface {
 	//
 	// Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
 	ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateServiceHTTPGrantWithBody performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-	CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateServiceHTTPGrant performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-	CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeServiceHTTPGrant performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
 	RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5524,18 +5387,6 @@ type ClientInterface interface {
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-	AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
 	RedeemServiceBrowserHandoffWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5578,18 +5429,6 @@ type ClientInterface interface {
 
 	// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceHTTPVisitorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-	AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceHTTPVisitor performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-	AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
@@ -5688,7 +5527,7 @@ type ClientInterface interface {
 
 	// ReleaseVisitorIngressAssignment performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
 	//
-	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked; local policy and session deadlines fence its active streams. Sibling sessions are never affected. Retrying release of an owned assignment succeeds.
 	ReleaseVisitorIngressAssignment(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVisitorIngressTransportTrust performs a GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust (the `GetVisitorIngressTransportTrust` operationId) request.
@@ -5754,14 +5593,6 @@ type ClientInterface interface {
 
 	// CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
 	CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type.
-	IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateWorkloadIngressAssignmentsWithBody performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
 	// with any type of body and a specified content type.
@@ -7975,34 +7806,6 @@ func (c *Client) ConfigureService(ctx context.Context, serviceId ServiceID, body
 	return c.Client.Do(req)
 }
 
-// IssueServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) IssueServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueServiceClientCertificateRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IssueServiceClientCertificate performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueServiceClientCertificateRequest(c.Server, serviceId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -8064,38 +7867,6 @@ func (c *Client) RevokeServiceGrant(ctx context.Context, serviceId ServiceID, gr
 // Secretless credential inventory for one service HTTP service. Requires current service management permission; includes expired and revoked records.
 func (c *Client) ListServiceHTTPGrants(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListServiceHTTPGrantsRequest(c.Server, serviceId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateServiceHTTPGrantWithBody performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-func (c *Client) CreateServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateServiceHTTPGrantRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateServiceHTTPGrant performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-func (c *Client) CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateServiceHTTPGrantRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8322,38 +8093,6 @@ func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, s
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceClientCertificateRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) RedeemServiceBrowserHandoffWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8497,38 +8236,6 @@ func (c *Client) CreateServiceCertificateIssuance(ctx context.Context, serviceId
 // GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetServiceCertificateIssuanceRequest(c.Server, serviceId, serviceRunId, issuanceId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceHTTPVisitorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-func (c *Client) AuthorizeServiceHTTPVisitorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceHTTPVisitorRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceHTTPVisitor performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-func (c *Client) AuthorizeServiceHTTPVisitor(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceHTTPVisitorRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8806,7 +8513,7 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEd
 
 // ReleaseVisitorIngressAssignment performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
 //
-// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked; local policy and session deadlines fence its active streams. Sibling sessions are never affected. Retrying release of an owned assignment succeeds.
 func (c *Client) ReleaseVisitorIngressAssignment(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleaseVisitorIngressAssignmentRequest(c.Server, connectorSessionId)
 	if err != nil {
@@ -9013,34 +8720,6 @@ func (c *Client) ListWorkloadServices(ctx context.Context, reqEditors ...Request
 // CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
 func (c *Client) CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckWorkloadServiceRequest(c.Server, serviceId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueWorkloadServiceClientCertificateRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueWorkloadServiceClientCertificateRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13444,53 +13123,6 @@ func NewConfigureServiceRequestWithBody(server string, serviceId ServiceID, cont
 	return req, nil
 }
 
-// NewIssueServiceClientCertificateRequest calls the generic IssueServiceClientCertificate builder with application/json body
-func NewIssueServiceClientCertificateRequest(server string, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewIssueServiceClientCertificateRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewIssueServiceClientCertificateRequestWithBody constructs an http.Request for the IssueServiceClientCertificate method, with any body, and a specified content type
-func NewIssueServiceClientCertificateRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/client-certificates", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewListServiceGrantsRequest constructs an http.Request for the ListServiceGrants method
 func NewListServiceGrantsRequest(server string, serviceId ServiceID, params *ListServiceGrantsParams) (*http.Request, error) {
 	var err error
@@ -13683,53 +13315,6 @@ func NewListServiceHTTPGrantsRequest(server string, serviceId ServiceID) (*http.
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewCreateServiceHTTPGrantRequest calls the generic CreateServiceHTTPGrant builder with application/json body
-func NewCreateServiceHTTPGrantRequest(server string, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateServiceHTTPGrantRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewCreateServiceHTTPGrantRequestWithBody constructs an http.Request for the CreateServiceHTTPGrant method, with any body, and a specified content type
-func NewCreateServiceHTTPGrantRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/http-grants", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14186,60 +13771,6 @@ func NewHeartbeatServiceRunRequestWithBody(server string, serviceId ServiceID, s
 	return req, nil
 }
 
-// NewAuthorizeServiceClientCertificateRequest calls the generic AuthorizeServiceClientCertificate builder with application/json body
-func NewAuthorizeServiceClientCertificateRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceClientCertificateRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceClientCertificateRequestWithBody constructs an http.Request for the AuthorizeServiceClientCertificate method, with any body, and a specified content type
-func NewAuthorizeServiceClientCertificateRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-client-certificate", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRedeemServiceBrowserHandoffRequest calls the generic RedeemServiceBrowserHandoff builder with application/json body
 func NewRedeemServiceBrowserHandoffRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14567,60 +14098,6 @@ func NewGetServiceCertificateIssuanceRequest(server string, serviceId ServiceID,
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewAuthorizeServiceHTTPVisitorRequest calls the generic AuthorizeServiceHTTPVisitor builder with application/json body
-func NewAuthorizeServiceHTTPVisitorRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceHTTPVisitorRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceHTTPVisitorRequestWithBody constructs an http.Request for the AuthorizeServiceHTTPVisitor method, with any body, and a specified content type
-func NewAuthorizeServiceHTTPVisitorRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/http-authorize", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -15639,53 +15116,6 @@ func NewCheckWorkloadServiceRequest(server string, serviceId string) (*http.Requ
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewIssueWorkloadServiceClientCertificateRequest calls the generic IssueWorkloadServiceClientCertificate builder with application/json body
-func NewIssueWorkloadServiceClientCertificateRequest(server string, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewIssueWorkloadServiceClientCertificateRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewIssueWorkloadServiceClientCertificateRequestWithBody constructs an http.Request for the IssueWorkloadServiceClientCertificate method, with any body, and a specified content type
-func NewIssueWorkloadServiceClientCertificateRequestWithBody(server string, serviceId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload/services/%s/client-certificate", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -16737,16 +16167,6 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ConfigureServiceWithResponse(ctx context.Context, serviceId ServiceID, body ConfigureServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfigureServiceResponse, error)
 
-	// IssueServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	IssueServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
-
-	// IssueServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
-
 	// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -16775,20 +16195,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListServiceHTTPGrantsWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*ListServiceHTTPGrantsResponse, error)
-
-	// CreateServiceHTTPGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error)
-
-	// CreateServiceHTTPGrantWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-	CreateServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error)
 
 	// RevokeServiceHTTPGrantWithResponse performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
 	//
@@ -16884,20 +16290,6 @@ type ClientWithResponsesInterface interface {
 	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
 	HeartbeatServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body HeartbeatServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatServiceRunResponse, error)
 
-	// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
-
-	// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
-
 	// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -16952,20 +16344,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
-
-	// AuthorizeServiceHTTPVisitorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
-
-	// AuthorizeServiceHTTPVisitorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-	AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error)
 
 	// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
@@ -17084,7 +16462,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReleaseVisitorIngressAssignmentWithResponse performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
 	//
-	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked; local policy and session deadlines fence its active streams. Sibling sessions are never affected. Retrying release of an owned assignment succeeds.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ReleaseVisitorIngressAssignmentWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseVisitorIngressAssignmentResponse, error)
@@ -17174,16 +16552,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CheckWorkloadServiceWithResponse(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*CheckWorkloadServiceResponse, error)
-
-	// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
-
-	// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
 
 	// CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
 	// with any type of body and a specified content type.
@@ -21471,54 +20839,6 @@ func (r ConfigureServiceResponse) ContentType() string {
 	return ""
 }
 
-type IssueServiceClientCertificateResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ServiceClientCertificate
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r IssueServiceClientCertificateResponse) GetJSON201() *ServiceClientCertificate {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IssueServiceClientCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r IssueServiceClientCertificateResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r IssueServiceClientCertificateResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r IssueServiceClientCertificateResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IssueServiceClientCertificateResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21698,54 +21018,6 @@ func (r ListServiceHTTPGrantsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListServiceHTTPGrantsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateServiceHTTPGrantResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ServiceHTTPGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateServiceHTTPGrantResponse) GetJSON201() *ServiceHTTPGrant {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateServiceHTTPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateServiceHTTPGrantResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateServiceHTTPGrantResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateServiceHTTPGrantResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateServiceHTTPGrantResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22170,54 +21442,6 @@ func (r HeartbeatServiceRunResponse) ContentType() string {
 	return ""
 }
 
-type AuthorizeServiceClientCertificateResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificateDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceClientCertificateResponse) GetJSON200() *ServiceClientCertificateDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceClientCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceClientCertificateResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceClientCertificateResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceClientCertificateResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceClientCertificateResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RedeemServiceBrowserHandoffResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22486,54 +21710,6 @@ func (r GetServiceCertificateIssuanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetServiceCertificateIssuanceResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AuthorizeServiceHTTPVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificateDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceHTTPVisitorResponse) GetJSON200() *ServiceClientCertificateDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceHTTPVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceHTTPVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceHTTPVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceHTTPVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceHTTPVisitorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23625,54 +22801,6 @@ func (r CheckWorkloadServiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CheckWorkloadServiceResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type IssueWorkloadServiceClientCertificateResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificate
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r IssueWorkloadServiceClientCertificateResponse) GetJSON200() *ServiceClientCertificate {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IssueWorkloadServiceClientCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r IssueWorkloadServiceClientCertificateResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r IssueWorkloadServiceClientCertificateResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r IssueWorkloadServiceClientCertificateResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IssueWorkloadServiceClientCertificateResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25537,28 +24665,6 @@ func (c *ClientWithResponses) ConfigureServiceWithResponse(ctx context.Context, 
 	return ParseConfigureServiceResponse(rsp)
 }
 
-// IssueServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error) {
-	rsp, err := c.IssueServiceClientCertificateWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueServiceClientCertificateResponse(rsp)
-}
-
-// IssueServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/client-certificates (the `IssueServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error) {
-	rsp, err := c.IssueServiceClientCertificate(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueServiceClientCertificateResponse(rsp)
-}
-
 // ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -25616,32 +24722,6 @@ func (c *ClientWithResponses) ListServiceHTTPGrantsWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseListServiceHTTPGrantsResponse(rsp)
-}
-
-// CreateServiceHTTPGrantWithBodyWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request,
-// with any type of body and a specified content type.
-//
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error) {
-	rsp, err := c.CreateServiceHTTPGrantWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateServiceHTTPGrantResponse(rsp)
-}
-
-// CreateServiceHTTPGrantWithResponse performs a POST /v1/services/{service_id}/http-grants (the `CreateServiceHTTPGrant` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-func (c *ClientWithResponses) CreateServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, body CreateServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateServiceHTTPGrantResponse, error) {
-	rsp, err := c.CreateServiceHTTPGrant(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateServiceHTTPGrantResponse(rsp)
 }
 
 // RevokeServiceHTTPGrantWithResponse performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
@@ -25822,32 +24902,6 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Contex
 	return ParseHeartbeatServiceRunResponse(rsp)
 }
 
-// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
-	rsp, err := c.AuthorizeServiceClientCertificateWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceClientCertificateResponse(rsp)
-}
-
-// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
-func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
-	rsp, err := c.AuthorizeServiceClientCertificate(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceClientCertificateResponse(rsp)
-}
-
 // RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -25967,32 +25021,6 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
-}
-
-// AuthorizeServiceHTTPVisitorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	rsp, err := c.AuthorizeServiceHTTPVisitorWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
-}
-
-// AuthorizeServiceHTTPVisitorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize (the `AuthorizeServiceHTTPVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
-func (c *ClientWithResponses) AuthorizeServiceHTTPVisitorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceHTTPVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	rsp, err := c.AuthorizeServiceHTTPVisitor(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceHTTPVisitorResponse(rsp)
 }
 
 // StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
@@ -26214,7 +25242,7 @@ func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Contex
 
 // ReleaseVisitorIngressAssignmentWithResponse performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
 //
-// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked; local policy and session deadlines fence its active streams. Sibling sessions are never affected. Retrying release of an owned assignment succeeds.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ReleaseVisitorIngressAssignmentWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseVisitorIngressAssignmentResponse, error) {
@@ -26393,28 +25421,6 @@ func (c *ClientWithResponses) CheckWorkloadServiceWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCheckWorkloadServiceResponse(rsp)
-}
-
-// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
-	rsp, err := c.IssueWorkloadServiceClientCertificateWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
-}
-
-// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
-	rsp, err := c.IssueWorkloadServiceClientCertificate(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
 }
 
 // CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
@@ -29400,39 +28406,6 @@ func ParseConfigureServiceResponse(rsp *http.Response) (*ConfigureServiceRespons
 	return response, nil
 }
 
-// ParseIssueServiceClientCertificateResponse parses an HTTP response from a IssueServiceClientCertificateWithResponse call
-func ParseIssueServiceClientCertificateResponse(rsp *http.Response) (*IssueServiceClientCertificateResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &IssueServiceClientCertificateResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ServiceClientCertificate
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListServiceGrantsResponse parses an HTTP response from a ListServiceGrantsWithResponse call
 func ParseListServiceGrantsResponse(rsp *http.Response) (*ListServiceGrantsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29548,39 +28521,6 @@ func ParseListServiceHTTPGrantsResponse(rsp *http.Response) (*ListServiceHTTPGra
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateServiceHTTPGrantResponse parses an HTTP response from a CreateServiceHTTPGrantWithResponse call
-func ParseCreateServiceHTTPGrantResponse(rsp *http.Response) (*CreateServiceHTTPGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateServiceHTTPGrantResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ServiceHTTPGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -29886,39 +28826,6 @@ func ParseHeartbeatServiceRunResponse(rsp *http.Response) (*HeartbeatServiceRunR
 	return response, nil
 }
 
-// ParseAuthorizeServiceClientCertificateResponse parses an HTTP response from a AuthorizeServiceClientCertificateWithResponse call
-func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*AuthorizeServiceClientCertificateResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceClientCertificateResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificateDecision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRedeemServiceBrowserHandoffResponse parses an HTTP response from a RedeemServiceBrowserHandoffWithResponse call
 func ParseRedeemServiceBrowserHandoffResponse(rsp *http.Response) (*RedeemServiceBrowserHandoffResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30092,39 +28999,6 @@ func ParseGetServiceCertificateIssuanceResponse(rsp *http.Response) (*GetService
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ServiceCertificateIssuance
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAuthorizeServiceHTTPVisitorResponse parses an HTTP response from a AuthorizeServiceHTTPVisitorWithResponse call
-func ParseAuthorizeServiceHTTPVisitorResponse(rsp *http.Response) (*AuthorizeServiceHTTPVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceHTTPVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificateDecision
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30912,39 +29786,6 @@ func ParseCheckWorkloadServiceResponse(rsp *http.Response) (*CheckWorkloadServic
 	return response, nil
 }
 
-// ParseIssueWorkloadServiceClientCertificateResponse parses an HTTP response from a IssueWorkloadServiceClientCertificateWithResponse call
-func ParseIssueWorkloadServiceClientCertificateResponse(rsp *http.Response) (*IssueWorkloadServiceClientCertificateResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &IssueWorkloadServiceClientCertificateResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificate
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreateWorkloadIngressAssignmentsResponse parses an HTTP response from a CreateWorkloadIngressAssignmentsWithResponse call
 func ParseCreateWorkloadIngressAssignmentsResponse(rsp *http.Response) (*CreateWorkloadIngressAssignmentsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31287,9 +30128,6 @@ type ServerInterface interface {
 	// (PUT /v1/services/{service_id})
 	ConfigureService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 
-	// (POST /v1/services/{service_id}/client-certificates)
-	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
 
@@ -31301,9 +30139,6 @@ type ServerInterface interface {
 
 	// (GET /v1/services/{service_id}/http-grants)
 	ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
-	// (POST /v1/services/{service_id}/http-grants)
-	CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 
 	// (DELETE /v1/services/{service_id}/http-grants/{grant_id})
 	RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, grantId string)
@@ -31332,9 +30167,6 @@ type ServerInterface interface {
 	// (POST /v1/services/{service_id}/runs/{service_run_id})
 	HeartbeatServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
-	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
@@ -31352,9 +30184,6 @@ type ServerInterface interface {
 
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
-
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/http-authorize)
-	AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/start)
 	StartServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -31424,9 +30253,6 @@ type ServerInterface interface {
 
 	// (POST /v1/workload/services/{service_id}/authorization)
 	CheckWorkloadService(w http.ResponseWriter, r *http.Request, serviceId string)
-
-	// (POST /v1/workload/services/{service_id}/client-certificate)
-	IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId string)
 
 	// (POST /v1/workload/services/{service_id}/ingress-assignments)
 	CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request, serviceId string)
@@ -34430,32 +33256,6 @@ func (siw *ServerInterfaceWrapper) ConfigureService(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// IssueServiceClientCertificate operation middleware
-func (siw *ServerInterfaceWrapper) IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IssueServiceClientCertificate(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListServiceGrants operation middleware
 func (siw *ServerInterfaceWrapper) ListServiceGrants(w http.ResponseWriter, r *http.Request) {
 
@@ -34604,32 +33404,6 @@ func (siw *ServerInterfaceWrapper) ListServiceHTTPGrants(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListServiceHTTPGrants(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateServiceHTTPGrant operation middleware
-func (siw *ServerInterfaceWrapper) CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateServiceHTTPGrant(w, r, serviceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34981,41 +33755,6 @@ func (siw *ServerInterfaceWrapper) HeartbeatServiceRun(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// AuthorizeServiceClientCertificate operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceClientCertificate(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RedeemServiceBrowserHandoff operation middleware
 func (siw *ServerInterfaceWrapper) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 
@@ -35254,41 +33993,6 @@ func (siw *ServerInterfaceWrapper) GetServiceCertificateIssuance(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetServiceCertificateIssuance(w, r, serviceId, serviceRunId, issuanceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AuthorizeServiceHTTPVisitor operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceHTTPVisitor(w, r, serviceId, serviceRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35955,32 +34659,6 @@ func (siw *ServerInterfaceWrapper) CheckWorkloadService(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// IssueWorkloadServiceClientCertificate operation middleware
-func (siw *ServerInterfaceWrapper) IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IssueWorkloadServiceClientCertificate(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // CreateWorkloadIngressAssignments operation middleware
 func (siw *ServerInterfaceWrapper) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request) {
 
@@ -36163,19 +34841,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/services", wrapper.ListWorkloadServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/authorization", wrapper.CheckWorkloadService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/client-certificate", wrapper.IssueWorkloadServiceClientCertificate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/service-login", wrapper.BeginServiceBrowserLogin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/http-grants", wrapper.ListServiceHTTPGrants)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/http-grants", wrapper.CreateServiceHTTPGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/http-grants/{grant_id}", wrapper.RevokeServiceHTTPGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/http-authorize", wrapper.AuthorizeServiceHTTPVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/handoff", wrapper.RedeemServiceBrowserHandoff)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/session", wrapper.RevokeServiceBrowserSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/session", wrapper.CheckServiceBrowserSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/services/{service}", wrapper.GetProjectService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/start", wrapper.StartServiceRun)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/client-certificates", wrapper.IssueServiceClientCertificate)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate", wrapper.AuthorizeServiceClientCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)

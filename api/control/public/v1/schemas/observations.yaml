@@ -28,6 +28,7 @@ schemas:
       run_number: { type: integer, format: int64, minimum: 0 }
       connector_session_id: { type: string }
       stream_allocation_id: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
+      visitor_reference: { $ref: "../openapi.yaml#/components/schemas/ServiceVisitorReference" }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
       outcome:
@@ -71,6 +72,17 @@ schemas:
             ObservationExpired,
             ObservationCancelled,
           ]
+  ServiceVisitorReference:
+    x-go-type: tunnelv1.ServiceVisitorReference
+    x-go-type-import:
+      name: tunnelv1
+      path: github.com/tnldotdev/tnl/pkg/protocol/tunnelv1
+    type: object
+    additionalProperties: false
+    required: [kind, id]
+    properties:
+      kind: { type: string, enum: [certificate, browser_session, grant] }
+      id: { type: string, minLength: 1, maxLength: 64 }
   ServiceObservationResult:
     type: object
     additionalProperties: false

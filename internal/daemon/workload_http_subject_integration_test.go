@@ -81,9 +81,21 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := (&http.Client{Transport: transport}).Do(request)
-		if err != nil || response.StatusCode != 200 {
-			t.Fatal("open stream", err)
+		var response *http.Response
+		for deadline := time.Now().Add(5 * time.Second); ; {
+			response, err = (&http.Client{Transport: transport}).Do(request.Clone(t.Context()))
+			if err != nil {
+				t.Fatal("open stream", err)
+			}
+			if response.StatusCode == 200 {
+				break
+			}
+			status := response.StatusCode
+			_ = response.Body.Close()
+			if (status != 403 && status != 503) || !time.Now().Before(deadline) {
+				t.Fatal("prepared workload permission did not admit a new stream", status)
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
 		t.Cleanup(func() { _ = response.Body.Close() })
 		return response, session.Id, session.ExpiresAt
@@ -104,7 +116,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		t.Fatal("old subject survived fixed expiry")
 	}
 	var oldConnections, newConnections, mixed int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FILTER(WHERE workload_session_id=$1),count(*) FILTER(WHERE workload_session_id=$2 AND closed_at IS NULL),count(*) FILTER(WHERE workload_session_id=$2 AND certificate_digest IN(SELECT certificate_digest FROM control.workload_client_certificates WHERE workload_session_id=$1)) FROM control.direct_service_visitors`, oldID, currentID).Scan(&oldConnections, &newConnections, &mixed); err != nil || oldConnections != 1 || newConnections != 1 || mixed != 0 {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FILTER(WHERE workload_session_id=$1),count(*) FILTER(WHERE workload_session_id=$2),count(*) FILTER(WHERE workload_session_id=$2 AND certificate_digest IN(SELECT certificate_digest FROM control.workload_client_certificates WHERE workload_session_id=$1)) FROM control.visitor_certificate_facts`, oldID, currentID).Scan(&oldConnections, &newConnections, &mixed); err != nil || oldConnections != 1 || newConnections != 1 || mixed != 0 {
 		t.Fatal("replacement transferred a visitor/certificate binding", err)
 	}
 }

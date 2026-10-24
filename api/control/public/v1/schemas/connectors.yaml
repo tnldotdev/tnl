@@ -43,13 +43,6 @@ schemas:
   ConnectorSessionID:
     type: string
     pattern: "^cns_[A-Za-z0-9]{22}$"
-  IssueServiceClientCertificateRequest:
-    type: object
-    additionalProperties: false
-    required: [device_id, csr]
-    properties:
-      device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
-      csr: { type: string, format: byte, maxLength: 10924 }
   ServiceClientCertificate:
     type: object
     additionalProperties: false
@@ -59,18 +52,6 @@ schemas:
       certificate_pem: { type: string, maxLength: 16384 }
       issuer_pem: { type: string, maxLength: 16384 }
       expires_at: { type: string, format: date-time }
-  ServiceClientCertificateDecision:
-    type: object
-    additionalProperties: false
-    required: [allowed, admitted, valid_until]
-    properties:
-      allowed: { type: boolean }
-      admitted:
-        {
-          type: boolean,
-          description: Ingress has reserved ordinary capacity. The publisher must wait for this before sending application bytes to the target.,
-        }
-      valid_until: { type: string, format: date-time }
   ConnectorSessionSetup:
     type: object
     additionalProperties: false

@@ -33,8 +33,8 @@ func (d *Database) CleanupWorkloads(ctx context.Context, now time.Time, limit in
 		name string
 		run  func() (int64, error)
 	}{
-		{"direct visitors", func() (int64, error) {
-			return q.CleanupWorkloadDirectVisitors(ctx, controlstatedb.CleanupWorkloadDirectVisitorsParams{BeforeTime: visitorsBefore, BatchSize: batch})
+		{"certificate facts", func() (int64, error) {
+			return q.CleanupWorkloadCertificateFacts(ctx, controlstatedb.CleanupWorkloadCertificateFactsParams{BeforeTime: visitorsBefore, BatchSize: batch})
 		}},
 		{"connectors", func() (int64, error) {
 			return q.CleanupWorkloadConnectors(ctx, controlstatedb.CleanupWorkloadConnectorsParams{BeforeTime: before, BatchSize: batch})

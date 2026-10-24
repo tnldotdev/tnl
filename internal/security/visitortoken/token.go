@@ -126,6 +126,24 @@ type View struct {
 	Keys                  map[string]ed25519.PublicKey
 	ControlTime           time.Time
 	Workloads             map[string]WorkloadLease
+	Credentials           map[string]CredentialLease
+}
+
+type CredentialLease struct {
+	SubjectSHA256 string
+	ExpiresAt     time.Time
+}
+
+func (v View) CredentialDeadline(subject Subject) time.Time {
+	key, digest, err := CredentialBinding(subject)
+	if err != nil {
+		return time.Time{}
+	}
+	lease, found := v.Credentials[key]
+	if !found || lease.SubjectSHA256 != digest {
+		return time.Time{}
+	}
+	return lease.ExpiresAt
 }
 
 type WorkloadLease struct {
@@ -217,8 +235,19 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 	if !view.current(now) {
 		return ErrPolicy
 	}
-	if permission.Scope != view.Scope || permission.Hostname != view.Hostname || permission.Port != view.Port || permission.VisitorPolicyRevision != view.VisitorPolicyRevision || !permission.ExpiresAt.After(view.AuthorityTime(now)) {
+	if permission.Scope != view.Scope || permission.Hostname != view.Hostname || permission.Port != view.Port || permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.After(view.AuthorityTime(now)) {
 		return ErrToken
+	}
+	if key, digest, err := CredentialBinding(permission.Subject); err == nil && view.Scope.Kind == visitorscope.Service {
+		lease, found := view.Credentials[key]
+		if !found || lease.SubjectSHA256 != digest || !lease.ExpiresAt.After(view.AuthorityTime(now)) {
+			return ErrBinding
+		}
+	}
+	if permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
+		if permission.VisitorPolicyRevision > view.VisitorPolicyRevision || !view.CredentialDeadline(permission.Subject).After(view.AuthorityTime(now)) {
+			return ErrToken
+		}
 	}
 	if len(view.Keys[permission.SigningKeyID]) != ed25519.PublicKeySize {
 		return ErrKey

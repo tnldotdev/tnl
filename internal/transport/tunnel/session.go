@@ -376,6 +376,10 @@ func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingS
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: err}
 	}
 	reply := newReplyStream(stream, initial)
+	if header.Direct != nil {
+		reply.promotion = header.Admission()
+		reply.promotion.Kind, reply.promotion.RelayID, reply.promotion.RelayRunID, reply.promotion.RelayLeaseRevision = tunnelv1.PublisherAdmissionStream, "", "", 0
+	}
 	return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: header, response: &incomingStreamResponse{stream: reply}}, nil
 }
 
@@ -417,6 +421,15 @@ func (r *IncomingServiceForwardingStream) TakeInitial() []byte {
 }
 func (r *IncomingServiceForwardingStream) ForwardRejection(code tunnelv1.ErrorCode) error {
 	return r.response.stream.forwardRejection(code)
+}
+
+func (r *IncomingServiceForwardingStream) Promote(h tunnelv1.AdmissionHeader) error {
+	want := r.Header.Admission()
+	want.Visitor = h.Visitor
+	if r.Header.Direct == nil || !h.Visitor.Valid() || h != want {
+		return tunnelv1.ErrReturnFrame
+	}
+	return r.response.stream.Promote(h)
 }
 
 func (s *Session) acceptStream(ctx context.Context, kind string) (muxsession.Stream, error) {

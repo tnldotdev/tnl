@@ -23,7 +23,7 @@ type serviceAccessStore interface {
 	AcceptServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceGrant, error)
 	RevokeServiceGrant(context.Context, string, string, string, time.Time) error
 	RevokeServiceInvitation(context.Context, string, string, string, time.Time) error
-	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateServiceHTTPGrantRequest, time.Time) (controlv1.ServiceHTTPGrant, error)
+	CreateServiceActorVisitorCredential(context.Context, string, string, string, controlv1.CreateVisitorCredentialRequest, time.Time) (controlstate.VisitorGrantCredentials, error)
 	ListServiceHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ServiceHTTPGrantSummary, error)
 	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
@@ -236,18 +236,25 @@ func (h *handler) ListWebsiteServiceHTTPGrants(w http.ResponseWriter, r *http.Re
 	writeJSON(w, 200, rows)
 }
 
-func (h *handler) CreateWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.CreateWebsiteServiceHTTPGrantParams) {
-	var body controlv1.CreateServiceHTTPGrantRequest
+func (h *handler) CreateWebsiteServiceVisitorCredential(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.CreateWebsiteServiceVisitorCredentialParams) {
+	var body controlv1.CreateVisitorCredentialRequest
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return
 	}
-	row, err := s.CreateServiceHTTPGrant(r.Context(), id, actor, body, time.Now())
+	if body.Resource.Kind != "service" || body.Resource.Id != id {
+		writeProblem(w, 400, authorityv1.InvalidRequest, "service visitor credential scope is invalid")
+		return
+	}
+	row, err := s.CreateServiceActorVisitorCredential(r.Context(), h.config.ControlURL, id, actor, body, time.Now())
 	if err != nil {
 		serviceAccessError(w, "create website HTTP grant", err)
 		return
 	}
-	writeJSON(w, 201, row)
+	permission := row.Permission
+	writeJSON(w, 201, controlv1.VisitorCredential{GrantId: row.GrantID, RefreshCredential: row.RefreshCredential,
+		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(permission.Scope.Kind), Id: permission.Scope.ID},
+			Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: row.Token.Reveal()}})
 }
 
 func (h *handler) RevokeWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, grant string, _ authorityv1.RevokeWebsiteServiceHTTPGrantParams) {

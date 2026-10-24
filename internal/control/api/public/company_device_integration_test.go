@@ -12,6 +12,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -22,6 +23,9 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	f := newCompanyHTTPFixture(t, "company_direct_device")
 	ctx := t.Context()
 	d := f.d
+	if err := d.PrepareVisitorSigningKeys(ctx, f.server.URL, f.now); err != nil {
+		t.Fatal(err)
+	}
 	owner := f.basic("owner")
 	person := f.basic("person")
 	team, err := d.CreateTeam(ctx, controlstate.CreateTeamRequest{IdentityID: owner.Identity.Identity.Id, DisplayName: "studio", MemberSlug: "owner", IdempotencyKey: "studio", RequestDigest: sha256.Sum256([]byte("studio"))}, f.now)
@@ -129,10 +133,12 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.IssueServiceClientCertificate(personalCtx, service.ID, p.IdentityID, device.ID, csr, time.Now()); !errors.Is(err, controlstate.ErrServiceAccess) {
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	source := controlstate.DeviceTokenSource{DeviceID: device.ID}
+	if _, err := d.IssueVisitorClientCertificate(personalCtx, f.server.URL, scope, source, csr, time.Now()); !errors.Is(err, controlstate.ErrVisitorPermission) {
 		t.Fatalf("personal certificate issuance: %v", err)
 	}
-	cert, err := d.IssueServiceClientCertificate(companyCtx, service.ID, p.IdentityID, device.ID, csr, time.Now())
+	cert, err := d.IssueVisitorClientCertificate(companyCtx, f.server.URL, scope, source, csr, time.Now())
 	if err != nil || cert.CertificatePEM == "" {
 		t.Fatal("company certificate issuance", err)
 	}

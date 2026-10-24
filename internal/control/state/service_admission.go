@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -14,6 +15,13 @@ func lockEnabledService(ctx context.Context, tx pgx.Tx, id string) error {
 		return ErrServiceAccess
 	}
 	return err
+}
+
+func minTime(first, second time.Time) time.Time {
+	if first.Before(second) {
+		return first
+	}
+	return second
 }
 
 // take the team lock before the saved service lock, matching grant and

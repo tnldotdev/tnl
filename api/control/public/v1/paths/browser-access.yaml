@@ -36,23 +36,6 @@ paths:
                 type: array
                 items: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPGrantSummary" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-    post:
-      operationId: createServiceHTTPGrant
-      security: [{ bearerAuth: [] }]
-      description: Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceHTTPGrantRequest" }
-      responses:
-        "201":
-          description: Exact managed subject and one-time secret
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPGrant" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/http-grants/{grant_id}:
     delete:
       operationId: revokeServiceHTTPGrant

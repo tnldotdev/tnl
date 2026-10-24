@@ -2089,6 +2089,26 @@ CREATE TABLE control.connector_sessions (
     CHECK (revoked_at IS NULL OR revoked_at >= created_at),
     UNIQUE (id, service_id, identity_id, source_ip)
 );
+
+-- immutable certificate attribution outlives CSR renewal and delayed delivery.
+-- these facts grant no permission and contain no certificate or private key.
+CREATE TABLE control.visitor_certificate_facts (
+    certificate_digest bytea PRIMARY KEY CHECK (octet_length(certificate_digest)=32),
+    service_id text NOT NULL REFERENCES control.services(id),
+    identity_id text,
+    device_id text,
+    workload_session_id text REFERENCES control.workload_sessions(id) ON DELETE RESTRICT,
+    control_session_id text,
+    csr_digest bytea NOT NULL CHECK (octet_length(csr_digest)=32),
+    serial text NOT NULL CHECK (serial ~ '^[0-9a-f]{1,64}$'),
+    subject_sha256 text NOT NULL CHECK (subject_sha256 ~ '^[A-Za-z0-9_-]{43}$'),
+    issued_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL CHECK (expires_at>issued_at),
+    CHECK ((identity_id IS NOT NULL AND device_id IS NOT NULL AND workload_session_id IS NULL)
+        OR (identity_id IS NULL AND device_id IS NULL AND workload_session_id IS NOT NULL))
+);
+CREATE INDEX visitor_certificate_facts_retention ON control.visitor_certificate_facts(expires_at,certificate_digest);
+CREATE INDEX visitor_certificate_facts_live ON control.visitor_certificate_facts(service_id,expires_at);
 CREATE INDEX connector_sessions_expiring ON control.connector_sessions(expires_at);
 CREATE INDEX connector_sessions_workload ON control.connector_sessions(workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE INDEX connector_sessions_unbound_assignment ON control.connector_sessions(assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at) WHERE bound_at IS NULL AND revoked_at IS NULL;
@@ -2114,41 +2134,6 @@ CREATE TABLE control.service_certificate_requests (
     PRIMARY KEY (service_run_id,idempotency_key)
 );
 
--- direct admission starts without an identity. TLS key possession and current
--- service permission bind the identity before application bytes are forwarded.
-CREATE TABLE control.direct_service_visitors (
-    workload_session_id text REFERENCES control.workload_sessions(id),
-    visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
-    service_id text NOT NULL,
-    service_run_id text NOT NULL,
-    run_number bigint NOT NULL,
-    ingress_id text NOT NULL,
-    ingress_run_id text NOT NULL,
-    ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>0),
-    destination_port integer NOT NULL CHECK (destination_port BETWEEN 1024 AND 65535),
-    source_ip inet NOT NULL,
-    identity_id text,
-    device_id text,
-    certificate_digest bytea CHECK (certificate_digest IS NULL OR octet_length(certificate_digest)=32),
-    http_credential_kind text CHECK (http_credential_kind IN ('browser','token','share')),
-    http_credential_digest bytea CHECK (octet_length(http_credential_digest)=32),
-    promoted_at timestamptz,
-    valid_until timestamptz NOT NULL,
-    created_at timestamptz NOT NULL,
-    closed_at timestamptz,
-    FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
-    FOREIGN KEY (device_id,identity_id) REFERENCES control.visitor_devices(id,identity_id) ON DELETE RESTRICT,
-    CHECK ((identity_id IS NULL)=(device_id IS NULL)),
-    CHECK (((identity_id IS NOT NULL OR workload_session_id IS NOT NULL))=(certificate_digest IS NOT NULL)),
-    CHECK (workload_session_id IS NULL OR (identity_id IS NULL AND device_id IS NULL)),
-    CHECK ((http_credential_kind IS NULL)=(http_credential_digest IS NULL)),
-    CHECK (http_credential_kind IS NULL OR certificate_digest IS NULL),
-    CHECK (promoted_at IS NULL OR identity_id IS NOT NULL OR workload_session_id IS NOT NULL OR http_credential_kind IS NOT NULL)
-);
-CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(service_run_id,valid_until) WHERE closed_at IS NULL;
-CREATE INDEX direct_service_visitors_workload ON control.direct_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
-CREATE INDEX direct_service_visitors_certificate ON control.direct_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
-CREATE INDEX direct_service_visitors_workload_retention ON control.direct_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 
 -- managed HTTP credentials are never public URL/preview credentials. runs are
 -- captured at login, so a later replacement cannot redeem an earlier handoff.

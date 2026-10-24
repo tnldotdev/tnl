@@ -341,7 +341,6 @@ func (d *daemon) startIngressRuntime(
 		privateConfig.Report = func(err error) {
 			logOperationalError(ctx, "prepare private visitors", failure.ServerControlConnectionFailed, err)
 		}
-		privateConfig.DirectControl, _ = runtimeConfig.client.(ingress.DirectControl)
 		privateConfig.VisitorControl, _ = runtimeConfig.client.(ingress.VisitorPreparationControl)
 		if privateConfig.VisitorControl == nil {
 			return errors.New("private ingress visitor preparation operations are required")

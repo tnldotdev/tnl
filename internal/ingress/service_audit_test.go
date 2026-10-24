@@ -31,7 +31,6 @@ func TestPrivateVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) 
 	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
 	events := make(chan serviceaudit.Observation, 2)
 	connector.config.AuditSink = auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true })
-	connector.config.RecheckInterval = 20 * time.Millisecond
 	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
 	defer stop()
 	var opened serviceaudit.Observation

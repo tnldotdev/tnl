@@ -247,7 +247,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), s.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: controlv1.CreateServiceHTTPGrantRequestKind("token"), ExpiresAt: time.Now().Add(time.Minute)})
+	grant, err := f.identity.routes.CreateVisitorCredential(t.Context(), controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: s.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	t.Cleanup(tr.CloseIdleConnections)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	endpoint := "https://" + net.JoinHostPort(s.Endpoint.Hostname, strconv.Itoa(s.Endpoint.Port))
-	request := func(path string, withHumanToken bool, status int) {
+	request := func(path string, withHumanToken bool, status int) int {
 		t.Helper()
 		r, err := http.NewRequestWithContext(t.Context(), "GET", endpoint+path, nil)
 		if err != nil {
@@ -266,23 +266,24 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 		}
 		r.Header.Set("Cookie", "__Host-tnl-browser=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 		if withHumanToken {
-			r.Header.Set("Tnl-Access-Token", grant.Secret)
+			r.Header.Set("Tnl-Visitor-Token", grant.Permission.VisitorToken)
 		}
 		response, err := client.Do(r)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer response.Body.Close()
-		if response.StatusCode != status {
+		if status != 0 && response.StatusCode != status {
 			t.Fatalf("workload HTTP status %d, want %d", response.StatusCode, status)
 		}
+		return response.StatusCode
 	}
 	request("/", false, 200)
 	request("/", true, 200)
 	if err = job.Revoke(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	request("/", true, 403)
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) { return request("/", true, 0) == 403, nil })
 	request("/__tnl/login", true, 403)
 }
 
@@ -590,6 +591,7 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 
 func workloadDirectDialer(t *testing.T, connector *ingress.Connector, port int) func(context.Context, string, string) (net.Conn, error) {
 	t.Helper()
+	privateWait(t, 5*time.Second, func(context.Context) (bool, error) { return connector.DirectServiceReady(uint16(port)), nil })
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

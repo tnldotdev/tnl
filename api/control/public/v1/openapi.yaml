@@ -29,16 +29,12 @@ paths:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1authorization"
   /v1/workload/services/{service_id}/ingress-assignments:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1ingress-assignments"
-  /v1/workload/services/{service_id}/client-certificate:
-    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1client-certificate"
   /v1/browser/service-login:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1browser~1service-login"
   /v1/services/{service_id}/http-grants:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants"
   /v1/services/{service_id}/http-grants/{grant_id}:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants~1{grant_id}"
-  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1http-authorize"
   /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1handoff"
   /v1/services/{service_id}/runs/{service_run_id}/browser/session:
@@ -47,10 +43,6 @@ paths:
     $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1services~1{service}"
   /v1/services/{service_id}/runs/{service_run_id}/start:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
-  /v1/services/{service_id}/client-certificates:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1client-certificates"
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-client-certificate"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}:
@@ -348,6 +340,8 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyUpdate"
     VisitorPolicySnapshot:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicySnapshot"
+    VisitorCredentialLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorCredentialLease"
     VisitorPolicyIP:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyIP"
     VisitorVerificationKey:
@@ -358,18 +352,10 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
     StreamCapacityAllocation:
       $ref: "./schemas/stream-capacity.yaml#/schemas/StreamCapacityAllocation"
-    CreateServiceHTTPGrantRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
-    ServiceHTTPGrant:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrant"
     ServiceHTTPGrantSummary:
       $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrantSummary"
     ServiceInvitationCredential:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitationCredential"
-    ServiceHTTPCredential:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPCredential"
-    ServiceHTTPVisitorRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPVisitorRequest"
     ServiceBrowserRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/ServiceBrowserRequest"
     ProjectPublicMetadata:
@@ -464,6 +450,8 @@ components:
       $ref: "./schemas/observations.yaml#/schemas/ServiceObservation"
     PublishRunServiceObservations:
       $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunServiceObservations"
+    ServiceVisitorReference:
+      $ref: "./schemas/observations.yaml#/schemas/ServiceVisitorReference"
     ServiceObservationResult:
       $ref: "./schemas/observations.yaml#/schemas/ServiceObservationResult"
     IngressTransportTrust:
@@ -500,14 +488,8 @@ components:
       $ref: "./schemas/services.yaml#/schemas/ServiceMetadata"
     ServiceEndpoint:
       $ref: "./schemas/common.yaml#/schemas/ServiceEndpoint"
-    IssueServiceClientCertificateRequest:
-      $ref: "./schemas/connectors.yaml#/schemas/IssueServiceClientCertificateRequest"
     ServiceClientCertificate:
       $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificate"
-    AuthorizeServiceClientCertificateRequest:
-      $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceClientCertificateRequest"
-    ServiceClientCertificateDecision:
-      $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificateDecision"
     ServiceRunDeclaration:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunDeclaration"
     Service:

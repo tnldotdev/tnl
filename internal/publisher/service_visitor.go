@@ -3,7 +3,6 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"reflect"
 
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -51,10 +50,10 @@ func (v ConnectorVisitor) authorize(ctx context.Context, _ tls.ConnectionState) 
 	return v.Check(ctx)
 }
 
-// CertificateVisitor requires key possession at the TLS boundary. control still
-// checks the exact leaf's service scope, device and current permission.
+// CertificateVisitor requires key possession at the TLS boundary. its owner
+// verifies the certificate's signed permission against current local policy.
 type CertificateVisitor struct {
-	Check func(context.Context, *x509.Certificate) (ServiceVisitorDecision, error)
+	Check func(context.Context, tls.ConnectionState) (ServiceVisitorDecision, error)
 }
 
 func (v CertificateVisitor) valid() bool                  { return v.Check != nil }
@@ -63,7 +62,7 @@ func (v CertificateVisitor) authorize(ctx context.Context, state tls.ConnectionS
 	if len(state.PeerCertificates) == 0 {
 		return ServiceVisitorDecision{}, ErrEndpoint
 	}
-	return v.Check(ctx, state.PeerCertificates[0])
+	return v.Check(ctx, state)
 }
 
 // normalizeManagedVisitor closes the authentication variants before any method

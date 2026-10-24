@@ -45,6 +45,7 @@ schemas:
         public,
         verification_keys,
         workload_leases,
+        credential_leases,
         stream_allocations,
       ]
     properties:
@@ -78,6 +79,10 @@ schemas:
         type: array
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
+      credential_leases:
+        type: array
+        maxItems: 4096
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorCredentialLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
       stream_allocations:
         type: array
@@ -97,6 +102,15 @@ schemas:
     properties:
       session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
       key_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      expires_at: { type: string, format: date-time }
+  VisitorCredentialLease:
+    type: object
+    additionalProperties: false
+    required: [kind, id, subject_sha256, expires_at]
+    properties:
+      kind: { type: string, enum: [certificate, grant] }
+      id: { type: string, minLength: 1, maxLength: 64 }
+      subject_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
       expires_at: { type: string, format: date-time }
   VisitorPolicyIP:
     type: object

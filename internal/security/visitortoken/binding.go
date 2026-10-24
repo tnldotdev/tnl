@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"time"
@@ -114,7 +115,21 @@ func verifyNativePossession(token Token, permission Permission, session, connect
 }
 
 func VerifyCertificate(token Token, view View, state tls.ConnectionState, now time.Time) (Permission, error) {
-	permission, err := verify(token, view, now)
+	permission, err := VerifyCertificateRenewalProof(token, view, state, now)
+	if err != nil {
+		return Permission{}, err
+	}
+	if err := CheckCurrent(permission, view, now); err != nil {
+		return Permission{}, err
+	}
+	return permission, nil
+}
+
+// VerifyCertificateRenewalProof identifies the signed certificate source even
+// when its policy revision changed. it grants no access; current admission must
+// also pass CheckCurrent. credential selection cannot replace a workload source.
+func VerifyCertificateRenewalProof(token Token, view View, state tls.ConnectionState, now time.Time) (Permission, error) {
+	permission, err := verifySignature(token, view, now)
 	if err != nil {
 		return Permission{}, err
 	}
@@ -129,4 +144,28 @@ func VerifyCertificate(token Token, view View, state tls.ConnectionState, now ti
 		return Permission{}, ErrBinding
 	}
 	return permission, nil
+}
+
+// ServiceAuditReference follows successful local admission. control resolves
+// human attribution from durable issuance/sign-in facts, never from actor claims.
+func ServiceAuditReference(permission Permission, state tls.ConnectionState) (tunnelv1.ServiceVisitorReference, error) {
+	var reference tunnelv1.ServiceVisitorReference
+	switch subject := permission.Subject.(type) {
+	case Certificate:
+		if !state.HandshakeComplete || len(state.PeerCertificates) == 0 || state.PeerCertificates[0].SerialNumber == nil || state.PeerCertificates[0].SerialNumber.Text(16) != subject.Serial {
+			return reference, ErrBinding
+		}
+		digest := sha256.Sum256(state.PeerCertificates[0].Raw)
+		reference = tunnelv1.ServiceVisitorReference{Kind: "certificate", ID: hex.EncodeToString(digest[:])}
+	case Browser:
+		reference = tunnelv1.ServiceVisitorReference{Kind: "browser_session", ID: subject.SessionID}
+	case Grant:
+		reference = tunnelv1.ServiceVisitorReference{Kind: "grant", ID: subject.GrantID}
+	default:
+		return reference, ErrBinding
+	}
+	if !reference.Valid() {
+		return tunnelv1.ServiceVisitorReference{}, ErrBinding
+	}
+	return reference, nil
 }

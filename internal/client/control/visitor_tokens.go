@@ -17,6 +17,12 @@ func VisitorSourceAuthenticates(ctx context.Context) bool {
 	return value
 }
 
+func (c *Client) CreateVisitorCredential(ctx context.Context, body controlv1.CreateVisitorCredentialRequest) (controlv1.VisitorCredential, error) {
+	return requestWithAccess[controlv1.VisitorCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateVisitorCredential(ctx, body, editors...)
+	})
+}
+
 // IssueVisitorToken exchanges an explicit authentication source for permission.
 // source credentials stay in the request body; they never become control bearer
 // credentials or application headers.
