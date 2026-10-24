@@ -58,6 +58,11 @@ func TestVisitorCertificateCarriesSharedTokenAndRequiresTLSKeyPossession(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	binding, digest, err := visitortoken.CredentialBinding(permission.Subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Credentials = map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: digest, ExpiresAt: permission.ExpiresAt}}
 	block, _ := pem.Decode(material)
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

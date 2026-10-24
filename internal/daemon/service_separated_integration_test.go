@@ -82,8 +82,8 @@ type observingServiceForwarder struct {
 	opened chan<- privateObservation
 }
 
-func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	stream, err := f.ServiceForwarder.OpenPrivate(ctx, relay, header)
+func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, events *tunnel.ReturnEvents) (net.Conn, error) {
+	stream, err := f.ServiceForwarder.OpenPrivate(ctx, relay, header, events)
 	if err == nil && f.opened != nil {
 		select {
 		case f.opened <- privateObservation{f.id, header}:
@@ -122,9 +122,6 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
 		privateHostname: hostname, privateAddress: listener.Addr().String(), disableConnectorQUIC: transport == "tls-tcp",
 		configurePrivate: func(config *ingress.ConnectorConfig) {
-			if !f.defaultTiming {
-				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-			}
 			if f.configurePrivate != nil {
 				f.configurePrivate(config)
 			}

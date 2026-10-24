@@ -29,12 +29,6 @@ type ConnectorSession struct {
 	ExpiresAt                                time.Time
 }
 
-type ServiceVisitorValidity struct {
-	Allowed    bool
-	Admitted   bool
-	ValidUntil time.Time
-}
-
 type ServiceRelay struct {
 	TLSServerName                string    `json:"tls_server_name"`
 	PublisherConnectionID        string    `json:"publisher_connection_id"`

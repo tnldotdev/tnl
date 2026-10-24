@@ -58,6 +58,12 @@ reply contains a consistent snapshot and the policy revisions it covers. Control
 keeps 256 events per resource; a reader that falls behind needs a full snapshot.
 Failed requests leave the last confirmed deadline unchanged.
 
+service policy also carries direct endpoint reachability and the public client
+certificate issuer once prepared. reachability does not grant visitor permission.
+client trust is scoped to service policy and expires with the same fetch-start
+deadline; readers receive independent certificate pools so they cannot mutate
+another serving owner's roots.
+
 [`publisher/visitorpolicy`](../../../internal/publisher/visitorpolicy) owns the
 run-bound publisher fetch lifetime. Public URL and service runtimes both compose
 it and depend on the policy lease below it. Keeping this owner below both
@@ -99,6 +105,24 @@ A changed policy revision gives an active renewable request only its last
 confirmed policy window while the credential owner obtains fresh permission.
 Unrelated policy updates cannot extend that window. The run cancels and joins
 renewal work before discarding its private source credentials.
+
+## direct service visitors
+
+ingress selects a public service only from the socket's trusted destination
+port and its prepared routing, reachability, policy, and capacity. the publisher
+verifies service client certificates against the prepared issuer and signed
+permission; each service HTTP request instead selects one signed visitor token
+or verified client certificate. the old service-specific HTTP token header and
+share cookie do not grant application access. a share link redeems a signed
+permission into the same host-bound visitor cookie.
+
+the publisher sends a verified, nonsecret certificate or grant reference back
+to ingress on the visitor stream after local admission. ingress releases its
+pending quota only for that exact run and allocation. control derives delayed
+audit actor facts from immutable certificate issuance or sign-in state; a
+bearer grant does not identify the person visiting or author feedback. neither
+serving process calls control to authorize a prepared visitor request. HTTP/2
+requests own independent target connections and request guards.
 
 ## native preparation
 
@@ -145,8 +169,10 @@ The guard retains one pending permission without extending the prior confirmed
 deadline. A covering policy snapshot activates it; missing coverage, revocation,
 changed metadata or expiry still closes the admission.
 
-Ingress's per-stream control admission/recheck records still supply audit
-identity and source attribution until their authenticated replacement is wired.
+native audit attribution uses the authenticated connector session and exact
+publisher-observed ingress allocation. control derives the actor, device, source,
+and publisher from those immutable facts; native streams have no per-stream
+control admission or recheck record.
 
 ## stream capacity
 

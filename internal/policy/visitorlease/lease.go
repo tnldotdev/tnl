@@ -6,6 +6,7 @@ package visitorlease
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/x509"
 	"errors"
 	"maps"
 	"net/netip"
@@ -32,6 +33,7 @@ type Update struct {
 	Events             []int64
 	Snapshot           bool
 	Allocations        map[string]controlv1.StreamCapacityAllocation
+	ClientAuthorities  *x509.CertPool
 }
 
 type Request struct {
@@ -145,6 +147,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		workloads[id] = parent
 	}
 	view.Keys, view.Workloads = keys, workloads
+	view.Credentials = maps.Clone(view.Credentials)
 	if len(update.Allocations) > 2048 {
 		return ErrUpdate
 	}
@@ -154,6 +157,9 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		}
 	}
 	update.Allocations = maps.Clone(update.Allocations)
+	if update.ClientAuthorities != nil {
+		update.ClientAuthorities = update.ClientAuthorities.Clone()
+	}
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil
@@ -184,6 +190,17 @@ func (l *Lease) Active() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.guards) != 0 || len(l.reservations) != 0
+}
+
+// ClientAuthorities returns a private copy of currently prepared certificate
+// trust. it performs no fetching and cannot extend the visitor policy deadline.
+func (l *Lease) ClientAuthorities() *x509.CertPool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.current || !l.update.Enabled || !l.now().Before(l.update.View.ValidUntil) || l.update.ClientAuthorities == nil {
+		return nil
+	}
+	return l.update.ClientAuthorities.Clone()
 }
 
 func (l *Lease) ValidateReservation(reservation tunnelv1.StreamReservation) error {
@@ -290,6 +307,9 @@ func (g *Guard) resetLocked() {
 	until := view.ValidUntil
 	if !g.anonymous {
 		until = view.LocalDeadline(g.permission.ExpiresAt)
+		if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+			until = earlier(until, view.LocalDeadline(credential))
+		}
 		if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
 		}
@@ -377,6 +397,9 @@ func (g *Guard) Deadline() (time.Time, error) {
 	}
 	view := l.update.View
 	until := earlier(view.ValidUntil, view.LocalDeadline(g.permission.ExpiresAt))
+	if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+		until = earlier(until, view.LocalDeadline(credential))
+	}
 	if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
 		until = earlier(until, g.confirmedUntil)
 	}

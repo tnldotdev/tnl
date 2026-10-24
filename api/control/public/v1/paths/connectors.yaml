@@ -1,27 +1,9 @@
 paths:
-  /v1/services/{service_id}/client-certificates:
-    post:
-      operationId: issueServiceClientCertificate
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              { $ref: "../openapi.yaml#/components/schemas/IssueServiceClientCertificateRequest" }
-      responses:
-        "201":
-          description: Exact service/identity/device client certificate; the client key never leaves the client
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificate" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/visitor-ingress-assignments/{connector_session_id}:
     delete:
       operationId: releaseVisitorIngressAssignment
       security: [{ bearerAuth: [] }]
-      description: Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+      description: Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked; local policy and session deadlines fence its active streams. Sibling sessions are never affected. Retrying release of an owned assignment succeeds.
       parameters:
         - {
             name: connector_session_id,

@@ -26,15 +26,6 @@ func copyLiveNativeVisitor(ctx context.Context, visitor net.Conn, backend net.Co
 	return err
 }
 
-// schedule against the actual admission deadline, including the initial claim
-// and failed checks. reserve RPC time without extending the last authorization;
-// a short remaining lease divides its budget between waiting and checking.
-func privateRecheckDelay(interval, timeout time.Duration, deadline time.Time) time.Duration {
-	remaining := time.Until(deadline)
-	reserve := min(timeout, remaining/2)
-	return max(time.Nanosecond, min(interval, remaining-reserve))
-}
-
 func privateMinTime(left, right time.Time) time.Time {
 	if left.Before(right) {
 		return left

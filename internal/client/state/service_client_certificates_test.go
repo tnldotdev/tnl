@@ -10,14 +10,29 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/security/visitorcert"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func issueServiceClientPermission(t *testing.T, issuer *controlvisitor.Issuer, csr []byte, service, identity, device string, expires, now time.Time) ([]byte, error) {
+	t.Helper()
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{51}, ed25519.SeedSize))
+	return issuer.IssuePermission(csr, expires, now, func(serial string, public any, until time.Time) (visitortoken.Token, error) {
+		digest, err := visitortoken.KeyDigest(public)
+		if err != nil {
+			return "", err
+		}
+		return visitortoken.Sign("https://control.example", "fixture", key, visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, Hostname: "service.example.test", Port: 25443, VisitorPolicyRevision: 1, ExpiresAt: until,
+			Subject: visitortoken.Certificate{Serial: serial, KeySHA256: digest, Source: visitortoken.Device{IdentityID: identity, DeviceID: device, SessionID: "cs_" + strings.Repeat("a", 22), KeySHA256: digest}}}, now)
+	})
+}
 
 func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T) {
 	ctx := t.Context()
@@ -63,12 +78,14 @@ func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T
 			return issued, nil
 		}
 		now := time.Now().UTC().Truncate(time.Second)
-		expires := now.Add(visitorcert.MaxLifetime)
+		expires := now.Add(visitortoken.RenewableLifetime)
+		issuedAt := now
 		if calls == 1 {
 			csr = bytes.Clone(request)
-			expires = now.Add(12 * time.Hour)
+			expires = now.Add(30 * time.Second)
+			issuedAt = now.Add(-4 * time.Minute)
 		}
-		certificate, err := issuer.Issue(request, service, identity, device, expires, now)
+		certificate, err := issueServiceClientPermission(t, issuer, request, service, identity, device, expires, issuedAt)
 		if err != nil {
 			return controlv1.ServiceClientCertificate{}, err
 		}
@@ -149,8 +166,8 @@ func TestServiceClientCertificateRejectsUndurableAndMismatchedReplies(t *testing
 			var old ServiceClientMaterial
 			valid := func(_ context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
 				now := time.Now().UTC().Truncate(time.Second)
-				expires := now.Add(visitorcert.MaxLifetime)
-				certificate, err := issuer.Issue(csr, service, identity, device, expires, now)
+				expires := now.Add(visitortoken.RenewableLifetime)
+				certificate, err := issueServiceClientPermission(t, issuer, csr, service, identity, device, expires, now)
 				return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
 			}
 			if rejection == "revalidation-changed" {
@@ -185,7 +202,7 @@ func TestServiceClientCertificateRejectsUndurableAndMismatchedReplies(t *testing
 				if rejection == "expired" {
 					now := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Hour)
 					expires := now.Add(time.Hour)
-					certificate, err := issuer.Issue(csr, service, identity, device, expires, now)
+					certificate, err := issueServiceClientPermission(t, issuer, csr, service, identity, device, expires, now)
 					return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: expires}, err
 				}
 				// issuing the same CSR again here deliberately returns another leaf,
@@ -227,13 +244,13 @@ func TestExpiredServiceClientCertificateRenewsWithStableKey(t *testing.T) {
 	var original []byte
 	issue := func(_ context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
 		now := time.Now().UTC().Truncate(time.Second)
-		certificate, err := issuer.Issue(csr, service, identity, device, now.Add(visitorcert.MaxLifetime), now)
+		certificate, err := issueServiceClientPermission(t, issuer, csr, service, identity, device, now.Add(visitortoken.RenewableLifetime), now)
 		if original == nil {
 			original = bytes.Clone(csr)
 		} else if bytes.Equal(original, csr) {
 			t.Fatal("expired leaf reused its old issuance request")
 		}
-		return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: now.Add(visitorcert.MaxLifetime)}, err
+		return controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: now.Add(visitortoken.RenewableLifetime)}, err
 	}
 	before, err := store.EnsureServiceClientCertificate(t.Context(), identity, service, device, issue)
 	if err != nil {
@@ -244,7 +261,7 @@ func TestExpiredServiceClientCertificateRenewsWithStableKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	expired, err := issuer.Issue(original, service, identity, device, now.Add(-time.Hour), now.Add(-2*time.Hour))
+	expired, err := issueServiceClientPermission(t, issuer, original, service, identity, device, now.Add(-time.Hour), now.Add(-2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

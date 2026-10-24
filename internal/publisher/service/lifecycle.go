@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -230,6 +231,13 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	defer policy.Close()
 	prepared.policy = policy.Lease
+	if prepared.managedPublic && prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		prepared.serviceHTTP, err = publisher.NewServiceHTTPRuntime(ctx, managedControl, policy)
+		if err != nil {
+			return err
+		}
+		defer prepared.serviceHTTP.Close()
+	}
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State)

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
@@ -483,10 +484,13 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.IssueServiceClientCertificate(personalCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
+	prepareVisitorTokenKeys(t, d, now)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	source := DeviceTokenSource{DeviceID: device.ID}
+	if _, err = d.IssueVisitorClientCertificate(personalCtx, testVisitorIssuer, scope, source, csr, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("personal mTLS issuance bypass", err)
 	}
-	issued, err := d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now)
+	issued, err := d.IssueVisitorClientCertificate(companyCtx, testVisitorIssuer, scope, source, csr, now)
 	if err != nil || issued.CertificatePEM == "" {
 		t.Fatal("company mTLS issuance", err)
 	}
@@ -494,9 +498,8 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != companyPrincipal.SessionID {
 		t.Fatal("mTLS identity lost exact session provenance", boundSession, err)
 	}
-	// expire the company proof while the leaf remains valid, then reauthenticate
-	// and replay the immutable issuance CSR to rebind without another certificate.
-	if _, err := d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now.Add(CompanyAuthenticationLifetime)); !errors.Is(err, ErrServiceAccess) {
+	// the original company's source proof cannot be extended by a cached CSR.
+	if _, err := d.IssueVisitorClientCertificate(companyCtx, testVisitorIssuer, scope, source, csr, now.Add(CompanyAuthenticationLifetime)); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("cached certificate extended expired company proof", err)
 	}
 	proof.AuthenticatedAt = now.Add(time.Minute).Unix()
@@ -507,15 +510,15 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	}
 	freshPrincipal := companyTestPrincipal(t, d, fresh, now.Add(time.Minute))
 	freshCtx := WithControlPrincipal(t.Context(), freshPrincipal)
-	rebound, err := d.IssueServiceClientCertificate(freshCtx, service.ID, person.Identity.ID, device.ID, csr, now.Add(time.Minute))
-	if err != nil || rebound != issued {
-		t.Fatal("fresh company sign-in did not reuse issued certificate", err)
+	rebound, err := d.IssueVisitorClientCertificate(freshCtx, testVisitorIssuer, scope, source, csr, now.Add(time.Minute))
+	if err != nil || rebound.CertificatePEM == issued.CertificatePEM || rebound.IssuerPEM != issued.IssuerPEM {
+		t.Fatal("fresh company sign-in reused the old session-bound certificate", err)
 	}
 	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != freshPrincipal.SessionID {
 		t.Fatal("certificate was not rebound to current company proof", boundSession, err)
 	}
 	companyTestEligibility(t, d, c, person.Identity.ID, 2, false, now)
-	if _, err = d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.IssueVisitorClientCertificate(companyCtx, testVisitorIssuer, scope, source, csr, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("offboarded mTLS CSR retry authorized", err)
 	}
 	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || permission.VisitAllowed {

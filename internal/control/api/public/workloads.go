@@ -15,7 +15,6 @@ type WorkloadVisitorStore interface {
 	ListWorkloadServices(context.Context, string, time.Time) ([]controlstate.WorkloadService, error)
 	CheckWorkloadService(context.Context, string, string, time.Time) (controlstate.WorkloadServiceAuthorization, error)
 	CreateWorkloadIngressAssignments(context.Context, string, string, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
-	IssueWorkloadServiceClientCertificate(context.Context, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
 	CreateWorkloadIngressAssignmentSet(context.Context, string, string, string, int, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
 	SelectWorkloadServiceRun(context.Context, string, string, time.Time) (controlstate.ServiceSelection, error)
 	GetWorkloadIngressTransportTrust(context.Context, string, string, time.Time) (controlstate.IngressTransportTrust, error)
@@ -145,23 +144,4 @@ func (h *handler) ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *htt
 		return
 	}
 	w.WriteHeader(204)
-}
-func (h *handler) IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, service string) {
-	store, token, ok := h.workloadVisitor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		CSR []byte `json:"csr"`
-	}
-	if decodeJSONLimited(w, r, &body, 16<<10) != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload certificate request")
-		return
-	}
-	result, err := store.IssueWorkloadServiceClientCertificate(r.Context(), token, service, body.CSR, time.Now())
-	if err != nil {
-		workloadVisitorProblem(w, err)
-		return
-	}
-	writeJSON(w, 200, result)
 }

@@ -151,6 +151,19 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// a newly issued certificate can reach the publisher before its
+		// background policy snapshot. only the bodyless stream fixture retries
+		// a pre-admission denial; application requests are never replayed.
+		if path == "/stream" && status == 200 {
+			for deadline := time.Now().Add(3 * time.Second); (response.StatusCode == 403 || response.StatusCode == 503) && time.Now().Before(deadline); {
+				response.Body.Close()
+				time.Sleep(25 * time.Millisecond)
+				response, err = client.Do(r.Clone(r.Context()))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 		if response.StatusCode != status {
 			response.Body.Close()
 			t.Fatalf("HTTP status %d, want %d", response.StatusCode, status)
@@ -231,10 +244,18 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for deadline := time.Now().Add(3 * time.Second); (upgradeResponse.StatusCode == 403 || upgradeResponse.StatusCode == 503) && time.Now().Before(deadline); {
+		upgradeResponse.Body.Close()
+		time.Sleep(25 * time.Millisecond)
+		upgradeResponse, err = upgradeClient.Do(upgradeRequest.Clone(upgradeRequest.Context()))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Cleanup(func() { _ = upgradeResponse.Body.Close() })
 	upgraded, ok := upgradeResponse.Body.(io.ReadWriteCloser)
 	if upgradeResponse.StatusCode != 101 || !ok {
-		t.Fatal("workload upgrade was not forwarded")
+		t.Fatalf("workload upgrade was not forwarded: status=%d", upgradeResponse.StatusCode)
 	}
 	if _, err := upgraded.Write([]byte("upgrade bytes\n")); err != nil {
 		t.Fatal(err)

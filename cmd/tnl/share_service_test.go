@@ -446,39 +446,40 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 }
 
 func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T) {
-	at := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	at := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 	service := controlv1.Service{Id: shareTestService, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.production.example.test", Port: 25443, Public: true}}
-	secret := shareTestHTTP + "." + strings.Repeat("A", 43)
-	for _, kind := range []controlv1.CreateServiceHTTPGrantRequestKind{"share", "token"} {
-		for _, corrupt := range []string{"", "subject", "id", "kind", "hostname", "secret"} {
+	secret := "signed.visitor.permission"
+	for _, kind := range []controlv1.CreateVisitorCredentialRequestKind{"share", "token"} {
+		for _, corrupt := range []string{"", "subject", "id", "grant_id", "hostname", "secret", "expiry", "refresh"} {
 			t.Run(string(kind)+"/"+corrupt, func(t *testing.T) {
 				control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodDelete && r.URL.Path == "/v1/services/"+shareTestService+"/http-grants/"+shareTestHTTP {
 						w.WriteHeader(204)
 						return
 					}
-					if r.Method != http.MethodPost || r.URL.Path != "/v1/services/"+shareTestService+"/http-grants" {
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/visitor-credentials" {
 						t.Errorf("service HTTP used a public URL or group grant: %s %s", r.Method, r.URL)
 					}
-					var body controlv1.CreateServiceHTTPGrantRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {
+					var body controlv1.CreateVisitorCredentialRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) || body.Resource.Kind != "service" || body.Resource.Id != shareTestService {
 						t.Error("service HTTP grant changed kind or deadline", err)
 					}
-					grant := controlv1.ServiceHTTPGrant{Id: shareTestHTTP, Subject: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Kind: controlv1.ServiceHTTPGrantKind(kind), Secret: secret, ExpiresAt: at}
-					if kind == "share" {
-						grant.ShareUrl = new("https://web.production.example.test:25443/__tnl/share/" + secret)
-					}
+					grant := controlv1.VisitorCredential{GrantId: shareTestHTTP, RefreshCredential: "vrf1." + shareTestHTTP + "." + strings.Repeat("A", 43), Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Hostname: service.Endpoint.Hostname, Port: service.Endpoint.Port, VisitorPolicyRevision: 1, VisitorToken: secret, ExpiresAt: at}}
 					switch corrupt {
 					case "subject":
-						grant.Subject.Kind = "public_url"
+						grant.Permission.Resource.Kind = "public_url"
 					case "id":
-						grant.Subject.Id = "svc_abcdefghijkl0123456789"
-					case "kind":
-						grant.Kind = "other"
+						grant.Permission.Resource.Id = "svc_abcdefghijkl0123456789"
+					case "grant_id":
+						grant.GrantId = "not-a-grant"
 					case "hostname":
-						grant.ShareUrl = new("https://other.example.test/__tnl/share/" + secret)
+						grant.Permission.Hostname = "other.example.test"
 					case "secret":
-						grant.Secret += "\nprivate-value"
+						grant.Permission.VisitorToken += "\nprivate-value"
+					case "expiry":
+						grant.Permission.ExpiresAt = at.Add(time.Hour)
+					case "refresh":
+						grant.RefreshCredential = "another-source"
 					}
 					w.WriteHeader(201)
 					_ = json.NewEncoder(w).Encode(grant)

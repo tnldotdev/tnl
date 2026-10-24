@@ -14,7 +14,7 @@ import (
 
 // OpenPrivate uses the same exact-process relay pool as HTTP, with a separate
 // ID-keyed private stream header. it sends no PROXY or visitor bytes itself.
-func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (result net.Conn, retErr error) {
+func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, events *tunnel.ReturnEvents) (result net.Conn, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.private_relay_attempt")
 	defer func() { finish(retErr) }()
 	if f == nil || f.connector == nil || header.Validate() != nil || relay.TlsServerName == "" || relay.InternalRelayAddress == "" ||
@@ -32,7 +32,7 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 			return nil, err
 		}
 		started := time.Now()
-		stream, err := session.StartServiceForwardingStream(ctx, header, nil, nil)
+		stream, err := session.StartServiceForwardingStream(ctx, header, nil, events)
 		f.observe("IngressForwardingStart", err, started)
 		if err == nil {
 			return stream, nil

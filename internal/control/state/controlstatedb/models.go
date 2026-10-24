@@ -313,28 +313,6 @@ type ControlDeviceLogin struct {
 	StorageKeyID     string
 }
 
-type ControlDirectServiceVisitor struct {
-	WorkloadSessionID    pgtype.Text
-	VisitorConnectionID  string
-	ServiceID            string
-	ServiceRunID         string
-	RunNumber            int64
-	IngressID            string
-	IngressRunID         string
-	IngressLeaseRevision int64
-	DestinationPort      int32
-	SourceIp             netip.Addr
-	IdentityID           pgtype.Text
-	DeviceID             pgtype.Text
-	CertificateDigest    []byte
-	HttpCredentialKind   pgtype.Text
-	HttpCredentialDigest []byte
-	PromotedAt           pgtype.Timestamptz
-	ValidUntil           pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	ClosedAt             pgtype.Timestamptz
-}
-
 type ControlDnsAuthority struct {
 	ID                    int64
 	AuthorityReference    string
@@ -1554,6 +1532,20 @@ type ControlTeamMembership struct {
 	IdentityConnectionID     pgtype.Text
 	ManualSuspendedAt        pgtype.Timestamptz
 	PersonalAccountException bool
+}
+
+type ControlVisitorCertificateFact struct {
+	CertificateDigest []byte
+	ServiceID         string
+	IdentityID        pgtype.Text
+	DeviceID          pgtype.Text
+	WorkloadSessionID pgtype.Text
+	ControlSessionID  pgtype.Text
+	CsrDigest         []byte
+	Serial            string
+	SubjectSha256     string
+	IssuedAt          pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
 }
 
 type ControlVisitorDevice struct {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const MaxBatch = 256
@@ -43,19 +44,20 @@ type Event struct {
 // observation carries only component-known facts. control derives team and
 // actor scope from authenticated leases, runs and admitted private visitors.
 type Observation struct {
-	EventID             string    `json:"event_id"`
-	ServiceID           string    `json:"service_id"`
-	ServiceKind         string    `json:"service_kind"`
-	EventType           string    `json:"event_type"`
-	OccurredAt          time.Time `json:"occurred_at"`
-	RunID               string    `json:"run_id"`
-	RunNumber           int64     `json:"run_number"`
-	ConnectorSessionID  string    `json:"connector_session_id,omitempty"`
-	StreamAllocationID  string    `json:"stream_allocation_id,omitempty"`
-	VisitorConnectionID string    `json:"visitor_connection_id"`
-	SourceIP            string    `json:"source_ip,omitempty"`
-	Outcome             string    `json:"outcome"`
-	Reason              string    `json:"reason,omitempty"`
+	EventID             string                           `json:"event_id"`
+	ServiceID           string                           `json:"service_id"`
+	ServiceKind         string                           `json:"service_kind"`
+	EventType           string                           `json:"event_type"`
+	OccurredAt          time.Time                        `json:"occurred_at"`
+	RunID               string                           `json:"run_id"`
+	RunNumber           int64                            `json:"run_number"`
+	ConnectorSessionID  string                           `json:"connector_session_id,omitempty"`
+	StreamAllocationID  string                           `json:"stream_allocation_id,omitempty"`
+	VisitorReference    tunnelv1.ServiceVisitorReference `json:"visitor_reference,omitzero"`
+	VisitorConnectionID string                           `json:"visitor_connection_id"`
+	SourceIP            string                           `json:"source_ip,omitempty"`
+	Outcome             string                           `json:"outcome"`
+	Reason              string                           `json:"reason,omitempty"`
 }
 
 type Batch struct {
@@ -131,6 +133,9 @@ func (o Observation) Validate() error {
 		return ErrInvalid
 	}
 	if o.StreamAllocationID != "" && (!opaqueid.Valid(o.StreamAllocationID, "salloc_") || o.ServiceKind != "service" || o.RunID == "") {
+		return ErrInvalid
+	}
+	if o.VisitorReference != (tunnelv1.ServiceVisitorReference{}) && (!o.VisitorReference.Valid() || o.ServiceKind != "service" || o.ConnectorSessionID != "" || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&

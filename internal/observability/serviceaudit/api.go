@@ -27,7 +27,11 @@ func APIObservations(batch Batch) ([]controlv1.ServiceObservation, error) {
 			value := controlv1.ServiceObservationReason(e.Reason)
 			reason = &value
 		}
-		result = append(result, controlv1.ServiceObservation{EventId: e.EventID, ServiceId: e.ServiceID, ServiceKind: controlv1.ServiceObservationServiceKind(e.ServiceKind), EventType: controlv1.ServiceObservationEventType(e.EventType), OccurredAt: e.OccurredAt, RunId: e.RunID, RunNumber: e.RunNumber, ConnectorSessionId: optional(e.ConnectorSessionID), StreamAllocationId: optional(e.StreamAllocationID), VisitorConnectionId: e.VisitorConnectionID, SourceIp: optional(e.SourceIP), Outcome: controlv1.ServiceObservationOutcome(e.Outcome), Reason: reason})
+		observation := controlv1.ServiceObservation{EventId: e.EventID, ServiceId: e.ServiceID, ServiceKind: controlv1.ServiceObservationServiceKind(e.ServiceKind), EventType: controlv1.ServiceObservationEventType(e.EventType), OccurredAt: e.OccurredAt, RunId: e.RunID, RunNumber: e.RunNumber, ConnectorSessionId: optional(e.ConnectorSessionID), StreamAllocationId: optional(e.StreamAllocationID), VisitorConnectionId: e.VisitorConnectionID, SourceIp: optional(e.SourceIP), Outcome: controlv1.ServiceObservationOutcome(e.Outcome), Reason: reason}
+		if e.VisitorReference.Kind != "" {
+			observation.VisitorReference = &e.VisitorReference
+		}
+		result = append(result, observation)
 	}
 	return result, nil
 }

@@ -99,26 +99,3 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadIngressAssignments" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/workload/services/{service_id}/client-certificate:
-    parameters:
-      - { name: service_id, in: path, required: true, schema: { type: string } }
-    post:
-      operationId: issueWorkloadServiceClientCertificate
-      security: [{ workloadAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [csr]
-              properties:
-                csr: { type: string, format: byte, maxLength: 11000 }
-      responses:
-        "200":
-          description: Service-scoped certificate for the workload's existing key, bounded by its fixed absolute expiry; current authorization always checks the live lease
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificate" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

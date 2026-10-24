@@ -7,24 +7,6 @@ schemas:
       kind: { type: string, enum: [public_url, service] }
       id: { type: string, maxLength: 64 }
     description: An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-  CreateServiceHTTPGrantRequest:
-    type: object
-    additionalProperties: false
-    required: [kind, expires_at]
-    properties:
-      kind: { type: string, enum: [token, share] }
-      expires_at: { type: string, format: date-time }
-  ServiceHTTPGrant:
-    type: object
-    additionalProperties: false
-    required: [subject, id, kind, secret, expires_at]
-    properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
-      id: { type: string }
-      kind: { type: string, enum: [token, share] }
-      secret: { type: string }
-      share_url: { type: string, format: uri }
-      expires_at: { type: string, format: date-time }
   ServiceHTTPGrantSummary:
     type: object
     additionalProperties: false
@@ -35,25 +17,6 @@ schemas:
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-  ServiceHTTPCredential:
-    type: object
-    additionalProperties: false
-    required: [kind]
-    properties:
-      kind: { type: string, enum: [none, browser, token, share, certificate] }
-      secret: { type: string, maxLength: 256 }
-      certificate: { type: string, format: byte, maxLength: 22000 }
-    description: Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
-  ServiceHTTPVisitorRequest:
-    type: object
-    additionalProperties: false
-    required: [run_number, visitor_connection_id, source_ip, destination_port, credential]
-    properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
-      visitor_connection_id: { type: string }
-      source_ip: { type: string }
-      destination_port: { type: integer, minimum: 1024, maximum: 65535 }
-      credential: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPCredential" }
   ServiceBrowserRequest:
     type: object
     additionalProperties: false

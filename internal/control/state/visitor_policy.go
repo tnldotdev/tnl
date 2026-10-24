@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
@@ -51,7 +52,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{StreamAllocations: []controlv1.StreamCapacityAllocation{}, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, CredentialLeases: []controlv1.VisitorCredentialLease{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -67,6 +68,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		team, policy.Hostname, policy.Port = row.TeamID, row.CanonicalHostname, 443
 		policy.Enabled = row.LifecycleState == "enabled" && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
 		policy.Anonymous = row.AccessMode == "anonymous"
+		policy.Public = true
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.After(now) && row.ExpiresAt.Time.Before(policy.ValidUntil) {
 			policy.ValidUntil = row.ExpiresAt.Time
 		}
@@ -122,7 +124,28 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		}
 		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
 		policy.MetadataRevision = row.TrustRevision
+		policy.Public = row.Public
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
+		// certificate trust is prepared with policy, never fetched by a visitor.
+		// the immutable issuer may not exist before the first certificate request.
+		var material []byte
+		var storageKey string
+		err = tx.QueryRow(ctx, `SELECT seed_ciphertext,storage_key_id FROM control.service_client_certificate_issuer WHERE id`).Scan(&material, &storageKey)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return result, err
+		}
+		if err == nil {
+			seed, _, err := d.storageKey.Open(storageKey, serviceClientIssuerContext, material)
+			if err != nil {
+				return result, err
+			}
+			issuer, err := controlvisitor.New(seed)
+			clear(seed)
+			if err != nil {
+				return result, err
+			}
+			policy.ClientIssuerPem = new(string(issuer.CertificatePEM()))
+		}
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 		if err != nil {
 			return result, err
@@ -173,6 +196,10 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		policy.Ip = &ip
 	}
 	if scope.Kind == visitorscope.Service {
+		policy.CredentialLeases, err = d.visitorCredentialLeases(ctx, tx, scope, now)
+		if err != nil {
+			return result, err
+		}
 		rows, err := tx.Query(ctx, `SELECT session.id,session.public_key,LEAST(session.lease_expires_at,session.expires_at)
 		    FROM control.workload_sessions session JOIN control.workload_session_services selected ON selected.workload_session_id=session.id
 		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.lease_expires_at>$2 AND session.expires_at>$2 ORDER BY session.id LIMIT 4097`, scope.ID, now)

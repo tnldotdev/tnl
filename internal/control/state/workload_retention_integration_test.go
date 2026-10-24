@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func drainWorkloadHistory(t *testing.T, d *Database, now time.Time, limit int) i
 func workloadHistoryCounts(t *testing.T, d *Database) map[string]int64 {
 	t.Helper()
 	counts := map[string]int64{}
-	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_ingress_requests", "workload_client_certificates", "workload_audit", "connector_sessions", "direct_service_visitors"} {
+	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_ingress_requests", "workload_client_certificates", "workload_audit", "connector_sessions", "visitor_certificate_facts"} {
 		var count int64
 		if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.`+table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -224,7 +225,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
+	_ = readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
 	var sessions []WorkloadSession
 	var connectors []string
 	var certificates [][]byte
@@ -247,13 +248,12 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// retained connector, direct decision, certificate, and JTI each pin an old
+	// retained connector, certificate fact, certificate, and JTI each pin an old
 	// subject. these defensive seeds also exercise stale dependent deadlines.
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_sessions SET created_at=$2,expires_at=$3 WHERE id=$1`, connectors[0], now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err := d.pool.Exec(ctx, `INSERT INTO control.direct_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
+	if _, err := d.pool.Exec(ctx, `INSERT INTO control.visitor_certificate_facts(certificate_digest,service_id,workload_session_id,csr_digest,serial,subject_sha256,issued_at,expires_at) VALUES($1,$2,$3,$1,'1',$4,$5,$6)`, certificates[1], service.ID, sessions[1].ID, strings.Repeat("A", 43), now.Add(-49*24*time.Hour), now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.workload_client_certificates SET expires_at=$2 WHERE workload_session_id=$1`, sessions[2].ID, now.Add(time.Hour)); err != nil {
@@ -296,8 +296,8 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	if retry, err := d.ExchangeWorkload(ctx, activeRequest, now); err != nil || retry.Credential != active.Credential || len(retry.ServiceIDs) != 2 {
 		t.Fatal("active subject snapshot changed", err)
 	}
-	var storedConnector, storedCert, storedDirect bool
-	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_sessions WHERE id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.direct_service_visitors WHERE visitor_connection_id=$3)`, connectors[0], certificates[1], direct).Scan(&storedConnector, &storedCert, &storedDirect); err != nil || !storedConnector || !storedCert || !storedDirect {
+	var storedConnector, storedCert, storedFact bool
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_sessions WHERE id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.visitor_certificate_facts WHERE certificate_digest=$3)`, connectors[0], certificates[2], certificates[1]).Scan(&storedConnector, &storedCert, &storedFact); err != nil || !storedConnector || !storedCert || !storedFact {
 		t.Fatal("live admission references were erased", err)
 	}
 	// the older run sweeper must neither erase these workload handles early nor

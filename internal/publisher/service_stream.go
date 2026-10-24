@@ -149,7 +149,15 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	frontTLS := s.TLS.Clone()
 	frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS12)
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
+	if frontTLS.ClientCAs != nil {
+		if _, certificate := s.Visitor.(CertificateVisitor); certificate {
+			frontTLS.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+	}
 	frontTLS.NextProtos = nil
+	if _, http := s.Visitor.(PublicHTTPVisitor); http {
+		frontTLS.NextProtos = []string{"h2", "http/1.1"}
+	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		if hello.ServerName != s.Hostname && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, ErrEndpoint

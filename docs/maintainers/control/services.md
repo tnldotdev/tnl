@@ -79,27 +79,38 @@ hello binds the service, subject, and nonce. ingress claims that hello against i
 current lease and captures the socket's source or verified PROXY metadata. SNI
 and client-supplied addresses do not select a service or visitor source.
 
-each application stream needs a current ready run and a separate admission.
-ingress and publisher check the exact subject, session, service/run, source,
-grant, and connection assignment. ingress emits PROXY v2 once; relay preserves
-it through the pipelined opening and byte stream. connector-admitted streams do not request an
-application client certificate. direct HTTP uses its current HTTP credential;
-direct database clients use mTLS. application authorization remains independent.
+each stream needs a prepared run, signed visitor permission, and reserved
+capacity. ingress verifies the native subject and session locally; the publisher
+checks the exact opening, source, metadata, run, and reservation before target
+work. ingress emits PROXY v2 once; relay preserves it through forwarding.
+native connector streams do not request a client certificate.
+
+direct visitors select a service by the trusted destination port and current
+local reachability, routing, and allocation. the publisher checks signed
+client-certificate permission for opaque protocols or each HTTP request's signed
+credential. after local permission succeeds, its exact attribution reference
+travels back to ingress as a one-way promotion on the authenticated visitor
+stream. pending time and byte limits still apply. application authorization and
+publisher-to-target TLS are separate.
 
 assignment retries retain one idempotency key until the outcome is known. changed
 requests conflict; expired, revoked, bound, or stale assignments cannot replay.
 the encrypted retry result is covered by storage-key rotation and bounded
 retention. see [`connector/stream`](../../../internal/connector/stream),
 [`tunnelv1`](../../../pkg/protocol/tunnelv1), and
-[`service_http_authorization.go`](../../../internal/control/state/service_http_authorization.go).
+[`direct_visitor.go`](../../../internal/ingress/direct_visitor.go).
 
 ## retain current authorization
 
-inventory, a connector session, and a previously accepted credential are not
-ongoing authorization. ingress normally rechecks active streams every 30 seconds,
-bounded by the applicable grant, run, infrastructure lease, certificate, and
-two-minute maximum decision deadline. denial closes both ends; unavailable
-control cannot extend the deadline. stream workers join before capacity is released.
+inventory, a connector session, and a signed credential are not ongoing
+authorization. ingress and publisher refresh visitor policy in the background,
+bounded to ten seconds from fetch start and earlier credential, parent,
+allocation, certificate, or infrastructure deadlines. each locally bound guard
+closes its affected stream or HTTP request on denial or expiry. an unavailable
+control cannot extend the last confirmed deadline; workers join before
+capacity is released. direct certificate and explicit grant coverage requires
+the exact current parent and grant facts, including after unrelated policy
+mutations.
 
 session expiry prevents new streams while admitted streams drain under their
 own authorization. replacement joins the old runner before reopening the

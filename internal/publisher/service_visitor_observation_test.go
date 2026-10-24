@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,8 +61,8 @@ func TestManagedVisitorRepresentationsDispatchAfterTLS(t *testing.T) {
 						visitor = &v
 					}
 				case "certificate":
-					v := publisher.CertificateVisitor{Check: func(_ context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
-						if leaf == nil {
+					v := publisher.CertificateVisitor{Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+						if !state.HandshakeComplete || len(state.PeerCertificates) == 0 {
 							t.Error("certificate admission omitted the TLS leaf")
 						}
 						return allowed()

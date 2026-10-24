@@ -38,7 +38,7 @@ type PrivateControl interface {
 // it sends the private forwarding sideband to the relay, which must bind the
 // publisher stream before returning. ingress alone writes PROXY v2 afterward.
 type ServiceForwarder interface {
-	OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error)
+	OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, *tunnel.ReturnEvents) (net.Conn, error)
 }
 
 type ConnectorConfig struct {
@@ -50,13 +50,11 @@ type ConnectorConfig struct {
 	Transport                                                    muxsession.TLSYamuxConfig
 	Control                                                      PrivateControl
 	VisitorControl                                               VisitorPreparationControl
-	DirectControl                                                DirectControl
 	Forwarder                                                    ServiceForwarder
 	Routing                                                      *ServiceRoutingTable
 	CurrentLease                                                 func() ingressv1.IngressLease
 	MaxSessions, MaxPending, MaxServiceStreams, MaxSourceStreams int
 	PendingTimeout                                               time.Duration
-	RecheckInterval, HardAuthorizationTTL, RecheckTimeout        time.Duration
 }
 
 type Connector struct {
@@ -108,20 +106,6 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 	}
 	if config.PendingTimeout == 0 {
 		config.PendingTimeout = 10 * time.Second
-	}
-	if config.RecheckInterval == 0 {
-		config.RecheckInterval = 30 * time.Second
-	}
-	if config.HardAuthorizationTTL == 0 {
-		config.HardAuthorizationTTL = 2 * time.Minute
-	}
-	if config.RecheckTimeout == 0 {
-		config.RecheckTimeout = 5 * time.Second
-	}
-	if config.RecheckInterval <= 0 || config.RecheckInterval > 30*time.Second ||
-		config.HardAuthorizationTTL <= config.RecheckInterval || config.HardAuthorizationTTL > 2*time.Minute ||
-		config.RecheckTimeout <= 0 || config.RecheckTimeout > config.RecheckInterval {
-		return nil, errors.New("ingress: private visitor recheck intervals must stay within the hard authorization deadline")
 	}
 	if config.Transport.MaxIncomingStreams <= 0 || config.Transport.MaxIncomingStreams > config.MaxSourceStreams {
 		config.Transport.MaxIncomingStreams = config.MaxSourceStreams
@@ -715,7 +699,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			return err
 		}
 		attemptCtx, stopAttempt := backendAttemptContext(streamCtx, len(*projection.ConnectedRelays)-attempt)
-		candidate, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, deadline)
+		candidate, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, deadline, nil)
 		stopAttempt()
 		if err != nil {
 			continue

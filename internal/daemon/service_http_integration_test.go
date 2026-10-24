@@ -133,6 +133,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if service.Endpoint == nil {
 		t.Fatal("missing managed endpoint")
 	}
+	privateWait(t, 5*time.Second, func(context.Context) (bool, error) {
+		return direct.DirectServiceReady(uint16(service.Endpoint.Port)), nil
+	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -191,9 +194,22 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		r.Header.Set("X-Forwarded-Host", "attacker.example")
 		r.Header.Set("X-Real-IP", "203.0.113.99")
 		r.Header["Authorization"] = []string{"caller-one", "caller-two"}
-		response, err := client.Do(r)
-		if err != nil {
-			t.Fatal(err)
+		var response *http.Response
+		// a freshly issued credential may precede the publisher's background
+		// policy update. retry only explicit pre-admission denials in this fixture;
+		// transport failures and application responses are never replayed.
+		for deadline := time.Now().Add(5 * time.Second); ; {
+			var err error
+			response, err = client.Do(r.Clone(r.Context()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (want != 200 && want != 303) || (response.StatusCode != 403 && response.StatusCode != 503) || !time.Now().Before(deadline) {
+				break
+			}
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			time.Sleep(10 * time.Millisecond)
 		}
 		if response.StatusCode != want {
 			body, _ := io.ReadAll(response.Body)
@@ -203,43 +219,64 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		return response
 	}
 	closeResponse := func(response *http.Response) { _, _ = io.Copy(io.Discard, response.Body); _ = response.Body.Close() }
+	waitDenied := func(client *http.Client, path, header, secret string) {
+		t.Helper()
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			r, _ := http.NewRequestWithContext(t.Context(), "GET", base+path, nil)
+			if header != "" {
+				r.Header.Set(header, secret)
+			}
+			response, err := client.Do(r)
+			if err != nil {
+				return false, err
+			}
+			defer closeResponse(response)
+			return response.StatusCode == 403, nil
+		})
+	}
+	createCredential := func(kind controlv1.CreateVisitorCredentialRequestKind) controlv1.VisitorCredential {
+		t.Helper()
+		credential, err := f.identity.routes.CreateVisitorCredential(t.Context(), controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: kind, ExpiresAt: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return credential
+	}
 	baseline := requests.Load()
 	closeResponse(request(client, "/", "", "", 403))
 	if requests.Load() != baseline {
 		t.Fatal("anonymous request reached target")
 	}
-	token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	closeResponse(request(client, "/app-auth", "Tnl-Access-Token", token.Secret, 200))
+	token := createCredential("token")
+	closeResponse(request(client, "/app-auth", "Tnl-Visitor-Token", token.Permission.VisitorToken, 200))
 	firstConnection := targetConnection.Load()
-	closeResponse(request(client, "/", "Tnl-Access-Token", token.Secret, 200))
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 200))
 	if targetConnection.Load() != firstConnection {
 		t.Fatal("HTTP keepalive selected more than one upstream")
 	}
 	wrongCertificate := &http.Client{Transport: newTransport(&target.TLS.Certificates[0]), Timeout: 10 * time.Second}
 	closeResponse(request(wrongCertificate, "/", "", "", 403))
-	closeResponse(request(wrongCertificate, "/", "Tnl-Access-Token", token.Secret, 200))
-	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, token.Id); err != nil {
+	closeResponse(request(wrongCertificate, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 200))
+	closeResponse(request(client, "/__tnl/share/"+token.Permission.VisitorToken, "", "", 403))
+	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, token.GrantId); err != nil {
 		t.Fatal(err)
 	}
-	closeResponse(request(client, "/", "Tnl-Access-Token", token.Secret, 403))
-	share, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "share", ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil || share.ShareUrl == nil || !strings.HasPrefix(*share.ShareUrl, base+"/") {
-		t.Fatal("share lost allocated port", err)
+	waitDenied(client, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken)
+	share := createCredential("share")
+	if share.Permission.Hostname != service.Endpoint.Hostname || share.Permission.Port != service.Endpoint.Port {
+		t.Fatal("share lost allocated port")
 	}
-	closeResponse(request(client, "/", "Tnl-Share-Token", share.Secret, 200))
-	closeResponse(request(client, "/", "Tnl-Access-Token", share.Secret, 403))
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.Permission.VisitorToken, 403))
+	closeResponse(request(client, "/", "Tnl-Access-Token", share.Permission.VisitorToken, 403))
 	jar, _ := cookiejar.New(nil)
 	shareClient := *client
 	shareClient.Jar = jar
-	closeResponse(request(&shareClient, "/__tnl/share/"+share.Secret, "", "", 303))
+	closeResponse(request(&shareClient, "/__tnl/share/"+share.Permission.VisitorToken, "", "", 303))
 	closeResponse(request(&shareClient, "/", "", "", 200))
-	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, share.Id); err != nil {
+	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, share.GrantId); err != nil {
 		t.Fatal(err)
 	}
-	closeResponse(request(&shareClient, "/", "", "", 403))
+	waitDenied(&shareClient, "/", "", "")
 	// a browser completes real OIDC discovery, PKCE/code redemption and the same
 	// control callback used by public URLs. it never supplies a TLS certificate.
 	browser := *client
@@ -299,17 +336,20 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	// use the actual signed-in browser credential through ingress and control,
 	// and verify the target still receives only the application cookie.
 	originForCookies, _ := url.Parse(base)
-	var browserSecret string
+	var browserSecret, browserPermission string
 	for _, cookie := range browser.Jar.Cookies(originForCookies) {
 		if cookie.Name == "__Host-tnl-browser" {
 			browserSecret = cookie.Value
 		}
+		if cookie.Name == "__Host-tnl-visitor" {
+			browserPermission = cookie.Value
+		}
 	}
-	if browserSecret == "" {
+	if browserSecret == "" || browserPermission == "" {
 		t.Fatal("browser credential missing")
 	}
 	for _, space := range []string{" ", "\t", " \t "} {
-		closeResponse(request(client, "/cookie-whitespace", "Cookie", "app_session=kept; __Host-tnl-browser"+space+"="+browserSecret+"; __Host-tnl-share"+space+"=unused; __Host-tnl-feedback-browser"+space+"=unused; __Host-tnl-browser-attempt"+space+"=unused", 200))
+		closeResponse(request(client, "/cookie-whitespace", "Cookie", "app_session=kept; __Host-tnl-visitor"+space+"="+browserPermission+"; __Host-tnl-browser"+space+"="+browserSecret+"; __Host-tnl-share"+space+"=unused; __Host-tnl-feedback-browser"+space+"=unused; __Host-tnl-browser-attempt"+space+"=unused", 200))
 	}
 	badOrigin, _ := http.NewRequestWithContext(t.Context(), "POST", base+"/__tnl/team/logout", nil)
 	badOrigin.Header.Set("Origin", "https://"+service.Endpoint.Hostname)
@@ -394,17 +434,14 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	mtls := &http.Client{Transport: newTransport(&material.Certificate), Timeout: 10 * time.Second}
 	closeResponse(request(mtls, "/", "", "", 200))
-	transition, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	transition := createCredential("token")
 	connectionBeforeProofChange := targetConnection.Load()
-	closeResponse(request(mtls, "/", "Tnl-Access-Token", transition.Secret, 200))
+	closeResponse(request(mtls, "/", "Tnl-Visitor-Token", transition.Permission.VisitorToken, 200))
 	closeResponse(request(mtls, "/", "", "", 200))
 	if targetConnection.Load() != connectionBeforeProofChange {
 		t.Fatal("credential selection changed the selected upstream")
 	}
-	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, transition.Id); err != nil {
+	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, transition.GrantId); err != nil {
 		t.Fatal(err)
 	}
 	closeResponse(request(mtls, "/", "Tnl-Access-Token", "invalid", 403))
@@ -413,7 +450,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if _, err = f.inspect.ExecContext(t.Context(), `UPDATE control.service_client_certificates SET revoked_at=now() WHERE certificate_digest=$1`, certificateDigest[:]); err != nil {
 		t.Fatal(err)
 	}
-	closeResponse(request(mtls, "/", "", "", 403))
+	waitDenied(mtls, "/", "", "")
 	key, _, _ = ed25519.GenerateKey(rand.Reader)
 	device, err = f.identity.routes.EnrollVisitorDevice(t.Context(), key)
 	if err != nil {
@@ -430,7 +467,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Id); err != nil {
 		t.Fatal(err)
 	}
-	closeResponse(request(mtls, "/", "", "", 403))
+	waitDenied(mtls, "/", "", "")
 	// stale public DNS cannot override current private reachability, and neither
 	// the stable hostname nor allocated port changes during the transition.
 	g := applied.Configuration.PublisherGroups[group]
@@ -443,6 +480,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if *updated.Services[0].Hostname != service.Endpoint.Hostname || *updated.Services[0].Port != service.Endpoint.Port {
 		t.Fatal("reachability changed endpoint")
 	}
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return !direct.DirectServiceReady(uint16(service.Endpoint.Port)), nil
+	})
 	client.Transport.(*http.Transport).CloseIdleConnections()
 	if response, err = client.Get(base + "/"); err == nil {
 		_ = response.Body.Close()
@@ -453,6 +493,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if _, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), ExpectedRevision: updated.Revision, Configuration: updated.Configuration}); err != nil {
 		t.Fatal(err)
 	}
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return direct.DirectServiceReady(uint16(service.Endpoint.Port)), nil
+	})
 	checkServiceHTTPCompany(t, f, issuer, client, base, service, person.Identity.Id)
 	var publicURLs int
 	if err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/oauth2"
@@ -219,7 +221,7 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 	}
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-	material, err := f.database.IssueServiceClientCertificate(companyCtx, service.Id, identity, device.ID, csr, time.Now())
+	material, err := f.database.IssueVisitorClientCertificate(companyCtx, f.controlConfig.ControlOrigin(), visitorscope.Scope{Kind: visitorscope.Service, ID: service.Id}, controlstate.DeviceTokenSource{DeviceID: device.ID}, csr, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,14 +235,18 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 	transport.TLSClientConfig.Certificates = []tls.Certificate{certificate}
 	defer transport.CloseIdleConnections()
 	mtls := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	response, err := mtls.Get(base + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != 200 {
-		t.Fatal("company client certificate denied", response.StatusCode)
-	}
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		response, err := mtls.Get(base + "/")
+		if err != nil {
+			return false, err
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != 200 && response.StatusCode != 403 && response.StatusCode != 503 {
+			t.Fatal("unexpected company certificate response", response.StatusCode)
+		}
+		return response.StatusCode == 200, nil
+	})
+	var response *http.Response
 	response, err = browser.Get(base + "/watch")
 	if err != nil {
 		t.Fatal(err)
@@ -257,12 +263,13 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 	}
 	_ = response.Body.Close()
 	for _, visitor := range []*http.Client{browser, mtls} {
-		response, err = visitor.Get(base + "/")
-		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == 200 {
-				t.Fatal("company suspension retained HTTP access")
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			response, err := visitor.Get(base + "/")
+			if err != nil {
+				return true, nil
 			}
-		}
+			_ = response.Body.Close()
+			return response.StatusCode != 200, nil
+		})
 	}
 }

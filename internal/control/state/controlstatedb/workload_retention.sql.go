@@ -53,11 +53,35 @@ func (q *Queries) CleanupWorkloadAudit(ctx context.Context, arg CleanupWorkloadA
 	return result.RowsAffected(), nil
 }
 
+const cleanupWorkloadCertificateFacts = `-- name: CleanupWorkloadCertificateFacts :execrows
+
+DELETE FROM control.visitor_certificate_facts WHERE certificate_digest IN (
+    SELECT fact.certificate_digest FROM control.visitor_certificate_facts fact
+    WHERE fact.workload_session_id IS NOT NULL AND fact.expires_at < $1
+    ORDER BY fact.expires_at, fact.certificate_digest LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+`
+
+type CleanupWorkloadCertificateFactsParams struct {
+	BeforeTime pgtype.Timestamptz
+	BatchSize  int32
+}
+
+// each phase has its own budget so a busy leaf cannot starve its parents.
+// select only unreferenced candidates before LIMIT; never cascade subject state.
+func (q *Queries) CleanupWorkloadCertificateFacts(ctx context.Context, arg CleanupWorkloadCertificateFactsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupWorkloadCertificateFacts, arg.BeforeTime, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cleanupWorkloadCertificates = `-- name: CleanupWorkloadCertificates :execrows
 DELETE FROM control.workload_client_certificates WHERE certificate_digest IN (
     SELECT cert.certificate_digest FROM control.workload_client_certificates cert
     WHERE cert.expires_at < $1
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors visitor WHERE visitor.certificate_digest = cert.certificate_digest)
     ORDER BY cert.expires_at, cert.certificate_digest LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
@@ -100,32 +124,6 @@ func (q *Queries) CleanupWorkloadConnectors(ctx context.Context, arg CleanupWork
 	return result.RowsAffected(), nil
 }
 
-const cleanupWorkloadDirectVisitors = `-- name: CleanupWorkloadDirectVisitors :execrows
-
-DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
-    SELECT visitor.visitor_connection_id FROM control.direct_service_visitors visitor
-    WHERE visitor.workload_session_id IS NOT NULL
-      AND (visitor.valid_until < $1 OR visitor.closed_at < $1)
-    ORDER BY visitor.valid_until, visitor.visitor_connection_id LIMIT $2
-    FOR UPDATE SKIP LOCKED
-)
-`
-
-type CleanupWorkloadDirectVisitorsParams struct {
-	BeforeTime pgtype.Timestamptz
-	BatchSize  int32
-}
-
-// each phase has its own budget so a busy leaf cannot starve its parents.
-// select only unreferenced candidates before LIMIT; never cascade subject state.
-func (q *Queries) CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupWorkloadDirectVisitors, arg.BeforeTime, arg.BatchSize)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const cleanupWorkloadIngressRequests = `-- name: CleanupWorkloadIngressRequests :execrows
 DELETE FROM control.workload_ingress_requests WHERE (workload_session_id, idempotency_key) IN (
     SELECT request.workload_session_id, request.idempotency_key FROM control.workload_ingress_requests request
@@ -162,7 +160,7 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, servic
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.visitor_certificate_facts child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT $2
     FOR UPDATE OF rights SKIP LOCKED
 )
@@ -194,7 +192,7 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_ingress_requests child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.connector_sessions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.visitor_certificate_facts child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
 )

@@ -11,7 +11,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -106,7 +108,7 @@ type stalledServiceForwarder struct {
 	stallProxy bool
 }
 
-func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, events *tunnel.ReturnEvents) (net.Conn, error) {
 	if relay.ConnectionSlot == 0 {
 		if f.stallProxy {
 			connection, peer := net.Pipe()
@@ -116,7 +118,7 @@ func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return f.alternate.OpenPrivate(ctx, relay, header)
+	return f.alternate.OpenPrivate(ctx, relay, header, events)
 }
 
 func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
@@ -149,28 +151,12 @@ func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	}
 }
 
-type directControlFixture struct{ control *privateControlFixture }
-
-func (f directControlFixture) AdmitDirectServiceVisitor(_ context.Context, _ string, claim ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
-	c := f.control
-	return ingressv1.DirectServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: *c.projection.ConnectedRelays}, nil
-}
-func (directControlFixture) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
-	return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
-}
-func (directControlFixture) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
-	return nil
-}
-func (directControlFixture) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
-	return nil
-}
-
 func TestDirectVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	for _, proxy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
 			p, control, forwarder, _, _, _ := privateTestSetup(t)
+			updateNativePolicy(t, p, control, func(update *visitorlease.Update) { update.View.Public, update.View.Port = true, 20000 })
 			p.config.PendingTimeout = 600 * time.Millisecond
-			p.config.DirectControl = directControlFixture{control}
 			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			connection, visitor := net.Pipe()
 			ctx, cancel := context.WithCancel(t.Context())

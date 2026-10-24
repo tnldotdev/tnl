@@ -1,8 +1,12 @@
 package publisher_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/netip"
@@ -16,7 +20,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -25,22 +31,28 @@ type nativeIngressControl struct {
 	port         int
 	service, run string
 	relays       []ingressv1.ServiceRelay
+	lease        ingressv1.IngressLease
+	allocation   string
 }
 
-func (c nativeIngressControl) AdmitDirectServiceVisitor(_ context.Context, _ string, claim ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
-	if claim.DestinationPort != c.port || claim.ObservedSourceIp != "127.0.0.1" {
-		return ingressv1.DirectServiceVisitorAdmission{}, ingress.ErrServiceAdmission
-	}
-	return ingressv1.DirectServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays}, nil
+func (c nativeIngressControl) GetServiceSnapshot(context.Context, string, ingressv1.GetServiceSnapshotParams) (ingressv1.ServiceSnapshot, error) {
+	return ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{{Kind: ingressv1.Upsert, Revision: 1, ServiceId: c.service, ServiceRunId: &c.run, RunNumber: new(int64(1)), ExpiresAt: c.lease.LeaseExpiresAt, ConnectedRelays: &c.relays}}}, nil
 }
-func (c nativeIngressControl) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
-	return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
+func (c nativeIngressControl) GetServiceEvents(context.Context, string, ingressv1.GetServiceEventsParams) (ingressv1.ServiceSnapshot, error) {
+	return ingressv1.ServiceSnapshot{Revision: 1}, nil
 }
-func (c nativeIngressControl) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+func (c nativeIngressControl) AllocateStreamCapacity(context.Context, string, ingressv1.StreamCapacityRequest) (controlv1.StreamCapacityAllocation, error) {
+	now := time.Now()
+	return controlv1.StreamCapacityAllocation{Id: c.allocation, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: c.service}, RunId: c.run, RunNumber: 1, Capacity: 16, IngressId: c.lease.IngressId, IngressRunId: c.lease.IngressRunId, IngressLeaseRevision: c.lease.IngressLeaseRevision, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}, nil
+}
+func (c nativeIngressControl) RetireStreamCapacity(context.Context, string, string, ingressv1.StreamCapacityRetirement) error {
 	return nil
 }
-func (c nativeIngressControl) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
-	return nil
+func (c nativeIngressControl) ReadIngressVisitorPolicy(ctx context.Context, _ string, _ ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+	now := time.Now()
+	allocation, _ := c.AllocateStreamCapacity(ctx, "", ingressv1.StreamCapacityRequest{})
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{42}, ed25519.SeedSize))
+	return controlv1.VisitorPolicyUpdate{SnapshotRequired: true, Policy: controlv1.VisitorPolicySnapshot{Resource: allocation.Resource, Hostname: "service.example.test", Port: c.port, Issuer: "https://control.example.test", VisitorPolicyRevision: 1, MetadataRevision: 1, KeyRevision: 1, Enabled: true, Public: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, StreamAllocations: []controlv1.StreamCapacityAllocation{allocation}}}, nil
 }
 
 type nativeIngressForwarder struct {
@@ -51,7 +63,7 @@ type nativeIngressForwarder struct {
 	visitor func() publisher.ServiceVisitorAuthentication
 }
 
-func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, events *tunnel.ReturnEvents) (net.Conn, error) {
 	if header.Direct == nil || header.Direct.DestinationPort != f.port || header.Validate() != nil {
 		return nil, ingress.ErrServiceAdmission
 	}
@@ -71,6 +83,43 @@ func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.Ser
 		server := f.server
 		if f.visitor != nil {
 			server.Visitor = f.visitor()
+		}
+		var promotion sync.Once
+		var promotionErr error
+		promote := func(reference tunnelv1.ServiceVisitorReference) error {
+			promotion.Do(func() {
+				if events == nil || events.Promoted == nil {
+					promotionErr = ingress.ErrServiceAdmission
+					return
+				}
+				promoted := header.Admission()
+				promoted.Visitor = reference
+				promotionErr = events.Promoted(promoted)
+			})
+			return promotionErr
+		}
+		switch visitor := server.Visitor.(type) {
+		case publisher.CertificateVisitor:
+			check := visitor.Check
+			visitor.Check = func(ctx context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+				decision, err := check(ctx, state)
+				if err == nil && decision.Allowed && decision.ValidUntil.After(time.Now()) {
+					digest := sha256.Sum256(state.PeerCertificates[0].Raw)
+					err = promote(tunnelv1.ServiceVisitorReference{Kind: "certificate", ID: hex.EncodeToString(digest[:])})
+				}
+				return decision, err
+			}
+			server.Visitor = visitor
+		case publisher.ConnectorVisitor:
+			check := visitor.Check
+			visitor.Check = func(ctx context.Context) (publisher.ServiceVisitorDecision, error) {
+				decision, err := check(ctx)
+				if err == nil && decision.Allowed && decision.ValidUntil.After(time.Now()) {
+					err = promote(tunnelv1.ServiceVisitorReference{Kind: "browser_session", ID: "cs_aaaaaaaaaaaaaaaaaaaaaa"})
+				}
+				return decision, err
+			}
+			server.Visitor = visitor
 		}
 		_ = server.Forward(f.t.Context(), nativeReaderConn{Conn: b, reader: reader})
 	})
@@ -107,7 +156,7 @@ func managedIngressListener(t *testing.T, managed publisher.ServiceStream, visit
 		return value
 	}
 	lease := ingressv1.IngressLease{IngressId: "native", IngressRunId: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	control := nativeIngressControl{port: port, service: id(opaqueid.ServicePrefix), run: id(opaqueid.ServiceRunPrefix)}
+	control := nativeIngressControl{port: port, service: id(opaqueid.ServicePrefix), run: id(opaqueid.ServiceRunPrefix), lease: lease, allocation: id("salloc_")}
 	for index := range 2 {
 		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", LeaseExpiresAt: lease.LeaseExpiresAt})
 	}
@@ -116,11 +165,30 @@ func managedIngressListener(t *testing.T, managed publisher.ServiceStream, visit
 	if len(visitors) != 0 {
 		forwarder.visitor = visitors[0]
 	}
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, DirectControl: control, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
+	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, VisitorControl: control, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
 	if err != nil {
 		_ = front.Close()
 		_ = backend.Close()
 		t.Fatal(err)
+	}
+	preparation, cancelPreparation := context.WithCancel(t.Context())
+	prepared := make(chan error, 1)
+	go func() { prepared <- connector.Run(preparation) }()
+	t.Cleanup(func() {
+		cancelPreparation()
+		_ = connector.Close()
+		if err := <-prepared; err != nil {
+			t.Error(err)
+		}
+	})
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		if _, ready := connector.ServiceRoute(control.service, control.run, 1, time.Now()); ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native ingress did not prepare routing and policy")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	server, err := ingress.New(backend, ingress.Config{DirectOnly: true, DirectConnector: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {

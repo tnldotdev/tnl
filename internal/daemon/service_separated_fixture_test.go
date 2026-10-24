@@ -114,6 +114,9 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err := database.PrepareVisitorSigningKeys(t.Context(), config.ControlOrigin(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.ServiceClientIssuer(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	publicControlAddress := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, nil, publicControlAddress, config.ControlListen, controlTLS)
 	pebble, dnsProvider := privateFixtureACME(t, database, &config)
@@ -166,9 +169,6 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Cleanup(func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
 		settings.configurePrivate = func(id string, config *ingress.ConnectorConfig) {
-			if !defaults {
-				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		}
 		if err := control.startStandalone(ctx, settings, metrics, handler); err != nil {

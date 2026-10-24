@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -183,12 +184,13 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, maximum.Credential, service, csr, expired)
+	prepareVisitorTokenKeys(t, d, expired)
+	certificate, err := d.IssueVisitorClientCertificate(ctx, testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, WorkloadTokenSource{Credential: maximum.Credential}, csr, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !certificate.ExpiresAt.Equal(maximum.ExpiresAt.Truncate(time.Second)) {
-		t.Fatal("maximum certificate clipped to renewable lease")
+	if !certificate.ExpiresAt.After(expired) || certificate.ExpiresAt.After(expired.Add(visitortoken.RenewableLifetime)) || certificate.ExpiresAt.After(maximum.ExpiresAt) {
+		t.Fatal("signed workload certificate escaped its renewable or fixed parent deadline")
 	}
 }
 
@@ -417,7 +419,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("publisher policy accepted a replaced run number", err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, session.Credential, service.ID, csr, now)
+	certificate, err := d.IssueVisitorClientCertificate(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, csr, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,29 +432,55 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subject, err := issuer.Subject(leaf, service.ID, now); err != nil || subject != session.Subject {
-		t.Fatal("certificate used a human subject", subject, err)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(issuer.CertificatePEM()) {
+		t.Fatal("invalid prepared certificate issuer")
+	}
+	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientState := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: chains}
+	actualScope, subject, err := visitortoken.CertificateIssuanceBinding(chains)
+	if err != nil || actualScope != scope {
+		t.Fatal("certificate changed its signed service scope", err)
+	}
+	if workload, ok := subject.(visitortoken.Workload); !ok || workload.SessionID != session.ID {
+		t.Fatal("certificate used a human subject")
+	}
+	clientToken, err := visitortoken.CertificateToken(leaf)
+	if err != nil {
+		t.Fatal(err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AdmitDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, port, source, now); err != nil {
-		t.Fatal(err)
+	currentDirect := func(at time.Time) (visitortoken.Permission, error) {
+		policy, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, run.Token, 0, nil, at)
+		if err != nil {
+			return visitortoken.Permission{}, err
+		}
+		update, err := visitorlease.Decode(policy)
+		if err != nil {
+			return visitortoken.Permission{}, err
+		}
+		if !update.View.Public || update.View.Port != uint16(port) {
+			t.Fatal("direct endpoint lost reachability or port")
+		}
+		return visitortoken.VerifyCertificate(clientToken, update.View, clientState, at)
 	}
-	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now)
-	if err != nil || !decision.Allowed || decision.Admitted || !decision.ValidUntil.Equal(session.ExpiresAt) {
-		t.Fatal("public workload certificate authorization", decision, err)
+	checked, err := currentDirect(now)
+	if err != nil || !checked.ExpiresAt.Equal(session.ExpiresAt.Truncate(time.Second)) {
+		t.Fatal("local public workload certificate deadline", checked.ExpiresAt, err)
 	}
-	if err = d.PromoteDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, direct, now); err != nil {
-		t.Fatal(err)
-	}
-	status, err := d.DirectServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, now.Add(time.Second))
-	if err != nil || status.State != DirectVisitorAllowed {
-		t.Fatal("public active recheck", status, err)
+	reference, err := visitortoken.ServiceAuditReference(checked, clientState)
+	if err != nil || reference.Kind != "certificate" {
+		t.Fatal("signed workload admission lacked exact audit identity", err)
 	}
 	for _, connector := range []bool{false, true} {
-		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
+		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed", StreamAllocationID: allocation.ID, VisitorReference: reference}
 		if connector {
 			observation.VisitorConnectionID, observation.ConnectorSessionID = visitor, assignment.ID
 			observation.StreamAllocationID = allocation.ID
+			observation.VisitorReference = tunnelv1.ServiceVisitorReference{}
 		}
 		if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, now); err != nil {
 			t.Fatal("audit scanned workload as a human", err)
@@ -461,8 +489,8 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if nativeAllowed(session.ExpiresAt) {
 		t.Fatal("private permission outlived job")
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("public stream outlived job", err)
+	if _, err := currentDirect(session.ExpiresAt); err == nil {
+		t.Fatal("public certificate outlived job")
 	}
 	// policy removal denies still-live admissions before their earlier deadline.
 	r.ExpectedRevision = applied.Revision
@@ -473,8 +501,8 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if nativeAllowed(now.Add(2 * time.Second)) {
 		t.Fatal("private permission survived policy removal")
 	}
-	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
-		t.Fatal("public stream survived policy removal", decision, err)
+	if _, err := currentDirect(now.Add(2 * time.Second)); err == nil {
+		t.Fatal("public certificate survived policy removal")
 	}
 }
 

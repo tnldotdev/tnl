@@ -3,7 +3,6 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"reflect"
 	"testing"
@@ -34,7 +33,7 @@ func (undeclaredVisitor) authorize(context.Context, tls.ConnectionState) (Servic
 func TestManagedVisitorNormalizationValuePointerAndTypedNil(t *testing.T) {
 	public := PublicHTTPVisitor{Frontend: visitorFrontendFunc(func(context.Context, *tls.Conn, ServiceHTTPTarget) error { return nil })}
 	connector := ConnectorVisitor{Check: func(context.Context) (ServiceVisitorDecision, error) { return ServiceVisitorDecision{}, nil }}
-	certificate := CertificateVisitor{Check: func(context.Context, *x509.Certificate) (ServiceVisitorDecision, error) {
+	certificate := CertificateVisitor{Check: func(context.Context, tls.ConnectionState) (ServiceVisitorDecision, error) {
 		return ServiceVisitorDecision{}, nil
 	}}
 	for _, test := range []struct {

@@ -39,10 +39,13 @@ func (s Share) valid() bool          { return opaqueid.Valid(s.ShareID, opaqueid
 
 type Grant struct {
 	GrantID string `json:"grant_id"`
+	Kind    string `json:"kind"`
 }
 
 func (Grant) visitorSubject() string { return "grant" }
-func (s Grant) valid() bool          { return opaqueid.Valid(s.GrantID, "shg_") }
+func (s Grant) valid() bool {
+	return opaqueid.Valid(s.GrantID, "shg_") && (s.Kind == "token" || s.Kind == "share")
+}
 
 type Device struct {
 	IdentityID string `json:"identity_id"`
@@ -195,4 +198,42 @@ func decodeSubject(data json.RawMessage) (Subject, error) {
 		return nil, ErrToken
 	}
 	return subject, nil
+}
+
+// CredentialBinding names a non-renewable application credential's exact signed
+// subject. a current authenticated policy may cover it across unrelated resource
+// revisions, without renewing its certificate/token or changing its subject.
+func CredentialBinding(subject Subject) (string, string, error) {
+	var kind, id string
+	switch value := subject.(type) {
+	case Certificate:
+		kind, id = "certificate", value.Serial
+	case Grant:
+		kind, id = "grant", value.GrantID
+	default:
+		return "", "", ErrBinding
+	}
+	key, valid := CredentialLeaseKey(kind, id)
+	encoded, err := encodeSubject(subject)
+	if !valid || err != nil {
+		return "", "", ErrBinding
+	}
+	digest := sha256.Sum256(encoded)
+	return key, base64.RawURLEncoding.EncodeToString(digest[:]), nil
+}
+
+func CredentialLeaseKey(kind, id string) (string, bool) {
+	switch kind {
+	case "certificate":
+		if len(id) == 0 || len(id) > 64 || strings.Trim(id, "0123456789abcdef") != "" {
+			return "", false
+		}
+	case "grant":
+		if !opaqueid.Valid(id, "shg_") {
+			return "", false
+		}
+	default:
+		return "", false
+	}
+	return kind + "/" + id, true
 }

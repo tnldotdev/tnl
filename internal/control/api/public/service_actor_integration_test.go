@@ -87,6 +87,9 @@ func serviceProblem(t *testing.T, w *httptest.ResponseRecorder, status int, code
 func serviceFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessionResponse, authorityv1.ControlSessionResponse, controlstate.Team, controlstate.ServiceRecord) {
 	t.Helper()
 	f := newCompanyHTTPFixture(t, "service_actor")
+	if err := f.d.PrepareVisitorSigningKeys(t.Context(), f.server.URL, f.now); err != nil {
+		t.Fatal(err)
+	}
 	owner, recipient := f.basic(serviceOwnerSub), f.basic(serviceRecipientSub)
 	team, err := f.d.CreateTeam(t.Context(), controlstate.CreateTeamRequest{IdentityID: owner.Identity.Identity.Id, DisplayName: "service-team", MemberSlug: "owner", IdempotencyKey: "team", RequestDigest: sha256.Sum256([]byte("team"))}, f.now)
 	if err != nil {
@@ -150,7 +153,7 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 		raw            []byte
 	}{
 		{"POST", base + "/invitations", body},
-		{"POST", base + "/http-grants", f.encode(controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: f.now.Add(time.Hour)})},
+		{"POST", base + "/http-grants", f.encode(controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: f.now.Add(time.Hour)})},
 		{"POST", "/v1/service/service-invitations/preview", f.encode(authorityv1.ServiceInvitationCredential{Secret: strings.Repeat("A", 64)})},
 		{"POST", "/v1/service/service-invitations/accept", f.encode(authorityv1.ServiceInvitationCredential{Secret: strings.Repeat("A", 64)})},
 		{"DELETE", base + "/grants/psg_0123456789ABCDEFGHIJKL", nil},
@@ -261,12 +264,16 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	if !found {
 		t.Fatal("invitation revoke did not revoke the existing accepted grant")
 	}
-	var httpGrant controlv1.ServiceHTTPGrant
-	serviceResult(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: deadline}, nil), 201, &httpGrant)
+	credentialRequest := controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: deadline}
+	var httpGrant controlv1.VisitorCredential
+	serviceResult(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, credentialRequest, nil), 201, &httpGrant)
+	if httpGrant.Permission.Resource != credentialRequest.Resource || httpGrant.Permission.VisitorToken == "" || !strings.HasPrefix(httpGrant.RefreshCredential, "vrf1."+httpGrant.GrantId+".") {
+		t.Fatal("website credential was not bound to the signed visitor scope")
+	}
 	var summaries []controlv1.ServiceHTTPGrantSummary
 	listed = f.serviceCall("GET", base+"/http-grants", serviceOwnerSub, nil, nil)
 	serviceResult(t, listed, 200, &summaries)
-	if len(summaries) != 1 || summaries[0].Id != httpGrant.Id || summaries[0].Subject.Kind != "service" || summaries[0].Subject.Id != service.ID || strings.Contains(listed.Body.String(), httpGrant.Secret) || strings.Contains(listed.Body.String(), `"secret"`) {
+	if len(summaries) != 1 || summaries[0].Id != httpGrant.GrantId || summaries[0].Subject.Kind != "service" || summaries[0].Subject.Id != service.ID || strings.Contains(listed.Body.String(), httpGrant.Permission.VisitorToken) || strings.Contains(listed.Body.String(), httpGrant.RefreshCredential) || strings.Contains(listed.Body.String(), `"secret"`) {
 		t.Fatal("HTTP inventory lost exact owned ID or exposed secret")
 	}
 	native, err := NewHandler(Config{}, f.d, f.d, nil)
@@ -283,16 +290,16 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	nativeList, err := nativeClient.ListServiceHTTPGrantsWithResponse(t.Context(), service.ID)
-	if err != nil || nativeList.JSON200 == nil || len(*nativeList.JSON200) != 1 || (*nativeList.JSON200)[0].Id != httpGrant.Id || bytes.Contains(nativeList.Body, []byte(httpGrant.Secret)) {
+	if err != nil || nativeList.JSON200 == nil || len(*nativeList.JSON200) != 1 || (*nativeList.JSON200)[0].Id != httpGrant.GrantId || bytes.Contains(nativeList.Body, []byte(httpGrant.Permission.VisitorToken)) || bytes.Contains(nativeList.Body, []byte(httpGrant.RefreshCredential)) {
 		t.Fatal("native HTTP grant inventory did not expose the owned secretless ID", err)
 	}
 	other, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceProblem(t, f.serviceCall("DELETE", "/v1/service/services/"+other.ID+"/http-grants/"+httpGrant.Id, serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
-	serviceProblem(t, f.serviceCall("DELETE", base+"/grants/"+httpGrant.Id, serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
-	serviceResult(t, f.serviceCall("DELETE", base+"/http-grants/"+httpGrant.Id, serviceOwnerSub, nil, nil), 204, nil)
+	serviceProblem(t, f.serviceCall("DELETE", "/v1/service/services/"+other.ID+"/http-grants/"+httpGrant.GrantId, serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
+	serviceProblem(t, f.serviceCall("DELETE", base+"/grants/"+httpGrant.GrantId, serviceOwnerSub, nil, nil), 403, authorityv1.Forbidden)
+	serviceResult(t, f.serviceCall("DELETE", base+"/http-grants/"+httpGrant.GrantId, serviceOwnerSub, nil, nil), 204, nil)
 	serviceResult(t, f.serviceCall("GET", base+"/http-grants", serviceOwnerSub, nil, nil), 200, &summaries)
 	if summaries[0].RevokedAt == nil {
 		t.Fatal("HTTP revocation disappeared from inventory")
@@ -301,7 +308,8 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	if _, err = f.sql.Exec(t.Context(), `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, service.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if w := f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateServiceHTTPGrantRequest{Kind: "share", ExpiresAt: deadline}, nil); w.Code < 400 {
+	credentialRequest.Kind = "share"
+	if w := f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, credentialRequest, nil); w.Code < 400 {
 		t.Fatal("manager without current visit access issued HTTP credential")
 	}
 	// direct grant revocation uses the same stored grant and exact service ID.
@@ -353,7 +361,7 @@ func TestIntegrationServiceActorCurrentCompanySource(t *testing.T) {
 		})
 	}
 	// signed service management does not mint a session to back HTTP credentials.
-	serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: f.now.Add(time.Hour)}, valid), 403, authorityv1.SourceSignInRequired)
+	serviceProblem(t, f.serviceCall("POST", base+"/http-grants", serviceOwnerSub, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: f.now.Add(time.Hour)}, valid), 403, authorityv1.SourceSignInRequired)
 	invitationBody := f.encode(controlv1.CreateServiceInvitationRequest{Email: "recipient@example.test", ExpiresAt: f.now.Add(time.Hour)})
 	retryInvitation := func() *httptest.ResponseRecorder {
 		token := f.serviceToken(serviceOwnerSub, "POST", base+"/invitations", invitationBody, valid)
