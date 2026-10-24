@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"net/netip"
 	"sort"
@@ -392,13 +393,20 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				o.ConnectorSessionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.OccurredAt, o.VisitorConnectionID).
 				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
 		} else if o.ConnectorSessionID == "" {
-			// direct admissions have no connector session. identity is recovered
-			// only from the publisher-authenticated record, never the report.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.direct_service_visitors v
-				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
-				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
-				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+			// direct traffic holds an exact ingress allocation. the publisher's
+			// one-way promotion supplies only an immutable attribution reference;
+			// control derives human names/IDs from its issuance or sign-in facts.
+			err = tx.QueryRow(ctx, `SELECT s.team_id,r.publisher_identity_id FROM control.services s
+				JOIN control.service_runs r ON r.service_id=s.id AND r.id=$3 AND r.run_number=$4
+				JOIN control.stream_capacity_allocations a ON a.resource_kind='service' AND a.resource_id=s.id AND a.run_id=r.id AND a.run_number=r.run_number
+				WHERE s.id=$2 AND a.id=$1 AND a.ingress_id=$5 AND a.ingress_run_id=$6 AND a.ingress_lease_revision=$7
+				AND a.publisher_observed_at IS NOT NULL AND a.issued_at<=$8::timestamptz+interval '1 minute'
+				AND r.created_at<=$8::timestamptz+interval '1 minute'
+				AND ($9<>'connection.open' OR $10<>'allowed' OR ($8<=a.valid_until AND $8<=r.publisher_expires_at AND (r.closed_at IS NULL OR $8<=r.closed_at)))`,
+				o.StreamAllocationID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.OccurredAt, o.EventType, o.Outcome).Scan(&e.TeamID, &e.PublisherIdentityID)
+			if err == nil && (o.Outcome == "allowed" || o.EventType == "connection.close") {
+				err = resolveDirectAuditVisitor(ctx, tx, o, &e)
+			}
 		} else {
 			// immutable session facts supply identity and source; the authenticated
 			// allocation binds the reported run to this exact ingress process. a
@@ -442,6 +450,34 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	d.activity.metrics.Load().ServiceAuditCount("accepted", uint64(result.Accepted))
 	d.activity.metrics.Load().ServiceAuditCount("duplicate", uint64(result.Duplicates))
 	return result, nil
+}
+
+func resolveDirectAuditVisitor(ctx context.Context, tx pgx.Tx, observation serviceaudit.Observation, event *serviceaudit.Event) error {
+	reference := observation.VisitorReference
+	if !reference.Valid() {
+		return ErrServiceAuditAccess
+	}
+	switch reference.Kind {
+	case "certificate":
+		digest, err := hex.DecodeString(reference.ID)
+		if err != nil {
+			return ErrServiceAuditAccess
+		}
+		return tx.QueryRow(ctx, `SELECT identity_id,device_id FROM control.visitor_certificate_facts
+		    WHERE certificate_digest=$1 AND service_id=$2 AND issued_at<=$3::timestamptz+interval '1 minute'`, digest, observation.ServiceID, observation.OccurredAt).
+			Scan((*nullableAuditString)(&event.ActorIdentityID), (*nullableAuditString)(&event.DeviceID))
+	case "browser_session":
+		return tx.QueryRow(ctx, `SELECT parent.identity_id FROM control.control_sessions parent
+		    WHERE parent.id=$1 AND parent.created_at<=$4::timestamptz+interval '1 minute'
+		    AND EXISTS(SELECT 1 FROM control.service_http_browser_sessions browser WHERE browser.control_session_id=parent.id AND browser.service_id=$2 AND $3=ANY(browser.run_ids))`, reference.ID, observation.ServiceID, observation.RunID, observation.OccurredAt).Scan(&event.ActorIdentityID)
+	case "grant":
+		// a bearer grant does not identify the person presenting it. its issuer
+		// is not a verified visitor or feedback author.
+		var found string
+		return tx.QueryRow(ctx, `SELECT id FROM control.service_http_grants WHERE id=$1 AND service_id=$2`, reference.ID, observation.ServiceID).Scan(&found)
+	default:
+		return ErrServiceAuditAccess
+	}
 }
 
 type nullableAuditString string

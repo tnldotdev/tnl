@@ -360,9 +360,9 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 		if err != nil {
 			return result, err
 		}
-		var creator, session string
-		err = tx.QueryRow(ctx, `SELECT created_by_identity_id,COALESCE(control_session_id,''),expires_at FROM control.service_http_grants
-		    WHERE id=$1 AND service_id=$2 AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4 FOR SHARE`, grantID, scope.ID, digest[:], now).Scan(&creator, &session, &until)
+		var creator, session, kind string
+		err = tx.QueryRow(ctx, `SELECT created_by_identity_id,COALESCE(control_session_id,''),kind,expires_at FROM control.service_http_grants
+		    WHERE id=$1 AND service_id=$2 AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4 FOR SHARE`, grantID, scope.ID, digest[:], now).Scan(&creator, &session, &kind, &until)
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
@@ -383,7 +383,7 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 		if decision.ExpiresAt.Valid && decision.ExpiresAt.InfinityModifier == 0 {
 			until = minTime(until, decision.ExpiresAt.Time)
 		}
-		subject = visitortoken.Grant{GrantID: grantID}
+		subject = visitortoken.Grant{GrantID: grantID, Kind: kind}
 		explicitLifetime = true
 	default:
 		return result, ErrVisitorPermission

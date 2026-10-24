@@ -1,64 +1,160 @@
 package service
 
 import (
-	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type admissionControl struct {
-	*lifecycleControl
-	calls atomic.Int32
-	err   error
-}
-
-func (c *admissionControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	call := c.calls.Add(1)
-	if c.err != nil {
-		return controlv1.ServiceClientCertificateDecision{}, c.err
+func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingHeader, tls.ConnectionState) {
+	t.Helper()
+	p, bound, ref, _ := privateFixture(t, "127.0.0.1:1")
+	p.managedPublic = true
+	header := privateHeader(t, ref)
+	header.Connector = nil
+	header.Direct = &tunnelv1.DirectAdmission{IngressID: header.Reservation.IngressID, IngressRunID: header.Reservation.IngressRunID, IngressLeaseRevision: header.Reservation.IngressLeaseRevision, DestinationPort: p.servicePort}
+	key := nativeFixtureKey()
+	issuer, err := controlvisitor.New(key.Seed())
+	if err != nil {
+		t.Fatal(err)
 	}
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: call > 1, ValidUntil: time.Now().Add(time.Minute)}, nil
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	view, _, _ := p.policy.Current()
+	digest, err := visitortoken.KeyDigest(key.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := issuer.IssuePermission(csr, now.Add(time.Minute), now, func(serial string, public any, expires time.Time) (visitortoken.Token, error) {
+		keyDigest, err := visitortoken.KeyDigest(public)
+		if err != nil {
+			return "", err
+		}
+		return visitortoken.Sign(view.Issuer, "native-fixture", key, visitortoken.Permission{Scope: view.Scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision,
+			Subject: visitortoken.Certificate{Serial: serial, KeySHA256: keyDigest, Source: visitortoken.Device{IdentityID: nativeFixtureSubject().IdentityID, DeviceID: nativeFixtureSubject().DeviceID, SessionID: "cs_" + strings.Repeat("d", 22), KeySHA256: digest}}, ExpiresAt: expires}, now)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certificate)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(issuer.CertificatePEM()) {
+		t.Fatal("client issuer is not a certificate")
+	}
+	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Public, view.ObservedAt, view.ValidUntil = true, now, now.Add(10*time.Second)
+	state := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: chains}
+	token, err := visitortoken.CertificateToken(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := visitortoken.VerifyCertificateRenewalProof(token, view, state, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, credentialDigest, err := visitortoken.CredentialBinding(permission.Subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Credentials = map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: credentialDigest, ExpiresAt: permission.ExpiresAt}}
+	a := controlv1.StreamCapacityAllocation{Id: header.Reservation.AllocationID, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: p.Preparation.ServiceId}, RunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber), Capacity: 64,
+		IngressId: header.Direct.IngressID, IngressRunId: header.Direct.IngressRunID, IngressLeaseRevision: int64(header.Direct.IngressLeaseRevision), ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}
+	if err := p.policy.Apply(p.policy.Begin(), visitorlease.Update{View: view, Snapshot: true, KeyRevision: 1, Enabled: true, ClientAuthorities: roots, Allocations: map[string]controlv1.StreamCapacityAllocation{a.Id: a}}); err != nil {
+		t.Fatal(err)
+	}
+	if view.Scope.Kind != visitorscope.Service {
+		t.Fatal("certificate permission crossed scopes")
+	}
+	return bound, header, state
 }
 
 func TestCertificateAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *testing.T) {
 	for _, infrastructureFailure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "pending-then-admitted", true: "infrastructure-failure"}[infrastructureFailure], func(t *testing.T) {
-			cfg, control := lifecycleFixture(t)
-			approved, err := control.GetPublisherService(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			prepared, err := newManagedPrepared(control.prep, approved, cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			c := &admissionControl{lifecycleControl: control}
-			cause := errors.New("fixture infrastructure cause")
-			if infrastructureFailure {
-				c.err = cause
-			}
-			_, cancel, err := configureServiceRun(t.Context(), cfg, prepared, control.setup, c, cfg.State)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer cancel()
-			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{Direct: &tunnelv1.DirectAdmission{}}})
-			certificate := visitor.(publisher.CertificateVisitor)
-			decision, err := certificate.Check(t.Context(), &x509.Certificate{})
-			if infrastructureFailure {
-				if !errors.Is(err, cause) || decision.Allowed || c.calls.Load() != 1 {
-					t.Fatal("infrastructure failure lost its cause or was admitted", decision, err)
+		t.Run(map[bool]string{false: "publisher-promotion", true: "infrastructure-failure"}[infrastructureFailure], func(t *testing.T) {
+			bound, header, state := directCertificateFixture(t)
+			peer, stream := net.Pipe()
+			defer peer.Close()
+			defer stream.Close()
+			cause := errors.New("fixture promotion transport failure")
+			var calls atomic.Int32
+			started, release := make(chan struct{}), make(chan struct{})
+			_, visitor, finish, err := bound.admitDirect(t.Context(), stream, header, func(reference tunnelv1.ServiceVisitorReference) error {
+				if !reference.Valid() || reference.Kind != "certificate" {
+					return errors.New("promotion lost certificate attribution")
 				}
-			} else if err != nil || !decision.Allowed || c.calls.Load() != 2 {
-				t.Fatal("allowed pending authorization entered the target boundary", decision, err, c.calls.Load())
+				calls.Add(1)
+				close(started)
+				if infrastructureFailure {
+					return cause
+				}
+				<-release
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer finish()
+			certificate := visitor.(publisher.CertificateVisitor)
+			type result struct {
+				decision publisher.ServiceVisitorDecision
+				err      error
+			}
+			done := make(chan result, 1)
+			go func() { decision, err := certificate.Check(t.Context(), state); done <- result{decision, err} }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("local certificate permission did not reach promotion")
+			}
+			if !infrastructureFailure {
+				select {
+				case <-done:
+					t.Fatal("certificate admission passed an incomplete promotion")
+				default:
+				}
+				close(release)
+			}
+			got := <-done
+			if infrastructureFailure {
+				if !errors.Is(got.err, cause) || got.decision.Allowed {
+					t.Fatal("promotion failure lost its cause or granted admission", got.err)
+				}
+			} else {
+				if got.err != nil || !got.decision.Allowed {
+					t.Fatal("local certificate permission denied", got.err)
+				}
+				if _, err := certificate.Check(t.Context(), state); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if calls.Load() != 1 {
+				t.Fatal("promotion was replayed")
 			}
 		})
 	}

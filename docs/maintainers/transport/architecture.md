@@ -73,22 +73,22 @@ discarding an unknown run because a newer sibling exists.
 
 ## authorization and tls boundaries
 
-Public HTTP decisions bind URL, run, selected credential digest, and trusted
-source. Rechecks occur within 30 seconds; structured control unavailability may
-reuse a positive result for at most two minutes and never past an earlier grant,
-credential, or run deadline. Unknown, denied, and malformed results fail closed.
-Each streaming request/WebSocket keeps its original live guard. A replacement
-credential authorizes future work, not that original operation. Denial cancels
-the target request and resets only the affected HTTP/2 stream; upgraded HTTP/1
-closes directly. No request is buffered for authorization or replayed.
+public URL and service HTTP requests verify signed visitor permission against
+current local policy and the trusted ingress-owned source. publisher policy
+expires within ten seconds of fetch start; an earlier credential, parent,
+allocation, or run deadline wins. unknown keys, invalid credentials, and stale
+updates fail closed without a visitor-triggered fetch. each streaming request
+or upgrade keeps its own local guard. denial cancels the target request and
+resets only the affected HTTP/2 stream; upgraded HTTP/1 closes directly.
+HTTP/2 requests use independent selected target connections, without replay.
 
-Private connector sessions authenticate two ingress paths and bind the observed
-source, exact service/session/subject, nonce, expiry, and key proof. Each stream
-gets current authorization and an exact publisher claim before bytes. Native
-visitor TLS verifies the service hostname; publisher admission precedes
-target dialing. Publicly reachable service HTTP instead selects one browser,
-share, token, or optional client-certificate credential, checks Host including the
-allocated port, and promotes ingress capacity before target access. Reachability
+private connector sessions authenticate two ingress paths and bind the observed
+source, exact service/session/subject, nonce, expiry, and key proof. each stream
+uses prepared permission and capacity at ingress and publisher before target
+work. native visitor TLS verifies the service hostname. publicly reachable
+service HTTP selects one signed browser, share, token, or verified client
+certificate, checks Host including the allocated port, and promotes ingress
+capacity over the authenticated return stream before target access. reachability
 does not imply anonymous access. See [services](../control/services.md)
 and [connector architecture](../connector/architecture.md).
 

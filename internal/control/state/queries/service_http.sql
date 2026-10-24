@@ -60,44 +60,6 @@ SELECT id,created_by_identity_id,control_session_id,expires_at FROM control.serv
 WHERE service_id=sqlc.arg(service_id) AND kind=sqlc.arg(kind)
 AND secret_digest=sqlc.arg(secret_digest) AND revoked_at IS NULL AND expires_at>sqlc.arg(now);
 
--- name: ServiceHTTPDirectBinding :one
-SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST(sqlc.arg(now)::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
-    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
-     JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-     AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-     AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.direct_service_visitors v
-JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
-JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
-    AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>sqlc.arg(now) AND run.certificate_expires_at>sqlc.arg(now)
-JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
-    AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>sqlc.arg(now)
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
-    AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
-JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
-WHERE v.visitor_connection_id=sqlc.arg(visitor_connection_id) AND v.service_id=sqlc.arg(service_id)
-AND v.service_run_id=sqlc.arg(service_run_id) AND v.run_number=sqlc.arg(run_number)
-AND v.source_ip=sqlc.arg(source_ip) AND v.destination_port=sqlc.arg(destination_port)
-AND v.closed_at IS NULL AND v.valid_until>sqlc.arg(now)
-AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay
-    ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-    AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-    WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-    AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining);
-
--- name: BindServiceHTTPDirectCredential :exec
-UPDATE control.direct_service_visitors SET http_credential_kind=sqlc.arg(kind),http_credential_digest=sqlc.arg(digest),
-    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=sqlc.arg(valid_until)
-WHERE visitor_connection_id=sqlc.arg(visitor_connection_id);
-
--- name: ServiceHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
-WHERE visitor_connection_id=$1;
-
 -- name: ServiceHTTPAppliedConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
@@ -15,7 +16,7 @@ import (
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 || len(policy.StreamAllocations) > 2048 {
+	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.CredentialLeases) > 4096 || len(body.Revisions) > 256 || len(policy.StreamAllocations) > 2048 {
 		return Update{}, ErrUpdate
 	}
 	if scope.Kind == visitorscope.PublicURL && policy.MetadataRevision != 0 || scope.Kind == visitorscope.Service && policy.MetadataRevision < 1 {
@@ -24,6 +25,18 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
 		MetadataRevision: policy.MetadataRevision, Public: policy.Public, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
+	update.View.Credentials = make(map[string]visitortoken.CredentialLease, len(policy.CredentialLeases))
+	for _, lease := range policy.CredentialLeases {
+		key, valid := visitortoken.CredentialLeaseKey(string(lease.Kind), lease.Id)
+		digest, err := base64.RawURLEncoding.Strict().DecodeString(lease.SubjectSha256)
+		if !valid || err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != lease.SubjectSha256 || !lease.ExpiresAt.After(policy.ObservedAt) {
+			return Update{}, ErrUpdate
+		}
+		if _, duplicate := update.View.Credentials[key]; duplicate {
+			return Update{}, ErrUpdate
+		}
+		update.View.Credentials[key] = visitortoken.CredentialLease{SubjectSHA256: lease.SubjectSha256, ExpiresAt: lease.ExpiresAt}
+	}
 	if policy.ClientIssuerPem != nil {
 		if scope.Kind != visitorscope.Service || len(*policy.ClientIssuerPem) > 4096 {
 			return Update{}, ErrUpdate

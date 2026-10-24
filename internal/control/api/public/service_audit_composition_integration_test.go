@@ -63,7 +63,7 @@ func (f *auditCompositionTarget) Open(context.Context, string) (net.Conn, error)
 	return f.open(true), nil
 }
 
-func (f *auditCompositionTarget) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *auditCompositionTarget) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, *tunnel.ReturnEvents) (net.Conn, error) {
 	return f.open(false), nil
 }
 

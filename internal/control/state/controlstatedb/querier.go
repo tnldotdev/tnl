@@ -44,7 +44,6 @@ type Querier interface {
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
 	BindBrowserSessionHost(ctx context.Context, arg BindBrowserSessionHostParams) error
 	BindInitialOIDCMembership(ctx context.Context, arg BindInitialOIDCMembershipParams) error
-	BindServiceHTTPDirectCredential(ctx context.Context, arg BindServiceHTTPDirectCredentialParams) error
 	BrowserSessionCurrentHost(ctx context.Context, arg BrowserSessionCurrentHostParams) (string, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -75,11 +74,11 @@ type Querier interface {
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupWorkloadAssertions(ctx context.Context, arg CleanupWorkloadAssertionsParams) (int64, error)
 	CleanupWorkloadAudit(ctx context.Context, arg CleanupWorkloadAuditParams) (int64, error)
-	CleanupWorkloadCertificates(ctx context.Context, arg CleanupWorkloadCertificatesParams) (int64, error)
-	CleanupWorkloadConnectors(ctx context.Context, arg CleanupWorkloadConnectorsParams) (int64, error)
 	// each phase has its own budget so a busy leaf cannot starve its parents.
 	// select only unreferenced candidates before LIMIT; never cascade subject state.
-	CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error)
+	CleanupWorkloadCertificateFacts(ctx context.Context, arg CleanupWorkloadCertificateFactsParams) (int64, error)
+	CleanupWorkloadCertificates(ctx context.Context, arg CleanupWorkloadCertificatesParams) (int64, error)
+	CleanupWorkloadConnectors(ctx context.Context, arg CleanupWorkloadConnectorsParams) (int64, error)
 	CleanupWorkloadIngressRequests(ctx context.Context, arg CleanupWorkloadIngressRequestsParams) (int64, error)
 	// keep the exact service snapshot until all other session references are gone.
 	CleanupWorkloadServiceRights(ctx context.Context, arg CleanupWorkloadServiceRightsParams) (int64, error)
@@ -602,8 +601,6 @@ type Querier interface {
 	ServiceHTTPAppliedConfiguration(ctx context.Context, serviceID pgtype.Text) (ServiceHTTPAppliedConfigurationRow, error)
 	ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTTPBrowserEndpointParams) (ServiceHTTPBrowserEndpointRow, error)
 	ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error)
-	ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPDirectBindingParams) (ServiceHTTPDirectBindingRow, error)
-	ServiceHTTPDirectCredential(ctx context.Context, visitorConnectionID string) (ServiceHTTPDirectCredentialRow, error)
 	ServiceHTTPGrantPermission(ctx context.Context, arg ServiceHTTPGrantPermissionParams) (ServiceHTTPGrantPermissionRow, error)
 	ServiceNamespaceOwnsHostname(ctx context.Context, hostname string) (bool, error)
 	ServicePortPoolCapacity(ctx context.Context) ([]ServicePortPoolCapacityRow, error)

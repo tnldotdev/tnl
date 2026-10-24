@@ -53,6 +53,9 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
+	if err := d.PrepareVisitorSigningKeys(ctx, server.URL, now); err != nil {
+		t.Fatal(err)
+	}
 	issuer := githubtest.New(t)
 	if _, err = controlauthority.Register(mux, controlauthority.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
 		t.Fatal(err)

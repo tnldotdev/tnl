@@ -3,14 +3,10 @@ package service
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"time"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -28,7 +24,6 @@ type ManagedControl interface {
 	publisher.ServiceCertificateControl
 	publisher.ServiceHTTPControl
 	StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)
-	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
@@ -109,45 +104,13 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if profile == nil || prepared.Preparation.CertificatePlan == nil {
 		return nil, nil, ErrPrivateStream
 	}
-	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (publisher.ServiceVisitorDecision, error) {
-		if errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, clientcontrol.ErrUnauthenticated) {
-			return publisher.ServiceVisitorDecision{}, nil
-		}
-		return publisher.ServiceVisitorDecision{Allowed: result.Allowed, ValidUntil: result.ValidUntil}, err
-	}
-	awaitAdmission := func(ctx context.Context, authorize func(context.Context) (controlv1.ServiceClientCertificateDecision, error)) (publisher.ServiceVisitorDecision, error) {
-		for {
-			result, err := authorize(ctx)
-			if err != nil || !result.Allowed || result.Admitted {
-				return decision(result, err)
-			}
-			observability.PublisherAuthorization(ctx, true, false, nil)
-			_, endWait := observability.Start(ctx, "publisher.admission_retry_wait")
-			timer := time.NewTimer(25 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				endWait(context.Cause(ctx))
-				return publisher.ServiceVisitorDecision{}, context.Cause(ctx)
-			case <-timer.C:
-				endWait(nil)
-			}
-		}
-	}
-	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-		if header.Direct != nil && header.Connector == nil {
-			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
-				return publisher.PublicHTTPVisitor{Frontend: publisher.ServiceHTTP{
-					Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
-					RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
-					Hostname: prepared.managedHostname, Port: prepared.servicePort, Header: header,
-					Requests: prepared.serviceHTTPRequests,
-				}}
-			}
-			return publisher.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
-				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceClientCertificate(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
-				})
+	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, promote func(tunnelv1.ServiceVisitorReference) error) publisher.ServiceVisitorAuthentication {
+		if header.Direct != nil && header.Connector == nil && prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+			return publisher.PublicHTTPVisitor{Frontend: publisher.ServiceHTTP{
+				Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+				RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
+				Hostname: prepared.managedHostname, Port: prepared.servicePort, Header: header,
+				Requests: prepared.serviceHTTPRequests, Runtime: prepared.serviceHTTP, Promote: promote, MetadataRevision: prepared.metadataRevision,
 			}}
 		}
 		return nil

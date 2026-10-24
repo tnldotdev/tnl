@@ -134,14 +134,19 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			}
 			connectorCtx, stopConnector := context.WithCancel(t.Context())
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
+			reconfigured := false
+			oldConnectorJoined := false
 			go func() {
 				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()
+				if oldConnectorJoined {
+					return
+				}
 				select {
 				case err := <-connectorDone:
-					if err != nil {
+					if err != nil && !(reconfigured && connectorstream.IsMetadataReload(err)) {
 						t.Error(err)
 					}
 				case <-time.After(10 * time.Second):
@@ -176,20 +181,114 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkManagedDirectTLS(t, f, directIngress, applied, service, device.Subject.DeviceID, person.Identity.Id)
+			checkManagedDirectTLS(t, f, directIngress, applied, service, device.Subject.DeviceID, person.Identity.Id, func() {
+				reconfigured = true
+				stopPublisher()
+				select {
+				case err := <-publisherDone:
+					if err != nil {
+						t.Fatal("previous publisher did not join", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("previous publisher did not join")
+				}
+				updated, err := native.SavedService(t.Context())
+				if err != nil || updated.Id != service.Id || updated.Endpoint == nil || updated.Endpoint.Port != service.Endpoint.Port {
+					t.Fatal("updated service metadata", err)
+				}
+				publisherCtx, stopPublisher = context.WithCancel(t.Context())
+				publisherReady, publisherDone = make(chan struct{}), make(chan error, 1)
+				go func() {
+					publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(updated), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
+						return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+					}})
+				}()
+				select {
+				case <-publisherReady:
+				case err := <-publisherDone:
+					publisherDone <- err
+					t.Fatal("public publisher not ready", err)
+				case <-time.After(15 * time.Second):
+					t.Fatal("public publisher not ready")
+				}
+			})
+			// restore a current private connector before proving that revoking its
+			// device closes fresh native HTTPS; the old approved revision exited
+			// when the managed service changed reachability.
+			stopConnector()
+			select {
+			case err := <-connectorDone:
+				if !connectorstream.IsMetadataReload(err) {
+					t.Fatal("old connector did not report stale metadata", err)
+				}
+				oldConnectorJoined = true
+			case <-time.After(10 * time.Second):
+				t.Fatal("old connector did not join")
+			}
+			_ = listener.Close()
+			current, err := native.SavedService(t.Context())
+			if err != nil || current.Endpoint == nil {
+				t.Fatal("current private service", err)
+			}
+			renewedControl, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control = &separatedVisitorControl{Control: renewedControl}
+			if standalone {
+				control.dialAddress = f.sharedQUIC
+			}
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			activeCtx, stopActive := context.WithCancel(t.Context())
+			activeReady, activeDone := make(chan struct{}), make(chan error, 1)
+			go func() {
+				activeDone <- connectorstream.Serve(activeCtx, listener, connectorstream.Config{Control: control, ServiceID: current.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: current.TrustRevision, Endpoint: current.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(activeReady); return nil }})
+			}()
+			t.Cleanup(func() {
+				stopActive()
+				select {
+				case err := <-activeDone:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Error("current connector did not join")
+				}
+			})
+			select {
+			case <-activeReady:
+			case err := <-activeDone:
+				activeDone <- err
+				t.Fatal("current connector not ready", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("current connector not ready")
+			}
+			transport.CloseIdleConnections()
+			response, err = client.Get("https://" + service.Endpoint.Hostname + "/once")
+			if err != nil || response.StatusCode != http.StatusOK {
+				t.Fatal("current connector cannot serve before revocation", err)
+			}
+			_ = response.Body.Close()
 			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
-			transport.CloseIdleConnections()
-			if response, err = client.Get("https://" + service.Endpoint.Hostname + "/once"); err == nil {
+			privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+				transport.CloseIdleConnections()
+				response, err := client.Get("https://" + service.Endpoint.Hostname + "/once")
+				if err != nil {
+					return true, nil
+				}
 				_ = response.Body.Close()
-				t.Fatal("revoked connector device retained service access")
-			}
+				return false, nil
+			})
 		})
 	}
 }
 
-func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.Connector, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device, identity string) {
+func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.Connector, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device, identity string, restartPublisher func()) {
 	t.Helper()
 	ctx := t.Context()
 	material, err := f.identity.state.EnsureServiceClientCertificate(ctx, identity, service.Id, device, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
@@ -257,6 +356,20 @@ func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *
 		applied = result
 	}
 	setPublic(true)
+	restartPublisher()
+	// the saved reachability change precedes ingress and publisher policy
+	// installation. prove prepared access with a bodyless fixture read before
+	// making the one application POST; never retry that POST after EOF.
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		transport.CloseIdleConnections()
+		probe, err := client.Get(endpoint)
+		if err != nil {
+			return false, nil
+		}
+		_, _ = io.Copy(io.Discard, probe.Body)
+		_ = probe.Body.Close()
+		return probe.StatusCode == http.StatusOK, nil
+	})
 	response, err := client.Post(endpoint, "text/plain", strings.NewReader("service HTTP certificate"))
 	if err != nil {
 		t.Fatal(err)
@@ -267,5 +380,8 @@ func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *
 		t.Fatalf("service HTTP default frontend: status=%d body=%q err=%v", response.StatusCode, body, err)
 	}
 	setPublic(false)
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return !connector.DirectServiceReady(uint16(service.Endpoint.Port)), nil
+	})
 	assertDenied()
 }

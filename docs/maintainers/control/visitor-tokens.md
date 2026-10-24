@@ -106,6 +106,24 @@ confirmed policy window while the credential owner obtains fresh permission.
 Unrelated policy updates cannot extend that window. The run cancels and joins
 renewal work before discarding its private source credentials.
 
+## direct service visitors
+
+ingress selects a public service only from the socket's trusted destination
+port and its prepared routing, reachability, policy, and capacity. the publisher
+verifies service client certificates against the prepared issuer and signed
+permission; each service HTTP request instead selects one signed visitor token
+or verified client certificate. the old service-specific HTTP token header and
+share cookie do not grant application access. a share link redeems a signed
+permission into the same host-bound visitor cookie.
+
+the publisher sends a verified, nonsecret certificate or grant reference back
+to ingress on the visitor stream after local admission. ingress releases its
+pending quota only for that exact run and allocation. control derives delayed
+audit actor facts from immutable certificate issuance or sign-in state; a
+bearer grant does not identify the person visiting or author feedback. neither
+serving process calls control to authorize a prepared visitor request. HTTP/2
+requests own independent target connections and request guards.
+
 ## native preparation
 
 One service connector prepares its approved metadata and signed device or

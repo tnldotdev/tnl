@@ -285,8 +285,8 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	if err != nil {
 		return result, err
 	}
-	// publisher-reported occupancy ranks native runs. direct admissions retain
-	// their pending capacity until that path also uses local reservations.
+	// publisher-reported occupancy ranks prepared runs. ingress and publisher
+	// hold exact local reservations without per-visitor database rows.
 	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,g.expires_at,run.certificate_expires_at)
 	    FROM control.publisher_service_runs runtime JOIN control.service_runs run ON run.id=runtime.id
 	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
@@ -298,8 +298,8 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	        AND lease.relay_run_id=slot.connected_relay_run_id AND lease.relay_lease_revision=slot.connected_relay_lease_revision
 	        AND lease.relay_service_id=slot.relay_service_id
 	        WHERE slot.run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
-	    AND GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.direct_service_visitors stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<runtime.stream_capacity
-	    ORDER BY GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.direct_service_visitors stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
+	    AND runtime.reported_streams<runtime.stream_capacity
+	    ORDER BY runtime.reported_streams::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
 		Scan(&result.ServiceRunID, &result.RunNumber, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess

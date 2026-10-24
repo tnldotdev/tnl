@@ -84,6 +84,10 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 		}
 	}
 	// retain allocation and session attribution for delayed native audit batches.
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.visitor_certificate_facts WHERE certificate_digest IN(
+	    SELECT certificate_digest FROM control.visitor_certificate_facts WHERE expires_at<$1 ORDER BY expires_at,certificate_digest LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
+		return count, err
+	}
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.stream_capacity_allocations WHERE id IN(
 	    SELECT id FROM control.stream_capacity_allocations WHERE valid_until<$1 ORDER BY valid_until,id LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
@@ -95,9 +99,6 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 		return count, err
 	}
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_client_certificates WHERE certificate_digest IN(SELECT certificate_digest FROM control.service_client_certificates WHERE expires_at<$1 ORDER BY expires_at LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
-		return count, err
-	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.direct_service_visitors WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {

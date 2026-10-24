@@ -52,7 +52,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{StreamAllocations: []controlv1.StreamCapacityAllocation{}, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, CredentialLeases: []controlv1.VisitorCredentialLease{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -196,6 +196,10 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		policy.Ip = &ip
 	}
 	if scope.Kind == visitorscope.Service {
+		policy.CredentialLeases, err = d.visitorCredentialLeases(ctx, tx, scope, now)
+		if err != nil {
+			return result, err
+		}
 		rows, err := tx.Query(ctx, `SELECT session.id,session.public_key,LEAST(session.lease_expires_at,session.expires_at)
 		    FROM control.workload_sessions session JOIN control.workload_session_services selected ON selected.workload_session_id=session.id
 		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.lease_expires_at>$2 AND session.expires_at>$2 ORDER BY session.id LIMIT 4097`, scope.ID, now)

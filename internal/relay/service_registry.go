@@ -312,7 +312,23 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		rejected = err
 		return incoming.Reject(tunnelv1.DrainingPublisherConnection)
 	}
-	stream, err := connection.paths.session.StartServiceForwardingStream(ctx, header, incoming.TakeInitial(), &tunnel.ReturnEvents{Rejected: incoming.ForwardRejection})
+	events := &tunnel.ReturnEvents{Rejected: incoming.ForwardRejection}
+	if header.Direct != nil {
+		want := header.Admission()
+		want.Kind, want.RelayID, want.RelayRunID, want.RelayLeaseRevision = tunnelv1.PublisherAdmissionStream, "", "", 0
+		events.Promoted = func(h tunnelv1.AdmissionHeader) error {
+			current, valid := a.private.candidate(header, a.currentLease(), a.now())
+			expected := want
+			expected.Visitor = h.Visitor
+			if ctx.Err() != nil || !h.Visitor.Valid() || h != expected || !valid || current != connection {
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			promoted := header.Admission()
+			promoted.Visitor = h.Visitor
+			return incoming.Promote(promoted)
+		}
+	}
+	stream, err := connection.paths.session.StartServiceForwardingStream(ctx, header, incoming.TakeInitial(), events)
 	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")

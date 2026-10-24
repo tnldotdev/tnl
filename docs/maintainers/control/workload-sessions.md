@@ -173,11 +173,12 @@ authenticated local connector for both public and services. see
 and authenticated rotating-assertion attachment.
 
 certificate issuance requires a CSR signed by the already-bound workload key.
-the service-scoped certificate and private connector handle expire at the fixed
-session deadline, at most six hours. they prove key possession; every admission
-and active authorization still checks the current renewable 90-second lease,
-service rights, revocation, and infrastructure deadlines. renewing a lease does
-not replace the certificate or disconnect admitted streams. an expired lease
+the signed service certificate expires within five minutes and never after the
+fixed workload deadline, at most six hours. the private connector handle keeps
+its own fixed deadline. local policy covers current workload leases, rights,
+revocation, and infrastructure deadlines for at most ten seconds from fetch
+start. renewing a lease does not replace the certificate or disconnect an
+admitted stream while its signed permission and local guard remain current. an expired lease
 cannot admit a new stream even while its certificate remains valid. active
 streams recheck within 30 seconds and close by their last successful decision's
 deadline if control is unavailable. cleanup may release only an exact owned
@@ -306,8 +307,8 @@ workload history follows service audit's 30-day retention:
 
 - audit events remain for 30 days after their event time;
 - GitHub JTI/assertion digests remain for 30 days after assertion expiry;
-- certificates remain for 30 days after certificate expiry and until no direct
-  visitor references them;
+- certificates remain for 30 days after certificate expiry; immutable
+  attribution facts remain at least 24 hours after their signed expiry;
 - connector handles remain until both their fixed expiry and any revocation
   are over 30 days old;
 - ingress retry results remain until their session's absolute expiry, lease
@@ -316,11 +317,10 @@ workload history follows service audit's 30-day retention:
   lease expiry, any revocation, and original assertion expiry are over 30 days
   old, and until all other session references have been removed.
 
-native streams have no control-owned admission row. immutable connector handles
-and capacity allocations supply delayed audit attribution; allocations remain
-for 24 hours after expiry. direct visitors retain 24-hour history after their
-decision expires or they close. cleanup never deletes a live decision or
-cascades through a subject, certificate, or admission reference. rows
+native and direct streams have no control-owned admission row. immutable
+connector handles, certificate facts, and capacity allocations supply delayed
+audit attribution; allocations remain for 24 hours after expiry. cleanup never
+cascades through a subject, certificate, or attribution reference. rows
 blocked by references are excluded before each batch limit, so they cannot
 prevent later eligible rows from being collected. retained references can extend
 the history window; retention is a minimum age, not an exact deletion deadline.

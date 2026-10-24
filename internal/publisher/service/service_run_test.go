@@ -152,7 +152,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err := p.installManagedCertificate(certificate); err != nil {
 		t.Fatal(err)
 	}
-	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
+	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader, func(tunnelv1.ServiceVisitorReference) error) publisher.ServiceVisitorAuthentication {
 		return publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 		}}

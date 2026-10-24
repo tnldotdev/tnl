@@ -147,6 +147,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		workloads[id] = parent
 	}
 	view.Keys, view.Workloads = keys, workloads
+	view.Credentials = maps.Clone(view.Credentials)
 	if len(update.Allocations) > 2048 {
 		return ErrUpdate
 	}
@@ -306,6 +307,9 @@ func (g *Guard) resetLocked() {
 	until := view.ValidUntil
 	if !g.anonymous {
 		until = view.LocalDeadline(g.permission.ExpiresAt)
+		if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+			until = earlier(until, view.LocalDeadline(credential))
+		}
 		if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
 		}
@@ -393,6 +397,9 @@ func (g *Guard) Deadline() (time.Time, error) {
 	}
 	view := l.update.View
 	until := earlier(view.ValidUntil, view.LocalDeadline(g.permission.ExpiresAt))
+	if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+		until = earlier(until, view.LocalDeadline(credential))
+	}
 	if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
 		until = earlier(until, g.confirmedUntil)
 	}

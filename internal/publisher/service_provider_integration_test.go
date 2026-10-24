@@ -136,7 +136,8 @@ func TestIntegrationManagedDatabaseProviders(t *testing.T) {
 			server := publisher.ServiceStream{Protocol: setting.protocol, Hostname: host, Target: *setting.address,
 				TLS:       &tls.Config{Certificates: []tls.Certificate{certificates.server}, MinVersion: tls.VersionTLS12},
 				TargetTLS: &tls.Config{RootCAs: targetRoots, ServerName: *setting.hostname, MinVersion: tls.VersionTLS12},
-				Visitor: publisher.CertificateVisitor{Check: func(_ context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
+				Visitor: publisher.CertificateVisitor{Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+					leaf := state.PeerCertificates[0]
 					_, err := leaf.Verify(x509.VerifyOptions{Roots: certificates.roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
 					return publisher.ServiceVisitorDecision{Allowed: err == nil, ValidUntil: time.Now().Add(time.Minute)}, err
 				}}}

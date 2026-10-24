@@ -25,11 +25,12 @@ func visitorPermissionCookie(w http.ResponseWriter, permission controlv1.Visitor
 }
 
 type httpPermission struct {
-	permission visitortoken.Permission
-	token      visitortoken.Token
-	renewed    bool
-	source     netip.Addr
-	anonymous  bool
+	permission       visitortoken.Permission
+	token            visitortoken.Token
+	renewed          bool
+	source           netip.Addr
+	anonymous        bool
+	metadataRevision int64
 }
 
 // localHTTPPermission verifies exactly one supplied visitor credential. it has
@@ -108,6 +109,9 @@ func localHTTPPermission(request *http.Request, policy *visitorlease.Lease, rene
 func (p httpPermission) bind(policy *visitorlease.Lease, stop func()) (*visitorlease.Guard, error) {
 	if p.anonymous {
 		return policy.BindAnonymous(p.source, stop)
+	}
+	if p.metadataRevision > 0 {
+		return policy.BindNative(p.permission, p.source, p.metadataRevision, stop)
 	}
 	return policy.Bind(p.permission, p.source, stop)
 }

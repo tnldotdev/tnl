@@ -2,24 +2,21 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func hashServiceHTTPSecret(secret string) []byte {
-	digest := sha256.Sum256([]byte("service-http-grant/v1\x00" + secret))
-	return digest[:]
-}
-
-func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateServiceHTTPGrantRequest, now time.Time) (result controlv1.ServiceHTTPGrant, retErr error) {
-	kind := serviceHTTPCredentialKind(input.Kind)
-	if !kind.grant() || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
+// a verified website actor has no CLI control session. this independent
+// authority boundary issues the same service-scoped signed credential as the
+// CLI, never a second kind of app access secret or publisher token.
+func (d *Database) CreateServiceActorVisitorCredential(ctx context.Context, issuer, service, actor string, input controlv1.CreateVisitorCredentialRequest, now time.Time) (result VisitorGrantCredentials, retErr error) {
+	if input.Resource.Kind != "service" || input.Resource.Id != service || (input.Kind != "token" && input.Kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
@@ -58,24 +55,20 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	secret = id + "." + secret
-	credential, err := parseServiceHTTPCredential(controlv1.ServiceHTTPCredential{Kind: controlv1.ServiceHTTPCredentialKind(kind), Secret: &secret})
+	refresh := "vrf1." + id + "." + secret
+	_, digest, err := visitorRefreshDigest(refresh)
 	if err != nil {
 		return result, err
 	}
-	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: string(credential.kind), SecretDigest: credential.digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
+	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: string(input.Kind), SecretDigest: digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
 	if err != nil {
 		return result, err
 	}
-	result = controlv1.ServiceHTTPGrant{Subject: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Id: id, Kind: controlv1.ServiceHTTPGrantKind(input.Kind), Secret: secret, ExpiresAt: input.ExpiresAt}
-	if input.Kind == "share" {
-		origin, err := serviceHTTPOrigin(endpoint)
-		if err != nil {
-			return result, err
-		}
-		link := origin + "/__tnl/share/" + secret
-		result.ShareUrl = &link
+	issued, err := d.issueVisitorToken(ctx, tx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: refresh}, now)
+	if err != nil {
+		return result, err
 	}
+	result.GrantID, result.RefreshCredential, result.IssuedVisitorToken = id, refresh, issued
 	return result, tx.Commit(ctx)
 }
 

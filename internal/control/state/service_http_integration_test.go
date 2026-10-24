@@ -3,7 +3,6 @@ package state
 import (
 	"bytes"
 	"errors"
-	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,9 +10,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -59,6 +59,16 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	a, b := start(0, "a"), start(1, "b")
 	ports := make([]int32, 0, len(applied.Services))
+	portFor := func(auth ServiceHTTPRun) int {
+		t.Helper()
+		for _, service := range applied.Services {
+			if service.ServiceID == auth.Subject.ID {
+				return service.Port
+			}
+		}
+		t.Fatal("service lost its saved endpoint port")
+		return 0
+	}
 	for _, service := range applied.Services {
 		ports = append(ports, int32(service.Port))
 	}
@@ -67,70 +77,50 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admit := func(auth ServiceHTTPRun) controlv1.ServiceHTTPVisitorRequest {
+	prepareVisitorTokenKeys(t, d, now)
+	read := func(scope visitorscope.Scope) visitortoken.View {
 		t.Helper()
-		port := 0
-		for _, s := range applied.Services {
-			if s.ServiceID == auth.Subject.ID {
-				port = s.Port
-			}
-		}
-		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-		if _, err := d.AdmitDirectServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+		wire, err := d.ReadIngressVisitorPolicy(t.Context(), lease.IngressLeaseIdentity, scope, 0, now)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return controlv1.ServiceHTTPVisitorRequest{RunNumber: auth.Number, VisitorConnectionId: visitor, SourceIp: "192.0.2.10", DestinationPort: port, Credential: controlv1.ServiceHTTPCredential{Kind: "none"}}
+		update, err := visitorlease.Decode(wire)
+		if err != nil || !update.Enabled || !update.View.Public {
+			t.Fatal("service HTTP policy lost its direct scope", err)
+		}
+		return update.View
 	}
-	input := admit(a)
-	grant, err := d.CreateServiceHTTPGrant(t.Context(), a.Subject.ID, r.ActorID, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: now.Add(time.Hour)}, now)
+	parent := browserTestControlSession(t, d, r.ActorID, now)
+	principal := WithControlPrincipal(t.Context(), ControlPrincipal{SessionID: parent.SessionID, IdentityID: r.ActorID})
+	grant, err := d.CreateVisitorGrantCredentials(principal, testVisitorIssuer, a.Subject, "token", now.Add(time.Hour), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.Credential = controlv1.ServiceHTTPCredential{Kind: "token", Secret: &grant.Secret}
-	decision, err := d.AuthorizeServiceHTTPVisitor(t.Context(), a, input, now)
-	if err != nil || !decision.Allowed || decision.Admitted {
-		t.Fatal("HTTP credential bypassed ingress promotion", decision, err)
+	view := read(a.Subject)
+	if view.Port != uint16(portFor(a)) {
+		t.Fatal("permission changed the direct destination port")
 	}
-	if err = d.PromoteDirectServiceVisitor(t.Context(), lease.IngressLeaseIdentity, input.VisitorConnectionId, now); err != nil {
-		t.Fatal(err)
+	if _, err := visitortoken.VerifyBearer(grant.Token, view, now); err != nil {
+		t.Fatal("signed HTTP credential was not locally verifiable", err)
 	}
-	decision, err = d.AuthorizeServiceHTTPVisitor(t.Context(), a, input, now)
-	if err != nil || !decision.Allowed || !decision.Admitted {
-		t.Fatal(decision, err)
+	if _, err := visitortoken.VerifyBearer(grant.Token, read(b.Subject), now); err == nil {
+		t.Fatal("credential widened to another service")
 	}
-	deny := func(auth ServiceHTTPRun, request controlv1.ServiceHTTPVisitorRequest) {
-		t.Helper()
-		decision, err := d.AuthorizeServiceHTTPVisitor(t.Context(), auth, request, now)
-		if err == nil && decision.Allowed {
-			t.Fatal("widened service HTTP credential")
-		}
+	wrongScope := view
+	wrongScope.Scope = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: a.Subject.ID}
+	if _, err := visitortoken.VerifyBearer(grant.Token, wrongScope, now); err == nil {
+		t.Fatal("service credential became a public URL grant")
 	}
-	wrong := input
-	wrong.SourceIp = "192.0.2.11"
-	deny(a, wrong)
-	wrong = input
-	wrong.DestinationPort++
-	deny(a, wrong)
-	wrong = input
-	wrong.RunNumber++
-	deny(a, wrong)
-	wrongAuth := a
-	wrongAuth.Subject.Kind = visitorscope.PublicURL
-	deny(wrongAuth, input)
-	wrong = admit(b)
-	wrong.Credential = input.Credential
-	deny(b, wrong)
-	wrong = input
-	wrong.Credential.Kind = "share"
-	deny(a, wrong)
-	wrong = input
-	wrong.Credential.Secret = new("shr_0123456789abcdefghijkl." + strings.Repeat("A", 43))
-	deny(a, wrong)
-	wrong = input
-	wrong.Credential.Certificate = new([]byte{1})
-	deny(a, wrong)
-	// browser credentials capture ready runs and stay separate from legacy URL
-	// sessions and managed bearer grants. a new pool member cannot redeem them.
+	wrongPort := view
+	wrongPort.Port++
+	if _, err := visitortoken.VerifyBearer(grant.Token, wrongPort, now); err == nil {
+		t.Fatal("credential crossed the approved direct port")
+	}
+	if _, err := visitortoken.VerifyBearer(visitortoken.Token("shr_0123456789abcdefghijkl."+strings.Repeat("A", 43)), view, now); err == nil {
+		t.Fatal("public URL share became a service credential")
+	}
+	// browser handoffs capture the ready run IDs. neither another service, a
+	// later run, nor the public URL browser API may redeem the same sign-in.
 	binding := bytes.Repeat([]byte{7}, 32)
 	state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, "/settings?tab=1", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
 	if err != nil {
@@ -148,7 +138,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(handoff.Origin, ":"+strconv.Itoa(input.DestinationPort)) {
+	if !strings.HasSuffix(handoff.Origin, ":"+strconv.Itoa(portFor(a))) {
 		t.Fatal("handoff dropped allocated port", handoff.Origin)
 	}
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, handoff.Token, now); err == nil {
@@ -166,28 +156,28 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), a, handoff.Token, now); err == nil {
 		t.Fatal("handoff replay")
 	}
-	input.Credential = controlv1.ServiceHTTPCredential{Kind: "browser", Secret: &redemption.CookieSecret}
-	decision, err = d.AuthorizeServiceHTTPVisitor(t.Context(), a, input, now)
-	if err != nil || !decision.Allowed {
-		t.Fatal("current browser was denied", decision, err)
+	browserPermission, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, a.Subject, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now)
+	if err != nil {
+		t.Fatal("redeemed browser did not receive a scoped token", err)
+	}
+	if _, err := visitortoken.VerifyBearer(browserPermission.Token, read(a.Subject), now); err != nil {
+		t.Fatal("signed-in visitor was denied locally", err)
 	}
 	if _, err = d.BrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now); err == nil {
-		t.Fatal("managed browser widened legacy URL scope")
+		t.Fatal("managed browser widened public URL scope")
 	}
 	if _, err = d.ServiceBrowserSession(t.Context(), later, redemption.CookieSecret, false, now); err == nil {
-		t.Fatal("browser session widened run scope")
+		t.Fatal("browser session widened to a later run")
 	}
-	// manual/company suspension invalidates both a signed-in visitor and the
-	// current authority behind a service-scoped bearer grant.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET manual_suspended_at=$3 WHERE team_id=$1 AND identity_id=$2`, r.TeamID, r.ActorID, now); err != nil {
 		t.Fatal(err)
 	}
-	deny(a, input)
-	input.Credential = controlv1.ServiceHTTPCredential{Kind: "token", Secret: &grant.Secret}
-	deny(a, input)
-	status, err := d.DirectServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, input.VisitorConnectionId, now)
-	if err != nil || status.State != DirectVisitorDenied {
-		t.Fatal("ingress retained suspended HTTP authority", status, err)
+	current := read(a.Subject)
+	if _, err := visitortoken.VerifyBearer(browserPermission.Token, current, now); err == nil {
+		t.Fatal("suspension retained the signed-in visitor")
+	}
+	if _, err := visitortoken.VerifyBearer(grant.Token, current, now); err == nil {
+		t.Fatal("suspension retained the explicit grant")
 	}
 }
 

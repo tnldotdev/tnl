@@ -17,14 +17,6 @@ paths:
     $ref: "./paths/stream-capacity.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1stream-capacity~1{allocation_id}"
   /internal/v1/ingresses/{ingress_id}/visitor-policy:
     $ref: "./paths/visitor-policy.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1visitor-policy"
-  /internal/v1/ingresses/{ingress_id}/direct-services/admit:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1admit"
-  /internal/v1/ingresses/{ingress_id}/direct-services/status:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1status"
-  /internal/v1/ingresses/{ingress_id}/direct-services/promote:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1promote"
-  /internal/v1/ingresses/{ingress_id}/direct-services/close:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1close"
   /internal/v1/ingresses/{ingress_id}/service-observations:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
   /internal/v1/ingresses/{ingress_id}/transport-certificate:
@@ -88,14 +80,6 @@ components:
       $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionClaim"
     ConnectorSessionResult:
       $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionResult"
-    DirectServiceVisitorClaim:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorClaim"
-    DirectServiceVisitorLookup:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorLookup"
-    DirectServiceVisitorAdmission:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorAdmission"
-    DirectServiceVisitorStatus:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorStatus"
     ServiceProjection:
       $ref: "./schemas/admission.yaml#/schemas/ServiceProjection"
     ServiceRelay:

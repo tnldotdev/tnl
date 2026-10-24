@@ -110,7 +110,7 @@ type privateForwarderFixture struct {
 	sourceIP       string
 }
 
-func (f *privateForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1.ServiceRelay, h tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *privateForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1.ServiceRelay, h tunnelv1.ServiceForwardingHeader, events *tunnel.ReturnEvents) (net.Conn, error) {
 	f.mu.Lock()
 	f.calls++
 	call := f.calls
@@ -151,6 +151,13 @@ func (f *privateForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1
 			return
 		}
 		f.data <- value
+		if h.Direct != nil && events != nil && events.Promoted != nil {
+			promoted := h.Admission()
+			promoted.Visitor = tunnelv1.ServiceVisitorReference{Kind: "browser_session", ID: "cs_aaaaaaaaaaaaaaaaaaaaaa"}
+			if err := events.Promoted(promoted); err != nil {
+				return
+			}
+		}
 		_, _ = upstream.Write([]byte("pong"))
 		if f.holdAfterReply {
 			_, _ = io.Copy(io.Discard, remaining)
@@ -236,7 +243,7 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 	if err := pool.apply(streamAllocation{ID: allocation.Id, ResourceKind: "service", ResourceID: service, RunID: run, RunNumber: 1, IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), Capacity: 64, ObservedAt: now, ValidUntil: allocation.ValidUntil}, now); err != nil {
 		t.Fatal(err)
 	}
-	connector.prepared[run] = &preparedVisitorRun{policy: &visitorPolicy{lease: policy}, capacity: &streamCapacity{owner: lease, pool: pool, id: allocation.Id, ready: true}}
+	connector.prepared[run] = &preparedVisitorRun{policy: &visitorPolicy{lease: policy}, capacity: &streamCapacity{owner: lease, pool: pool, id: allocation.Id, ready: true, body: ingressv1.StreamCapacityRequest{RunId: run, RunNumber: 1}}}
 	if err := connector.refreshRouting(t.Context(), lease); err != nil {
 		t.Fatal(err)
 	}

@@ -408,7 +408,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("public group lost service HTTP endpoint")
 	}
 	f.connectDirectListener(t, directService.Endpoint)
-	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	grant, err := control.CreateVisitorCredential(t.Context(), controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: directService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set("Tnl-Access-Token", grant.Secret)
+		request.Header.Set("Tnl-Visitor-Token", grant.Permission.VisitorToken)
 		response, err := visitor.Do(request)
 		if err != nil {
 			return false
@@ -588,6 +588,12 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 		t.Fatal(err)
 	}
 	if _, err := database.UpdateACMEAccountRegistration(t.Context(), account.ID, account.ContactEmail, "https://ca.integration.test/account", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.PrepareVisitorSigningKeys(t.Context(), f.url, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ServiceClientIssuer(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	handler, err := controlpublic.NewHandler(controlpublic.Config{Role: daemonconfig.RoleControl, ControlURL: f.url, ManagedDomain: "apps.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: provider.URL, OIDCClientID: "server", OIDCClientSecret: "fixture-secret", OIDCScopes: []string{"openid"}, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour, CertificateIssuance: true, DNSAutomation: true, ACMEDirectoryURL: directory}, database, database, nil)
@@ -924,7 +930,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = forwarder.Close() })
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: name, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: getCertificate}, Control: client, DirectControl: client, Forwarder: forwarder, Routing: &ingress.ServiceRoutingTable{}, CurrentLease: controller.Lease})
+	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: name, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: getCertificate}, Control: client, VisitorControl: client, Forwarder: forwarder, Routing: &ingress.ServiceRoutingTable{}, CurrentLease: controller.Lease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -932,6 +938,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		f.directConnector = connector
 	}
 	t.Cleanup(func() { _ = connector.Close() })
+	f.workers.Go(func() { _ = connector.Run(f.ctx) })
 	f.serve(t, listener, func(connection net.Conn) error {
 		return connector.Accept(f.ctx, connection, netip.MustParseAddrPort(connection.RemoteAddr().String()), netip.MustParseAddrPort(connection.LocalAddr().String()))
 	})

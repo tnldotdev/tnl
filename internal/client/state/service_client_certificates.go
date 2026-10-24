@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitorcert"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -92,7 +94,8 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 		if err != nil {
 			return result, err
 		}
-		refresh = len(issuedCSR) == 0 || len(csr) != 0 || !material.Leaf.NotAfter.After(time.Now().Add(24*time.Hour))
+		renewBefore := min(24*time.Hour, material.Leaf.NotAfter.Sub(material.Leaf.NotBefore)/4)
+		refresh = len(issuedCSR) == 0 || len(csr) != 0 || !material.Leaf.NotAfter.After(time.Now().Add(renewBefore))
 	}
 	if refresh {
 		if len(csr) != 0 && !time.Unix(0, csrCreated).Add(visitorcert.MaxLifetime).After(time.Now()) {
@@ -174,7 +177,13 @@ func validateServiceClientMaterial(key, certificate, issuer []byte, service, ide
 	if now.After(leaf.NotAfter) {
 		now = leaf.NotAfter.Add(-time.Second)
 	}
-	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil || len(leaf.URIs) != 1 || leaf.URIs[0].String() != "tnl://service-client/"+service+"/"+identity+"/"+device || leaf.IsCA || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
+	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	if err != nil || leaf.IsCA || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
+		return material, visitorcert.ErrInvalidCertificate
+	}
+	scope, source, err := visitortoken.CertificateIssuanceBinding(chains)
+	human, ok := source.(visitortoken.Device)
+	if err != nil || scope.Kind != visitorscope.Service || scope.ID != service || !ok || human.IdentityID != identity || human.DeviceID != device {
 		return material, visitorcert.ErrInvalidCertificate
 	}
 	material.Leaf = leaf

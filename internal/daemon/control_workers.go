@@ -74,6 +74,9 @@ func (d *daemon) startControlWorkers(
 	if err := database.PrepareVisitorSigningKeys(ctx, cfg.ControlOrigin(), time.Now()); err != nil {
 		return fmt.Errorf("prepare visitor signing keys: %w", err)
 	}
+	if _, err := database.ServiceClientIssuer(ctx); err != nil {
+		return fmt.Errorf("prepare visitor certificate issuer: %w", err)
+	}
 	var dnsProvider interface {
 		dns.Provider
 		dns.ChallengeProvider
