@@ -47,6 +47,7 @@ schemas:
     properties:
       traffic:
         $ref: "../openapi.yaml#/components/schemas/TrafficSelection"
+      preferred_regions: { $ref: "../openapi.yaml#/components/schemas/LocationPreferences" }
   TrafficLimits:
     type: object
     additionalProperties: false

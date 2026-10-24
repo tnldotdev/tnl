@@ -59,6 +59,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	) (controlstate.IngressLease, error) {
 		got, gotNow, gotDuration = registration, registeredAt, leaseDuration
 		return controlstate.IngressLease{
+			Region: registration.Region,
 			IngressLeaseIdentity: controlstate.IngressLeaseIdentity{
 				IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 				IngressLeaseRevision: 7,
@@ -68,7 +69,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 		}, nil
 	}}
 	body := ingressv1.IngressRegistration{
-		IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100,
+		IngressId: "ingress-1", IngressRunId: "run-1", Region: "sjc", ProtocolVersion: 1, ConnectionCapacity: 100,
 		IngressPoolId: "ingress-a", ServicePorts: []int{20000, 20001},
 	}
 	response := serveIngressJSON(
@@ -79,7 +80,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if got.IngressID != body.IngressId || got.IngressRunID != body.IngressRunId ||
-		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" || len(got.ServicePorts) != 2 || got.ServicePorts[1] != 20001 {
+		got.Region != "sjc" || got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" || len(got.ServicePorts) != 2 || got.ServicePorts[1] != 20001 {
 		t.Fatalf("registration = %#v", got)
 	}
 	if !gotNow.Equal(now) || gotDuration != 30*time.Second {
@@ -87,7 +88,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 	var lease ingressv1.IngressLease
 	decodeIngressResponse(t, response, &lease)
-	if lease.IngressId != "ingress-1" || lease.IngressLeaseRevision != 7 {
+	if lease.IngressId != "ingress-1" || lease.Region != "sjc" || lease.IngressLeaseRevision != 7 {
 		t.Fatalf("lease = %#v", lease)
 	}
 }

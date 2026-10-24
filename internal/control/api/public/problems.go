@@ -20,6 +20,8 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")
 	case errors.Is(err, controlstate.ErrTrafficSelection):
 		writeProblem(response, http.StatusBadRequest, controlv1.TrafficSelectionInvalid, "traffic selection is invalid or exceeds operator ceilings; lower the selected limits and retry")
+	case errors.Is(err, controlstate.ErrRegionPreference):
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "preferred regions must be known tnl or provider region names")
 	case errors.Is(err, controlstate.ErrVisitorSignIn):
 		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "feedback requires sign-in; sign in and retry")
 	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):

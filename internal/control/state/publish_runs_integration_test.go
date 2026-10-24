@@ -14,9 +14,38 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestIntegrationPublishRunRegionalPlacement(t *testing.T) {
+	database, now, request, _ := newPublishRunPrerequisites(t)
+	local := relayLifecycleRegistration("regional-sjc")
+	local.Region, local.ConnectionCapacity = region.Code("sjc"), 1
+	if _, err := database.RegisterRelay(t.Context(), local, now, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	conflict := relayLifecycleRegistration("regional-sjc")
+	conflict.RelayID, conflict.RelayRunID = "regional-other", "regional-other-run"
+	conflict.Region = "iad"
+	if _, err := database.RegisterRelay(t.Context(), conflict, now, time.Hour); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatal("relay service crossed regional failure boundaries", err)
+	}
+	request.PreferredRegions = []region.Code{"aws:us-west-1"}
+	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
+	if err != nil || setup.PublisherConnections[0].RelayServiceID != "regional-sjc" || setup.PublisherConnections[1].RelayServiceID == "regional-sjc" {
+		t.Fatal("local-first relay placement lost two service boundaries", setup.PublisherConnections, err)
+	}
+	request.PreferredRegions = []region.Code{"sjc"}
+	if repeated, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute); err != nil || repeated.PublishRunID != setup.PublishRunID {
+		t.Fatal("normalized preference changed an idempotent publish run", repeated, err)
+	}
+	request.PreferredRegions = []region.Code{"iad"}
+	if _, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute); !errors.Is(err, ErrPublishRunIdempotency) {
+		t.Fatal("changed preference reused a committed publish run", err)
+	}
+}
 
 func TestIntegrationPublishRunCreation(t *testing.T) {
 	database, now, request, _ := newPublishRunPrerequisites(t)

@@ -8,7 +8,43 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/region"
 )
+
+func TestIntegrationRecoveryPrefersOldRegionWhenServiceUnavailable(t *testing.T) {
+	d, now, request, leases := newPublishRunPrerequisites(t)
+	local := relayLifecycleRegistration("regional-primary")
+	local.Region = "sjc"
+	lease, err := d.RegisterRelay(t.Context(), local, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leases[lease.RelayServiceID] = lease
+	request.PreferredRegions = []region.Code{"sjc"}
+	setup, err := d.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
+	if err != nil || setup.PublisherConnections[0].RelayServiceID != local.RelayServiceID {
+		t.Fatal("regional publish run did not prefer the local relay", err)
+	}
+	f := publishRunFixture{database: d, now: now, request: request, setup: setup, leases: leases}
+	readyTestSession(t, f)
+	for _, candidate := range []struct {
+		id     string
+		region region.Code
+	}{{"a-remote", "iad"}, {"z-nearby", "sjc"}} {
+		r := relayLifecycleRegistration(candidate.id)
+		r.Region = candidate.region
+		if _, err := d.RegisterRelay(t.Context(), r, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.relay_services SET enabled=false WHERE relay_service_id=$1`, local.RelayServiceID); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := d.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(time.Second), time.Hour, time.Minute)
+	if err != nil || replaced.PublisherConnections[0].RelayServiceID != "z-nearby" || replaced.PublisherConnections[1].ConnectionAssignmentIdentity != setup.PublisherConnections[1].ConnectionAssignmentIdentity {
+		t.Fatal("recovery lost the nearby spare or moved the healthy sibling", replaced.PublisherConnections, err)
+	}
+}
 
 func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	f := newPublishRunFixture(t)

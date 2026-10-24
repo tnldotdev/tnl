@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -121,6 +122,7 @@ type ingressRuntimeConfig struct {
 }
 
 type ingressSettings struct {
+	region                           region.Code
 	clientHelloConnectionLimit       int
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
@@ -144,6 +146,7 @@ func ingressSettingsFrom(cfg daemonconfig.Config) ingressSettings {
 	}
 	peers, _ := proxyproto.TrustedPeers(cfg.IngressTrustedProxies)
 	return ingressSettings{
+		region:                           cfg.ServingRegion(),
 		clientHelloConnectionLimit:       cfg.ClientHelloConnectionLimit,
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
@@ -166,6 +169,7 @@ func (d *daemon) startIngressRuntime(
 	metrics *observability.Metrics,
 	runtimeConfig ingressRuntimeConfig,
 ) error {
+	ctx = observability.WithRegion(ctx, settings.region)
 	runtime := &ingressRuntime{privateOnly: runtimeConfig.privateOnly}
 	auditClient, ok := runtimeConfig.client.(ingressServiceObservationClient)
 	if !ok {
@@ -199,7 +203,7 @@ func (d *daemon) startIngressRuntime(
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
-	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, Region: string(settings.region), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
 	var visitorControl ingress.VisitorPreparationControl
 	if !runtimeConfig.privateOnly {
 		visitorControl, ok = runtimeConfig.client.(ingress.VisitorPreparationControl)

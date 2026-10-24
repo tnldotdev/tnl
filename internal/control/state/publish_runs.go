@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -35,6 +37,7 @@ var (
 	ErrPublishRunIdempotency     = errors.New("controlstate: publish-run idempotency conflict")
 	ErrPublishRunCreationGated   = errors.New("controlstate: publish-run creation is disabled")
 	ErrInsufficientRelayServices = errors.New("controlstate: insufficient relay-service placement capacity")
+	ErrRegionPreference          = errors.New("controlstate: invalid region preference")
 	errRelayPlacementCapacity    = errors.New("controlstate: relay-service placement capacity exhausted")
 )
 
@@ -61,6 +64,7 @@ type PublishRunRequest struct {
 	PublisherRunProof        string
 	PublisherSourceIP        string
 	TrafficSelection         *trafficlimits.Selection
+	PreferredRegions         []region.Code
 	TrafficDefaults          trafficlimits.Limits
 	TrafficCeiling           trafficlimits.Limits
 }
@@ -120,6 +124,14 @@ func (d *Database) CreatePublishRun(
 	}()
 	if err := validatePublishRunRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return PublishRunSetup{}, err
+	}
+	raw := make([]string, len(request.PreferredRegions))
+	for index, code := range request.PreferredRegions {
+		raw[index] = string(code)
+	}
+	request.PreferredRegions, retErr = region.Preferences(raw)
+	if retErr != nil {
+		return result, ErrRegionPreference
 	}
 	if request.TrafficSelection != nil {
 		if err := request.TrafficSelection.Validate(); err != nil {
@@ -191,6 +203,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return result, err
 	}
+	request.RequestDigest = publishRunRegionDigest(request.RequestDigest, request.PreferredRegions)
 	if request.PublisherIdentityID != "" {
 		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
 		if err != nil {
@@ -298,7 +311,7 @@ func (d *Database) createPublishRun(
 		}
 	}
 
-	placements, err := selectRelayServicePlacements(ctx, queries, now)
+	placements, err := selectRelayServicePlacements(ctx, queries, now, request.PreferredRegions)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
@@ -407,21 +420,38 @@ func (d *Database) createPublishRun(
 
 type relayServicePlacement struct {
 	relayServiceID string
+	region         region.Code
 	relayAddress   string
 	tlsServerName  string
 	capacity       int64
 	assignments    int64
 }
 
+func publishRunRegionDigest(base [32]byte, preferences []region.Code) [32]byte {
+	h := sha256.New()
+	_, _ = h.Write([]byte("tnl/publish-run/regions/v1\x00"))
+	_, _ = h.Write(base[:])
+	for _, code := range preferences {
+		_, _ = h.Write([]byte(string(code) + "\x00"))
+	}
+	var result [32]byte
+	copy(result[:], h.Sum(nil))
+	return result
+}
+
 func selectRelayServicePlacements(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	now time.Time,
+	preferences []region.Code,
 ) ([publishRunConnectionCount]relayServicePlacement, error) {
 	services, _, err := availableRelayServicePlacements(ctx, queries, now)
 	if err != nil {
 		return [publishRunConnectionCount]relayServicePlacement{}, fmt.Errorf("controlstate: create publish run: %w", err)
 	}
+	sort.SliceStable(services, func(i, j int) bool {
+		return region.Rank(preferences, services[i].region) < region.Rank(preferences, services[j].region)
+	})
 	var result [publishRunConnectionCount]relayServicePlacement
 	index := 0
 	for _, service := range services {
@@ -431,6 +461,7 @@ func selectRelayServicePlacements(
 		result[index] = service
 		index++
 		if index == len(result) {
+			observability.WithRegion(ctx, result[0].region)
 			return result, nil
 		}
 	}
@@ -438,6 +469,21 @@ func selectRelayServicePlacements(
 		return result, fmt.Errorf("%w: %w", ErrInsufficientRelayServices, errRelayPlacementCapacity)
 	}
 	return result, ErrInsufficientRelayServices
+}
+
+// replacements retain the failed slot's geography when its relay service is
+// gone, while still preferring an unreserved service with available capacity.
+func nearbyRelayServices(ctx context.Context, queries *controlstatedb.Queries, oldID string, available []relayServicePlacement) ([]relayServicePlacement, error) {
+	code, err := queries.GetRelayServiceRegion(ctx, oldID)
+	if err != nil {
+		return nil, err
+	}
+	choices := append([]relayServicePlacement(nil), available...)
+	preferred := []region.Code{region.Code(code)}
+	sort.SliceStable(choices, func(i, j int) bool {
+		return region.Rank(preferred, choices[i].region) < region.Rank(preferred, choices[j].region)
+	})
+	return choices, nil
 }
 
 func availableRelayServicePlacements(
@@ -470,6 +516,7 @@ func availableRelayServicePlacements(
 		service := servicesByID[lease.RelayServiceID]
 		if service == nil {
 			service = &relayServicePlacement{
+				region:         region.Code(lease.Region),
 				relayServiceID: lease.RelayServiceID, relayAddress: lease.RelayAddress,
 				tlsServerName: lease.TlsServerName, assignments: assignments[lease.RelayServiceID],
 			}

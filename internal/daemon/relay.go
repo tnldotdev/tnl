@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -163,6 +164,7 @@ type relayRuntimeConfig struct {
 }
 
 type relaySettings struct {
+	region                   region.Code
 	publisherConnectionLimit int64
 	streamCapacity           int64
 	leaseRenewalInterval     time.Duration
@@ -171,6 +173,7 @@ type relaySettings struct {
 
 func relaySettingsFrom(cfg daemonconfig.Config) relaySettings {
 	return relaySettings{
+		region:                   cfg.ServingRegion(),
 		publisherConnectionLimit: cfg.PublisherConnectionLimit,
 		streamCapacity:           cfg.RelayStreamCapacity,
 		leaseRenewalInterval:     cfg.LeaseRenewalInterval,
@@ -183,6 +186,7 @@ func (d *daemon) startRelayRuntime(
 	settings relaySettings,
 	runtimeConfig relayRuntimeConfig,
 ) (*relayRuntime, error) {
+	ctx = observability.WithRegion(ctx, settings.region)
 	if runtimeConfig.transportTLS == nil {
 		return nil, errors.New("relay TLS certificate is not configured")
 	}
@@ -223,6 +227,7 @@ func (d *daemon) startRelayRuntime(
 		Client:   runtimeConfig.client,
 		Registration: relayv1.RelayRegistration{
 			RelayServiceId: runtimeConfig.relayServiceID, RelayId: runtimeConfig.relayID, RelayRunId: runID,
+			Region:          string(settings.region),
 			ProtocolVersion: tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
 			TlsServerName: runtimeConfig.tlsServerName, InternalRelayAddress: runtimeConfig.internalAddress,
 			InternalNetworks: []string{}, ConnectionCapacity: settings.publisherConnectionLimit,

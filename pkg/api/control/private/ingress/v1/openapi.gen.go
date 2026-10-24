@@ -221,6 +221,7 @@ type IngressLease struct {
 	IngressRunId         Identifier `json:"ingress_run_id"`
 	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
 	ProtocolVersion      int64      `json:"protocol_version"`
+	Region               string     `json:"region"`
 	RegisteredAt         time.Time  `json:"registered_at"`
 	RenewedAt            time.Time  `json:"renewed_at"`
 	ReportedConnections  int64      `json:"reported_connections"`
@@ -250,6 +251,9 @@ type IngressRegistration struct {
 	IngressPoolId          Identifier `json:"ingress_pool_id"`
 	IngressRunId           Identifier `json:"ingress_run_id"`
 	ProtocolVersion        int64      `json:"protocol_version"`
+
+	// Region Stable tnl region code, or local for an unlocated self-hosted process.
+	Region string `json:"region"`
 
 	// ServicePorts Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
 	ServicePorts []int `json:"service_ports"`

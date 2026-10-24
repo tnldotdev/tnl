@@ -37,6 +37,7 @@ type PublicURLManagementClient interface {
 
 type Config struct {
 	PublisherIdentityID          string
+	PreferredRegions             []string
 	Control                      PublicURLControlClient
 	VisitorControl               *clientcontrol.Client
 	ControlURL                   string

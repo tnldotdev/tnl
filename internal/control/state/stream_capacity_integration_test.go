@@ -20,7 +20,7 @@ func capacityFixture(t *testing.T, capacity int32) (publishRunFixture, ServiceRu
 	}
 	var owners []IngressLeaseIdentity
 	for index := range 2 {
-		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("capacity-%d", index), IngressRunID: fmt.Sprintf("process-%d", index), ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, f.now, time.Minute)
+		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("capacity-%d", index), IngressRunID: fmt.Sprintf("process-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, f.now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,6 +64,25 @@ func TestIntegrationStreamCapacityIncludesIntegrationURLsWithoutVisitorGrants(t 
 
 func capacityRequest(run ServiceRunState, owner IngressLeaseIdentity, key string, amount int32) StreamCapacityRequest {
 	return StreamCapacityRequest{Owner: owner, Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}, RunID: run.RunID, RunNumber: run.RunNumber, RequestID: key, Capacity: amount}
+}
+
+func TestIntegrationStreamCapacitySmallRunSharesTwoIngresses(t *testing.T) {
+	f, run, owners := capacityFixture(t, 2)
+	first, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "first", 2), f.now)
+	if err != nil || first.Capacity != 1 {
+		t.Fatal("first ingress took the entire small run", first, err)
+	}
+	if _, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "extra-id", 1), f.now); !errors.Is(err, ErrStreamCapacity) {
+		t.Fatal("one ingress hoarded a second allocation ID", err)
+	}
+	other, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[1], "second", 2), f.now)
+	if err != nil || other.Capacity != 1 || other.Owner.IngressID == first.Owner.IngressID {
+		t.Fatal("second ingress lost its independent small-run slot", other, err)
+	}
+	replayed, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "first", 2), f.now.Add(time.Second))
+	if err != nil || replayed.ID != first.ID || replayed.Capacity != first.Capacity {
+		t.Fatal("replaying the first slot spent a sibling's capacity", replayed, err)
+	}
 }
 
 func TestIntegrationStreamCapacityConcurrentOwnersCannotDoubleSpend(t *testing.T) {
@@ -157,14 +176,14 @@ func TestIntegrationStreamCapacityRetentionKeepsDelayedAuditAttribution(t *testi
 }
 
 func TestIntegrationStreamCapacityRetirementWaitsForGrantedDeadline(t *testing.T) {
-	f, run, owners := capacityFixture(t, 2)
-	request := capacityRequest(run, owners[0], "first", 2)
+	f, run, owners := capacityFixture(t, 1)
+	request := capacityRequest(run, owners[0], "first", 1)
 	first, err := f.database.AllocateStreamCapacity(t.Context(), request, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	replayed, err := f.database.AllocateStreamCapacity(t.Context(), request, f.now.Add(time.Second))
-	if err != nil || replayed.ID != first.ID || replayed.Capacity != 2 {
+	if err != nil || replayed.ID != first.ID || replayed.Capacity != 1 {
 		t.Fatal("ambiguous allocation retry spent capacity twice", err)
 	}
 	if err := f.database.RetireStreamCapacity(t.Context(), owners[0], first.ID, f.now.Add(2*time.Second)); err != nil {
@@ -186,7 +205,7 @@ func TestIntegrationStreamCapacityRetirementWaitsForGrantedDeadline(t *testing.T
 }
 
 func TestIntegrationStreamCapacityReductionCannotRenewOversizedGrants(t *testing.T) {
-	f, run, owners := capacityFixture(t, 2)
+	f, run, owners := capacityFixture(t, 4)
 	request := capacityRequest(run, owners[0], "old", 2)
 	first, err := f.database.AllocateStreamCapacity(t.Context(), request, f.now)
 	if err != nil {
@@ -208,15 +227,15 @@ func TestIntegrationStreamCapacityReductionCannotRenewOversizedGrants(t *testing
 }
 
 func TestIntegrationStreamCapacityRestartCannotReusePriorProcessGrant(t *testing.T) {
-	f, run, owners := capacityFixture(t, 2)
-	first, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "old-process", 2), f.now)
+	f, run, owners := capacityFixture(t, 1)
+	first, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "old-process", 1), f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_leases SET lease_expires_at=$2 WHERE ingress_id=$1`, owners[0].IngressID, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := f.database.RegisterIngress(t.Context(), IngressRegistration{IngressID: owners[0].IngressID, IngressRunID: "replacement-process", ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, f.now.Add(time.Second), time.Minute)
+	restarted, err := f.database.RegisterIngress(t.Context(), IngressRegistration{IngressID: owners[0].IngressID, IngressRunID: "replacement-process", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, f.now.Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

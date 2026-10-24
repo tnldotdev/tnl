@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/region"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -27,7 +28,11 @@ func Start(ctx context.Context, name operationName, options ...trace.SpanStartOp
 		options = append(options, trace.WithLinks(link))
 	}
 	options = parentOnlyLinks(options)
-	options = append(options, trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	attributes := append(identityAttributes(ctx), fieldAttributes(ctx)...)
+	if code, ok := ctx.Value(regionKey{}).(region.Code); ok {
+		attributes = append(attributes, RegionKey.String(string(code)))
+	}
+	options = append(options, trace.WithAttributes(attributes...))
 	ctx, span := FromContext(ctx).tracer().Start(ctx, name.String(), options...)
 	span.SetAttributes(Operation.Value(name))
 	if id, ok := ctx.Value(visitorKey{}).(string); ok {
@@ -77,6 +82,19 @@ func Visitor(ctx context.Context, id string) {
 }
 
 type visitorKey struct{}
+
+type regionKey struct{}
+
+// WithRegion records a validated neutral site on the current span and its
+// descendants. provider deployment facts stay in cloud.region on the resource.
+func WithRegion(ctx context.Context, value region.Code) context.Context {
+	code, valid := region.Parse(string(value))
+	if !valid || code != value {
+		return ctx
+	}
+	trace.SpanFromContext(ctx).SetAttributes(RegionKey.String(string(code)))
+	return context.WithValue(ctx, regionKey{}, code)
+}
 
 func WithVisitor(ctx context.Context, id string) context.Context {
 	if len(id) > 128 {

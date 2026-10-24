@@ -11,18 +11,20 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type workloadControl struct {
-	client  *workload.Client
-	subject tunnelv1.VisitorSubject
-	mu      sync.Mutex
-	pairs   map[string]*workloadAssignmentPair
-	owned   map[string]bool
-	closed  bool
+	client    *workload.Client
+	preferred []string
+	subject   tunnelv1.VisitorSubject
+	mu        sync.Mutex
+	pairs     map[string]*workloadAssignmentPair
+	owned     map[string]bool
+	closed    bool
 }
 
 type workloadAssignmentPair struct {
@@ -37,7 +39,7 @@ type workloadAssignmentPair struct {
 // NewWorkloadControl uses the exchanged workload's in-memory key. pass the
 // result to Serve with Config.IdentityID empty. the caller owns Renew/Revoke;
 // closing one service connector releases only that connector's assignments.
-func NewWorkloadControl(client *workload.Client) (Control, error) {
+func NewWorkloadControl(client *workload.Client, preferred ...string) (Control, error) {
 	if client == nil {
 		return nil, ErrServiceConnection
 	}
@@ -45,7 +47,15 @@ func NewWorkloadControl(client *workload.Client) (Control, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &workloadControl{client: client, subject: subject, pairs: make(map[string]*workloadAssignmentPair), owned: make(map[string]bool)}
+	codes, err := region.Preferences(preferred)
+	if err != nil {
+		return nil, errors.Join(ErrServiceConnection, err)
+	}
+	selected := make([]string, len(codes))
+	for index, code := range codes {
+		selected[index] = string(code)
+	}
+	c := &workloadControl{client: client, preferred: selected, subject: subject, pairs: make(map[string]*workloadAssignmentPair), owned: make(map[string]bool)}
 	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext})
 }
 
@@ -90,7 +100,7 @@ func (c *workloadControl) assignment(ctx context.Context, service string, subjec
 				return Assignment{}, err
 			}
 		}
-		response, err = c.client.CreateIngressAssignments(ctx, service, p.initialKey)
+		response, err = c.client.CreateIngressAssignments(ctx, service, p.initialKey, c.preferred...)
 		if err != nil {
 			if errors.Is(err, clientcontrol.ErrStatusConflict) {
 				p.initialKey = ""
@@ -117,7 +127,7 @@ func (c *workloadControl) assignment(ctx context.Context, service string, subjec
 				retry.exclude = a.IngressID
 			}
 		}
-		response, err = c.client.CreateIngressAssignment(ctx, service, retry.key, retry.exclude)
+		response, err = c.client.CreateIngressAssignment(ctx, service, retry.key, retry.exclude, c.preferred...)
 		if err != nil {
 			if errors.Is(err, clientcontrol.ErrStatusConflict) {
 				*retry = assignmentRetry{}

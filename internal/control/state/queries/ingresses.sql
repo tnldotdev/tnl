@@ -2,6 +2,7 @@
 INSERT INTO control.ingress_leases (
     ingress_id,
     ingress_run_id,
+    region,
     ingress_lease_revision,
     protocol_version,
     connection_capacity,
@@ -15,6 +16,7 @@ INSERT INTO control.ingress_leases (
 ) VALUES (
     sqlc.arg(ingress_id),
     sqlc.arg(ingress_run_id),
+    sqlc.arg(region),
     1,
     sqlc.arg(protocol_version),
     sqlc.arg(connection_capacity),
@@ -28,6 +30,7 @@ INSERT INTO control.ingress_leases (
 )
 ON CONFLICT (ingress_id) DO UPDATE SET
     ingress_run_id = EXCLUDED.ingress_run_id,
+    region = EXCLUDED.region,
     ingress_lease_revision = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
          AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
@@ -79,6 +82,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
+    AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports
     AND control.ingress_leases.connector_address=EXCLUDED.connector_address

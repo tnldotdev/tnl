@@ -22,11 +22,13 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 		{`{}`, 0}, {`{"traffic":{"connections":48,"rate":40,"rate_per":"2s","upload_bytes":4194304}}`, 0},
 		{`{"traffic":{"connections":0}}`, 400}, {`{"traffic":{"rate_per":"1ns"}}`, 400},
 		{`{"traffic":{"upload_bytes":1}}`, 400}, {`{"traffic":{"unknown":1}}`, 400}, {`{"unknown":1}`, 400},
+		{`{"preferred_regions":["AWS:us-west-1"]}`, 0}, {`{"preferred_regions":["sjc","fly:sjc"]}`, 400},
+		{`{"preferred_regions":["unknown"]}`, 400}, {`{"preferred_regions":null}`, 400},
 		{`{} {}`, 400}, {`null`, 400}, {`{"traffic":null}`, 400},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
-		selection, ok := publishRunTrafficSelection(w, r)
+		selection, _, ok := publishRunOptions(w, r)
 		if ok != (tc.status == 0) || !ok && w.Code != tc.status {
 			t.Fatalf("body %s: %+v %t %d", tc.body, selection, ok, w.Code)
 		}
@@ -39,7 +41,7 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 	}
 }
 
-func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testing.T) {
+func TestCreatePublishRunCarriesTrafficAndRegionSeparatelyFromPublisherAuthority(t *testing.T) {
 	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
 		ID: "url", TeamID: "team", DomainID: "domain", MembershipID: "member", PolicyRevision: 1,
 		CanonicalHostname: "app.example.test", PublicURLScope: controlstate.PublicURLScopeMember,
@@ -47,7 +49,7 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 	}}
 	store.publisher = &controlstate.PublisherIdentity{ID: "publisher", GrantID: "grant", KeyID: "key", CreatorID: "identity", Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_public_url", PublicURLID: "url"}}
 	store.publisherPlan = &authorization.CertificatePlan{CacheKey: "app.example.test", Scope: "app.example.test", Identifiers: []string{"app.example.test"}, ChallengeMethod: certificateidentity.ChallengeDNS01}
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576}}`))
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576},"preferred_regions":["AWS:us-west-1"]}`))
 	r.Header.Set("Authorization", "Bearer publisher-access")
 	r.Header.Set("Idempotency-Key", "retry")
 	r.Header.Set("Publisher-Run-Proof", "proof")
@@ -58,7 +60,7 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 		t.Fatalf("create run: %d %s", w.Code, w.Body.String())
 	}
 	request := store.sessionRequest
-	if request.TrafficSelection == nil || *request.TrafficSelection.Connections != 48 || *request.TrafficSelection.RatePer != "2s" || *request.TrafficSelection.TotalUploadBytes != 1048576 || request.TrafficDefaults != defaults || request.TrafficCeiling != ceiling || request.PublisherIdentityID != "publisher" || request.PublisherRunProof != "proof" || len(request.RetrySecret) != 0 {
+	if request.TrafficSelection == nil || *request.TrafficSelection.Connections != 48 || *request.TrafficSelection.RatePer != "2s" || *request.TrafficSelection.TotalUploadBytes != 1048576 || len(request.PreferredRegions) != 1 || request.PreferredRegions[0] != "sjc" || request.TrafficDefaults != defaults || request.TrafficCeiling != ceiling || request.PublisherIdentityID != "publisher" || request.PublisherRunProof != "proof" || len(request.RetrySecret) != 0 {
 		t.Fatal("traffic hooks changed or lost publisher authorization")
 	}
 }

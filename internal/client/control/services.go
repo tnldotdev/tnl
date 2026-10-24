@@ -25,14 +25,23 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, id string) error {
 	return err
 }
 
-func (c *Client) CreateVisitorIngressAssignments(ctx context.Context, serviceID, deviceID, key string) ([]controlv1.ConnectorSessionSetup, error) {
+func (c *Client) CreateVisitorIngressAssignments(ctx context.Context, serviceID, deviceID, key string, preferred ...string) ([]controlv1.ConnectorSessionSetup, error) {
+	body := controlv1.CreateVisitorIngressAssignmentsJSONRequestBody{DeviceId: deviceID, IdempotencyKey: key}
+	if len(preferred) > 0 {
+		values := controlv1.LocationPreferences(append([]string(nil), preferred...))
+		body.PreferredRegions = &values
+	}
 	return requestWithAccess[[]controlv1.ConnectorSessionSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateVisitorIngressAssignments(ctx, serviceID, controlv1.CreateVisitorIngressAssignmentsJSONRequestBody{DeviceId: deviceID, IdempotencyKey: key}, editors...)
+		return c.api.CreateVisitorIngressAssignments(ctx, serviceID, body, editors...)
 	})
 }
 
-func (c *Client) CreateVisitorIngressAssignment(ctx context.Context, serviceID, deviceID, excludeIngressID, key string) (controlv1.ConnectorSessionSetup, error) {
+func (c *Client) CreateVisitorIngressAssignment(ctx context.Context, serviceID, deviceID, excludeIngressID, key string, preferred ...string) (controlv1.ConnectorSessionSetup, error) {
 	body := controlv1.CreateVisitorIngressAssignmentJSONRequestBody{DeviceId: deviceID, IdempotencyKey: key}
+	if len(preferred) > 0 {
+		values := controlv1.LocationPreferences(append([]string(nil), preferred...))
+		body.PreferredRegions = &values
+	}
 	if excludeIngressID != "" {
 		body.ExcludeIngressId = &excludeIngressID
 	}

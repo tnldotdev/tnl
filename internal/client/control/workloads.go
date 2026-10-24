@@ -16,15 +16,19 @@ func (c *Client) CheckWorkloadService(ctx context.Context, credential, service s
 		return c.api.CheckWorkloadService(ctx, service, editors...)
 	})
 }
-func (c *Client) CreateWorkloadIngressAssignments(ctx context.Context, credential, service, key string) (controlv1.WorkloadIngressAssignments, error) {
-	return c.CreateWorkloadIngressAssignmentSet(ctx, credential, service, key, 2, "")
+func (c *Client) CreateWorkloadIngressAssignments(ctx context.Context, credential, service, key string, preferred ...string) (controlv1.WorkloadIngressAssignments, error) {
+	return c.CreateWorkloadIngressAssignmentSet(ctx, credential, service, key, 2, "", preferred...)
 }
-func (c *Client) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string) (controlv1.WorkloadIngressAssignments, error) {
+func (c *Client) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string, preferred ...string) (controlv1.WorkloadIngressAssignments, error) {
+	body := controlv1.CreateWorkloadIngressAssignmentsJSONRequestBody{IdempotencyKey: key, Count: &count}
+	if exclude != "" {
+		body.ExcludeIngressId = &exclude
+	}
+	if len(preferred) > 0 {
+		values := controlv1.LocationPreferences(append([]string(nil), preferred...))
+		body.PreferredRegions = &values
+	}
 	return request[controlv1.WorkloadIngressAssignments](ctx, c, credential, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		body := controlv1.CreateWorkloadIngressAssignmentsJSONRequestBody{IdempotencyKey: key, Count: &count}
-		if exclude != "" {
-			body.ExcludeIngressId = &exclude
-		}
 		return c.api.CreateWorkloadIngressAssignments(ctx, service, body, editors...)
 	})
 }

@@ -9,6 +9,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -48,6 +49,10 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
+	code, valid := region.Parse(body.Region)
+	if !valid || code != region.Code(body.Region) {
+		return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress region must be a known tnl code")
+	}
 	if !serviceapi.ValidIdentifiers(body.IngressPoolId) || body.ServicePorts == nil || len(body.ServicePorts) > 256 {
 		return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress service port inventory is invalid")
 	}
@@ -70,6 +75,7 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 	}
 	lease, err := s.store.RegisterIngress(ctx, controlstate.IngressRegistration{
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
+		Region:          code,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
 		ConnectorAddress: optionalString(body.ConnectorAddress), ConnectorTLSServerName: optionalString(body.ConnectorTlsServerName),

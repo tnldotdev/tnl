@@ -40,13 +40,23 @@ schemas:
           type: object
           additionalProperties: false
           required:
-            [id, service_id, credential, expires_at, ingress_id, ingress_address, tls_server_name]
+            [
+              id,
+              service_id,
+              credential,
+              expires_at,
+              ingress_id,
+              region,
+              ingress_address,
+              tls_server_name,
+            ]
           properties:
             id: { type: string }
             service_id: { type: string }
             credential: { type: string }
             expires_at: { type: string, format: date-time }
             ingress_id: { type: string }
+            region: { type: string, pattern: "^(local|[a-z]{3})$" }
             ingress_address: { type: string }
             tls_server_name: { type: string }
   WorkloadProvider:

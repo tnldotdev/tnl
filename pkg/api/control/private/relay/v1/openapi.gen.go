@@ -225,6 +225,7 @@ type RelayLease struct {
 	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
 	ObservedAddress      *string    `json:"observed_address,omitempty"`
 	ProtocolVersion      int64      `json:"protocol_version"`
+	Region               string     `json:"region"`
 	RegisteredAt         time.Time  `json:"registered_at"`
 	RelayAddress         Identifier `json:"relay_address"`
 	RelayId              Identifier `json:"relay_id"`
@@ -252,12 +253,15 @@ type RelayRegistration struct {
 	InternalNetworks     []string   `json:"internal_networks"`
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
 	ProtocolVersion      int64      `json:"protocol_version"`
-	RelayAddress         Identifier `json:"relay_address"`
-	RelayId              Identifier `json:"relay_id"`
-	RelayRunId           Identifier `json:"relay_run_id"`
-	RelayServiceId       Identifier `json:"relay_service_id"`
-	StreamCapacity       int64      `json:"stream_capacity"`
-	TlsServerName        Identifier `json:"tls_server_name"`
+
+	// Region Stable tnl region code shared by processes in this relay service.
+	Region         string     `json:"region"`
+	RelayAddress   Identifier `json:"relay_address"`
+	RelayId        Identifier `json:"relay_id"`
+	RelayRunId     Identifier `json:"relay_run_id"`
+	RelayServiceId Identifier `json:"relay_service_id"`
+	StreamCapacity int64      `json:"stream_capacity"`
+	TlsServerName  Identifier `json:"tls_server_name"`
 }
 
 // RelayRenewal defines model for RelayRenewal.

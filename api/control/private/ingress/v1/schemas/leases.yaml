@@ -6,12 +6,17 @@ schemas:
       [
         ingress_id,
         ingress_run_id,
+        region,
         protocol_version,
         connection_capacity,
         ingress_pool_id,
         service_ports,
       ]
     properties:
+      region:
+        type: string
+        pattern: "^(local|[a-z]{3})$"
+        description: Stable tnl region code, or local for an unlocated self-hosted process.
       ingress_pool_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       service_ports:
@@ -88,6 +93,7 @@ schemas:
       - ingress_id
       - ingress_run_id
       - ingress_lease_revision
+      - region
       - protocol_version
       - connection_capacity
       - reported_connections
@@ -98,6 +104,9 @@ schemas:
       - renewed_at
       - lease_expires_at
     properties:
+      region:
+        type: string
+        pattern: "^(local|[a-z]{3})$"
       ingress_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       ingress_run_id:

@@ -112,6 +112,14 @@ bundling and external consumers.
 - Publisher connection slots use different relay services. Initial routability
   needs the certificate and both connections; afterward one ready connection can
   sustain service while the other is replaced.
+- [region catalog](../../internal/region/catalog.json) codes identify geography,
+  not a provider or authority boundary. ingress and relay registrations use a
+  checked tnl code; unlocated self-hosted processes use `local`. providers map to
+  these codes explicitly. preferences select from currently live, capacity-eligible
+  processes; a failed preferred region falls back without granting visit access.
+  one relay service stays in one region, and its connection slots still belong to
+  different relay services. each private ingress address must reach its exact
+  assigned process; two hostnames on a load-balanced app are not two paths.
 - Ingress creates PROXY v2 metadata once; relay preserves it. No application
   bytes are replayed after the first visitor byte sent to a relay.
 - A copied relay lease deadline is a routing observation. The connected relay

@@ -3061,6 +3061,11 @@
           "type": "string",
           "description": "Stable ingress process identity."
         },
+        "region": {
+          "type": "string",
+          "description": "Stable tnl region code for this ingress or relay process; local means no geographic placement.",
+          "default": "local"
+        },
         "ingress_pool_id": {
           "type": "string",
           "description": "Ingress pool served by this ingress process.",

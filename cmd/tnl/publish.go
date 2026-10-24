@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -25,6 +26,7 @@ type publishCommand struct {
 	backgroundPublishFlags  `embed:""`
 	Target                  string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
 	Protocol                string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Configured services need publicURL for public HTTPS."`
+	PreferRegion            []string          `name:"prefer-region" help:"Preferred tnl region or provider:region; repeat to order fallback regions for an ad-hoc foreground publish."`
 	TargetTLS               *bool             `name:"target-tls" help:"Verify publisher-to-target TLS using native protocol negotiation. Independent of visitor TLS."`
 	TargetTLSName           string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	EnrollmentKey           string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
@@ -45,6 +47,12 @@ type publishCommand struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if _, err := region.Preferences(flags.PreferRegion); err != nil {
+		return publisherCLIError("--prefer-region requires distinct known tnl or provider regions")
+	}
+	if len(flags.PreferRegion) > 0 && (flags.service || flags.Service != "" || flags.Protocol != "" && flags.Protocol != "http" || flags.Install || flags.Detach || flags.Enrolled || flags.EnrollmentKey != "" || flags.PublisherCredentialFile != "" || flags.PublisherIdentityID != "") {
+		return publisherCLIError("--prefer-region is available for a foreground ad-hoc publish")
+	}
 	telemetry := optionalTelemetryReporter(reporters)
 	if flags.Enrolled {
 		var err error
@@ -144,7 +152,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{Target: flags.Target, PreferredRegions: flags.PreferRegion, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {

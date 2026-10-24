@@ -9,6 +9,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
@@ -37,6 +38,10 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistration) (relayv1.RelayLease, error) {
+	code, valid := region.Parse(body.Region)
+	if !valid || code != region.Code(body.Region) {
+		return relayv1.RelayLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "relay region must be a known tnl code")
+	}
 	if !serviceapi.ValidIdentifiers(
 		body.RelayServiceId, body.RelayId, body.RelayRunId, body.RelayAddress,
 		body.TlsServerName, body.InternalRelayAddress,
@@ -62,6 +67,7 @@ func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistrat
 	}
 	lease, err := s.store.RegisterRelay(ctx, controlstate.RelayRegistration{
 		RelayServiceID: body.RelayServiceId, RelayID: body.RelayId, RelayRunID: body.RelayRunId,
+		Region:          code,
 		ProtocolVersion: protocolVersion, RelayAddress: body.RelayAddress, TLSServerName: body.TlsServerName,
 		InternalRelayAddress: body.InternalRelayAddress, InternalNetworks: internalNetworks,
 		ConnectionCapacity: connectionCapacity, StreamCapacity: streamCapacity,

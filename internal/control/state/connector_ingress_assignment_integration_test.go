@@ -12,8 +12,63 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestIntegrationPrivateIngressRegionalPreferenceAndFallback(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "regional_ingress")
+	ctx := t.Context()
+	request := oidcRouteRequest(t, d, now)
+	service, err := d.CreateServiceAt(ctx, request.TeamID, request.ActingIdentityID, "db", "db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := d.EnrollVisitorDevice(ctx, request.ActingIdentityID, public, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct {
+		id     string
+		region region.Code
+	}{
+		{"a-iad", "iad"}, {"b-sjc", "sjc"}, {"c-sjc", "sjc"},
+	} {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: entry.id, IngressRunID: entry.id + "-run", Region: entry.region,
+			ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: entry.id + ".example.test:443", ConnectorTLSServerName: entry.id + ".example.test"}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := d.CreateVisitorIngressAssignments(ctx, request.ActingIdentityID, device.ID, service.ID, "pair", now, "aws:us-west-1")
+	if err != nil || len(first) != 2 || first[0].Region != "sjc" || first[1].Region != "sjc" || first[0].IngressID == first[1].IngressID || first[0].IngressAddress == first[1].IngressAddress {
+		t.Fatal("preferred region lost independent process endpoints", first, err)
+	}
+	replayed, err := d.CreateVisitorIngressAssignments(ctx, request.ActingIdentityID, device.ID, service.ID, "pair", now, "sjc")
+	if err != nil || replayed[0].ID != first[0].ID || replayed[1].ID != first[1].ID {
+		t.Fatal("normalized preference did not recover exact assignments", replayed, err)
+	}
+	if _, err := d.CreateVisitorIngressAssignments(ctx, request.ActingIdentityID, device.ID, service.ID, "pair", now, "iad"); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("changing preferred region reused a committed request", err)
+	}
+	fallback, err := d.CreateVisitorIngressAssignment(ctx, request.ActingIdentityID, device.ID, service.ID, "", "fallback", now, "fly:sjc")
+	if err != nil || fallback.Region != "iad" || fallback.IngressID != "a-iad" {
+		t.Fatal("full local region did not fall back to the live remote process", fallback, err)
+	}
+	if err := d.ReleaseVisitorIngressAssignment(ctx, request.ActingIdentityID, first[0].ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateVisitorIngressAssignment(ctx, request.ActingIdentityID, device.ID, service.ID, "", "missing", now, "unknown"); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("unknown location was accepted", err)
+	}
+	freed, err := d.CreateVisitorIngressAssignment(ctx, request.ActingIdentityID, device.ID, service.ID, "", "freed", now, "sjc")
+	if err != nil || freed.Region != "sjc" || freed.IngressID != first[0].IngressID {
+		t.Fatal("released preferred capacity was not reused", freed, err)
+	}
+}
 
 func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 	for _, change := range []string{"device", "service", "count", "exclusion", "revoked-device", "revoked-grant", "disabled-identity", "released", "bound", "expired", "lease-expired", "lease-replaced", "draining", "cleanup", "storage-rotation"} {
