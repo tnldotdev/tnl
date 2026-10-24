@@ -85,6 +85,13 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if scenario != "relay-restart" && scenario != "control-restart" && !runtimeExternalFault(scenario) {
 		return fmt.Errorf("unknown runtime scenario %q", scenario)
 	}
+	controlDelay, err := controlDelayOptions(os.Getenv("CONTROL_DELAY"))
+	if err != nil {
+		return err
+	}
+	if len(controlDelay) > 0 && scenario != "latency" && scenario != "packet-loss" {
+		return errors.New("CONTROL_DELAY requires a latency or packet-loss scenario")
+	}
 	if topology := os.Getenv("HA_TOPOLOGY"); topology != "0" && topology != "1" && topology != "" {
 		return errors.New("HA_TOPOLOGY must be 0 or 1")
 	}
