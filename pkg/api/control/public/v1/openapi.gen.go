@@ -3712,17 +3712,23 @@ type VisitorPolicyIP struct {
 
 // VisitorPolicySnapshot defines model for VisitorPolicySnapshot.
 type VisitorPolicySnapshot struct {
-	Anonymous   bool             `json:"anonymous"`
-	Enabled     bool             `json:"enabled"`
-	Hostname    string           `json:"hostname"`
-	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
-	Issuer      string           `json:"issuer"`
-	KeyRevision int64            `json:"key_revision"`
+	Anonymous bool `json:"anonymous"`
+
+	// ClientIssuerPem public trust for service client certificates; absent until the issuer is prepared.
+	ClientIssuerPem *string          `json:"client_issuer_pem,omitempty"`
+	Enabled         bool             `json:"enabled"`
+	Hostname        string           `json:"hostname"`
+	Ip              *VisitorPolicyIP `json:"ip,omitempty"`
+	Issuer          string           `json:"issuer"`
+	KeyRevision     int64            `json:"key_revision"`
 
 	// MetadataRevision current service metadata revision; zero for public URLs.
 	MetadataRevision int64     `json:"metadata_revision"`
 	ObservedAt       time.Time `json:"observed_at"`
 	Port             int       `json:"port"`
+
+	// Public whether the saved service endpoint permits direct visitors; true for public URLs.
+	Public bool `json:"public"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource              VisitorResourceScope       `json:"resource"`

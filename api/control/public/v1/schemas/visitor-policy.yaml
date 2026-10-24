@@ -42,6 +42,7 @@ schemas:
         valid_until,
         enabled,
         anonymous,
+        public,
         verification_keys,
         workload_leases,
         stream_allocations,
@@ -62,6 +63,13 @@ schemas:
       valid_until: { type: string, format: date-time }
       enabled: { type: boolean }
       anonymous: { type: boolean }
+      public:
+        description: whether the saved service endpoint permits direct visitors; true for public URLs.
+        type: boolean
+      client_issuer_pem:
+        description: public trust for service client certificates; absent until the issuer is prepared.
+        type: string
+        maxLength: 4096
       verification_keys:
         type: array
         maxItems: 64

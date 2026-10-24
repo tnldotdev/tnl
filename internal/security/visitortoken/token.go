@@ -120,6 +120,7 @@ type View struct {
 	Port                  uint16
 	VisitorPolicyRevision int64
 	MetadataRevision      int64
+	Public                bool
 	ObservedAt            time.Time
 	ValidUntil            time.Time
 	Keys                  map[string]ed25519.PublicKey

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
@@ -67,6 +68,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		team, policy.Hostname, policy.Port = row.TeamID, row.CanonicalHostname, 443
 		policy.Enabled = row.LifecycleState == "enabled" && (!row.ExpiresAt.Valid || row.ExpiresAt.Time.After(now))
 		policy.Anonymous = row.AccessMode == "anonymous"
+		policy.Public = true
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.After(now) && row.ExpiresAt.Time.Before(policy.ValidUntil) {
 			policy.ValidUntil = row.ExpiresAt.Time
 		}
@@ -122,7 +124,28 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		}
 		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
 		policy.MetadataRevision = row.TrustRevision
+		policy.Public = row.Public
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
+		// certificate trust is prepared with policy, never fetched by a visitor.
+		// the immutable issuer may not exist before the first certificate request.
+		var material []byte
+		var storageKey string
+		err = tx.QueryRow(ctx, `SELECT seed_ciphertext,storage_key_id FROM control.service_client_certificate_issuer WHERE id`).Scan(&material, &storageKey)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return result, err
+		}
+		if err == nil {
+			seed, _, err := d.storageKey.Open(storageKey, serviceClientIssuerContext, material)
+			if err != nil {
+				return result, err
+			}
+			issuer, err := controlvisitor.New(seed)
+			clear(seed)
+			if err != nil {
+				return result, err
+			}
+			policy.ClientIssuerPem = new(string(issuer.CertificatePEM()))
+		}
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 		if err != nil {
 			return result, err

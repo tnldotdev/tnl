@@ -1,7 +1,10 @@
 package visitorlease
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/pem"
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -19,8 +22,23 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
-		MetadataRevision: policy.MetadataRevision, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
+		MetadataRevision: policy.MetadataRevision, Public: policy.Public, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
+	if policy.ClientIssuerPem != nil {
+		if scope.Kind != visitorscope.Service || len(*policy.ClientIssuerPem) > 4096 {
+			return Update{}, ErrUpdate
+		}
+		block, remaining := pem.Decode([]byte(*policy.ClientIssuerPem))
+		if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(remaining)) != 0 {
+			return Update{}, ErrUpdate
+		}
+		issuer, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !issuer.IsCA || issuer.CheckSignatureFrom(issuer) != nil {
+			return Update{}, ErrUpdate
+		}
+		update.ClientAuthorities = x509.NewCertPool()
+		update.ClientAuthorities.AddCert(issuer)
+	}
 	update.Allocations = make(map[string]controlv1.StreamCapacityAllocation, len(policy.StreamAllocations))
 	for _, allocation := range policy.StreamAllocations {
 		if !validAllocation(allocation, scope) {
