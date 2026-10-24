@@ -6,6 +6,7 @@ package visitorlease
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/x509"
 	"errors"
 	"maps"
 	"net/netip"
@@ -32,6 +33,7 @@ type Update struct {
 	Events             []int64
 	Snapshot           bool
 	Allocations        map[string]controlv1.StreamCapacityAllocation
+	ClientAuthorities  *x509.CertPool
 }
 
 type Request struct {
@@ -154,6 +156,9 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		}
 	}
 	update.Allocations = maps.Clone(update.Allocations)
+	if update.ClientAuthorities != nil {
+		update.ClientAuthorities = update.ClientAuthorities.Clone()
+	}
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil
@@ -184,6 +189,17 @@ func (l *Lease) Active() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.guards) != 0 || len(l.reservations) != 0
+}
+
+// ClientAuthorities returns a private copy of currently prepared certificate
+// trust. it performs no fetching and cannot extend the visitor policy deadline.
+func (l *Lease) ClientAuthorities() *x509.CertPool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.current || !l.update.Enabled || !l.now().Before(l.update.View.ValidUntil) || l.update.ClientAuthorities == nil {
+		return nil
+	}
+	return l.update.ClientAuthorities.Clone()
 }
 
 func (l *Lease) ValidateReservation(reservation tunnelv1.StreamReservation) error {
