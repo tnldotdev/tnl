@@ -84,7 +84,11 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		PublicURLCertificateWorkers: 4,
-		OIDCIssuer:                  testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		// the transport matrix opens 16 fresh visitors concurrently; prepare
+		// all 16 slots in the first allocation instead of racing expansion.
+		TrafficDefaultConnections: 64, TrafficDefaultRate: 20, TrafficDefaultRatePer: time.Second,
+		TrafficDefaultBurst: 40, TrafficDefaultUploadBytes: 8 << 20, TrafficDefaultDownloadBytes: 16 << 20,
+		OIDCIssuer: testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,

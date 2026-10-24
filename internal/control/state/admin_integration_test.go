@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/region"
 )
 
 func TestIntegrationAdministrationState(t *testing.T) {
@@ -39,7 +40,7 @@ func TestIntegrationAdministrationState(t *testing.T) {
 		t.Fatalf("admin counts = %#v, %v", counts, err)
 	}
 	page, err := database.ListAdminRelayLeases(t.Context(), "relay_a", now)
-	if err != nil || len(page.Relays) != 1 || page.Relays[0].RelayID != "relay_b" || page.NextCursor != "" {
+	if err != nil || len(page.Relays) != 1 || page.Relays[0].RelayID != "relay_b" || page.Relays[0].Region != region.Local || page.NextCursor != "" {
 		t.Fatalf("relay page = %#v, %v", page, err)
 	}
 	if _, err := database.ListAdminRelayLeases(t.Context(), " relay_a ", now); !errors.Is(err, ErrAdminInvalid) {
@@ -50,7 +51,7 @@ func TestIntegrationAdministrationState(t *testing.T) {
 	drained, err := database.BeginAdminRelayDrain(
 		t.Context(), lease.RelayLeaseIdentity, actor, "request_drain", now.Add(time.Second), deadline,
 	)
-	if err != nil || !drained.Draining || drained.DrainDeadline == nil || !drained.DrainDeadline.Equal(deadline) ||
+	if err != nil || drained.Region != region.Local || !drained.Draining || drained.DrainDeadline == nil || !drained.DrainDeadline.Equal(deadline) ||
 		!drained.LeaseExpiresAt.Equal(deadline) {
 		t.Fatalf("drained relay = %#v, %v", drained, err)
 	}
