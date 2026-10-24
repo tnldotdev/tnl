@@ -495,45 +495,40 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *pr
 		return nil, false, err
 	}
 	entry.MetadataRevision = uint64(run.TrustRevision)
-	entry.Permission, err = nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, run.Permission.VisitorToken, nil)
-	if err != nil {
-		return nil, false, err
-	}
 	entry.TraceContext = observability.WireTrace(ctx)
-	if _, err = tunnelv1.WriteConnectorVisitorOpening(stream, entry, nil); err != nil {
-		return nil, false, err
-	}
-	_, endAcceptance := observability.Start(ctx, "connector.acceptance")
-	accepted, err := tunnelv1.ReadConnectorVisitorAccepted(stream)
-	endAcceptance(err)
-	if err != nil {
-		// a complete native opening can start server-first target negotiation.
-		// an uncertain acceptance must never create a second target connection.
-		return nil, true, err
-	}
-	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP || accepted.VisitorConnectionID != entry.VisitorConnectionID {
-		return nil, true, ErrServiceConnection
-	}
 	if run.Endpoint == nil {
 		return nil, false, ErrServiceConnection
 	}
-	request := tunnel.NewNativeRequestWriter(stream)
-	stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
-	defer func() {
-		if err != nil {
-			_ = stopRenewal()
+	opening := func(initial []byte) error {
+		permission, proofErr := nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, run.Permission.VisitorToken, initial)
+		if proofErr != nil {
+			return proofErr
 		}
-	}()
+		entry.Permission = permission
+		// even an empty native opening can start server-first target work.
+		// an uncertain write cannot create a second target on the sibling path.
+		committed = true
+		_, writeErr := tunnelv1.WriteConnectorVisitorOpening(stream, entry, initial)
+		return writeErr
+	}
+	var request *tunnel.NativeRequestWriter
+	if run.Protocol == "tcp" {
+		request = tunnel.NewNativeOpeningWriter(stream, opening)
+	} else {
+		if err := opening(nil); err != nil {
+			return nil, committed, err
+		}
+		request = tunnel.NewNativeRequestWriter(stream)
+	}
 	{
 		if run.Protocol == "tcp" {
 			if run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify {
-				return nil, false, ErrServiceConnection
+				return nil, committed, ErrServiceConnection
 			}
 			verification := run.ServiceTLS.Clone()
 			verification.ServerName = run.Endpoint.Hostname
 			verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
 			secured := tls.Client(request, verification)
-			committed = true
 			tlsCtx, endTLS := observability.Start(setup, "connector.visitor_tls")
 			err = secured.HandshakeContext(tlsCtx)
 			endTLS(err)
@@ -543,11 +538,13 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *pr
 			if err = stream.SetDeadline(time.Time{}); err != nil {
 				return nil, true, err
 			}
+			stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
 			return &privateConn{Conn: secured, release: release, stop: stopRenewal}, true, nil
 		}
 		if err = stream.SetDeadline(time.Time{}); err != nil {
-			return nil, false, err
+			return nil, committed, err
 		}
+		stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
 		return &privateConn{Conn: request, release: release, stop: stopRenewal}, true, nil
 	}
 }

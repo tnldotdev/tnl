@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -75,6 +76,66 @@ func TestNativeRequestDeadlineInterruptionResumesPartialHeaderAndPayload(t *test
 
 func nativeRequestPermissionFixture() tunnelv1.NativeVisitorPermission {
 	return tunnelv1.NativeVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}
+}
+
+func TestNativeOpeningCarriesBoundedInitialDataWithoutReturnAcceptance(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	_ = client.SetDeadline(time.Now().Add(time.Second))
+	_ = server.SetDeadline(time.Now().Add(time.Second))
+	entry := tunnelv1.ConnectorVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: "svc_aaaaaaaaaaaaaaaaaaaaaa", ServiceRunID: "srun_aaaaaaaaaaaaaaaaaaaaaa", RunNumber: 1, VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", MetadataRevision: 1, Permission: nativeRequestPermissionFixture()}
+	data := bytes.Repeat([]byte{0x16}, tunnelv1.MaxInitialBytes+7)
+	done := make(chan error, 1)
+	go func() {
+		writer := NewNativeOpeningWriter(client, func(initial []byte) error {
+			_, err := tunnelv1.WriteConnectorVisitorOpening(client, entry, initial)
+			return err
+		})
+		if n, err := writer.Write(data); err != nil || n != len(data) {
+			done <- errors.Join(err, io.ErrShortWrite)
+			return
+		}
+		if err := writer.Renew(nativeRequestPermissionFixture()); err != nil {
+			done <- err
+			return
+		}
+		done <- writer.CloseWrite()
+	}()
+	gotEntry, initial, err := tunnelv1.ReadConnectorVisitorOpening(server)
+	if err != nil || gotEntry.VisitorConnectionID != entry.VisitorConnectionID || len(initial) != tunnelv1.MaxInitialBytes {
+		t.Fatal("native opening lost its binding or initial-data bound", err)
+	}
+	var renewals int
+	reader := NewNativeRequestReader(server, initial, func(tunnelv1.NativeVisitorPermission) error { renewals++; return nil })
+	got, err := io.ReadAll(reader)
+	if err != nil || !bytes.Equal(got, data) || renewals != 1 {
+		t.Fatal("native opening duplicated, changed, or reordered request bytes", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal("native request waited for return acceptance", err)
+	}
+}
+
+func TestNativeOpeningFailureCannotReplayOnDataRenewalOrClose(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	failed := errors.New("ambiguous opening write")
+	var attempts int
+	writer := NewNativeOpeningWriter(client, func([]byte) error { attempts++; return failed })
+	if _, err := writer.Write([]byte("initial visitor bytes")); !errors.Is(err, failed) {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("following bytes")); !errors.Is(err, failed) {
+		t.Fatal("failed opening resumed request data", err)
+	}
+	if err := writer.Renew(nativeRequestPermissionFixture()); !errors.Is(err, failed) {
+		t.Fatal("failed opening resumed permission renewal", err)
+	}
+	if err := writer.CloseWrite(); !errors.Is(err, failed) || attempts != 1 {
+		t.Fatal("failed opening was replayed during cleanup", attempts, err)
+	}
 }
 
 func TestNativeRequestRenewalNeverEntersVisitorTLSBytes(t *testing.T) {

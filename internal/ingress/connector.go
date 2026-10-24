@@ -691,11 +691,6 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		audit.Reason = "capacity"
 		return ErrServiceAdmission
 	}
-	accepted := tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted",
-		ConnectorSessionID: bound.ConnectorSessionId,
-		SourceIP:           bound.ObservedSourceIp, VisitorConnectionID: visitorID}
-	accepted.Subject = subject
-	accepted.GrantRevision = uint64(permission.VisitorPolicyRevision)
 	proxy, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
 	if err != nil {
 		return err
@@ -743,11 +738,6 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			return openingErr
 		}
 		backendRequests = tunnel.NewNativeRequestWriter(candidate)
-		accepted.PublisherConnectionID, accepted.ConnectionAssignmentRevision = relay.PublisherConnectionId, uint64(relay.ConnectionAssignmentRevision)
-		if err := tunnelv1.WriteConnectorVisitorAccepted(visitor, accepted); err != nil {
-			_ = candidate.Close()
-			return err
-		}
 		if err := visitor.SetDeadline(time.Time{}); err != nil {
 			_ = candidate.Close()
 			return err

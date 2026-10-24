@@ -281,7 +281,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check combined openings, exact byte commitment, ordered notifications, TLS isolation, and drain
     cmds:
-      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|NativeRequest|NativeAdmission|ConnectorOpening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions)' -count=1
+      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|NativeOpening|NativeRequest|NativeAdmission|ConnectorOpening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions)' -count=1
 
   test:fuzz:stream-opening:
     dir: "{{.ROOT_DIR}}"

@@ -138,9 +138,6 @@ func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			if _, err := tunnelv1.WriteConnectorVisitorOpening(stream, privateEntry(control), nil); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-				t.Fatalf("alternate could not accept after stalled preferred relay: %v", err)
-			}
 			if _, err := stream.Write([]byte("ping")); err != nil {
 				t.Fatal(err)
 			}

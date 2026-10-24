@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -158,6 +160,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithCancel(t.Context())
+				revoked := false
 				ready, done := make(chan struct{}), make(chan error, 1)
 				go func() {
 					done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id,
@@ -167,7 +170,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 					cancel()
 					select {
 					case err := <-done:
-						if err != nil {
+						if err != nil && (!revoked || !errors.Is(err, clientcontrol.ErrNotFound)) {
 							t.Errorf("private HTTP connector shutdown: %v", err)
 						}
 					case <-time.After(5 * time.Second):
@@ -227,6 +230,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 					t.Fatal(err)
 				}
+				revoked = true
 				if _, err := io.Copy(io.Discard, reader); err == nil {
 					t.Fatal("revocation did not interrupt the live HTTP stream")
 				}

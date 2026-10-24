@@ -296,9 +296,6 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 	if err != nil {
 		return
 	}
-	if len(initial) != 0 {
-		return
-	}
 	f.mu.Lock()
 	run := f.run
 	f.mu.Unlock()
@@ -306,13 +303,15 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		return
 	}
 	f.opened.Add(1)
-	connection, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-	accepted := tunnelv1.ConnectorVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "connector_visitor_accepted", ConnectorSessionID: session.SessionID, Subject: session.Subject,
-		SourceIP: session.SourceIP, VisitorConnectionID: entry.VisitorConnectionID, GrantRevision: 7, PublisherConnectionID: connection, ConnectionAssignmentRevision: 2}
-	if f.wrongAdmission.Load() {
-		accepted.Subject.DeviceID = "vdev_bbbbbbbbbbbbbbbbbbbbbb"
+	if f.wrongAdmission.Load() || session.Subject != f.device.Subject {
+		return
 	}
-	if tunnelv1.WriteConnectorVisitorAccepted(stream, accepted) != nil {
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(entry.Permission.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, initial)
+	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
+	if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
+		return
+	}
+	if run.Protocol == "tcp" && len(initial) == 0 {
 		return
 	}
 	request := tunnel.NewNativeRequestReader(stream, initial, func(p tunnelv1.NativeVisitorPermission) error {

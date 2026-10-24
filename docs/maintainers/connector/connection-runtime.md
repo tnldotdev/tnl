@@ -113,14 +113,14 @@ existing ownership-based qualification rule.
 | prepared snapshot                | one service adapter's transport identity and current authorization deadline; existing driver settings do not update     |
 | admitted operation               | its original subject/session and exact run; bounded live decisions renew only within that original authorization window |
 
-public HTTP responses and WebSocket upgrades retain live guards just as managed
-HTTP and PostgreSQL streams do. guards recheck current access within 30 seconds
-and fail closed at the last successful decision deadline during a control outage,
-at most two minutes and never beyond an earlier credential/session/run deadline.
-renewal can keep an authorized operation alive within its original scope; a fresh
-session cannot extend that operation's original deadline. denied or failed
-operations close without replay. pool reuse and stable listener ports do not
-replace these checks.
+prepared public HTTP requests and native connector streams retain local policy
+guards through responses, upgrades, and database queries. background observations
+are valid for at most ten seconds from fetch start and stop earlier at credential,
+parent, allocation, or infrastructure deadlines. native permission renewals travel
+outside visitor TLS and application bytes; a future policy revision cannot extend
+the prior confirmed deadline while its observation is pending. renewal stays within
+the original subject and scope. denied or failed operations close without replay.
+pool reuse and stable listener ports do not replace these checks.
 
 ## machine lifecycle, schema 1
 
