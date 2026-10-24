@@ -9,12 +9,14 @@ WITH service_guard AS MATERIALIZED (
 ), relay_service AS (
     INSERT INTO control.relay_services (
         relay_service_id,
+        region,
         relay_address,
         tls_server_name,
         created_at,
         updated_at
     ) SELECT
         sqlc.arg(relay_service_id),
+        sqlc.arg(region),
         sqlc.arg(relay_address),
         sqlc.arg(tls_server_name),
         sqlc.arg(registered_at),
@@ -24,13 +26,15 @@ WITH service_guard AS MATERIALIZED (
     ON CONFLICT (relay_service_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at
     WHERE control.relay_services.relay_address = EXCLUDED.relay_address
+      AND control.relay_services.region = EXCLUDED.region
       AND control.relay_services.tls_server_name = EXCLUDED.tls_server_name
       AND control.relay_services.enabled
-	RETURNING relay_service_id, relay_address, tls_server_name
+	RETURNING relay_service_id, region, relay_address, tls_server_name
 ), relay_lease AS (
 INSERT INTO control.relay_leases (
     relay_id,
     relay_service_id,
+    region,
     relay_run_id,
     relay_lease_revision,
     protocol_version,
@@ -45,6 +49,7 @@ INSERT INTO control.relay_leases (
 SELECT
     sqlc.arg(relay_id),
     relay_service.relay_service_id,
+    relay_service.region,
     sqlc.arg(relay_run_id),
     1,
     sqlc.arg(protocol_version),
@@ -58,6 +63,7 @@ SELECT
 FROM relay_service
 ON CONFLICT (relay_id) DO UPDATE SET
     relay_service_id = EXCLUDED.relay_service_id,
+    region = EXCLUDED.region,
     relay_run_id = EXCLUDED.relay_run_id,
     relay_lease_revision = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
@@ -115,6 +121,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    AND control.relay_leases.region = EXCLUDED.region
     OR control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
   AND NOT (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
       AND control.relay_leases.draining
@@ -273,6 +280,9 @@ WHERE leases.lease_expires_at > sqlc.arg(now)
   AND leases.stream_capacity > 0
 ORDER BY leases.relay_service_id, leases.relay_id
 FOR UPDATE OF leases;
+
+-- name: GetRelayServiceRegion :one
+SELECT region FROM control.relay_services WHERE relay_service_id=sqlc.arg(relay_service_id);
 
 -- name: LockRelayServiceForCertificate :one
 WITH service_guard AS MATERIALIZED (

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
@@ -44,6 +45,7 @@ type RunConfig struct {
 	Access            func(context.Context) (string, error)
 	Identity          authorityv1.PublisherEnrollmentResult
 	ServiceID         string
+	PreferredRegions  []string
 	Target            string
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
@@ -72,6 +74,9 @@ func (RunConfig) GoString() string { return "private publisher configuration" }
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
+	if _, err := region.Preferences(config.PreferredRegions); err != nil {
+		return errors.Join(ErrPrivateStream, err)
+	}
 	if config.Control == nil || config.Access == nil || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
@@ -205,7 +210,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		if access == "" {
 			return ErrPrivateStream
 		}
-		setup, err = managedControl.StartServiceRun(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber)
+		if len(config.PreferredRegions) > 0 {
+			control, ok := managedControl.(interface {
+				StartServiceRunInRegions(context.Context, string, string, string, int64, []string) (controlv1.ServiceRunSetup, error)
+			})
+			if !ok {
+				return errors.Join(ErrPrivateStream, region.ErrPreference)
+			}
+			setup, err = control.StartServiceRunInRegions(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber, config.PreferredRegions)
+		} else {
+			setup, err = managedControl.StartServiceRun(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber)
+		}
 		return err
 	})
 	if err != nil {

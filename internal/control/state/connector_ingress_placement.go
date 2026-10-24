@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -15,13 +17,14 @@ var ErrPrivateIngressUnavailable = errors.New("private connector ingress assignm
 
 type privateIngressPlacement struct {
 	id, run, address, serverName string
+	region                       region.Code
 	revision, capacity, load     int64
 }
 
 // lock in identity order, then count outstanding assignments in a fresh
 // statement. concurrent setup cannot overbook the same advertised capacity.
-func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, count int, exclude string) ([]privateIngressPlacement, error) {
-	rows, err := tx.Query(ctx, `SELECT ingress_id,ingress_run_id,ingress_lease_revision,connector_address,connector_tls_server_name,connection_capacity,reported_connections
+func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, count int, exclude string, preferences []region.Code) ([]privateIngressPlacement, error) {
+	rows, err := tx.Query(ctx, `SELECT ingress_id,ingress_run_id,ingress_lease_revision,connector_address,connector_tls_server_name,region,connection_capacity,reported_connections
 	    FROM control.ingress_leases ingress WHERE lease_expires_at>$1 AND NOT draining AND protocol_version=$3 AND connection_capacity>0
 	    AND connector_address<>'' AND connector_tls_server_name<>'' AND ingress_id<>$2
 	    AND NOT EXISTS(SELECT 1 FROM control.ingress_leases excluded WHERE excluded.ingress_id=$2 AND excluded.connector_address=ingress.connector_address)
@@ -32,10 +35,12 @@ func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, cou
 	var candidates []privateIngressPlacement
 	for rows.Next() {
 		var p privateIngressPlacement
-		if err = rows.Scan(&p.id, &p.run, &p.revision, &p.address, &p.serverName, &p.capacity, &p.load); err != nil {
+		var code string
+		if err = rows.Scan(&p.id, &p.run, &p.revision, &p.address, &p.serverName, &code, &p.capacity, &p.load); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		p.region = region.Code(code)
 		candidates = append(candidates, p)
 	}
 	if err = rows.Err(); err != nil {
@@ -60,6 +65,13 @@ func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, cou
 		}
 	}
 	slices.SortStableFunc(candidates, func(a, b privateIngressPlacement) int {
+		leftRank, rightRank := region.Rank(preferences, a.region), region.Rank(preferences, b.region)
+		if leftRank != rightRank {
+			if leftRank < rightRank {
+				return -1
+			}
+			return 1
+		}
 		left, right := float64(a.load)/float64(a.capacity), float64(b.load)/float64(b.capacity)
 		if left < right {
 			return -1
@@ -76,6 +88,7 @@ func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, cou
 		}
 		selected = append(selected, p)
 		if len(selected) == count {
+			observability.WithRegion(ctx, selected[0].region)
 			return selected, nil
 		}
 	}

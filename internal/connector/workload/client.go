@@ -304,20 +304,20 @@ func (c *Client) PrepareVisitorToken(ctx context.Context, service string) (contr
 	}
 	return c.control.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Source: source})
 }
-func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string) (controlv1.WorkloadIngressAssignments, error) {
+func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string, preferred ...string) (controlv1.WorkloadIngressAssignments, error) {
 	r, err := c.Session()
 	if err != nil {
 		return controlv1.WorkloadIngressAssignments{}, err
 	}
-	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key)
+	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key, preferred...)
 }
 
-func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, exclude string) (controlv1.WorkloadIngressAssignments, error) {
+func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, exclude string, preferred ...string) (controlv1.WorkloadIngressAssignments, error) {
 	r, err := c.Session()
 	if err != nil {
 		return controlv1.WorkloadIngressAssignments{}, err
 	}
-	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude)
+	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude, preferred...)
 }
 func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.ServiceSelection, error) {
 	r, err := c.Session()

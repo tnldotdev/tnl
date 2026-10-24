@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "locations": [
+    {
+      "code": "sjc",
+      "latitude": 37.34,
+      "longitude": -121.89,
+      "providers": { "aws": "us-west-1", "azure": "westus", "fly": "sjc" }
+    },
+    {
+      "code": "sea",
+      "latitude": 47.61,
+      "longitude": -122.33,
+      "providers": { "aws": "us-west-2", "gcp": "us-west1", "azure": "westus2", "fly": "sea" }
+    },
+    {
+      "code": "lax",
+      "latitude": 34.05,
+      "longitude": -118.24,
+      "providers": { "gcp": "us-west2", "fly": "lax" }
+    },
+    {
+      "code": "dfw",
+      "latitude": 32.78,
+      "longitude": -96.8,
+      "providers": { "gcp": "us-south1", "azure": "southcentralus", "fly": "dfw" }
+    },
+    {
+      "code": "ord",
+      "latitude": 41.88,
+      "longitude": -87.63,
+      "providers": { "aws": "us-east-2", "gcp": "us-central1", "azure": "centralus", "fly": "ord" }
+    },
+    {
+      "code": "iad",
+      "latitude": 38.95,
+      "longitude": -77.46,
+      "providers": { "aws": "us-east-1", "gcp": "us-east4", "azure": "eastus", "fly": "iad" }
+    },
+    {
+      "code": "lhr",
+      "latitude": 51.51,
+      "longitude": -0.13,
+      "providers": { "aws": "eu-west-2", "gcp": "europe-west2", "azure": "uksouth", "fly": "lhr" }
+    },
+    {
+      "code": "fra",
+      "latitude": 50.11,
+      "longitude": 8.68,
+      "providers": {
+        "aws": "eu-central-1",
+        "gcp": "europe-west3",
+        "azure": "germanywestcentral",
+        "fly": "fra"
+      }
+    },
+    {
+      "code": "sin",
+      "latitude": 1.29,
+      "longitude": 103.85,
+      "providers": {
+        "aws": "ap-southeast-1",
+        "gcp": "asia-southeast1",
+        "azure": "southeastasia",
+        "fly": "sin"
+      }
+    },
+    {
+      "code": "syd",
+      "latitude": -33.87,
+      "longitude": 151.21,
+      "providers": {
+        "aws": "ap-southeast-2",
+        "gcp": "australia-southeast1",
+        "azure": "australiaeast",
+        "fly": "syd"
+      }
+    }
+  ]
+}

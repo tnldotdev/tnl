@@ -66,6 +66,7 @@ var (
 	RoleKey                = metricEnumKey[Role]{keyName{"tnl.role"}}
 	CloudProvider          = stringKey{keyName{"cloud.provider"}}
 	CloudRegion            = stringKey{keyName{"cloud.region"}}
+	RegionKey              = stringKey{keyName{"tnl.region"}}
 	CloudAvailabilityZone  = stringKey{keyName{"cloud.availability_zone"}}
 	TeamID                 = metricStringKey{keyName{"tnl.team_id"}}
 	DeploymentID           = metricStringKey{keyName{"tnl.deployment_id"}}

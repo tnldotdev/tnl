@@ -16,6 +16,7 @@ import (
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -23,6 +24,7 @@ type StartOptions struct {
 	SessionOptions
 	Team                                                           string
 	Name, Listen, Protocol                                         string
+	PreferredRegions                                               []string
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
 	Foreground, Detach, Install, System, Stdio                     bool
 	SystemStateDir, DetachedChild, Output                          string
@@ -37,6 +39,9 @@ type StartOptions struct {
 }
 
 func ValidateMode(flags StartOptions) error {
+	if _, err := region.Preferences(flags.PreferredRegions); err != nil {
+		return publisherCLIError("--prefer-region requires distinct known tnl or provider regions")
+	}
 	if flags.Stdio && (flags.Listen != "" || flags.Install || flags.Detach || flags.Foreground || flags.DetachedChild != "" || flags.Output == "json") {
 		return connectModeError(failure.ConnectModeInvalid)
 	}
@@ -140,7 +145,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	}
 	if flags.Stdio {
 		finishStartup(nil)
-		return runConnectStdio(observability.Independent(ctx), session, service, input, output)
+		return runConnectStdio(observability.Independent(ctx), session, service, input, output, flags.PreferredRegions...)
 	}
 	flags.Protocol = string(service.Protocol)
 	if flags.Listen == "" && service.Endpoint != nil {
@@ -194,7 +199,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	}
 	job := supervisor.Job{Kind: supervisor.KindConnector, ID: jobID, Name: service.Name,
 		Server: session.authenticated.ServerEndpoint, ServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
-		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision}
+		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision, PreferredRegions: append([]string(nil), flags.PreferredRegions...)}
 	job.Endpoint = service.Endpoint
 	writeReady := func(job supervisor.Job, destination io.Writer) error {
 		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
@@ -323,7 +328,7 @@ func serveConnector(ctx context.Context, session *Session, listener net.Listener
 }
 
 func connectConfiguration(ctx context.Context, session *Session, job supervisor.Job) (connectorstream.Config, error) {
-	control, err := connectorstream.NewControl(session.authenticated.Control, session.store, job.IdentityID)
+	control, err := connectorstream.NewControl(session.authenticated.Control, session.store, job.IdentityID, job.PreferredRegions...)
 	if err != nil {
 		return connectorstream.Config{}, err
 	}

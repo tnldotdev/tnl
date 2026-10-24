@@ -667,6 +667,24 @@
       "dimension_policy": "bounded"
     },
     {
+      "key": "tnl.region",
+      "values": [
+        "local",
+        "sjc",
+        "sea",
+        "lax",
+        "dfw",
+        "ord",
+        "iad",
+        "lhr",
+        "fra",
+        "sin",
+        "syd"
+      ],
+      "semantics": "validated tnl location code; never a provider region or high-cardinality metric label",
+      "dimension_policy": "trace_log"
+    },
+    {
       "key": "tnl.replica_key",
       "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
       "dimension_policy": "scoped"

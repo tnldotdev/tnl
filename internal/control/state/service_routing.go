@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -22,6 +23,7 @@ type ServiceInventory struct {
 
 type ConnectorSession struct {
 	Subject                                  VisitorSubject
+	Region                                   region.Code
 	ID, ServiceID, IdentityID, Credential    string
 	DeviceID                                 string
 	IngressID, IngressAddress, TLSServerName string

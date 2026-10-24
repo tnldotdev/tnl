@@ -101,6 +101,7 @@ type Querier interface {
 	CopyCompanySessionContexts(ctx context.Context, arg CopyCompanySessionContextsParams) error
 	CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error)
 	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
+	CountEligibleIngressesByPool(ctx context.Context, arg CountEligibleIngressesByPoolParams) (int64, error)
 	CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
 	CountOpenPublishRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenPublishRunAssignmentsByRelayServiceRow, error)
@@ -247,6 +248,7 @@ type Querier interface {
 	// KEY SHARE does not block claims or other readiness work. renewal or drain may
 	// overlap; readiness checks its lease, and projection reads exclude drained leases.
 	GetRelayLeaseForReady(ctx context.Context, relayID string) (GetRelayLeaseForReadyRow, error)
+	GetRelayServiceRegion(ctx context.Context, relayServiceID string) (string, error)
 	GetRelayTransportCertificate(ctx context.Context, arg GetRelayTransportCertificateParams) (ControlRelayService, error)
 	GetService(ctx context.Context, id string) (ControlService, error)
 	GetServiceCertificateOrderByCSR(ctx context.Context, arg GetServiceCertificateOrderByCSRParams) (ControlAcmeOrder, error)
@@ -617,6 +619,7 @@ type Querier interface {
 	StopPublisherRuntime(ctx context.Context, arg StopPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	StoreIngressTransportCertificate(ctx context.Context, arg StoreIngressTransportCertificateParams) (ControlIngressTransportCertificate, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
+	SumOwnedStreamCapacityAllocations(ctx context.Context, arg SumOwnedStreamCapacityAllocationsParams) (int64, error)
 	SumStreamCapacityAllocations(ctx context.Context, arg SumStreamCapacityAllocationsParams) (int64, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)
 	TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error)

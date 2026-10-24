@@ -494,6 +494,7 @@ type ControlIngressLease struct {
 	ID                     int64
 	IngressID              string
 	IngressRunID           string
+	Region                 string
 	IngressLeaseRevision   int64
 	ProtocolVersion        int64
 	ConnectionCapacity     int64
@@ -1117,6 +1118,7 @@ type ControlRelayLease struct {
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
+	Region               string
 	RelayRunID           string
 	RelayLeaseRevision   int64
 	ProtocolVersion      int64
@@ -1137,6 +1139,7 @@ type ControlRelayLease struct {
 type ControlRelayService struct {
 	ID                              int64
 	RelayServiceID                  string
+	Region                          string
 	RelayAddress                    string
 	TlsServerName                   string
 	TransportCertificatePem         pgtype.Text
@@ -1684,6 +1687,7 @@ type ControlWorkloadIngressRequest struct {
 	WorkloadSessionID string
 	IdempotencyKey    string
 	ServiceID         string
+	RequestDigest     []byte
 	ResultCiphertext  []byte
 	StorageKeyID      string
 }

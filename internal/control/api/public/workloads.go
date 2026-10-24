@@ -15,7 +15,7 @@ type WorkloadVisitorStore interface {
 	ListWorkloadServices(context.Context, string, time.Time) ([]controlstate.WorkloadService, error)
 	CheckWorkloadService(context.Context, string, string, time.Time) (controlstate.WorkloadServiceAuthorization, error)
 	CreateWorkloadIngressAssignments(context.Context, string, string, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
-	CreateWorkloadIngressAssignmentSet(context.Context, string, string, string, int, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
+	CreateWorkloadIngressAssignmentSet(context.Context, string, string, string, int, string, time.Time, ...string) (controlstate.WorkloadIngressAssignments, error)
 	SelectWorkloadServiceRun(context.Context, string, string, time.Time) (controlstate.ServiceSelection, error)
 	GetWorkloadIngressTransportTrust(context.Context, string, string, time.Time) (controlstate.IngressTransportTrust, error)
 	ReleaseWorkloadIngressAssignment(context.Context, string, string, time.Time) error
@@ -90,11 +90,16 @@ func (h *handler) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *htt
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload ingress assignment request")
 		return
 	}
+	preferences, err := normalizedLocationPreferences(body.PreferredRegions)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid preferred regions")
+		return
+	}
 	count := 2
 	if body.Count != nil {
 		count = *body.Count
 	}
-	result, err := store.CreateWorkloadIngressAssignmentSet(r.Context(), token, service, body.IdempotencyKey, count, optionalFeedbackString(body.ExcludeIngressId), time.Now())
+	result, err := store.CreateWorkloadIngressAssignmentSet(r.Context(), token, service, body.IdempotencyKey, count, optionalFeedbackString(body.ExcludeIngressId), time.Now(), preferences...)
 	if err != nil {
 		workloadVisitorProblem(w, err)
 		return

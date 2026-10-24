@@ -400,11 +400,15 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	reserved := make(map[string]int64, len(replaced))
 	choices := make([]relayServicePlacement, 0, len(replaced))
 	for range replaced {
+		nearby, err := nearbyRelayServices(ctx, q, replaced[len(choices)].RelayServiceID, services)
+		if err != nil {
+			return err
+		}
 		var choice *relayServicePlacement
-		for i := range services {
-			id := services[i].relayServiceID
-			if !used[id] && services[i].assignments-free[id]+reserved[id] < services[i].capacity {
-				choice = &services[i]
+		for i := range nearby {
+			id := nearby[i].relayServiceID
+			if !used[id] && nearby[i].assignments-free[id]+reserved[id] < nearby[i].capacity {
+				choice = &nearby[i]
 				break
 			}
 		}

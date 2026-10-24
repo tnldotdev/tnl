@@ -25,6 +25,10 @@ func (h *handler) serviceRuns(w http.ResponseWriter) (serviceRunStore, bool) {
 }
 
 func serviceRunProblem(w http.ResponseWriter, operation string, err error) {
+	if errors.Is(err, controlstate.ErrRegionPreference) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid preferred regions")
+		return
+	}
 	if errors.Is(err, controlstate.ErrInsufficientRelayServices) {
 		writeProblem(w, 503, controlv1.Unavailable, "two live relay services are required")
 		return
@@ -103,18 +107,23 @@ func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, servic
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service run")
 		return
 	}
+	preferences, err := normalizedLocationPreferences(body.PreferredRegions)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid preferred regions")
+		return
+	}
 	_, publisher, ok := h.authenticatePublisher(w, r)
 	if !ok {
 		return
 	}
 	store, ok := h.store.(interface {
-		StartServiceRun(context.Context, string, string, int64, controlstate.PublisherIdentity, time.Time) (controlstate.ServiceRunState, error)
+		StartServiceRun(context.Context, string, string, int64, controlstate.PublisherIdentity, time.Time, ...string) (controlstate.ServiceRunState, error)
 	})
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service runs are unavailable")
 		return
 	}
-	state, err := store.StartServiceRun(r.Context(), service, run, body.RunNumber, publisher, time.Now())
+	state, err := store.StartServiceRun(r.Context(), service, run, body.RunNumber, publisher, time.Now(), preferences...)
 	if err != nil {
 		serviceRunProblem(w, "start service run", err)
 		return

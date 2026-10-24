@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var ErrStreamCapacity = errors.New("stream capacity is unavailable")
@@ -149,10 +150,29 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if err != nil {
 		return result, err
 	}
+	// for runs smaller than two slots per live ingress, prevent one process
+	// from claiming every slot through its first request or extra request IDs.
+	// large runs retain demand-driven chunks instead of stranding idle capacity.
+	fairShare := capacity
+	live, err := q.CountEligibleIngressesByPool(ctx, controlstatedb.CountEligibleIngressesByPoolParams{IngressPoolID: ingressPool, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version})
+	if err != nil {
+		return result, err
+	}
+	if live < 1 {
+		return result, ErrStreamCapacity
+	}
+	if live >= (capacity+1)/2 {
+		fairShare = (capacity + live - 1) / live
+	}
+	owned, err := q.SumOwnedStreamCapacityAllocations(ctx, controlstatedb.SumOwnedStreamCapacityAllocationsParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
+		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
 	prior, err := q.FindStreamCapacityAllocation(ctx, controlstatedb.FindStreamCapacityAllocationParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
 		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), RequestID: request.RequestID})
 	if err == nil {
-		if prior.RetiredAt.Valid || !prior.ValidUntil.Time.After(now) || prior.RunNumber != request.RunNumber || used > capacity {
+		if prior.RetiredAt.Valid || !prior.ValidUntil.Time.After(now) || prior.RunNumber != request.RunNumber || used > capacity || owned > fairShare {
 			return result, ErrStreamCapacity
 		}
 		prior, err = q.RenewStreamCapacityAllocation(ctx, controlstatedb.RenewStreamCapacityAllocationParams{ID: prior.ID, Now: timestamptz(now), ValidUntil: timestamptz(until)})
@@ -179,7 +199,10 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if allocations >= 2048 {
 		return result, ErrStreamCapacity
 	}
-	amount := int32(min(int64(request.Capacity), available))
+	amount := int32(min(int64(request.Capacity), available, fairShare-owned))
+	if amount < 1 {
+		return result, ErrStreamCapacity
+	}
 	id, err := opaqueid.New("salloc_")
 	if err != nil {
 		return result, err

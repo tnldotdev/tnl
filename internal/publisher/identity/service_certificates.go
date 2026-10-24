@@ -51,8 +51,21 @@ func (n *Native) MarkServiceCertificateInstalled(ctx context.Context, service, r
 }
 
 func (n *Native) StartServiceRun(ctx context.Context, service, run, access string, number int64) (controlv1.ServiceRunSetup, error) {
+	return n.StartServiceRunInRegions(ctx, service, run, access, number, nil)
+}
+
+func (n *Native) StartServiceRunInRegions(ctx context.Context, service, run, access string, number int64, preferred []string) (controlv1.ServiceRunSetup, error) {
 	if _, err := n.serviceCertificates(service); err != nil {
 		return controlv1.ServiceRunSetup{}, err
+	}
+	if len(preferred) > 0 {
+		control, ok := n.NativeControl.(interface {
+			StartServiceRunInRegions(context.Context, string, string, string, int64, []string) (controlv1.ServiceRunSetup, error)
+		})
+		if !ok {
+			return controlv1.ServiceRunSetup{}, ErrRegionUnsupported
+		}
+		return control.StartServiceRunInRegions(ctx, service, run, access, number, preferred)
 	}
 	control, ok := n.NativeControl.(interface {
 		StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)

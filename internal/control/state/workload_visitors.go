@@ -1,8 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -62,13 +65,14 @@ func (d *Database) ListWorkloadServices(ctx context.Context, credential string, 
 }
 
 type WorkloadIngressAssignment struct {
-	ID             string    `json:"id"`
-	ServiceID      string    `json:"service_id"`
-	Credential     string    `json:"credential"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	IngressID      string    `json:"ingress_id"`
-	IngressAddress string    `json:"ingress_address"`
-	TLSServerName  string    `json:"tls_server_name"`
+	ID             string      `json:"id"`
+	Region         region.Code `json:"region"`
+	ServiceID      string      `json:"service_id"`
+	Credential     string      `json:"credential"`
+	ExpiresAt      time.Time   `json:"expires_at"`
+	IngressID      string      `json:"ingress_id"`
+	IngressAddress string      `json:"ingress_address"`
+	TLSServerName  string      `json:"tls_server_name"`
 }
 type WorkloadIngressAssignments struct {
 	Subject     VisitorSubject              `json:"subject"`
@@ -79,10 +83,19 @@ func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credent
 	return d.CreateWorkloadIngressAssignmentSet(ctx, credential, service, key, 2, "", now)
 }
 
-func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string, now time.Time) (result WorkloadIngressAssignments, retErr error) {
+func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string, now time.Time, preferred ...string) (result WorkloadIngressAssignments, retErr error) {
 	if !validIdempotencyKey(key) || count < 1 || count > 2 || len(exclude) > 256 || count == 2 && exclude != "" {
 		return result, ErrWorkloadDenied
 	}
+	preferences, err := region.Preferences(preferred)
+	if err != nil {
+		return result, ErrWorkloadDenied
+	}
+	request, err := json.Marshal([]any{service, count, exclude, preferences})
+	if err != nil {
+		return result, err
+	}
+	digest := sha256.Sum256(request)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -104,10 +117,11 @@ func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, crede
 	}
 	scope := workloadRequestScope(id, key)
 	var storedService, keyID string
+	var storedDigest []byte
 	var encrypted []byte
-	err = tx.QueryRow(ctx, `SELECT service_id,result_ciphertext,storage_key_id FROM control.workload_ingress_requests WHERE workload_session_id=$1 AND idempotency_key=$2`, id, key).Scan(&storedService, &encrypted, &keyID)
+	err = tx.QueryRow(ctx, `SELECT service_id,request_digest,result_ciphertext,storage_key_id FROM control.workload_ingress_requests WHERE workload_session_id=$1 AND idempotency_key=$2`, id, key).Scan(&storedService, &storedDigest, &encrypted, &keyID)
 	if err == nil {
-		if storedService != service {
+		if storedService != service || !bytes.Equal(storedDigest, digest[:]) {
 			return result, ErrWorkloadConflict
 		}
 		data, _, err := d.storageKey.Open(keyID, scope, encrypted)
@@ -137,7 +151,7 @@ func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, crede
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude)
+	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude, preferences)
 	if err != nil {
 		return result, err
 	}
@@ -155,14 +169,14 @@ func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, crede
 		if err != nil {
 			return result, err
 		}
-		result.Assignments = append(result.Assignments, WorkloadIngressAssignment{ID: session, ServiceID: service, Credential: secret, ExpiresAt: until, IngressID: p.id, IngressAddress: p.address, TLSServerName: p.serverName})
+		result.Assignments = append(result.Assignments, WorkloadIngressAssignment{ID: session, ServiceID: service, Credential: secret, ExpiresAt: until, IngressID: p.id, Region: p.region, IngressAddress: p.address, TLSServerName: p.serverName})
 	}
 	data, _ := json.Marshal(result)
 	encrypted, err = d.storageKey.Seal(scope, data)
 	if err != nil {
 		return result, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO control.workload_ingress_requests(workload_session_id,idempotency_key,service_id,result_ciphertext,storage_key_id) VALUES($1,$2,$3,$4,$5)`, id, key, service, encrypted, d.storageKey.CurrentID()); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO control.workload_ingress_requests(workload_session_id,idempotency_key,service_id,request_digest,result_ciphertext,storage_key_id) VALUES($1,$2,$3,$4,$5,$6)`, id, key, service, digest[:], encrypted, d.storageKey.CurrentID()); err != nil {
 		return result, err
 	}
 	if err = workloadAudit(ctx, tx, id, "assignment.create", service, now); err != nil {

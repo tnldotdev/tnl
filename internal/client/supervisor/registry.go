@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -73,6 +74,7 @@ type Job struct {
 	StateDir            string                          `json:"state_dir,omitempty"`
 	Project             *clientproject.Project          `json:"project,omitempty"`
 	ProjectService      string                          `json:"project_service,omitempty"`
+	PreferredRegions    []string                        `json:"preferred_regions,omitempty"`
 	Trust               *targettrust.Snapshot           `json:"trust,omitempty"`
 	Endpoint            *controlv1.ServiceEndpoint      `json:"endpoint,omitempty"`
 	ID                  string                          `json:"job_id"`
@@ -546,6 +548,7 @@ func validateJob(job *Job) error {
 		job.Kind != KindGroup && job.GroupInstance != "" ||
 		job.Kind != KindGroup && job.IdentityDir != "" ||
 		job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
+		job.Kind != KindConnector && len(job.PreferredRegions) != 0 ||
 		job.Kind != KindService && job.Kind != KindConnector && job.Endpoint != nil ||
 		job.Kind != KindService && (job.Project != nil || job.ProjectService != "" || job.PublisherPool) ||
 		(job.Kind == KindPublicURL || job.Kind == KindGroup) && (job.Trust != nil || job.TrustRevision != 0) {
@@ -569,6 +572,14 @@ func validateJob(job *Job) error {
 			return ErrScope
 		}
 	case KindConnector:
+		codes, err := region.Preferences(job.PreferredRegions)
+		if err != nil {
+			return ErrScope
+		}
+		job.PreferredRegions = make([]string, len(codes))
+		for index, code := range codes {
+			job.PreferredRegions[index] = string(code)
+		}
 		if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.PublicURLID != "" || job.PublisherIdentityID != "" || job.GrantID != "" ||
 			!opaqueid.Valid(job.IdentityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(job.StateDir) || job.TrustRevision < 1 ||
 			job.Limits != (publisher.ApplicationLimits{}) || !job.Protocol.Valid() {

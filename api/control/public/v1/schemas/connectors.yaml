@@ -1,4 +1,9 @@
 schemas:
+  LocationPreferences:
+    type: array
+    maxItems: 8
+    description: Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
+    items: { type: string, minLength: 1, maxLength: 64 }
   IngressTransportTrust:
     type: object
     additionalProperties: false
@@ -61,6 +66,7 @@ schemas:
         service_id,
         session_credential,
         ingress_id,
+        region,
         ingress_address,
         tls_server_name,
         subject,
@@ -78,6 +84,7 @@ schemas:
           not a service-specific hostname.,
         }
       ingress_id: { type: string, minLength: 1 }
+      region: { type: string, pattern: "^(local|[a-z]{3})$" }
       tls_server_name: { type: string, minLength: 1, maxLength: 253 }
       expires_at: { type: string, format: date-time }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }

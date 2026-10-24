@@ -8,6 +8,17 @@ WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id
 SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations
 WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND run_id=sqlc.arg(run_id) AND valid_until>sqlc.arg(now);
 
+-- name: CountEligibleIngressesByPool :one
+SELECT count(*) FROM control.ingress_leases
+WHERE ingress_pool_id=sqlc.arg(ingress_pool_id) AND lease_expires_at>sqlc.arg(now)
+    AND NOT draining AND protocol_version=sqlc.arg(protocol_version) AND connection_capacity>0;
+
+-- name: SumOwnedStreamCapacityAllocations :one
+SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations
+WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND run_id=sqlc.arg(run_id)
+    AND ingress_id=sqlc.arg(ingress_id) AND ingress_run_id=sqlc.arg(ingress_run_id)
+    AND ingress_lease_revision=sqlc.arg(ingress_lease_revision) AND valid_until>sqlc.arg(now);
+
 -- name: CountStreamCapacityAllocations :one
 SELECT count(*) FROM control.stream_capacity_allocations
 WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND valid_until>sqlc.arg(now);

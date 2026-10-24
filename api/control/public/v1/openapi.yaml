@@ -510,6 +510,8 @@ components:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitationPage"
     ConnectorSessionSetup:
       $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionSetup"
+    LocationPreferences:
+      $ref: "./schemas/connectors.yaml#/schemas/LocationPreferences"
     ServiceRunPreparation:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunPreparation"
     CreateServiceCertificateIssuanceRequest:

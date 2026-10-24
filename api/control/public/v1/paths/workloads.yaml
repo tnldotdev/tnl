@@ -92,6 +92,8 @@ paths:
                 idempotency_key: { type: string, minLength: 1, maxLength: 128 }
                 count: { type: integer, minimum: 1, maximum: 2, default: 2 }
                 exclude_ingress_id: { type: string, minLength: 1, maxLength: 256 }
+                preferred_regions:
+                  { $ref: "../openapi.yaml#/components/schemas/LocationPreferences" }
       responses:
         "200":
           description: Independently claimable workload-owned assignments; a replacement reserves only its failed slot

@@ -98,6 +98,8 @@ paths:
               properties:
                 device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
                 exclude_ingress_id: { type: string, maxLength: 128 }
+                preferred_regions:
+                  { $ref: "../openapi.yaml#/components/schemas/LocationPreferences" }
                 idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
       responses:
         "201":
@@ -119,6 +121,8 @@ paths:
               required: [device_id, idempotency_key]
               properties:
                 device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+                preferred_regions:
+                  { $ref: "../openapi.yaml#/components/schemas/LocationPreferences" }
                 idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
       description: Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
       security: [{ bearerAuth: [] }]

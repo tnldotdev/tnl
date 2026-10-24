@@ -262,6 +262,7 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 	}
 	result := relayv1.RelayLease{
 		RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
+		Region:             string(lease.Region),
 		RelayLeaseRevision: int64(lease.RelayLeaseRevision), ProtocolVersion: int64(lease.ProtocolVersion),
 		RelayAddress: lease.RelayAddress, TlsServerName: lease.TLSServerName,
 		InternalRelayAddress: lease.InternalRelayAddress, InternalNetworks: internalNetworks,

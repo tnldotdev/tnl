@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
+	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -31,7 +32,7 @@ type serviceVisitorStore interface {
 	ListAvailableServices(context.Context, string, string, time.Time) ([]controlstate.ServiceInventory, string, error)
 	EnrollVisitorDevice(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.VisitorDevice, error)
 	RevokeVisitorDevice(context.Context, string, string, time.Time) error
-	CreateVisitorIngressAssignments(context.Context, string, string, string, string, time.Time) ([]controlstate.ConnectorSession, error)
+	CreateVisitorIngressAssignments(context.Context, string, string, string, string, time.Time, ...string) ([]controlstate.ConnectorSession, error)
 	SelectServiceRun(context.Context, string, string, string, time.Time) (controlstate.ServiceSelection, error)
 }
 
@@ -375,11 +376,16 @@ func (h *handler) CreateVisitorIngressAssignments(w http.ResponseWriter, r *http
 		writeProblem(w, 400, controlv1.InvalidRequest, "device identity is required")
 		return
 	}
+	preferences, err := normalizedLocationPreferences(body.PreferredRegions)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid preferred regions")
+		return
+	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
 	}
-	sessions, err := store.CreateVisitorIngressAssignments(r.Context(), identity, body.DeviceId, id, body.IdempotencyKey, time.Now())
+	sessions, err := store.CreateVisitorIngressAssignments(r.Context(), identity, body.DeviceId, id, body.IdempotencyKey, time.Now(), preferences...)
 	if err != nil {
 		serviceVisitorError(w, "create private connector session", err)
 		return
@@ -393,7 +399,22 @@ func (h *handler) CreateVisitorIngressAssignments(w http.ResponseWriter, r *http
 }
 
 func connectorSessionSetup(session controlstate.ConnectorSession) controlv1.ConnectorSessionSetup {
-	return controlv1.ConnectorSessionSetup{ConnectorSessionId: session.ID, ServiceId: session.ServiceID, SessionCredential: session.Credential, IngressId: session.IngressID, IngressAddress: session.IngressAddress, TlsServerName: session.TLSServerName, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: session.IdentityID, DeviceID: session.DeviceID}), ExpiresAt: session.ExpiresAt}
+	return controlv1.ConnectorSessionSetup{ConnectorSessionId: session.ID, ServiceId: session.ServiceID, SessionCredential: session.Credential, IngressId: session.IngressID, Region: string(session.Region), IngressAddress: session.IngressAddress, TlsServerName: session.TLSServerName, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: session.IdentityID, DeviceID: session.DeviceID}), ExpiresAt: session.ExpiresAt}
+}
+
+func normalizedLocationPreferences(values *controlv1.LocationPreferences) ([]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+	codes, err := region.Preferences(*values)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, len(codes))
+	for index, code := range codes {
+		result[index] = string(code)
+	}
+	return result, nil
 }
 
 func (h *handler) CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
@@ -402,18 +423,23 @@ func (h *handler) CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.
 		writeProblem(w, 400, controlv1.InvalidRequest, "device identity is required")
 		return
 	}
+	preferences, err := normalizedLocationPreferences(body.PreferredRegions)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid preferred regions")
+		return
+	}
 	principal, ok := h.authorizeReads(w, r)
 	if !ok {
 		return
 	}
 	store, ok := h.store.(interface {
-		CreateVisitorIngressAssignment(context.Context, string, string, string, string, string, time.Time) (controlstate.ConnectorSession, error)
+		CreateVisitorIngressAssignment(context.Context, string, string, string, string, string, time.Time, ...string) (controlstate.ConnectorSession, error)
 	})
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "services are unavailable")
 		return
 	}
-	session, err := store.CreateVisitorIngressAssignment(r.Context(), principal.identityID, body.DeviceId, id, optionalFeedbackString(body.ExcludeIngressId), body.IdempotencyKey, time.Now())
+	session, err := store.CreateVisitorIngressAssignment(r.Context(), principal.identityID, body.DeviceId, id, optionalFeedbackString(body.ExcludeIngressId), body.IdempotencyKey, time.Now(), preferences...)
 	if err != nil {
 		serviceVisitorError(w, "create private connector assignment", err)
 		return
