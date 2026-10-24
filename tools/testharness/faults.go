@@ -13,8 +13,9 @@ import (
 )
 
 type impairmentEndpoint struct {
-	Service string     `json:"service"`
-	Filters [][]string `json:"filters"`
+	Service        string     `json:"service"`
+	Filters        [][]string `json:"filters"`
+	ControlFilters [][]string `json:"control_filters,omitempty"`
 }
 
 func (h *runtimeHarness) applyFault(ctx context.Context) error {
@@ -178,6 +179,10 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 	if err != nil {
 		return err
 	}
+	controlOptions, err := controlDelayOptions(os.Getenv("CONTROL_DELAY"))
+	if err != nil {
+		return err
+	}
 	addresses := make(map[string]string)
 	visitors := []string{"visitor-1", "visitor-2", "visitor-3", "visitor-4"}
 	for _, service := range append(append(append([]string{}, h.ingresses...), visitors...), append(h.activePublish, "relay-a", "relay-b")...) {
@@ -197,6 +202,19 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 	if err != nil {
 		return err
 	}
+	if len(controlOptions) > 0 {
+		controls := []string{"control-a"}
+		if len(h.ingresses) == 2 {
+			controls = append(controls, "control-b")
+		}
+		for _, name := range controls {
+			addresses[name], err = h.containerIP(ctx, name)
+			if err != nil {
+				return err
+			}
+		}
+		endpoints = controlImpairmentEndpoints(endpoints, addresses, append(append(append(append([]string{}, h.ingresses...), h.activePublish...), visitors...), "relay-a", "relay-b"), controls)
+	}
 	return h.withFaultCleanup(ctx, func(undo func(...string)) error {
 		for _, endpoint := range endpoints {
 			svc := endpoint.Service
@@ -211,6 +229,18 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 			if _, err := h.compose(ctx, append([]string{"exec", "-T", svc, "tc", "qdisc", "add", "dev", "eth0", "parent", "1:3", "handle", "30:", "netem"}, options...)...); err != nil {
 				return err
 			}
+			if len(endpoint.ControlFilters) > 0 {
+				if _, err := h.compose(ctx, append([]string{"exec", "-T", svc, "tc", "qdisc", "add", "dev", "eth0", "parent", "1:2", "handle", "20:", "netem"}, controlOptions...)...); err != nil {
+					return err
+				}
+				for _, filter := range endpoint.ControlFilters {
+					args := append([]string{"exec", "-T", svc, "tc", "filter", "add", "dev", "eth0", "parent", "1:", "protocol", "ip", "prio", "1", "u32"}, filter...)
+					args = append(args, "flowid", "1:2")
+					if _, err := h.compose(ctx, args...); err != nil {
+						return err
+					}
+				}
+			}
 			for _, filter := range endpoint.Filters {
 				args := append([]string{"exec", "-T", svc, "tc", "filter", "add", "dev", "eth0", "parent", "1:", "protocol", "ip", "prio", "1", "u32"}, filter...)
 				args = append(args, "flowid", "1:3")
@@ -219,7 +249,7 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 				}
 			}
 		}
-		config := map[string]any{"scenario": h.selected, "path": path, "rtt": os.Getenv("RTT"), "loss": os.Getenv("LOSS"),
+		config := map[string]any{"scenario": h.selected, "path": path, "rtt": os.Getenv("RTT"), "loss": os.Getenv("LOSS"), "control_request_delay": os.Getenv("CONTROL_DELAY"),
 			"seed": os.Getenv("SEED"), "endpoints": endpoints, "options": options}
 		data, err := json.MarshalIndent(config, "", "  ")
 		if err != nil {
@@ -314,6 +344,43 @@ func netemOptions(scenario, rtt, loss, rawSeed string) ([]string, error) {
 		result = append(result, "seed", strconv.FormatUint(seed, 10))
 	}
 	return result, nil
+}
+
+func controlDelayOptions(value string) ([]string, error) {
+	switch value {
+	case "", "0ms":
+		return nil, nil
+	case "50ms", "100ms":
+		return []string{"delay", value}, nil
+	default:
+		return nil, errors.New("CONTROL_DELAY must be 0ms, 50ms, or 100ms")
+	}
+}
+
+// only TCP requests addressed to control receive this additional one-way
+// delay. data-path QUIC/TLS filters retain their independent impairment band.
+func controlImpairmentEndpoints(endpoints []impairmentEndpoint, addresses map[string]string, sources, controls []string) []impairmentEndpoint {
+	seen := make(map[string]int, len(endpoints))
+	for index := range endpoints {
+		seen[endpoints[index].Service] = index
+	}
+	for _, source := range sources {
+		index, present := seen[source]
+		if !present {
+			index = len(endpoints)
+			seen[source] = index
+			endpoints = append(endpoints, impairmentEndpoint{Service: source, Filters: [][]string{}})
+		} else if len(endpoints[index].ControlFilters) > 0 {
+			continue
+		}
+		for _, control := range controls {
+			for _, port := range []string{"443", "8080", "9443"} {
+				endpoints[index].ControlFilters = append(endpoints[index].ControlFilters, []string{"match", "ip", "dst", addresses[control],
+					"match", "ip", "protocol", "6", "0xff", "match", "ip", "dport", port, "0xffff"})
+			}
+		}
+	}
+	return endpoints
 }
 
 func impairmentEndpoints(path string, addresses map[string]string, ingresses, publishers, visitors []string) ([]impairmentEndpoint, error) {

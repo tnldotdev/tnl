@@ -58,6 +58,7 @@ x-runtime: &runtime
         -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
         -tnl-runtime-load-network-path='${NETWORK_PATH:-forwarding}' \
+        -tnl-runtime-load-control-delay='${CONTROL_DELAY:-0ms}' \
         -tnl-runtime-load-rtt='${RTT:-20ms}' \
         -tnl-runtime-load-loss='${LOSS:-0.1}' \
         -tnl-runtime-load-trace='${TRACE:-0}' \

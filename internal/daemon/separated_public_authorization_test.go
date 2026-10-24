@@ -123,7 +123,17 @@ func runSeparatedPublicAuthorization(t *testing.T, database *sql.DB, publishers 
 			}
 		}
 		reportSetupLoad(t, phase.Name, results, expected)
-		reportSeparatedSetupEvidence(t, phase.Name, phase.Start, time.Now())
+		evidence := reportSeparatedSetupEvidence(t, phase.Name, phase.Start, time.Now())
+		if !phase.Direct {
+			if len(evidence.Visitors) == 0 {
+				t.Error("no public visitor traces were captured")
+			}
+			for _, visitor := range evidence.Visitors {
+				for operation, count := range visitor.ControlCalls {
+					t.Errorf("public visitor made %d synchronous control calls for %s", count, operation)
+				}
+			}
+		}
 	}
 	separatedWrite(t, fmt.Sprintf("public.phase-%d", len(phases)), publicLoadPhase{Done: true})
 	separatedWrite(t, "close-half", time.Now())
@@ -135,6 +145,50 @@ func runSeparatedPublicAuthorization(t *testing.T, database *sql.DB, publishers 
 		separatedWait(t, "fault.restored", 30*time.Second, nil)
 	}
 	verifySeparatedShutdown(t, database, len(publishers.URLs))
+}
+
+// prove both ingress processes can deliver a nonsecret, idempotent internal
+// request before handing visitors one-use browser handoffs or share links.
+// routing and allocation installation are background work, not proof from a
+// ready publisher connection alone.
+func waitSeparatedPublicVisitorTLS(t *testing.T, url string) {
+	t.Helper()
+	addresses := []string{"ingress-a-separated." + separatedDomain + ":443"}
+	if *runtimeLoadHATopology {
+		addresses = append(addresses, "ingress-b-separated."+separatedDomain+":443")
+	}
+	for _, address := range addresses {
+		visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: address}
+		client := visitor.OpenHTTP(false, false)
+		deadline := time.Now().Add(15 * time.Second)
+		status, failure := 0, ""
+		for {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url+"/__tnl/unknown", nil)
+			if err != nil {
+				t.Fatal("invalid prepared visitor probe")
+			}
+			response, err := client.Do(request)
+			if err == nil {
+				status = response.StatusCode
+				_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+				_ = response.Body.Close()
+				if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusSeeOther {
+					break
+				}
+			} else {
+				failure = fmt.Sprintf("%T", err)
+			}
+			if !time.Now().Before(deadline) {
+				client.Close()
+				t.Fatalf("prepared public visitor TLS did not become available; check ingress capacity and publisher policy (status=%d error_type=%s)", status, failure)
+			}
+			if err := benchworkload.WaitUntil(t.Context(), time.Now().Add(25*time.Millisecond)); err != nil {
+				client.Close()
+				t.Fatal("prepared public visitor probe was canceled")
+			}
+		}
+		client.Close()
+	}
 }
 
 func runSeparatedPublicAuthorizationVisitor(t *testing.T, ctx context.Context, component string, rate int) {
@@ -158,6 +212,7 @@ func runSeparatedPublicAuthorizationVisitor(t *testing.T, ctx context.Context, c
 		if preparation.Entry == "" {
 			continue
 		}
+		waitSeparatedPublicVisitorTLS(t, preparation.URL)
 		started := time.Now()
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, preparation.Entry, nil)
 		if err != nil {
@@ -173,6 +228,26 @@ func runSeparatedPublicAuthorizationVisitor(t *testing.T, ctx context.Context, c
 		parsed, _ := url.Parse(preparation.URL)
 		if readErr != nil || response.StatusCode != http.StatusSeeOther || len(jar.Cookies(parsed)) == 0 {
 			t.Fatalf("visitor preparation returned HTTP %d or no credential", response.StatusCode)
+		}
+		visitorPermission := false
+		for _, cookie := range jar.Cookies(parsed) {
+			visitorPermission = visitorPermission || cookie.Name == "__Host-tnl-visitor"
+		}
+		if !visitorPermission {
+			t.Fatal("visitor handoff did not install its signed permission cookie")
+		}
+		check, err := http.NewRequestWithContext(ctx, http.MethodGet, preparation.URL+"/bench", nil)
+		if err != nil {
+			t.Fatal("invalid visitor preparation probe")
+		}
+		proof, err := preparer.Do(check)
+		if err != nil {
+			t.Fatalf("signed visitor cookie failed on its first request: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(proof.Body, 64<<10))
+		_ = proof.Body.Close()
+		if proof.StatusCode != http.StatusOK {
+			t.Fatalf("signed visitor cookie was denied on its first request (status=%d)", proof.StatusCode)
 		}
 	}
 	preparer.Close()

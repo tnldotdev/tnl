@@ -55,6 +55,22 @@ func TestFaultNetworkSelectionAndInputs(t *testing.T) {
 	if _, err := impairmentEndpoints("invalid", addresses, nil, nil, nil); err == nil {
 		t.Fatal("invalid network path accepted")
 	}
+	for _, delay := range []string{"0ms", "50ms", "100ms"} {
+		options, err := controlDelayOptions(delay)
+		if err != nil || (delay == "0ms") != (len(options) == 0) {
+			t.Fatal("control delay cohort changed", delay, options, err)
+		}
+	}
+	if _, err := controlDelayOptions("25ms"); err == nil {
+		t.Fatal("unmatched control delay cohort was accepted")
+	}
+	addresses["control-a"], addresses["control-b"] = "192.0.2.6", "192.0.2.7"
+	separated := controlImpairmentEndpoints(forward, addresses, []string{"ingress-a", "publishers"}, []string{"control-a", "control-b"})
+	if len(separated) != 4 || len(separated[0].Filters) != 2 || len(separated[0].ControlFilters) != 6 ||
+		len(separated[3].ControlFilters) != 6 || !strings.Contains(strings.Join(separated[0].ControlFilters[0], " "), "dst 192.0.2.6 match ip protocol 6") ||
+		!strings.Contains(strings.Join(separated[3].ControlFilters[5], " "), "dst 192.0.2.7 match ip protocol 6") {
+		t.Fatal("control-only filters changed data-path impairment or missed a publisher", separated)
+	}
 	addresses["visitor-1"] = "192.0.2.5"
 	connector, err := impairmentEndpoints("connector", addresses, []string{"ingress-a"}, nil, []string{"visitor-1"})
 	if err != nil || len(connector) != 2 || len(connector[0].Filters) != 2 || !strings.Contains(strings.Join(connector[0].Filters[1], " "), "dst 192.0.2.1 match ip protocol 17") || !strings.Contains(strings.Join(connector[1].Filters[0], " "), "dst 192.0.2.5 match ip protocol 6") {
