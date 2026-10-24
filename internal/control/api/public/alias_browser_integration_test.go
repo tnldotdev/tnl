@@ -23,6 +23,9 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	m := owner.Identity.Memberships[0]
 	p := f.principal(owner)
 	ctx := controlstate.WithControlPrincipal(t.Context(), p)
+	if err := f.d.PrepareVisitorSigningKeys(ctx, f.server.URL, f.now); err != nil {
+		t.Fatal(err)
+	}
 	domains, err := f.d.ListTeamDomains(ctx, p.IdentityID, m.TeamId)
 	if err != nil {
 		t.Fatal(err)
