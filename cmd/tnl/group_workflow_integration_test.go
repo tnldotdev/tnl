@@ -47,6 +47,7 @@ import (
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -869,12 +870,16 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 		t.Fatal(err)
 	}
 	var firstFailure sync.Once
-	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond,
+	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, Region: string(region.Local), RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond,
 		Report: func(err error) { firstFailure.Do(func() { t.Logf("relay %s first control error: %v", id, err) }) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.workers.Go(func() { _ = controller.Run(f.ctx) })
+	f.workers.Go(func() {
+		if err := controller.Run(f.ctx); err != nil && f.ctx.Err() == nil {
+			t.Errorf("relay %s controller exited before readiness: %v", id, err)
+		}
+	})
 	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 }, "relay "+id)
 	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
@@ -928,12 +933,16 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		ports[index] = 20000 + index
 	}
 	var firstFailure sync.Once
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, VisitorControl: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second,
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, VisitorControl: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, Region: string(region.Local), IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second,
 		Report: func(err error) { firstFailure.Do(func() { t.Logf("ingress %s first control error: %v", id, err) }) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.workers.Go(func() { _ = controller.Run(f.ctx) })
+	f.workers.Go(func() {
+		if err := controller.Run(f.ctx); err != nil && f.ctx.Err() == nil {
+			t.Errorf("ingress %s controller exited before readiness: %v", id, err)
+		}
+	})
 	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) }, "ingress "+id)
 	// certificates expire with their issuing lease deadline. fetch current
 	// material for later connectors after the controller renews that lease.
