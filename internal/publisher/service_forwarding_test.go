@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func privateTCPPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
@@ -72,6 +76,97 @@ func TestPrivateOpaqueCancellationRetainsResponseAfterEOF(t *testing.T) {
 		t.Fatalf("half-close lost response: %q, %v", response, err)
 	}
 	if err := awaitPublisherTest(t, done); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNativeTLSCloseNotifyKeepsOuterPermissionRenewalsAndResponse(t *testing.T) {
+	target, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	client, server := privateTCPPair(t)
+	started := time.Now()
+	certificate := publicURLTestCertificate(t, "native.test")
+	var deadline atomic.Int64
+	renewed := make(chan struct{}, 1)
+	reader := tunnel.NewNativeRequestReader(server, nil, func(tunnelv1.NativeVisitorPermission) error {
+		deadline.Store(time.Now().Add(5 * time.Second).UnixNano())
+		renewed <- struct{}{}
+		return nil
+	})
+	service := ServiceStream{Protocol: config.ProtocolTCP, Hostname: "native.test", Target: target.Addr().String(),
+		TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, Visitor: ConnectorVisitor{Check: func(context.Context) (ServiceVisitorDecision, error) {
+			deadline.CompareAndSwap(0, time.Now().Add(1200*time.Millisecond).UnixNano())
+			return ServiceVisitorDecision{Allowed: true, ValidUntil: time.Unix(0, deadline.Load())}, nil
+		}}}
+	finished := make(chan error, 1)
+	go func() { finished <- service.Forward(t.Context(), reader) }()
+	targetDone := make(chan error, 1)
+	go func() {
+		conn, err := target.AcceptTCP()
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		var request []byte
+		request, err = io.ReadAll(conn)
+		if err != nil || string(request) != "request" {
+			targetDone <- errors.Join(err, errors.New("native target lost request half-close"))
+			return
+		}
+		select {
+		case <-renewed:
+		case <-time.After(2 * time.Second):
+			targetDone <- errors.New("outer permission frame stopped after TLS close_notify")
+			return
+		}
+		time.Sleep(1500 * time.Millisecond) // beyond the original decision deadline
+		_, err = io.WriteString(conn, "response-after-renewal")
+		if err == nil {
+			err = conn.CloseWrite()
+		}
+		targetDone <- err
+	}()
+	writer := tunnel.NewNativeRequestWriter(client)
+	secured := tls.Client(writer, &tls.Config{RootCAs: rootsForCertificate(t, certificate), ServerName: "native.test", MinVersion: tls.VersionTLS12})
+	if err := secured.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(secured, "request"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.CloseTLSWrite(secured); err != nil {
+		t.Fatal(err)
+	}
+	renewalDone := make(chan error, 1)
+	go func() {
+		renewalDone <- writer.Renew(tunnelv1.NativeVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)})
+	}()
+	select {
+	case err := <-renewalDone:
+		if err != nil {
+			select {
+			case stopped := <-finished:
+				t.Fatalf("renewal failed after %s: %v; publisher: %v", time.Since(started), err, stopped)
+			default:
+				t.Fatalf("renewal failed after %s: %v", time.Since(started), err)
+			}
+		}
+	case err := <-targetDone:
+		t.Fatal("target stopped before permission renewal", err)
+	}
+	response := make([]byte, len("response-after-renewal"))
+	if _, err := io.ReadFull(secured, response); err != nil || string(response) != "response-after-renewal" {
+		t.Fatal("response stopped after the unconsumed TLS renewal", string(response), err)
+	}
+	if err := awaitPublisherTest(t, targetDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitPublisherTest(t, finished); err != nil {
 		t.Fatal(err)
 	}
 }

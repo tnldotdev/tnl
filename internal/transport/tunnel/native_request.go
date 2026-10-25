@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -15,6 +16,7 @@ import (
 type NativeRequestWriter struct {
 	net.Conn
 	mu      sync.Mutex
+	renewMu sync.Mutex
 	ended   bool
 	err     error
 	opening func([]byte) error
@@ -70,6 +72,8 @@ func (s *NativeRequestWriter) Write(p []byte) (int, error) {
 }
 
 func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission) error {
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.startLocked(nil); err != nil {
@@ -77,6 +81,16 @@ func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission)
 	}
 	s.err = tunnelv1.WriteNativeRequestFrame(s.Conn, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestPermission, Permission: permission})
 	return s.err
+}
+
+// CloseTLSWrite keeps the outer native stream writable after TLS close_notify.
+// crypto/tls sets the underlying write deadline to now when it sends the alert;
+// serialize that transition with renewals and restore the outer stream deadline.
+func (s *NativeRequestWriter) CloseTLSWrite(secured interface{ CloseWrite() error }) error {
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
+	err := secured.CloseWrite()
+	return errors.Join(err, s.Conn.SetWriteDeadline(time.Time{}))
 }
 
 func (s *NativeRequestWriter) CloseWrite() error {
@@ -107,6 +121,7 @@ type NativeRequestReader struct {
 	headerRead  int
 	payload     []byte
 	payloadRead int
+	afterEnd    sync.Once
 }
 
 func NewNativeRequestReader(conn net.Conn, initial []byte, renew func(tunnelv1.NativeVisitorPermission) error) *NativeRequestReader {
@@ -144,10 +159,24 @@ func (s *NativeRequestReader) Read(p []byte) (int, error) {
 			}
 		case tunnelv1.NativeRequestEnded:
 			s.terminal = io.EOF
-			go s.renewAfterEnd()
+			s.ContinueAfterTLSCloseNotify()
 		}
 	}
 	return 0, s.terminal
+}
+
+// ContinueAfterTLSCloseNotify keeps reading outer permission frames when TLS
+// closes its request direction before the outer native request has ended. call
+// this only after the TLS reader reports EOF; it must own the raw reader until
+// then. no further TLS data may follow close_notify.
+func (s *NativeRequestReader) ContinueAfterTLSCloseNotify() {
+	s.afterEnd.Do(func() {
+		if s.initial.Len() != 0 || s.remaining != nil && s.remaining.Len() != 0 {
+			_ = s.Conn.Close()
+			return
+		}
+		go s.renewAfterEnd()
+	})
 }
 
 // after the local application sees EOF, only signed permission frames may

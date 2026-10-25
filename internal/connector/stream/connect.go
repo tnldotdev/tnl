@@ -539,7 +539,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *pr
 				return nil, true, err
 			}
 			stopRenewal := renewNativePermission(ctx, stream, request, prepared, path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run)
-			return &privateConn{Conn: secured, release: release, stop: stopRenewal}, true, nil
+			return &privateConn{Conn: secured, writer: request, release: release, stop: stopRenewal}, true, nil
 		}
 		if err = stream.SetDeadline(time.Time{}); err != nil {
 			return nil, committed, err
@@ -551,6 +551,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *pr
 
 type privateConn struct {
 	net.Conn
+	writer  *tunnel.NativeRequestWriter
 	release func()
 	stop    func() error
 }
@@ -571,6 +572,9 @@ func (c *privateConn) Close() error {
 }
 func (c *privateConn) CloseWrite() error {
 	if writer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		if c.writer != nil {
+			return c.writer.CloseTLSWrite(writer)
+		}
 		return writer.CloseWrite()
 	}
 	return errors.ErrUnsupported

@@ -58,6 +58,32 @@ type connectorFixture struct {
 	denied           atomic.Bool
 }
 
+type tlsHalfCloseDeadlineConn struct{ net.Conn }
+
+func (c tlsHalfCloseDeadlineConn) CloseWrite() error { return c.SetWriteDeadline(time.Now()) }
+
+func TestOpaqueTLSHalfCloseKeepsOuterRenewalWriterAvailable(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	_ = server.SetReadDeadline(time.Now().Add(time.Second))
+	writer := tunnel.NewNativeRequestWriter(client)
+	conn := &privateConn{Conn: tlsHalfCloseDeadlineConn{client}, writer: writer}
+	if err := conn.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	proof := tunnelv1.NativeVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}
+	done := make(chan error, 1)
+	go func() { done <- writer.Renew(proof) }()
+	frame, err := tunnelv1.ReadNativeRequestFrame(server)
+	if err != nil || frame.Kind != tunnelv1.NativeRequestPermission || frame.Permission != proof {
+		t.Fatal("TLS half-close stranded its outer renewal", frame, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func connectorID(t *testing.T, prefix string) string {
 	t.Helper()
 	id, err := opaqueid.New(prefix)

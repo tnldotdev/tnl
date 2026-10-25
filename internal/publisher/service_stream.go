@@ -285,9 +285,29 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}()
 	defer func() { cancel(); <-guardDone }()
 	observed, streamDone := observability.PublisherStream(live, backend)
-	_, err = streamcopy.Copy(secured, observed)
+	var client net.Conn = secured
+	if native, ok := visitor.(interface{ ContinueAfterTLSCloseNotify() }); ok {
+		client = &nativeTLSRequestConn{Conn: secured, onEOF: native.ContinueAfterTLSCloseNotify}
+	}
+	_, err = streamcopy.Copy(client, observed)
 	streamDone(err)
 	return err
+}
+
+// TLS close_notify ends application input but does not end the outer native
+// request stream. continue consuming its permission proofs while target bytes
+// can still flow back to the visitor.
+type nativeTLSRequestConn struct {
+	net.Conn
+	onEOF func()
+}
+
+func (c *nativeTLSRequestConn) Read(data []byte) (int, error) {
+	n, err := c.Conn.Read(data)
+	if errors.Is(err, io.EOF) {
+		c.onEOF()
+	}
+	return n, err
 }
 
 func (s ServiceStream) guardVisitor(ctx context.Context, client *tls.Conn, target net.Conn, decision ServiceVisitorDecision) {
