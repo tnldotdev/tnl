@@ -170,6 +170,36 @@ func enrollAppliedGroup(t *testing.T, d *Database, r ApplyProjectConfigurationRe
 	return enrolledGroupReplica{m, key, lease, assignments}
 }
 
+func TestIntegrationPublisherGroupReachabilityChangesAssignmentWithoutTrustRevision(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "group_reachability")
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{}
+	r.Configuration.Services["api"] = ProjectServiceConfiguration{PublisherGroup: "production", Target: "api.internal:3000"}
+	delete(r.Configuration.Services, "web")
+	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := d.IssuePublisherGroupEnrollment(t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	prior := replica.assignments.Services[0]
+	if prior.Public {
+		t.Fatal("private service was advertised as public")
+	}
+	r.ExpectedRevision, r.Now = applied.Revision, now.Add(time.Second)
+	r.Configuration.PublisherGroups["production"] = ProjectPublisherGroup{Public: true}
+	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	current, err := d.GetPublisherGroupAssignments(t.Context(), replica.lease.AccessToken, r.Now)
+	if err != nil || len(current.Services) != 1 || !current.Services[0].Public || current.Services[0].ServiceID != prior.ServiceID || current.Services[0].TrustRevision != prior.TrustRevision {
+		t.Fatalf("group reachability did not change the worker definition: %+v %v", current.Services, err)
+	}
+}
+
 func groupAssignmentAccess(t *testing.T, d *Database, replica enrolledGroupReplica, a PublisherGroupServiceAssignment, now time.Time) PublisherAccess {
 	t.Helper()
 	assertion, err := publisherproof.Sign(replica.member.PublisherIdentityID, replica.member.KeyID, a.GrantID, publisherTestAudience, replica.private, now)

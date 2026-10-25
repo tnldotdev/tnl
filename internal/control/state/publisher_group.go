@@ -62,6 +62,7 @@ type PublisherGroupServiceAssignment struct {
 	GrantID       string                      `json:"grant_id"`
 	Hostname      string                      `json:"hostname,omitempty"`
 	TrustRevision int64                       `json:"trust_revision"`
+	Public        bool                        `json:"public"`
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type PublisherGroupAssignments struct {
@@ -424,7 +425,7 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
-			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT trust_revision,public FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision, &a.Public); err != nil {
 				return result, err
 			}
 		} else {

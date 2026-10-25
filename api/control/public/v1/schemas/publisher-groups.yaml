@@ -106,7 +106,7 @@ schemas:
         }
   PublisherGroupServiceAssignment:
     type: object
-    required: [service, service_id, service_kind, grant_id, configuration, trust_revision]
+    required: [service, service_id, service_kind, grant_id, configuration, trust_revision, public]
     properties:
       service: { type: string }
       service_id: { type: string }
@@ -114,6 +114,9 @@ schemas:
       grant_id: { type: string }
       hostname: { type: string }
       trust_revision: { type: integer, format: int64 }
+      public:
+        type: boolean
+        description: current service reachability; changing it replaces the publisher worker.
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   PublisherGroupAcknowledgement:
     type: object

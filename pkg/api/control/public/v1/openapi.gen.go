@@ -2837,9 +2837,12 @@ type PublisherGroupMemberStatus struct {
 
 // PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
 type PublisherGroupServiceAssignment struct {
-	Configuration ProjectServiceConfiguration                `json:"configuration"`
-	GrantId       string                                     `json:"grant_id"`
-	Hostname      *string                                    `json:"hostname,omitempty"`
+	Configuration ProjectServiceConfiguration `json:"configuration"`
+	GrantId       string                      `json:"grant_id"`
+	Hostname      *string                     `json:"hostname,omitempty"`
+
+	// Public current service reachability; changing it replaces the publisher worker.
+	Public        bool                                       `json:"public"`
 	Service       string                                     `json:"service"`
 	ServiceId     string                                     `json:"service_id"`
 	ServiceKind   PublisherGroupServiceAssignmentServiceKind `json:"service_kind"`

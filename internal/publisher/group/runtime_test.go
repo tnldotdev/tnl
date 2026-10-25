@@ -113,6 +113,47 @@ func TestReconcileJoinsOldAssignmentBeforeStartingReplacement(t *testing.T) {
 	}
 }
 
+func TestGroupReachabilityRestartsPublicationWithUnchangedTrust(t *testing.T) {
+	control, key := groupFixture(t)
+	events := make(chan string, 4)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runtime{Control: control, Member: control.assignment.Member, Private: key, PollInterval: time.Millisecond,
+			Publish: func(ctx context.Context, service controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+				if service.Public {
+					events <- "start-public"
+				} else {
+					events <- "start-private"
+				}
+				health(true)
+				<-ctx.Done()
+				events <- "joined"
+				return ctx.Err()
+			}}).Serve(ctx)
+	}()
+	if got := receive(t, events); got != "start-private" {
+		t.Fatal(got)
+	}
+	control.mu.Lock()
+	control.assignment.Services = append([]controlv1.PublisherGroupServiceAssignment(nil), control.assignment.Services...)
+	control.assignment.Services[0].Public = true
+	control.assignment.Revision++
+	control.assignment.ConfigurationHash = strings.Repeat("b", 64)
+	control.mu.Unlock()
+	if got := receive(t, events); got != "joined" {
+		t.Fatalf("old private worker was not joined before public startup: %s", got)
+	}
+	if got := receive(t, events); got != "start-public" {
+		t.Fatalf("reachability change did not start a public worker: %s", got)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	control, key := groupFixture(t)
 	member := control.assignment.Member
