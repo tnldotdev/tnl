@@ -79,6 +79,8 @@ func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, publicURLI
 
 func waitForPublisherObservedIngressAllocations(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, expected int) {
 	t.Helper()
+	// a nearly expired grant can pass this check but disappear before the
+	// first held visitor reaches its publisher on a slower ci host.
 	var observed int
 	defer func() {
 		if t.Failed() {
@@ -89,7 +91,8 @@ func waitForPublisherObservedIngressAllocations(t *testing.T, database *sql.DB, 
 		err := database.QueryRowContext(ctx, `
 			SELECT count(DISTINCT ingress_id) FROM control.stream_capacity_allocations
 			WHERE resource_kind='public_url' AND resource_id=$1 AND run_number=$2
-			  AND publisher_observed_at IS NOT NULL AND retired_at IS NULL AND valid_until>now()
+			  AND publisher_observed_at IS NOT NULL AND retired_at IS NULL
+			  AND valid_until>now()+interval '5 seconds'
 		`, publicURLID, publishRunNumber).Scan(&observed)
 		return err == nil && observed == expected, err
 	})

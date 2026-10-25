@@ -340,6 +340,9 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 				t.Logf("publisher failure snapshot: %v", err)
 			}
 		},
+		Report: func(index int, err error) {
+			t.Logf("separated_publisher index=%d: %v", index, err)
+		},
 		Observe: func(index int, event publisher.Event) error {
 			if event.Type == publisher.EventTransportFallback {
 				fallbacks.Add(1)
