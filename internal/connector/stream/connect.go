@@ -242,6 +242,9 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	}
 	prepared, err := prepareSelection(serveCtx, config, cancel)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	defer prepared.Close()

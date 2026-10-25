@@ -31,8 +31,28 @@ type preparedSelection struct {
 
 func prepareSelection(ctx context.Context, config Config, stop context.CancelCauseFunc) (*preparedSelection, error) {
 	p := &preparedSelection{config: config, stop: stop, done: make(chan struct{})}
-	if err := p.refresh(ctx); err != nil {
-		return nil, err
+	startup, finishStartup := context.WithTimeout(ctx, 10*time.Second)
+	defer finishStartup()
+	for {
+		err := p.refresh(startup)
+		if err == nil {
+			break
+		}
+		if !selectionRetryable(err) {
+			return nil, err
+		}
+		if startup.Err() != nil {
+			return nil, context.Cause(startup)
+		}
+		// no socket is served until a complete current selection is installed.
+		// retry only transient control failures within the startup budget.
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-startup.Done():
+			timer.Stop()
+			return nil, context.Cause(startup)
+		case <-timer.C:
+		}
 	}
 	life, cancel := context.WithCancel(ctx)
 	p.cancel = cancel

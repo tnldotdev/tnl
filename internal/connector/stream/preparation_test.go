@@ -66,6 +66,31 @@ func TestConnectorPreparationSocketReadsMakeNoControlCalls(t *testing.T) {
 	})
 }
 
+func TestConnectorPreparationRetriesTransientStartupWithoutServingUnprepared(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, run := selectionFixture()
+		var calls atomic.Int64
+		control := &selectionControl{resolve: func(context.Context) (Run, error) {
+			if controlCalls := calls.Add(1); controlCalls < 3 {
+				return Run{}, clientcontrol.ErrUnavailable
+			}
+			return run, nil
+		}}
+		config.Control = control
+		ctx, stop := context.WithCancelCause(t.Context())
+		defer stop(nil)
+		prepared, err := prepareSelection(ctx, config, stop)
+		if err != nil {
+			t.Fatal("transient control failures aborted startup", err)
+		}
+		defer prepared.Close()
+		current, err := prepared.current()
+		if err != nil || current.ServiceRunID != run.ServiceRunID || calls.Load() != 3 {
+			t.Fatal("startup admitted no current selection or bypassed retry", err)
+		}
+	})
+}
+
 func TestConnectorPreparationOutageCannotExtendItsLastObservation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		config, run := selectionFixture()
