@@ -185,6 +185,30 @@ func TestIntegrationVisitorCredentialCoverageKeepsUnrelatedRevisionsAndRevokesEx
 	if !grantFound {
 		t.Fatal("signed bearer grant observation was not stored")
 	}
+	browserToken, err := d.IssueVisitorToken(principal, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+	if err != nil {
+		t.Fatal("control-session visitor token was not issued", err)
+	}
+	if browserToken.Permission.Subject != (visitortoken.Browser{IdentityID: identity, SessionID: parent.SessionID}) {
+		t.Fatal("control-session visitor changed identity")
+	}
+	browserVisit := observation
+	browserVisit.EventID = serviceaudit.NewID()
+	browserVisit.VisitorConnectionID = mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	browserVisit.VisitorReference = tunnelv1.ServiceVisitorReference{Kind: "browser_session", ID: parent.SessionID}
+	if accepted, err := d.IngestIngressServiceObservations(ctx, owners[0], serviceaudit.Batch{Events: []serviceaudit.Observation{browserVisit}}, now); err != nil || accepted.Accepted != 1 {
+		t.Fatal("control-session visitor lost immutable audit attribution", err)
+	}
+	var attributed string
+	if err := d.pool.QueryRow(ctx, `SELECT actor_identity_id FROM control.service_audit_events WHERE id=$1`, browserVisit.EventID).Scan(&attributed); err != nil || attributed != identity {
+		t.Fatal("control-session visitor was attributed to the wrong identity", err)
+	}
+	browserVisit.EventID = serviceaudit.NewID()
+	browserVisit.VisitorConnectionID = mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	browserVisit.VisitorReference.ID = mustOpaqueID(t, opaqueid.ControlSessionPrefix)
+	if _, err := d.IngestIngressServiceObservations(ctx, owners[0], serviceaudit.Batch{Events: []serviceaudit.Observation{browserVisit}}, now); !errors.Is(err, ErrServiceAuditAccess) {
+		t.Fatal("session without token issuance was attributed to a visitor", err)
+	}
 	if err := d.RevokeVisitorDevice(principal, identity, device.ID, now); err != nil {
 		t.Fatal(err)
 	}

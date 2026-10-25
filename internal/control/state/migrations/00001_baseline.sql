@@ -2109,6 +2109,17 @@ CREATE TABLE control.visitor_certificate_facts (
 );
 CREATE INDEX visitor_certificate_facts_retention ON control.visitor_certificate_facts(expires_at,certificate_digest);
 CREATE INDEX visitor_certificate_facts_live ON control.visitor_certificate_facts(service_id,expires_at);
+-- control-session visitor tokens have no browser handoff. retain their
+-- issuance for direct-visitor audit without retaining the bearer credential.
+CREATE TABLE control.service_browser_token_facts (
+    token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest)=32),
+    service_id text NOT NULL REFERENCES control.services(id),
+    control_session_id text NOT NULL,
+    issued_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL CHECK (expires_at>issued_at)
+);
+CREATE INDEX service_browser_token_facts_session ON control.service_browser_token_facts(control_session_id,service_id,expires_at);
+CREATE INDEX service_browser_token_facts_retention ON control.service_browser_token_facts(expires_at,token_digest);
 CREATE INDEX connector_sessions_expiring ON control.connector_sessions(expires_at);
 CREATE INDEX connector_sessions_workload ON control.connector_sessions(workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE INDEX connector_sessions_unbound_assignment ON control.connector_sessions(assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,expires_at) WHERE bound_at IS NULL AND revoked_at IS NULL;

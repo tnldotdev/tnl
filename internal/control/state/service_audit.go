@@ -469,7 +469,9 @@ func resolveDirectAuditVisitor(ctx context.Context, tx pgx.Tx, observation servi
 	case "browser_session":
 		return tx.QueryRow(ctx, `SELECT parent.identity_id FROM control.control_sessions parent
 		    WHERE parent.id=$1 AND parent.created_at<=$4::timestamptz+interval '1 minute'
-		    AND EXISTS(SELECT 1 FROM control.service_http_browser_sessions browser WHERE browser.control_session_id=parent.id AND browser.service_id=$2 AND $3=ANY(browser.run_ids))`, reference.ID, observation.ServiceID, observation.RunID, observation.OccurredAt).Scan(&event.ActorIdentityID)
+		    AND (EXISTS(SELECT 1 FROM control.service_http_browser_sessions browser WHERE browser.control_session_id=parent.id AND browser.service_id=$2 AND $3=ANY(browser.run_ids))
+		      OR EXISTS(SELECT 1 FROM control.service_browser_token_facts fact WHERE fact.control_session_id=parent.id AND fact.service_id=$2
+		        AND fact.issued_at<=$4 AND fact.expires_at>=$4))`, reference.ID, observation.ServiceID, observation.RunID, observation.OccurredAt).Scan(&event.ActorIdentityID)
 	case "grant":
 		// a bearer grant does not identify the person presenting it. its issuer
 		// is not a verified visitor or feedback author.

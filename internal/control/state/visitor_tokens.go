@@ -182,6 +182,17 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 	if err != nil {
 		return result, err
 	}
+	if _, ok := source.(BrowserTokenSource); ok && scope.Kind == visitorscope.Service {
+		browser, ok := permission.Subject.(visitortoken.Browser)
+		if !ok {
+			return result, ErrVisitorPermission
+		}
+		digest := sha256.Sum256([]byte(token.Reveal()))
+		if _, err := tx.Exec(ctx, `INSERT INTO control.service_browser_token_facts(token_digest,service_id,control_session_id,issued_at,expires_at)
+		    VALUES($1,$2,$3,$4,$5) ON CONFLICT (token_digest) DO NOTHING`, digest[:], scope.ID, browser.SessionID, now, permission.ExpiresAt); err != nil {
+			return result, err
+		}
+	}
 	return IssuedVisitorToken{Token: token, Permission: permission}, nil
 }
 

@@ -88,6 +88,10 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	    SELECT certificate_digest FROM control.visitor_certificate_facts WHERE expires_at<$1 ORDER BY expires_at,certificate_digest LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_browser_token_facts WHERE token_digest IN(
+	    SELECT token_digest FROM control.service_browser_token_facts WHERE expires_at<$1 ORDER BY expires_at,token_digest LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
+		return count, err
+	}
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.stream_capacity_allocations WHERE id IN(
 	    SELECT id FROM control.stream_capacity_allocations WHERE valid_until<$1 ORDER BY valid_until,id LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
