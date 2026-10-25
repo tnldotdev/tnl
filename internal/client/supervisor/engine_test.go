@@ -457,14 +457,25 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 
 func TestServiceRejectsASecondSupervisor(t *testing.T) {
 	r := testRegistry(t)
-	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond})
-	await(t, func() bool {
-		lock, err := filelock.Acquire(filepath.Join(r.Root(), "service.lock"), filelock.Nonblocking, r.owner)
-		if lock != nil {
-			lock.Close()
-		}
-		return errors.Is(err, filelock.ErrLocked)
-	})
+	started := make(chan struct{})
+	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond, Initialize: func(context.Context) error {
+		close(started)
+		return nil
+	}})
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("first supervisor stopped before owning service.lock: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("first supervisor did not acquire service.lock")
+	}
+	lock, err := filelock.Acquire(filepath.Join(r.Root(), "service.lock"), filelock.Nonblocking, r.owner)
+	if lock != nil {
+		_ = lock.Close()
+	}
+	if !errors.Is(err, filelock.ErrLocked) {
+		t.Fatalf("second process acquired the service lock: %v", err)
+	}
 	ctx, stop := context.WithTimeout(t.Context(), time.Second)
 	defer stop()
 	if err := (Engine{Registry: r}).Serve(ctx); err == nil {

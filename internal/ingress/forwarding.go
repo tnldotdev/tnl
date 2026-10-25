@@ -39,13 +39,14 @@ type Forwarder struct {
 	cancel          context.CancelFunc
 	onSessionClosed func(relayServiceID, relayID, origin string, cause error)
 
-	mu        sync.Mutex
-	sessions  map[relaySessionKey]*relaySession
-	closed    bool
-	closeDone chan struct{}
-	closeErr  error
-	pending   map[string]*forwardingAdmission
-	promote   func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
+	mu            sync.Mutex
+	sessions      map[relaySessionKey]*relaySession
+	recoveryUntil time.Time
+	closed        bool
+	closeDone     chan struct{}
+	closeErr      error
+	pending       map[string]*forwardingAdmission
+	promote       func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
@@ -290,6 +291,8 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 			stream, err = session.StartConfirmedInternalForwardingStream(ctx, header, proxy, initial, events)
 			if err == nil {
 				b.forwarder.confirmSession(b.target.key(), session)
+			} else if ctx.Err() == nil {
+				b.forwarder.markRecovery()
 			}
 		}
 		if err == nil && len(overflow) != 0 {
@@ -362,7 +365,19 @@ func (f *Forwarder) confirmedSession(key relaySessionKey, session *tunnel.Sessio
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	entry := f.sessions[key]
-	return entry != nil && entry.session == session && entry.confirmed
+	return entry != nil && entry.session == session && entry.confirmed && !time.Now().Before(f.recoveryUntil)
+}
+
+// keep even previously confirmed relay sessions behind acceptance while a lost
+// relay's publisher assignments and ingress projections converge. this guard
+// expires; normal pipelined openings resume without a per-visitor round trip.
+func (f *Forwarder) markRecovery() {
+	f.mu.Lock()
+	until := time.Now().Add(90 * time.Second)
+	if until.After(f.recoveryUntil) {
+		f.recoveryUntil = until
+	}
+	f.mu.Unlock()
 }
 
 func (f *Forwarder) confirmSession(key relaySessionKey, session *tunnel.Session) {
@@ -496,6 +511,7 @@ func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) err
 	f.mu.Unlock()
 	if entry != nil {
 		entry.cancel()
+		f.markRecovery()
 		f.reportSessionClosed(key, "local_invalidation", session.Err())
 		started := time.Now()
 		err := session.Close()
@@ -520,6 +536,7 @@ func (f *Forwarder) removeWhenDone(key relaySessionKey, entry *relaySession, ses
 	}
 	f.mu.Unlock()
 	if unexpected {
+		f.markRecovery()
 		f.reportSessionClosed(key, "observed_close", session.Err())
 	}
 }

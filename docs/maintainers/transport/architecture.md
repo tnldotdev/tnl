@@ -45,9 +45,10 @@ relay preserves it and the TLS bytes. Protocol version 1 and ALPN `tnl-tunnel/1`
 require a coordinated client/server update. Each opening carries bounded metadata
 and up to 64 KiB of initial bytes. On a confirmed relay session, ingress sends
 metadata and initial bytes together without waiting for acceptance. On a newly
-connected relay session, ingress sends metadata first and waits for relay
-acceptance before sending visitor bytes. This prevents an old routing entry from
-committing a visitor to a restarted relay process.
+connected relay session, or for a bounded period after a relay session is lost,
+ingress waits for relay acceptance before sending visitor bytes. This prevents
+old routing entries from committing a visitor to a restarted relay process or
+to a replaced publisher connection on the surviving relay.
 
 The return direction frames acceptance, rejection, promotion, data, and half-close
 in order. Only data reaches visitor TLS. Promotion stays on that visitor's return

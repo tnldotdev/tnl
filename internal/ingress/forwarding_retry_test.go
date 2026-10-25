@@ -158,3 +158,31 @@ func TestForwarderPreservesPooledSessionAfterVisitorStreamFailure(t *testing.T) 
 		t.Fatalf("pooled relay sessions = %d, want 1", got)
 	}
 }
+
+func TestForwarderConfirmsExistingSessionsDuringRelayRecovery(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
+		return captureForwardingRequests(ctx, transport, make(chan forwardingTestRequest, 1))
+	})
+	forwarder := newTestForwarder(t, material)
+	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address())).(forwardingBackend)
+	session, _, err := forwarder.session(ingressContext(t), backend.target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := backend.target.key()
+	forwarder.confirmSession(key, session)
+	if !forwarder.confirmedSession(key, session) {
+		t.Fatal("healthy relay session did not enable pipelined openings")
+	}
+	forwarder.markRecovery()
+	if forwarder.confirmedSession(key, session) {
+		t.Fatal("surviving relay bypassed confirmation during publisher replacement")
+	}
+	forwarder.mu.Lock()
+	forwarder.recoveryUntil = time.Now().Add(-time.Second)
+	forwarder.mu.Unlock()
+	if !forwarder.confirmedSession(key, session) {
+		t.Fatal("recovered relay retained the extra confirmation round trip")
+	}
+}
