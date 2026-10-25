@@ -42,6 +42,20 @@ func policyRevision(t *testing.T, d *Database, scope visitorscope.Scope) int64 {
 	return revision
 }
 
+func TestIntegrationVisitorPolicyPreservesSavedIPAllowlist(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_saved_ip")
+	request := oidcRouteRequest(t, d, now)
+	request.AllowedIPPrefixes = []string{"192.0.2.0/24"}
+	url := createTestPublicURL(t, d, request, now)
+	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+		t.Fatal(err)
+	}
+	update, err := visitorlease.Decode(policyObservation(t, d, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}, 0))
+	if err != nil || update.IP == nil || !update.IP.Allows(netip.MustParseAddr("192.0.2.7")) || update.IP.Allows(netip.MustParseAddr("198.51.100.7")) {
+		t.Fatal("saved IP allowlist was not retained in the policy snapshot", err)
+	}
+}
+
 func TestIntegrationVisitorPolicyMutationsCommitWithTheirScopeHistory(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_policy_mutations")
 	request := oidcRouteRequest(t, d, now)

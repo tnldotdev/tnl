@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"slices"
@@ -70,19 +71,44 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		}
 		ipRestricted = row.IpPolicy != "allow_all"
 		if ipRestricted {
-			grants, err := d.readVisitorIPs(ctx, q, scope.ID, now)
+			initialized, err := q.HasVisitorIPSet(ctx, scope.ID)
 			if err != nil {
 				return result, err
 			}
-			for _, grant := range grants {
-				prefix, err := netip.ParsePrefix(grant.Prefix)
+			if initialized {
+				grants, err := d.readVisitorIPs(ctx, q, scope.ID, now)
 				if err != nil {
+					return result, err
+				}
+				for _, grant := range grants {
+					prefix, err := netip.ParsePrefix(grant.Prefix)
+					if err != nil {
+						return result, ErrVisitorPolicy
+					}
+					prefixes = append(prefixes, prefix)
+					if grant.ExpiresAt != nil && grant.ExpiresAt.Before(policy.ValidUntil) {
+						policy.ValidUntil = *grant.ExpiresAt
+					}
+				}
+			} else if len(row.AllowedIpPolicyCiphertext) != 0 {
+				prefixes, err = d.openIPPolicy(row.ID, row.AllowedIpPolicyStorageKeyID.String, row.AllowedIpPolicyCiphertext)
+				if err != nil {
+					return result, err
+				}
+			} else if len(row.AllowedIpHashes) != 0 {
+				var entries []ippolicy.Entry
+				if err := json.Unmarshal(row.AllowedIpHashes, &entries); err != nil {
 					return result, ErrVisitorPolicy
 				}
-				prefixes = append(prefixes, prefix)
-				if grant.ExpiresAt != nil && grant.ExpiresAt.Before(policy.ValidUntil) {
-					policy.ValidUntil = *grant.ExpiresAt
+				key, err := d.storageKey.IPPolicyKey(row.AllowedIpHashKeyID.String, "url:"+scope.ID)
+				if err != nil {
+					return result, err
 				}
+				ip := controlv1.VisitorPolicyIP{Key: key[:], Prefixes: []controlv1.HashedIPPrefix{}}
+				for _, entry := range entries {
+					ip.Prefixes = append(ip.Prefixes, controlv1.HashedIPPrefix{Family: controlv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest})
+				}
+				policy.Ip = &ip
 			}
 		}
 	case visitorscope.Service:
@@ -129,7 +155,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		}
 	}
 	policy.Enabled = policy.Enabled && activeTeam
-	if ipRestricted {
+	if ipRestricted && policy.Ip == nil {
 		key, err := d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "visitor-policy:"+string(scope.Kind)+":"+scope.ID)
 		if err != nil {
 			return result, err

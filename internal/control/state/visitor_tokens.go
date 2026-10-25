@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -121,6 +122,26 @@ func (r visitorResource) permission(subject visitortoken.Subject, until, now tim
 // key retention in the same transaction. serving processes never call this while
 // admitting a prepared visitor connection or request.
 func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+	for attempt := range 8 {
+		result, retErr = d.issueVisitorTokenTransaction(ctx, issuer, scope, source, now)
+		var pgErr *pgconn.PgError
+		if !errors.As(retErr, &pgErr) || pgErr.Code != "40001" || attempt == 7 {
+			return result, retErr
+		}
+		// a repeatable-read snapshot may lose a concurrent issuer or key
+		// update. retry authorization and signing in a fresh transaction.
+		timer := time.NewTimer(time.Millisecond << attempt)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return IssuedVisitorToken{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return result, retErr
+}
+
+func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err

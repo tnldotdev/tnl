@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +60,28 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserSessionTokenSource{Secret: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))}, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("unknown browser sign-in fell back to anonymous", err)
 	}
+}
+
+func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_token_concurrent")
+	request := oidcRouteRequest(t, d, now)
+	url := createTestPublicURL(t, d, request, now)
+	session := newOIDCSession(t, d, now)
+	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID})
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			<-start
+			issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+			if err != nil || issued.Token == "" {
+				t.Errorf("concurrent visitor token issuance failed: %v", err)
+			}
+		})
+	}
+	close(start)
+	workers.Wait()
 }
 
 func TestIntegrationVisitorTokenShareUsesCapturedScopeExpiryAndCurrentIssuer(t *testing.T) {
