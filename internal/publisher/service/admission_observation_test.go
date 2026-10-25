@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -84,7 +85,7 @@ func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingH
 	}
 	view.Credentials = map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: credentialDigest, ExpiresAt: permission.ExpiresAt}}
 	a := controlv1.StreamCapacityAllocation{Id: header.Reservation.AllocationID, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: p.Preparation.ServiceId}, RunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber), Capacity: 64,
-		IngressId: header.Direct.IngressID, IngressRunId: header.Direct.IngressRunID, IngressLeaseRevision: int64(header.Direct.IngressLeaseRevision), ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}
+		IngressId: header.Direct.IngressID, IngressRunId: header.Direct.IngressRunID, IngressLeaseRevision: int64(header.Direct.IngressLeaseRevision), ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: bytes.Repeat([]byte{1}, 32)}
 	if err := p.policy.Apply(p.policy.Begin(), visitorlease.Update{View: view, Snapshot: true, KeyRevision: 1, Enabled: true, ClientAuthorities: roots, Allocations: map[string]controlv1.StreamCapacityAllocation{a.Id: a}}); err != nil {
 		t.Fatal(err)
 	}

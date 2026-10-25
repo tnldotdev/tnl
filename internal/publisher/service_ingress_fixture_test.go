@@ -43,7 +43,7 @@ func (c nativeIngressControl) GetServiceEvents(context.Context, string, ingressv
 }
 func (c nativeIngressControl) AllocateStreamCapacity(context.Context, string, ingressv1.StreamCapacityRequest) (controlv1.StreamCapacityAllocation, error) {
 	now := time.Now()
-	return controlv1.StreamCapacityAllocation{Id: c.allocation, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: c.service}, RunId: c.run, RunNumber: 1, Capacity: 16, IngressId: c.lease.IngressId, IngressRunId: c.lease.IngressRunId, IngressLeaseRevision: c.lease.IngressLeaseRevision, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}, nil
+	return controlv1.StreamCapacityAllocation{Id: c.allocation, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: c.service}, RunId: c.run, RunNumber: 1, Capacity: 16, IngressId: c.lease.IngressId, IngressRunId: c.lease.IngressRunId, IngressLeaseRevision: c.lease.IngressLeaseRevision, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: bytes.Repeat([]byte{1}, 32)}, nil
 }
 func (c nativeIngressControl) RetireStreamCapacity(context.Context, string, string, ingressv1.StreamCapacityRetirement) error {
 	return nil
