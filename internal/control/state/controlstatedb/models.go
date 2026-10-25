@@ -1208,6 +1208,14 @@ type ControlServiceAuditEvent struct {
 	ConfigurationRevision pgtype.Int8
 }
 
+type ControlServiceBrowserTokenFact struct {
+	TokenDigest      []byte
+	ServiceID        string
+	ControlSessionID string
+	IssuedAt         pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
 type ControlServiceCertificateRequest struct {
 	ServiceRunID   string
 	IdempotencyKey string
