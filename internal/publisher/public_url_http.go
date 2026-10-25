@@ -274,8 +274,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}
 				}
-				if share, ok := permission.permission.Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
-					sharePermitted, shareExpiry = true, permission.permission.ExpiresAt
+				if share, ok := permission.permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
+					sharePermitted, shareExpiry = true, permission.permission.Facts().ExpiresAt
 				} else {
 					sharePermitted = false
 				}

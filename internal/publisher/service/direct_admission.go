@@ -98,7 +98,7 @@ func (b *Bound) admitDirect(ctx context.Context, stream net.Conn, header tunnelv
 			if err != nil {
 				return publisher.ServiceVisitorDecision{}, err
 			}
-			reference, err := visitortoken.ServiceAuditReference(permission, state)
+			reference, err := visitortoken.ServiceAuditReference(permission.Facts(), state)
 			if err != nil {
 				return publisher.ServiceVisitorDecision{}, err
 			}

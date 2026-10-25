@@ -37,7 +37,7 @@ func TestVisitorCertificateCarriesSharedTokenAndRequiresTLSKeyPossession(t *test
 	source := visitortoken.Device{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22), DeviceID: "vdev_" + strings.Repeat("C", 22), KeySHA256: deviceDigest}
 	permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("D", 22)}, Hostname: "service.example.test", Port: 5432, VisitorPolicyRevision: 3, ExpiresAt: now.Add(time.Minute)}
 	view := visitortoken.View{Issuer: "https://control.example.test", Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port, VisitorPolicyRevision: 3,
-		ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), Keys: map[string]ed25519.PublicKey{"visitor-key": key.Public().(ed25519.PublicKey)}}
+		ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{"visitor-key": key.Public().(ed25519.PublicKey)})
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestVisitorCertificateCarriesSharedTokenAndRequiresTLSKeyPossession(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	view.Credentials = map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: digest, ExpiresAt: permission.ExpiresAt}}
+	view = view.WithCredentialLeases(map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: digest, ExpiresAt: permission.ExpiresAt}})
 	block, _ := pem.Decode(material)
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestVisitorCertificateCarriesSharedTokenAndRequiresTLSKeyPossession(t *test
 			http.Error(w, "visitor permission denied", http.StatusForbidden)
 			return
 		}
-		verified <- permission
+		verified <- permission.Facts()
 		w.WriteHeader(204)
 	}))
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots}

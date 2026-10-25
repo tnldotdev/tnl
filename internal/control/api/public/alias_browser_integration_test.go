@@ -102,8 +102,8 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal("alias owner permission failed local verification", err)
 	}
-	browser, ok := allowed.Subject.(visitortoken.Browser)
-	if !ok || browser.IdentityID != p.IdentityID || allowed.Scope != scope || !allowed.ExpiresAt.After(f.now) {
+	browser, ok := allowed.Facts().Subject.(visitortoken.Browser)
+	if !ok || browser.IdentityID != p.IdentityID || allowed.Facts().Scope != scope || !allowed.Facts().ExpiresAt.After(f.now) {
 		t.Fatal("alias owner permission changed identity, scope, or deadline")
 	}
 	source, err := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: installed.CookieSecret})

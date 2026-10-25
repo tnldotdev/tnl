@@ -103,7 +103,7 @@ func stateTestVisitorKeys(t *testing.T, d *Database, now time.Time) map[string]e
 
 func stateTestVisitorView(permission visitortoken.Permission, keys map[string]ed25519.PublicKey, now time.Time) visitortoken.View {
 	return visitortoken.View{Issuer: testVisitorIssuer, Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
-		VisitorPolicyRevision: permission.VisitorPolicyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), Keys: keys}
+		VisitorPolicyRevision: permission.VisitorPolicyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime)}.WithVerificationKeys(keys)
 }
 
 func TestIntegrationVisitorSigningKeysAreEncryptedSharedAndIssuerBound(t *testing.T) {

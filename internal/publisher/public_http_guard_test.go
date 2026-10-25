@@ -194,7 +194,7 @@ func (c *liveHTTPControl) permission(t *testing.T, cookie string, share bool) co
 		t.Fatal(err)
 	}
 	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
-		VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: token}
+		VisitorPolicyRevision: permission.Facts().VisitorPolicyRevision, ExpiresAt: permission.Facts().ExpiresAt, VisitorToken: token}
 }
 
 func TestPublicHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {

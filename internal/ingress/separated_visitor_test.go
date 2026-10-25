@@ -41,7 +41,7 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.Repeat("C", 22), Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: c.PublicURLID}, RunId: f.entry.PublishRunId, RunNumber: f.entry.PublishRunNumber,
 		IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 32, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: []byte(strings.Repeat("s", 32))}
 	update := visitorlease.Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID},
-		Hostname: c.Hostname, Port: 443, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}},
+		Hostname: c.Hostname, Port: 443, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}),
 		KeyRevision: 1, Snapshot: true, Enabled: true, Anonymous: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}}
 	if err := policy.Apply(request, update); err != nil {
 		t.Fatal(err)

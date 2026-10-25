@@ -630,7 +630,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			return ErrServiceAdmission
 		}
 		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, nil, public, signature, time.Now())
-		if err != nil || next.Subject != permission.Subject {
+		if err != nil || !next.SameSubject(permission) {
 			return ErrServiceAdmission
 		}
 		if err := guard.Renew(next); err != nil {
@@ -657,7 +657,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	}
 	streamCtx, stop := context.WithDeadline(ctx, deadline)
 	defer stop()
-	audit, auditErr = serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission, "connection.open", "denied", "authorization")
+	audit, auditErr = serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission.Facts(), "connection.open", "denied", "authorization")
 	current, err = p.lease(time.Now())
 	if err != nil || !samePrivateLease(current, lease) {
 		return ErrServiceAdmission
@@ -688,7 +688,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 			ServiceID: entry.ServiceID, ServiceRunID: entry.ServiceRunID, RunNumber: entry.RunNumber,
-			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, Subject: subject, GrantRevision: uint64(permission.VisitorPolicyRevision)}, SourceIP: bound.ObservedSourceIp,
+			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, Subject: subject, GrantRevision: uint64(permission.Facts().VisitorPolicyRevision)}, SourceIP: bound.ObservedSourceIp,
 			VisitorConnectionID: visitorID, PublisherConnectionID: relay.PublisherConnectionId,
 			ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
 			ExpiresAt:                    validUntil,
@@ -744,7 +744,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if err != nil {
 			outcome, reason = "failed", "authorization"
 		}
-		if closed, auditErr := serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission, "connection.close", outcome, reason); auditErr == nil {
+		if closed, auditErr := serviceaudit.NewNativeStreamObservation(bound, entry, reservation.header, permission.Facts(), "connection.close", outcome, reason); auditErr == nil {
 			serviceaudit.Emit(p.config.AuditSink, closed)
 		}
 		return err

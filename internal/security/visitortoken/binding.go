@@ -36,29 +36,29 @@ func NativeProofMessage(token Token, session, connection, runID string, runNumbe
 	return append([]byte("tnl visitor opening v1\x00"), body...), nil
 }
 
-func VerifyNative(token Token, view View, expectedSubject Subject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+func VerifyNative(token Token, view View, expectedSubject Subject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (VerifiedPermission, error) {
 	if view.MetadataRevision < 1 || uint64(view.MetadataRevision) != metadataRevision {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	permission, err := verify(token, view, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	if permission.Subject != expectedSubject {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	return verifyNativePossession(token, permission, session, connection, runID, runNumber, metadataRevision, initial, public, signature)
 }
 
 // VerifyNativeSession compares signed permission with the subject already bound
 // to the infrastructure session, then proves possession of the signed key.
-func VerifyNativeSession(token Token, view View, expected tunnelv1.VisitorSubject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+func VerifyNativeSession(token Token, view View, expected tunnelv1.VisitorSubject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (VerifiedPermission, error) {
 	permission, err := VerifyNativeRenewalProof(token, view, expected, session, connection, runID, runNumber, metadataRevision, initial, public, signature, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	if err := CheckCurrent(permission, view, now); err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	return permission, nil
 }
@@ -67,17 +67,17 @@ func VerifyNativeSession(token Token, view View, expected tunnelv1.VisitorSubjec
 // granting admission. an active guard may retain one verified future revision
 // until its independently refreshed policy covers it; it cannot extend the old
 // confirmed deadline or revive an expired admission while waiting.
-func VerifyNativeRenewalProof(token Token, view View, expected tunnelv1.VisitorSubject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (Permission, error) {
+func VerifyNativeRenewalProof(token Token, view View, expected tunnelv1.VisitorSubject, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte, now time.Time) (VerifiedPermission, error) {
 	if expected.Validate() != nil || view.MetadataRevision < 1 || uint64(view.MetadataRevision) != metadataRevision {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	permission, err := verifySignature(token, view, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	peer, err := NativeSubject(permission.Subject)
 	if err != nil || peer != expected {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	return verifyNativePossession(token, permission, session, connection, runID, runNumber, metadataRevision, initial, public, signature)
 }
@@ -93,7 +93,7 @@ func NativeSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
 	}
 }
 
-func verifyNativePossession(token Token, permission Permission, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte) (Permission, error) {
+func verifyNativePossession(token Token, permission Permission, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte) (VerifiedPermission, error) {
 	var expectedKey string
 	switch subject := permission.Subject.(type) {
 	case Device:
@@ -101,26 +101,26 @@ func verifyNativePossession(token Token, permission Permission, session, connect
 	case Workload:
 		expectedKey = subject.KeySHA256
 	default:
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	digest, err := KeyDigest(public)
 	if err != nil || digest != expectedKey || len(public) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	message, err := NativeProofMessage(token, session, connection, runID, runNumber, metadataRevision, initial)
 	if err != nil || !ed25519.Verify(public, message, signature) {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
-	return permission, nil
+	return VerifiedPermission{facts: permission}, nil
 }
 
-func VerifyCertificate(token Token, view View, state tls.ConnectionState, now time.Time) (Permission, error) {
+func VerifyCertificate(token Token, view View, state tls.ConnectionState, now time.Time) (VerifiedPermission, error) {
 	permission, err := VerifyCertificateRenewalProof(token, view, state, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	if err := CheckCurrent(permission, view, now); err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	return permission, nil
 }
@@ -128,22 +128,22 @@ func VerifyCertificate(token Token, view View, state tls.ConnectionState, now ti
 // VerifyCertificateRenewalProof identifies the signed certificate source even
 // when its policy revision changed. it grants no access; current admission must
 // also pass CheckCurrent. credential selection cannot replace a workload source.
-func VerifyCertificateRenewalProof(token Token, view View, state tls.ConnectionState, now time.Time) (Permission, error) {
+func VerifyCertificateRenewalProof(token Token, view View, state tls.ConnectionState, now time.Time) (VerifiedPermission, error) {
 	permission, err := verifySignature(token, view, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	subject, ok := permission.Subject.(Certificate)
 	if !ok || !state.HandshakeComplete || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 || len(state.PeerCertificates) == 0 || !state.PeerCertificates[0].Equal(state.VerifiedChains[0][0]) {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 	leaf := state.PeerCertificates[0]
 	authorityNow := view.AuthorityTime(now)
 	digest, err := KeyDigest(leaf.PublicKey)
 	if err != nil || digest != subject.KeySHA256 || leaf.SerialNumber == nil || leaf.SerialNumber.Text(16) != subject.Serial || !authorityNow.Before(leaf.NotAfter) || authorityNow.Before(leaf.NotBefore) || permission.ExpiresAt.After(leaf.NotAfter) {
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
-	return permission, nil
+	return VerifiedPermission{facts: permission}, nil
 }
 
 // ServiceAuditReference follows successful local admission. control resolves

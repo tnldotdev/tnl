@@ -16,7 +16,7 @@ func FuzzVisitorTokenVerification(f *testing.F) {
 	permission := Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443, VisitorPolicyRevision: 1,
 		Subject: Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, ExpiresAt: now.Add(time.Minute)}
 	view := View{Issuer: "https://control.example.test", Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port, VisitorPolicyRevision: 1,
-		ObservedAt: now, ValidUntil: now.Add(PolicyLifetime), Keys: map[string]ed25519.PublicKey{"test-key": private.Public().(ed25519.PublicKey)}}
+		ObservedAt: now, ValidUntil: now.Add(PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{"test-key": private.Public().(ed25519.PublicKey)})
 	token, err := Sign(view.Issuer, "test-key", private, permission, now)
 	if err != nil {
 		f.Fatal(err)

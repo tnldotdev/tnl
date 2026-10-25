@@ -79,11 +79,11 @@ func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingH
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, credentialDigest, err := visitortoken.CredentialBinding(permission.Subject)
+	binding, credentialDigest, err := visitortoken.CredentialBinding(permission.Facts().Subject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view.Credentials = map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: credentialDigest, ExpiresAt: permission.ExpiresAt}}
+	view = view.WithCredentialLeases(map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: credentialDigest, ExpiresAt: permission.Facts().ExpiresAt}})
 	a := controlv1.StreamCapacityAllocation{Id: header.Reservation.AllocationID, Resource: controlv1.VisitorResourceScope{Kind: "service", Id: p.Preparation.ServiceId}, RunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber), Capacity: 64,
 		IngressId: header.Direct.IngressID, IngressRunId: header.Direct.IngressRunID, IngressLeaseRevision: int64(header.Direct.IngressLeaseRevision), ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: bytes.Repeat([]byte{1}, 32)}
 	if err := p.policy.Apply(p.policy.Begin(), visitorlease.Update{View: view, Snapshot: true, KeyRevision: 1, Enabled: true, ClientAuthorities: roots, Allocations: map[string]controlv1.StreamCapacityAllocation{a.Id: a}}); err != nil {

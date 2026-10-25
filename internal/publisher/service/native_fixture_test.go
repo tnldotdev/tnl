@@ -52,7 +52,7 @@ func prepareNativeFixturePolicy(t *testing.T, p *Prepared) {
 		RunNumber: p.Preparation.RunNumber, Capacity: 64, IngressId: "fixture-ingress", IngressRunId: "irun_" + strings.Repeat("c", 22), IngressLeaseRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: bytes.Repeat([]byte{1}, 32)}
 	if err := lease.Apply(lease.Begin(), visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{a.Id: a},
 		View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: p.managedHostname, Port: p.servicePort, MetadataRevision: 1, VisitorPolicyRevision: 1,
-			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"native-fixture": nativeFixtureKey().Public().(ed25519.PublicKey)}}}); err != nil {
+			ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"native-fixture": nativeFixtureKey().Public().(ed25519.PublicKey)})}); err != nil {
 		t.Fatal(err)
 	}
 	p.policy = lease

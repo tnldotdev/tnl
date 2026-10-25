@@ -10,12 +10,20 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestServiceHTTPClassificationRejectsTypedNilProblem(t *testing.T) {
+	var problem *clientcontrol.ProblemError
+	if got := serviceHTTPDecisionStatus(problem); got != http.StatusServiceUnavailable {
+		t.Fatalf("typed-nil control error classified as %d", got)
+	}
+}
 
 func TestServiceHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_0123456789abcdefghijkl"}
@@ -38,8 +46,9 @@ func TestServiceHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 	t.Cleanup(lease.Close)
 	update := visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, View: visitortoken.View{Scope: scope,
 		Issuer: "https://control.example", Hostname: permission.Hostname, Port: permission.Port,
-		VisitorPolicyRevision: 1, MetadataRevision: 1, Public: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
-		Keys: map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}, Credentials: map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: digest, ExpiresAt: permission.ExpiresAt}}}}
+		VisitorPolicyRevision: 1, MetadataRevision: 1, Public: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.
+		WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}).
+		WithCredentialLeases(map[string]visitortoken.CredentialLease{binding: {SubjectSHA256: digest, ExpiresAt: permission.ExpiresAt}})}
 	if err := lease.Apply(lease.Begin(), update); err != nil {
 		t.Fatal(err)
 	}

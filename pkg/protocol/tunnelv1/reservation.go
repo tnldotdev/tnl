@@ -11,6 +11,41 @@ import (
 
 var ErrInvalidStreamReservation = errors.New("stream reservation is invalid")
 
+// StreamBinding identifies the exact run and ingress process authorized to use
+// delegated capacity. allocations and reservations validate this independently
+// of their own identifiers, slots, and visitor connection IDs.
+type StreamBinding struct {
+	ResourceKind, ResourceID string
+	RunID                    string
+	RunNumber                uint64
+	IngressID, IngressRunID  string
+	IngressLeaseRevision     uint64
+}
+
+func (b StreamBinding) Validate() error {
+	if b.RunNumber == 0 || b.IngressLeaseRevision == 0 {
+		return ErrInvalidStreamReservation
+	}
+	for _, id := range []string{b.IngressID, b.IngressRunID} {
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\x00\r\n\t ") {
+			return ErrInvalidStreamReservation
+		}
+	}
+	switch b.ResourceKind {
+	case "public_url":
+		if !opaqueid.Valid(b.ResourceID, opaqueid.PublicURLPrefix) || !opaqueid.Valid(b.RunID, opaqueid.PublishRunPrefix) {
+			return ErrInvalidStreamReservation
+		}
+	case "service":
+		if !opaqueid.Valid(b.ResourceID, opaqueid.ServicePrefix) || !opaqueid.Valid(b.RunID, opaqueid.ServiceRunPrefix) {
+			return ErrInvalidStreamReservation
+		}
+	default:
+		return ErrInvalidStreamReservation
+	}
+	return nil
+}
+
 // StreamReservation names capacity already held by the exact ingress process.
 // its control allocation is prepared state, not a visitor permission credential.
 type StreamReservation struct {
@@ -31,13 +66,8 @@ type StreamReservation struct {
 }
 
 func (r StreamReservation) Validate() error {
-	if !opaqueid.Valid(r.ID, "sres_") || !opaqueid.Valid(r.AllocationID, "salloc_") || !opaqueid.Valid(r.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || r.RunNumber == 0 || r.IngressLeaseRevision == 0 || r.Sequence == 0 || r.Slot >= 1<<20 {
+	if !opaqueid.Valid(r.ID, "sres_") || !opaqueid.Valid(r.AllocationID, "salloc_") || !opaqueid.Valid(r.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || r.Sequence == 0 || r.Slot >= 1<<20 {
 		return ErrInvalidStreamReservation
-	}
-	for _, id := range []string{r.IngressID, r.IngressRunID} {
-		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\x00\r\n\t ") {
-			return ErrInvalidStreamReservation
-		}
 	}
 	if r.SourceIP != "" || r.Proof != "" {
 		address, err := netip.ParseAddr(r.SourceIP)
@@ -46,19 +76,8 @@ func (r StreamReservation) Validate() error {
 			return ErrInvalidStreamReservation
 		}
 	}
-	switch r.ResourceKind {
-	case "public_url":
-		if !opaqueid.Valid(r.ResourceID, opaqueid.PublicURLPrefix) || !opaqueid.Valid(r.RunID, opaqueid.PublishRunPrefix) {
-			return ErrInvalidStreamReservation
-		}
-	case "service":
-		if !opaqueid.Valid(r.ResourceID, opaqueid.ServicePrefix) || !opaqueid.Valid(r.RunID, opaqueid.ServiceRunPrefix) {
-			return ErrInvalidStreamReservation
-		}
-	default:
-		return ErrInvalidStreamReservation
-	}
-	return nil
+	return (StreamBinding{ResourceKind: r.ResourceKind, ResourceID: r.ResourceID, RunID: r.RunID, RunNumber: r.RunNumber,
+		IngressID: r.IngressID, IngressRunID: r.IngressRunID, IngressLeaseRevision: r.IngressLeaseRevision}).Validate()
 }
 
 func (r StreamReservation) validatePublicBinding(resource, run string, number uint64, visitor string) error {

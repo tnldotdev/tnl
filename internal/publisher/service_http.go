@@ -153,7 +153,7 @@ func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target Servi
 				return
 			}
 			defer release()
-			reference, err := visitortoken.ServiceAuditReference(permission.permission, state)
+			reference, err := visitortoken.ServiceAuditReference(permission.permission.Facts(), state)
 			if err != nil {
 				serviceHTTPDenied(w, http.StatusForbidden)
 				return
@@ -178,36 +178,36 @@ func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target Servi
 	})
 }
 
-func (f ServiceHTTP) certificatePermission(state tls.ConnectionState) (visitortoken.Permission, bool, error) {
+func (f ServiceHTTP) certificatePermission(state tls.ConnectionState) (visitortoken.VerifiedPermission, bool, error) {
 	if len(state.PeerCertificates) == 0 {
-		return visitortoken.Permission{}, false, nil
+		return visitortoken.VerifiedPermission{}, false, nil
 	}
 	view, enabled, _ := f.Runtime.policy.Lease.Current()
 	if !enabled {
-		return visitortoken.Permission{}, false, visitortoken.ErrPolicy
+		return visitortoken.VerifiedPermission{}, false, visitortoken.ErrPolicy
 	}
 	if len(state.VerifiedChains) == 0 {
 		roots := f.Runtime.policy.Lease.ClientAuthorities()
 		if roots == nil {
-			return visitortoken.Permission{}, false, visitortoken.ErrPolicy
+			return visitortoken.VerifiedPermission{}, false, visitortoken.ErrPolicy
 		}
 		chains, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{Roots: roots, CurrentTime: view.AuthorityTime(time.Now()), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
 		if err != nil {
-			return visitortoken.Permission{}, false, visitortoken.ErrBinding
+			return visitortoken.VerifiedPermission{}, false, visitortoken.ErrBinding
 		}
 		state.VerifiedChains = chains
 	}
 	token, err := visitortoken.CertificateToken(state.PeerCertificates[0])
 	if err != nil {
-		return visitortoken.Permission{}, false, err
+		return visitortoken.VerifiedPermission{}, false, err
 	}
 	permission, err := visitortoken.VerifyCertificateRenewalProof(token, view, state, time.Now())
 	if err != nil {
-		return visitortoken.Permission{}, false, err
+		return visitortoken.VerifiedPermission{}, false, err
 	}
-	certificate, ok := permission.Subject.(visitortoken.Certificate)
+	certificate, ok := permission.Facts().Subject.(visitortoken.Certificate)
 	if !ok {
-		return visitortoken.Permission{}, false, visitortoken.ErrBinding
+		return visitortoken.VerifiedPermission{}, false, visitortoken.ErrBinding
 	}
 	_, workload := certificate.Source.(visitortoken.Workload)
 	return permission, workload, nil
@@ -259,7 +259,7 @@ func (f ServiceHTTP) localPermission(r *http.Request, state tls.ConnectionState)
 	request.RemoteAddr = net.JoinHostPort(source.String(), "0")
 	permission, err := localHTTPPermission(request, f.Runtime.policy.Lease, f.Runtime.tokens)
 	if err == nil {
-		if grant, ok := permission.permission.Subject.(visitortoken.Grant); ok && grant.Kind == "share" {
+		if grant, ok := permission.permission.Facts().Subject.(visitortoken.Grant); ok && grant.Kind == "share" {
 			if _, header := request.Header[http.CanonicalHeaderKey(visitorTokenHeader)]; header {
 				return httpPermission{}, true, visitortoken.ErrBinding
 			}
@@ -283,7 +283,7 @@ func serviceHTTPDecisionStatus(err error) int {
 		return http.StatusForbidden
 	}
 	var problem *clientcontrol.ProblemError
-	if errors.As(err, &problem) && (problem.Status == 401 || problem.Status == 403 || problem.Status == 404 || problem.Status == 409) {
+	if errors.As(err, &problem) && problem != nil && (problem.Status == 401 || problem.Status == 403 || problem.Status == 404 || problem.Status == 409) {
 		return http.StatusForbidden
 	}
 	return http.StatusServiceUnavailable
@@ -308,12 +308,12 @@ func (f ServiceHTTP) share(w http.ResponseWriter, r *http.Request) {
 	secret := strings.TrimPrefix(r.URL.Path, "/__tnl/share/")
 	view, enabled, _ := f.Runtime.policy.Lease.Current()
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(secret), view, time.Now())
-	grant, ok := permission.Subject.(visitortoken.Grant)
+	grant, ok := permission.Facts().Subject.(visitortoken.Grant)
 	if !enabled || err != nil || !ok || grant.Kind != "share" {
 		serviceHTTPDenied(w, 403)
 		return
 	}
-	response := controlv1.VisitorTokenResponse{VisitorToken: secret, ExpiresAt: permission.ExpiresAt}
+	response := controlv1.VisitorTokenResponse{VisitorToken: secret, ExpiresAt: permission.Facts().ExpiresAt}
 	if err := visitorPermissionCookie(w, response); err != nil {
 		serviceHTTPDenied(w, http.StatusForbidden)
 		return

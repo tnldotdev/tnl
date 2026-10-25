@@ -244,9 +244,9 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 			message, status = "feedback changed; reload and retry", http.StatusConflict
 		case errors.Is(err, clientcontrol.ErrRateLimited):
 			message, status = "too many feedback requests; retry shortly", http.StatusTooManyRequests
-		case errors.As(err, &problem) && problem.Status == http.StatusForbidden:
+		case errors.As(err, &problem) && problem != nil && problem.Status == http.StatusForbidden:
 			message, status = "feedback requires a current share", http.StatusForbidden
-		case errors.As(err, &problem) && problem.Status == http.StatusBadRequest:
+		case errors.As(err, &problem) && problem != nil && problem.Status == http.StatusBadRequest:
 			message, status = "invalid feedback request; check the input", http.StatusBadRequest
 		}
 		http.Error(response, message, status)

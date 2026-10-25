@@ -33,7 +33,7 @@ func httpPermissionFixture(t *testing.T, anonymous bool) (*visitorlease.Lease, v
 	t.Cleanup(policy.Close)
 	now := time.Now()
 	update := visitorlease.Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: "preview.example.test", Port: 443,
-		VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"http": key.Public().(ed25519.PublicKey)}},
+		VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"http": key.Public().(ed25519.PublicKey)}),
 		KeyRevision: 1, Enabled: true, Anonymous: anonymous, Snapshot: true}
 	if err := policy.Apply(policy.Begin(), update); err != nil {
 		t.Fatal(err)

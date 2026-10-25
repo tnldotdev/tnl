@@ -24,8 +24,20 @@ func fixture(t *testing.T) (*Lease, Update, ed25519.PrivateKey) {
 	t.Cleanup(lease.Close)
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("k", 32)))
 	update := Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: "preview.example.test", Port: 443, VisitorPolicyRevision: 1,
-		ObservedAt: time.Now(), ValidUntil: time.Now().Add(visitortoken.PolicyLifetime), Keys: map[string]ed25519.PublicKey{"first": key.Public().(ed25519.PublicKey)}}, KeyRevision: 1, Enabled: true, Snapshot: true}
+		ObservedAt: time.Now(), ValidUntil: time.Now().Add(visitortoken.PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{"first": key.Public().(ed25519.PublicKey)}), KeyRevision: 1, Enabled: true, Snapshot: true}
 	return lease, update, key
+}
+
+func TestLeaseRejectsUnverifiedEvidence(t *testing.T) {
+	lease, update, _ := fixture(t)
+	started := lease.Begin()
+	update.View.ObservedAt, update.View.ValidUntil = started.StartedAt, started.StartedAt.Add(visitortoken.PolicyLifetime)
+	if err := lease.Apply(started, update); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lease.Bind(visitortoken.VerifiedPermission{}, netip.MustParseAddr("192.0.2.1"), func() {}); err == nil {
+		t.Fatal("unsigned facts entered a current visitor lease")
+	}
 }
 
 func TestPolicyFutureRenewalWaitsForCoverageWithoutExtendingPriorDeadline(t *testing.T) {
@@ -50,9 +62,10 @@ func TestPolicyFutureRenewalWaitsForCoverageWithoutExtendingPriorDeadline(t *tes
 				if err != nil {
 					t.Fatal(err)
 				}
-				future := permission
-				future.VisitorPolicyRevision = 2
-				future.ExpiresAt = time.Now().Add(2 * time.Minute)
+				futureFacts := permission.Facts()
+				futureFacts.VisitorPolicyRevision = 2
+				futureFacts.ExpiresAt = time.Now().Add(2 * time.Minute)
+				future := signedAdmission(t, lease, key, "first", futureFacts)
 				if err := guard.Renew(future); err != nil {
 					t.Fatal("verified future permission could not wait for policy", err)
 				}
@@ -101,8 +114,9 @@ func TestPolicyNativeMetadataFenceRejectsPendingRenewal(t *testing.T) {
 		if err := guard.AllowRenewal(); err != nil {
 			t.Fatal(err)
 		}
-		permission.VisitorPolicyRevision = 2
-		if err := guard.Renew(permission); err != nil {
+		futureFacts := permission.Facts()
+		futureFacts.VisitorPolicyRevision = 2
+		if err := guard.Renew(signedAdmission(t, lease, key, "first", futureFacts)); err != nil {
 			t.Fatal(err)
 		}
 		update.View.MetadataRevision, update.View.VisitorPolicyRevision = 2, 2
@@ -115,18 +129,27 @@ func TestPolicyNativeMetadataFenceRejectsPendingRenewal(t *testing.T) {
 	})
 }
 
-func admission(t *testing.T, lease *Lease, key ed25519.PrivateKey, id string, expires time.Time) visitortoken.Permission {
+func admission(t *testing.T, lease *Lease, key ed25519.PrivateKey, id string, expires time.Time) visitortoken.VerifiedPermission {
 	t.Helper()
 	view, enabled, _ := lease.Current()
 	if !enabled {
 		t.Fatal("policy was not prepared")
 	}
 	permission := visitortoken.Permission{Scope: view.Scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision, Subject: visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, ExpiresAt: expires}
+	return signedAdmission(t, lease, key, id, permission)
+}
+
+func signedAdmission(t *testing.T, lease *Lease, key ed25519.PrivateKey, id string, permission visitortoken.Permission) visitortoken.VerifiedPermission {
+	t.Helper()
+	view, enabled, _ := lease.Current()
+	if !enabled {
+		t.Fatal("policy was not prepared")
+	}
 	token, err := visitortoken.Sign(view.Issuer, id, key, permission, view.AuthorityTime(time.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified, err := visitortoken.VerifyBearer(token, view, time.Now())
+	verified, err := visitortoken.VerifyBearerRenewalProof(token, view, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +278,7 @@ func TestPolicyKeyRevocationCancelsOnlyAffectedAdmissions(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, update, first := fixture(t)
 		second := ed25519.NewKeyFromSeed([]byte(strings.Repeat("b", 32)))
-		update.View.Keys["second"] = second.Public().(ed25519.PublicKey)
+		update.View = update.View.WithVerificationKeys(map[string]ed25519.PublicKey{"first": first.Public().(ed25519.PublicKey), "second": second.Public().(ed25519.PublicKey)})
 		if err := lease.Apply(lease.Begin(), update); err != nil {
 			t.Fatal(err)
 		}
@@ -271,7 +294,7 @@ func TestPolicyKeyRevocationCancelsOnlyAffectedAdmissions(t *testing.T) {
 		}
 		defer two.Close()
 		update.Snapshot, update.AfterRevision, update.KeyRevision = false, 1, 2
-		delete(update.View.Keys, "first")
+		update.View = update.View.WithVerificationKeys(map[string]ed25519.PublicKey{"second": second.Public().(ed25519.PublicKey)})
 		if err := lease.Apply(lease.Begin(), update); err != nil {
 			t.Fatal(err)
 		}

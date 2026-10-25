@@ -65,9 +65,9 @@ func (s *streamReservations) apply(allocation streamAllocation, started time.Tim
 	if s.closed || started.IsZero() || s.now().Before(started) || !opaqueid.Valid(allocation.ID, "salloc_") || allocation.ProofKey == ([32]byte{}) || allocation.Capacity < 1 || allocation.Capacity > 1<<20 || duration <= 0 || duration > 10*time.Second || !s.now().Before(started.Add(duration)) {
 		return ErrStreamReservation
 	}
-	probe := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: allocation.ID, Sequence: 1, ResourceKind: allocation.ResourceKind, ResourceID: allocation.ResourceID, RunID: allocation.RunID, RunNumber: allocation.RunNumber,
-		VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", IngressID: allocation.IngressID, IngressRunID: allocation.IngressRunID, IngressLeaseRevision: allocation.IngressLeaseRevision}
-	if probe.Validate() != nil {
+	binding := tunnelv1.StreamBinding{ResourceKind: allocation.ResourceKind, ResourceID: allocation.ResourceID, RunID: allocation.RunID, RunNumber: allocation.RunNumber,
+		IngressID: allocation.IngressID, IngressRunID: allocation.IngressRunID, IngressLeaseRevision: allocation.IngressLeaseRevision}
+	if binding.Validate() != nil {
 		return ErrStreamReservation
 	}
 	allocation.ObservedAt, allocation.ValidUntil = started, started.Add(duration)

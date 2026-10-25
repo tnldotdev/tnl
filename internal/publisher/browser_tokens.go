@@ -44,7 +44,7 @@ type browserTokens struct {
 type browserTokenSource struct {
 	source         json.RawMessage
 	response       controlv1.VisitorTokenResponse
-	permission     visitortoken.Permission
+	permission     visitortoken.VerifiedPermission
 	parentDeadline time.Time
 	reprepared     bool
 	used           time.Time
@@ -59,7 +59,7 @@ type browserTokenRenewal struct {
 	source         *browserTokenSource
 	generation     uint64
 	request        controlv1.VisitorTokenRequest
-	permission     visitortoken.Permission
+	permission     visitortoken.VerifiedPermission
 	parentDeadline time.Time
 	reprepared     bool
 }
@@ -91,18 +91,19 @@ func startBrowserTokens(ctx context.Context, client browserTokenClient, policy *
 	return b, nil
 }
 
-func (b *browserTokens) verify(response controlv1.VisitorTokenResponse, parent time.Time) (visitortoken.Permission, error) {
+func (b *browserTokens) verify(response controlv1.VisitorTokenResponse, parent time.Time) (visitortoken.VerifiedPermission, error) {
 	view, enabled, _ := b.policy.Current()
 	if !enabled {
-		return visitortoken.Permission{}, visitortoken.ErrPolicy
+		return visitortoken.VerifiedPermission{}, visitortoken.ErrPolicy
 	}
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(response.VisitorToken), view, time.Now())
 	if err != nil {
-		return visitortoken.Permission{}, err
+		return visitortoken.VerifiedPermission{}, err
 	}
-	if response.Resource.Id != permission.Scope.ID || string(response.Resource.Kind) != string(permission.Scope.Kind) || response.Hostname != permission.Hostname || response.Port != int(permission.Port) ||
-		response.VisitorPolicyRevision != permission.VisitorPolicyRevision || !response.ExpiresAt.Equal(permission.ExpiresAt) || parent.IsZero() || response.ExpiresAt.After(parent) {
-		return visitortoken.Permission{}, visitortoken.ErrBinding
+	facts := permission.Facts()
+	if response.Resource.Id != facts.Scope.ID || string(response.Resource.Kind) != string(facts.Scope.Kind) || response.Hostname != facts.Hostname || response.Port != int(facts.Port) ||
+		response.VisitorPolicyRevision != facts.VisitorPolicyRevision || !response.ExpiresAt.Equal(facts.ExpiresAt) || parent.IsZero() || response.ExpiresAt.After(parent) {
+		return visitortoken.VerifiedPermission{}, visitortoken.ErrBinding
 	}
 	return permission, nil
 }
@@ -126,7 +127,7 @@ func (b *browserTokens) install(source json.RawMessage, response controlv1.Visit
 	if json.Unmarshal(source, &binding) != nil {
 		return visitortoken.ErrBinding
 	}
-	switch subject := permission.Subject.(type) {
+	switch subject := permission.Facts().Subject.(type) {
 	case visitortoken.Browser:
 		if binding.Kind != "browser_session" {
 			return visitortoken.ErrBinding
@@ -157,7 +158,7 @@ func (b *browserTokens) install(source json.RawMessage, response controlv1.Visit
 		}
 		prior = &browserTokenSource{source: bytes.Clone(source), aliases: make(map[[32]byte]time.Time), guards: make(map[*visitorlease.Guard]struct{})}
 		b.sources[key] = prior
-	} else if prior.permission.Subject != permission.Subject || !prior.parentDeadline.Equal(parent) {
+	} else if !prior.permission.SameSubject(permission) || !prior.parentDeadline.Equal(parent) {
 		return visitortoken.ErrBinding
 	}
 	for digest, until := range prior.aliases {
@@ -174,7 +175,7 @@ func (b *browserTokens) install(source json.RawMessage, response controlv1.Visit
 	prior.source = bytes.Clone(source)
 	prior.generation++
 	prior.denied = false
-	prior.aliases[digest], b.tokens[digest] = permission.ExpiresAt, prior
+	prior.aliases[digest], b.tokens[digest] = permission.Facts().ExpiresAt, prior
 	return nil
 }
 
@@ -242,20 +243,20 @@ func (b *browserTokens) use(token visitortoken.Token, guard *visitorlease.Guard)
 	return response, release, true
 }
 
-func (b *browserTokens) replacement(token visitortoken.Token, proof visitortoken.Permission) (visitortoken.Token, visitortoken.Permission, error) {
+func (b *browserTokens) replacement(token visitortoken.Token, proof visitortoken.VerifiedPermission) (visitortoken.Token, visitortoken.VerifiedPermission, error) {
 	response, release, found := b.use(token, nil)
 	defer release()
 	if !found || response.VisitorToken == token.Reveal() {
-		return "", visitortoken.Permission{}, visitortoken.ErrToken
+		return "", visitortoken.VerifiedPermission{}, visitortoken.ErrToken
 	}
 	view, enabled, _ := b.policy.Current()
 	if !enabled {
-		return "", visitortoken.Permission{}, visitortoken.ErrPolicy
+		return "", visitortoken.VerifiedPermission{}, visitortoken.ErrPolicy
 	}
 	replacement := visitortoken.Token(response.VisitorToken)
 	permission, err := visitortoken.VerifyBearer(replacement, view, time.Now())
-	if err != nil || permission.Subject != proof.Subject || permission.Scope != proof.Scope || permission.Hostname != proof.Hostname || permission.Port != proof.Port {
-		return "", visitortoken.Permission{}, visitortoken.ErrBinding
+	if err != nil || !permission.SameIdentity(proof) {
+		return "", visitortoken.VerifiedPermission{}, visitortoken.ErrBinding
 	}
 	return replacement, permission, nil
 }
@@ -305,7 +306,9 @@ func (b *browserTokens) refresh(ctx context.Context, report func(error)) {
 	if len(due) == 0 {
 		return
 	}
-	sort.Slice(due, func(i, j int) bool { return due[i].permission.ExpiresAt.Before(due[j].permission.ExpiresAt) })
+	sort.Slice(due, func(i, j int) bool {
+		return due[i].permission.Facts().ExpiresAt.Before(due[j].permission.Facts().ExpiresAt)
+	})
 	batch, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	jobs := make(chan browserTokenRenewal)
@@ -344,19 +347,19 @@ func (b *browserTokens) renew(ctx context.Context, job browserTokenRenewal, repo
 	if err == nil {
 		err = ctx.Err()
 	}
-	var permission visitortoken.Permission
+	var permission visitortoken.VerifiedPermission
 	if err == nil {
 		parent := job.parentDeadline
 		if job.reprepared {
 			parent = response.ExpiresAt
 		}
 		permission, err = b.verify(response, parent)
-		if err == nil && permission.Subject != job.permission.Subject {
+		if err == nil && !permission.SameSubject(job.permission) {
 			err = visitortoken.ErrBinding
 		}
 	}
 	var problem *clientcontrol.ProblemError
-	terminal := errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.As(err, &problem) && (problem.Status == http.StatusUnauthorized || problem.Status == http.StatusForbidden)
+	terminal := errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.As(err, &problem) && problem != nil && (problem.Status == http.StatusUnauthorized || problem.Status == http.StatusForbidden)
 	var guards []*visitorlease.Guard
 	b.mu.Lock()
 	source := job.source
@@ -378,7 +381,7 @@ func (b *browserTokens) renew(ctx context.Context, job browserTokenRenewal, repo
 				if job.reprepared {
 					source.parentDeadline = response.ExpiresAt
 				}
-				source.aliases[digest], b.tokens[digest] = permission.ExpiresAt, source
+				source.aliases[digest], b.tokens[digest] = permission.Facts().ExpiresAt, source
 				source.generation++
 			}
 		}

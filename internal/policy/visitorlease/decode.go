@@ -23,19 +23,19 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
-		MetadataRevision: policy.MetadataRevision, Public: policy.Public, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, Keys: make(map[string]ed25519.PublicKey), Workloads: make(map[string]visitortoken.WorkloadLease)},
+		MetadataRevision: policy.MetadataRevision, Public: policy.Public, ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
-	update.View.Credentials = make(map[string]visitortoken.CredentialLease, len(policy.CredentialLeases))
+	credentials := make(map[string]visitortoken.CredentialLease, len(policy.CredentialLeases))
 	for _, lease := range policy.CredentialLeases {
 		key, valid := visitortoken.CredentialLeaseKey(string(lease.Kind), lease.Id)
 		digest, err := base64.RawURLEncoding.Strict().DecodeString(lease.SubjectSha256)
 		if !valid || err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != lease.SubjectSha256 || !lease.ExpiresAt.After(policy.ObservedAt) {
 			return Update{}, ErrUpdate
 		}
-		if _, duplicate := update.View.Credentials[key]; duplicate {
+		if _, duplicate := credentials[key]; duplicate {
 			return Update{}, ErrUpdate
 		}
-		update.View.Credentials[key] = visitortoken.CredentialLease{SubjectSHA256: lease.SubjectSha256, ExpiresAt: lease.ExpiresAt}
+		credentials[key] = visitortoken.CredentialLease{SubjectSHA256: lease.SubjectSha256, ExpiresAt: lease.ExpiresAt}
 	}
 	if policy.ClientIssuerPem != nil {
 		if scope.Kind != visitorscope.Service || len(*policy.ClientIssuerPem) > 4096 {
@@ -62,21 +62,24 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		}
 		update.Allocations[allocation.Id] = allocation
 	}
+	keys := make(map[string]ed25519.PublicKey, len(policy.VerificationKeys))
 	for _, key := range policy.VerificationKeys {
-		if len(key.PublicKey) != ed25519.PublicKeySize || key.Id == "" || update.View.Keys[key.Id] != nil {
+		if len(key.PublicKey) != ed25519.PublicKeySize || key.Id == "" || keys[key.Id] != nil {
 			return Update{}, ErrUpdate
 		}
-		update.View.Keys[key.Id] = ed25519.PublicKey(key.PublicKey)
+		keys[key.Id] = ed25519.PublicKey(key.PublicKey)
 	}
+	workloads := make(map[string]visitortoken.WorkloadLease, len(policy.WorkloadLeases))
 	for _, parent := range policy.WorkloadLeases {
 		if parent.SessionId == "" {
 			return Update{}, ErrUpdate
 		}
-		if _, found := update.View.Workloads[parent.SessionId]; found {
+		if _, found := workloads[parent.SessionId]; found {
 			return Update{}, ErrUpdate
 		}
-		update.View.Workloads[parent.SessionId] = visitortoken.WorkloadLease{KeySHA256: parent.KeySha256, ExpiresAt: parent.ExpiresAt}
+		workloads[parent.SessionId] = visitortoken.WorkloadLease{KeySHA256: parent.KeySha256, ExpiresAt: parent.ExpiresAt}
 	}
+	update.View = update.View.WithVerificationKeys(keys).WithWorkloadLeases(workloads).WithCredentialLeases(credentials)
 	if policy.Ip != nil {
 		if len(policy.Ip.Key) != 32 || len(policy.Ip.Prefixes) > 2048 {
 			return Update{}, ErrUpdate

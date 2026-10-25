@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,6 +74,52 @@ func TestNativeRequestDeadlineInterruptionResumesPartialHeaderAndPayload(t *test
 		if data.String() != "visitor TLS bytes" || renewed != 1 || !conn.reported {
 			t.Fatalf("deadline at %d lost bytes or renewal: data=%q renewed=%d", offset, data.String(), renewed)
 		}
+	}
+}
+
+func TestNativeRequestReaderSerializesConcurrentReads(t *testing.T) {
+	var wire bytes.Buffer
+	const count = 64
+	for range count {
+		if err := tunnelv1.WriteNativeRequestFrame(&wire, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestData, Data: []byte{'x'}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tunnelv1.WriteNativeRequestFrame(&wire, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestEnded}); err != nil {
+		t.Fatal(err)
+	}
+	reader := NewNativeRequestReader(&interruptedNativeConn{wire: wire.Bytes(), interrupt: wire.Len() + 1}, nil, nil)
+	var workers sync.WaitGroup
+	counts := make(chan int, 8)
+	for range 8 {
+		workers.Go(func() {
+			var count int
+			var b [1]byte
+			for {
+				n, err := reader.Read(b[:])
+				if n > 0 && b[0] != 'x' {
+					t.Error("native framing leaked into visitor bytes")
+				}
+				count += n
+				if err == io.EOF {
+					counts <- count
+					return
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	workers.Wait()
+	close(counts)
+	var read int
+	for n := range counts {
+		read += n
+	}
+	if read != count {
+		t.Fatalf("concurrent readers received %d of %d visitor bytes", read, count)
 	}
 }
 

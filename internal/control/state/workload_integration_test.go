@@ -453,14 +453,14 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	currentDirect := func(at time.Time) (visitortoken.Permission, error) {
+	currentDirect := func(at time.Time) (visitortoken.VerifiedPermission, error) {
 		policy, err := d.ReadPublisherVisitorPolicy(ctx, scope, run.RunID, run.RunNumber, run.Token, 0, nil, at)
 		if err != nil {
-			return visitortoken.Permission{}, err
+			return visitortoken.VerifiedPermission{}, err
 		}
 		update, err := visitorlease.Decode(policy)
 		if err != nil {
-			return visitortoken.Permission{}, err
+			return visitortoken.VerifiedPermission{}, err
 		}
 		if !update.View.Public || update.View.Port != uint16(port) {
 			t.Fatal("direct endpoint lost reachability or port")
@@ -468,10 +468,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		return visitortoken.VerifyCertificate(clientToken, update.View, clientState, at)
 	}
 	checked, err := currentDirect(now)
-	if err != nil || !checked.ExpiresAt.Equal(session.ExpiresAt.Truncate(time.Second)) {
-		t.Fatal("local public workload certificate deadline", checked.ExpiresAt, err)
+	if err != nil || !checked.Facts().ExpiresAt.Equal(session.ExpiresAt.Truncate(time.Second)) {
+		t.Fatal("local public workload certificate deadline", checked.Facts().ExpiresAt, err)
 	}
-	reference, err := visitortoken.ServiceAuditReference(checked, clientState)
+	reference, err := visitortoken.ServiceAuditReference(checked.Facts(), clientState)
 	if err != nil || reference.Kind != "certificate" {
 		t.Fatal("signed workload admission lacked exact audit identity", err)
 	}

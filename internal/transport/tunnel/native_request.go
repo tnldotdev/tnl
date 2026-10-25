@@ -22,6 +22,8 @@ type NativeRequestWriter struct {
 	opening func([]byte) error
 }
 
+var _ net.Conn = (*NativeRequestWriter)(nil)
+
 func NewNativeRequestWriter(conn net.Conn) *NativeRequestWriter {
 	return &NativeRequestWriter{Conn: conn}
 }
@@ -113,6 +115,7 @@ func (s *NativeRequestWriter) CloseWrite() error {
 // parsers see bytes. a rejected renewal terminates this stream, never a sibling.
 type NativeRequestReader struct {
 	net.Conn
+	mu          sync.Mutex
 	renew       func(tunnelv1.NativeVisitorPermission) error
 	initial     *bytes.Reader
 	remaining   *bytes.Reader
@@ -124,11 +127,15 @@ type NativeRequestReader struct {
 	afterEnd    sync.Once
 }
 
+var _ net.Conn = (*NativeRequestReader)(nil)
+
 func NewNativeRequestReader(conn net.Conn, initial []byte, renew func(tunnelv1.NativeVisitorPermission) error) *NativeRequestReader {
 	return &NativeRequestReader{Conn: conn, initial: bytes.NewReader(initial), renew: renew}
 }
 
 func (s *NativeRequestReader) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(p) == 0 {
 		return 0, nil
 	}

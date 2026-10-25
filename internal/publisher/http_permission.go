@@ -25,7 +25,7 @@ func visitorPermissionCookie(w http.ResponseWriter, permission controlv1.Visitor
 }
 
 type httpPermission struct {
-	permission       visitortoken.Permission
+	permission       visitortoken.VerifiedPermission
 	token            visitortoken.Token
 	renewed          bool
 	source           netip.Addr

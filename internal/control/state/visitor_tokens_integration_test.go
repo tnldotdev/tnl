@@ -39,7 +39,7 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	}
 	keys := stateTestVisitorKeys(t, d, now)
 	verified, err := visitortoken.VerifyBearer(issued.Token, stateTestVisitorView(issued.Permission, keys, now), now)
-	if err != nil || verified.Scope != scope || verified.Subject != (visitortoken.Browser{IdentityID: principal.IdentityID, SessionID: principal.SessionID}) || !verified.ExpiresAt.Equal(now.Add(5*time.Minute).Truncate(time.Second)) {
+	if err != nil || verified.Facts().Scope != scope || verified.Facts().Subject != (visitortoken.Browser{IdentityID: principal.IdentityID, SessionID: principal.SessionID}) || !verified.Facts().ExpiresAt.Equal(now.Add(5*time.Minute).Truncate(time.Second)) {
 		t.Fatal("incorrect scoped visitor permission", err)
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, BrowserTokenSource{}, now); !errors.Is(err, ErrVisitorPermission) {

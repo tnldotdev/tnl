@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"strings"
 	"time"
 
@@ -45,6 +46,22 @@ type Permission struct {
 	VisitorPolicyRevision int64
 	Subject               Subject
 	ExpiresAt             time.Time
+}
+
+// VerifiedPermission is signed evidence, not permanent authorization. only the
+// verification boundary constructs it; admission still checks current policy.
+// its zero value cannot be bound to a visitor lease.
+type VerifiedPermission struct{ facts Permission }
+
+func (p VerifiedPermission) Facts() Permission { return p.facts }
+func (p VerifiedPermission) Valid() bool       { return p.facts.SigningKeyID != "" }
+
+func (p VerifiedPermission) SameSubject(other VerifiedPermission) bool {
+	return p.Valid() && other.Valid() && p.facts.Subject == other.facts.Subject
+}
+
+func (p VerifiedPermission) SameIdentity(other VerifiedPermission) bool {
+	return p.SameSubject(other) && p.facts.Scope == other.facts.Scope && p.facts.Hostname == other.facts.Hostname && p.facts.Port == other.facts.Port
 }
 
 type claims struct {
@@ -123,10 +140,49 @@ type View struct {
 	Public                bool
 	ObservedAt            time.Time
 	ValidUntil            time.Time
-	Keys                  map[string]ed25519.PublicKey
+	keys                  map[string]ed25519.PublicKey
 	ControlTime           time.Time
-	Workloads             map[string]WorkloadLease
-	Credentials           map[string]CredentialLease
+	workloads             map[string]WorkloadLease
+	credentials           map[string]CredentialLease
+}
+
+// WithVerificationKeys publishes independent key bytes. snapshots may share
+// this private immutable map without copying it on each visitor admission.
+func (v View) WithVerificationKeys(keys map[string]ed25519.PublicKey) View {
+	v.keys = make(map[string]ed25519.PublicKey, len(keys))
+	for id, key := range keys {
+		v.keys[id] = bytes.Clone(key)
+	}
+	return v
+}
+
+func (v View) WithWorkloadLeases(leases map[string]WorkloadLease) View {
+	v.workloads = maps.Clone(leases)
+	return v
+}
+
+func (v View) WithCredentialLeases(leases map[string]CredentialLease) View {
+	v.credentials = maps.Clone(leases)
+	return v
+}
+
+func (v View) Workload(id string) (WorkloadLease, bool) {
+	lease, found := v.workloads[id]
+	return lease, found
+}
+
+func (v View) HasSigningKey(id string) bool { return len(v.keys[id]) == ed25519.PublicKeySize }
+
+func (v View) ValidVerificationKeys() bool {
+	if len(v.keys) > 64 {
+		return false
+	}
+	for id, key := range v.keys {
+		if id == "" || len(key) != ed25519.PublicKeySize {
+			return false
+		}
+	}
+	return true
 }
 
 type CredentialLease struct {
@@ -139,7 +195,7 @@ func (v View) CredentialDeadline(subject Subject) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	lease, found := v.Credentials[key]
+	lease, found := v.credentials[key]
 	if !found || lease.SubjectSHA256 != digest {
 		return time.Time{}
 	}
@@ -177,7 +233,7 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 	if err != nil {
 		return Permission{}, err
 	}
-	if err := CheckCurrent(permission, view, now); err != nil {
+	if err := checkCurrent(permission, view, now); err != nil {
 		return Permission{}, err
 	}
 	return permission, nil
@@ -201,7 +257,7 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != string(jose.EdDSA) || header.Type != Type || !validText(header.KeyID, 128) {
 		return Permission{}, ErrToken
 	}
-	public := view.Keys[header.KeyID]
+	public := view.keys[header.KeyID]
 	if len(public) != ed25519.PublicKeySize {
 		return Permission{}, ErrKey
 	}
@@ -231,7 +287,14 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 
 // CheckCurrent rechecks an already verified, proof-bound admission. it does not
 // replace signature or possession verification at the admission boundary.
-func CheckCurrent(permission Permission, view View, now time.Time) error {
+func CheckCurrent(permission VerifiedPermission, view View, now time.Time) error {
+	if !permission.Valid() {
+		return ErrToken
+	}
+	return checkCurrent(permission.facts, view, now)
+}
+
+func checkCurrent(permission Permission, view View, now time.Time) error {
 	if !view.current(now) {
 		return ErrPolicy
 	}
@@ -239,7 +302,7 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 		return ErrToken
 	}
 	if key, digest, err := CredentialBinding(permission.Subject); err == nil && view.Scope.Kind == visitorscope.Service {
-		lease, found := view.Credentials[key]
+		lease, found := view.credentials[key]
 		if !found || lease.SubjectSHA256 != digest || !lease.ExpiresAt.After(view.AuthorityTime(now)) {
 			return ErrBinding
 		}
@@ -249,7 +312,7 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 			return ErrToken
 		}
 	}
-	if len(view.Keys[permission.SigningKeyID]) != ed25519.PublicKeySize {
+	if !view.HasSigningKey(permission.SigningKeyID) {
 		return ErrKey
 	}
 	subject := permission.Subject
@@ -257,7 +320,7 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 		subject = certificate.Source
 	}
 	if workload, ok := subject.(Workload); ok {
-		parent, found := view.Workloads[workload.SessionID]
+		parent, found := view.Workload(workload.SessionID)
 		if !found || parent.KeySHA256 != workload.KeySHA256 || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
 			return ErrBinding
 		}
@@ -265,16 +328,16 @@ func CheckCurrent(permission Permission, view View, now time.Time) error {
 	return nil
 }
 
-func VerifyBearer(token Token, view View, now time.Time) (Permission, error) {
+func VerifyBearer(token Token, view View, now time.Time) (VerifiedPermission, error) {
 	permission, err := verify(token, view, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	switch permission.Subject.(type) {
 	case Browser, Share, Grant:
-		return permission, nil
+		return VerifiedPermission{facts: permission}, nil
 	default:
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 }
 
@@ -282,16 +345,16 @@ func VerifyBearer(token Token, view View, now time.Time) (Permission, error) {
 // does not authorize admission: a superseded revision still fails CheckCurrent
 // and Lease.Bind. the browser renewal owner may only match it to a separately
 // prepared, currently verified replacement for the exact same subject.
-func VerifyBearerRenewalProof(token Token, view View, now time.Time) (Permission, error) {
+func VerifyBearerRenewalProof(token Token, view View, now time.Time) (VerifiedPermission, error) {
 	permission, err := verifySignature(token, view, now)
 	if err != nil {
-		return Permission{}, err
+		return VerifiedPermission{}, err
 	}
 	switch permission.Subject.(type) {
 	case Browser, Share, Grant:
-		return permission, nil
+		return VerifiedPermission{facts: permission}, nil
 	default:
-		return Permission{}, ErrBinding
+		return VerifiedPermission{}, ErrBinding
 	}
 }
 

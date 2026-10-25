@@ -21,7 +21,7 @@ func tokenFixture(t *testing.T) (ed25519.PrivateKey, Permission, View, time.Time
 	permission := Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443,
 		VisitorPolicyRevision: 7, Subject: Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, ExpiresAt: now.Add(RenewableLifetime)}
 	view := View{Issuer: "https://control.example.test", Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
-		VisitorPolicyRevision: permission.VisitorPolicyRevision, ObservedAt: now, ValidUntil: now.Add(PolicyLifetime), Keys: map[string]ed25519.PublicKey{"key-one": key.Public().(ed25519.PublicKey)}}
+		VisitorPolicyRevision: permission.VisitorPolicyRevision, ObservedAt: now, ValidUntil: now.Add(PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{"key-one": key.Public().(ed25519.PublicKey)})
 	return key, permission, view, now
 }
 
@@ -34,6 +34,30 @@ func issueToken(t *testing.T, key ed25519.PrivateKey, permission Permission, vie
 	return token
 }
 
+func TestVerificationEvidenceAndPolicySnapshotsCannotBeForgedOrMutated(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	if CheckCurrent(VerifiedPermission{}, view, now) == nil {
+		t.Fatal("zero evidence passed current admission")
+	}
+	public := key.Public().(ed25519.PublicKey)
+	input := map[string]ed25519.PublicKey{"key-one": public}
+	view = view.WithVerificationKeys(input)
+	input["key-one"][0] ^= 0xff
+	delete(input, "key-one")
+	if _, err := VerifyBearer(issueToken(t, key, permission, view, now), view, now); err != nil {
+		t.Fatal("mutating caller-owned signing keys changed a published snapshot", err)
+	}
+	verified, err := VerifyBearer(issueToken(t, key, permission, view, now), view, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := verified.Facts()
+	facts.VisitorPolicyRevision++
+	if err := CheckCurrent(verified, view, now); err != nil {
+		t.Fatal("mutating returned facts changed verified evidence", err)
+	}
+}
+
 func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	for _, kind := range []visitorscope.Kind{visitorscope.PublicURL, visitorscope.Service} {
@@ -44,7 +68,7 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 			}
 			token := issueToken(t, key, permission, view, now)
 			got, err := VerifyBearer(token, view, now.Add(time.Second))
-			if err != nil || got.Scope != permission.Scope || got.Subject != permission.Subject || !got.ExpiresAt.Equal(permission.ExpiresAt) {
+			if err != nil || got.Facts().Scope != permission.Scope || got.Facts().Subject != permission.Subject || !got.Facts().ExpiresAt.Equal(permission.ExpiresAt) {
 				t.Fatalf("permission mismatch: %+v, %v", got, err)
 			}
 			for name, change := range map[string]func(*View){
@@ -68,9 +92,9 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 						v.Port = 443
 					}
 				},
-				"missing-key": func(v *View) { v.Keys = nil },
+				"missing-key": func(v *View) { *v = v.WithVerificationKeys(nil) },
 				"wrong-key": func(v *View) {
-					v.Keys = map[string]ed25519.PublicKey{"key-one": ed25519.NewKeyFromSeed([]byte(strings.Repeat("x", 32))).Public().(ed25519.PublicKey)}
+					*v = v.WithVerificationKeys(map[string]ed25519.PublicKey{"key-one": ed25519.NewKeyFromSeed([]byte(strings.Repeat("x", 32))).Public().(ed25519.PublicKey)})
 				},
 				"expired-policy":     func(v *View) { v.ValidUntil = now.Add(time.Second) },
 				"oversized-lease":    func(v *View) { v.ValidUntil = now.Add(PolicyLifetime + time.Nanosecond) },
@@ -96,7 +120,7 @@ func TestVisitorTokensKeepSeparateIssuancesOfIdenticalPermission(t *testing.T) {
 	}
 	for _, token := range []Token{first, second} {
 		verified, err := VerifyBearer(token, view, now)
-		if err != nil || verified.Subject != permission.Subject || verified.Scope != permission.Scope {
+		if err != nil || verified.Facts().Subject != permission.Subject || verified.Facts().Scope != permission.Scope {
 			t.Fatal("issuance identity changed permission", err)
 		}
 	}
@@ -127,7 +151,7 @@ func TestBearerRenewalProofDoesNotAuthorizeSupersededOrExpiredPermission(t *test
 	token := issueToken(t, key, permission, view, now)
 	view.VisitorPolicyRevision++
 	proof, err := VerifyBearerRenewalProof(token, view, now)
-	if err != nil || proof.Subject != permission.Subject || proof.Scope != permission.Scope {
+	if err != nil || proof.Facts().Subject != permission.Subject || proof.Facts().Scope != permission.Scope {
 		t.Fatal("unexpired signed bearer did not retain its exact renewal identity", err)
 	}
 	if _, err := VerifyBearer(token, view, now); !errors.Is(err, ErrToken) {
@@ -139,7 +163,7 @@ func TestBearerRenewalProofDoesNotAuthorizeSupersededOrExpiredPermission(t *test
 	if _, err := VerifyBearerRenewalProof(token, view, permission.ExpiresAt); !errors.Is(err, ErrToken) {
 		t.Fatal("expired credential became a renewal handle", err)
 	}
-	view.Keys = nil
+	view = view.WithVerificationKeys(nil)
 	if _, err := VerifyBearerRenewalProof(token, view, now); !errors.Is(err, ErrKey) {
 		t.Fatal("renewal proof trusted a missing verification key", err)
 	}
@@ -228,7 +252,7 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			permission.Subject = subject
 			if workload, ok := subject.(Workload); ok {
-				view.Workloads = map[string]WorkloadLease{workload.SessionID: {KeySHA256: workload.KeySHA256, ExpiresAt: permission.ExpiresAt}}
+				view = view.WithWorkloadLeases(map[string]WorkloadLease{workload.SessionID: {KeySHA256: workload.KeySHA256, ExpiresAt: permission.ExpiresAt}})
 			}
 			token := issueToken(t, key, permission, view, now)
 			message, err := NativeProofMessage(token, session, connection, runID, runNumber, 1, initial)
@@ -267,7 +291,7 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 				t.Fatal("future policy revision admitted a native stream", err)
 			}
 			verifiedFuture, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, runID, runNumber, 1, nil, public, futureSignature, now)
-			if err != nil || verifiedFuture.VisitorPolicyRevision != future.VisitorPolicyRevision {
+			if err != nil || verifiedFuture.Facts().VisitorPolicyRevision != future.VisitorPolicyRevision {
 				t.Fatal("signed future renewal could not wait for policy coverage", err)
 			}
 			if err := CheckCurrent(verifiedFuture, view, now); !errors.Is(err, ErrToken) {

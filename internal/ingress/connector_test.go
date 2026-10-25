@@ -234,7 +234,7 @@ func privateTestSetup(t *testing.T) (*Connector, *privateControlFixture, *privat
 	}
 	t.Cleanup(policy.Close)
 	allocation := controlv1.StreamCapacityAllocation{Id: privateTestID(t, "salloc_"), Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, RunId: run, RunNumber: 1, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, Capacity: 64, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: bytes.Repeat([]byte{1}, 32)}
-	control.policyUpdate = visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"test-key": public}}}
+	control.policyUpdate = visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}, View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: permission.Hostname, Port: permission.Port, MetadataRevision: 1, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"test-key": public})}
 	if err := policy.Apply(policy.Begin(), control.policyUpdate); err != nil {
 		t.Fatal(err)
 	}

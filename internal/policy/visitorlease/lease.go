@@ -4,8 +4,6 @@
 package visitorlease
 
 import (
-	"bytes"
-	"crypto/ed25519"
 	"crypto/x509"
 	"errors"
 	"maps"
@@ -94,7 +92,7 @@ func (l *Lease) Apply(request Request, update Update) error {
 				delete(l.guards, guard)
 				stopped = append(stopped, guard)
 			} else {
-				if guard.pending == nil && (guard.anonymous || guard.permission.VisitorPolicyRevision == l.update.View.VisitorPolicyRevision) {
+				if guard.pending == nil && (guard.anonymous || guard.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision) {
 					guard.confirmedUntil = l.update.View.ValidUntil
 				}
 				guard.resetLocked()
@@ -114,7 +112,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 	if l.closed || request.epoch != l.epoch || request.sequence <= l.applied || request.sequence > l.sequence || request.StartedAt.IsZero() || now.Before(request.StartedAt) ||
 		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
-		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || len(view.Keys) > 64 {
+		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || !view.ValidVerificationKeys() {
 		return ErrUpdate
 	}
 	if request.Snapshot && !update.Snapshot {
@@ -135,19 +133,6 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 			return ErrUpdate
 		}
 	}
-	keys := make(map[string]ed25519.PublicKey, len(view.Keys))
-	for id, key := range view.Keys {
-		if id == "" || len(key) != ed25519.PublicKeySize {
-			return ErrUpdate
-		}
-		keys[id] = bytes.Clone(key)
-	}
-	workloads := make(map[string]visitortoken.WorkloadLease, len(view.Workloads))
-	for id, parent := range view.Workloads {
-		workloads[id] = parent
-	}
-	view.Keys, view.Workloads = keys, workloads
-	view.Credentials = maps.Clone(view.Credentials)
 	if len(update.Allocations) > 2048 {
 		return ErrUpdate
 	}
@@ -227,13 +212,13 @@ func (l *Lease) validateReservationLocked(reservation tunnelv1.StreamReservation
 	return nil
 }
 
-func (l *Lease) allowedLocked(permission visitortoken.Permission, source netip.Addr, now time.Time) bool {
+func (l *Lease) allowedLocked(permission visitortoken.VerifiedPermission, source netip.Addr, now time.Time) bool {
 	return l.current && l.update.Enabled && visitortoken.CheckCurrent(permission, l.update.View, now) == nil && (l.update.IP == nil || l.update.IP.Allows(source))
 }
 
 type Guard struct {
 	lease            *Lease
-	permission       visitortoken.Permission
+	permission       visitortoken.VerifiedPermission
 	source           netip.Addr
 	stop             func()
 	once             sync.Once
@@ -242,7 +227,7 @@ type Guard struct {
 	renewable        bool
 	confirmedUntil   time.Time
 	metadataRevision int64
-	pending          *visitortoken.Permission
+	pending          *visitortoken.VerifiedPermission
 }
 
 func (g *Guard) allowedLocked(now time.Time) bool {
@@ -259,33 +244,36 @@ func (g *Guard) allowedLocked(now time.Time) bool {
 	if l.allowedLocked(g.permission, g.source, now) {
 		return true
 	}
-	if !g.renewable || !l.current || !l.update.Enabled || !now.Before(g.confirmedUntil) || g.permission.VisitorPolicyRevision == l.update.View.VisitorPolicyRevision ||
+	if !g.renewable || !l.current || !l.update.Enabled || !now.Before(g.confirmedUntil) || g.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision ||
 		(l.update.IP != nil && !l.update.IP.Allows(g.source)) {
 		return false
 	}
 	prior := l.update.View
-	prior.VisitorPolicyRevision = g.permission.VisitorPolicyRevision
+	prior.VisitorPolicyRevision = g.permission.Facts().VisitorPolicyRevision
 	return visitortoken.CheckCurrent(g.permission, prior, now) == nil
 }
 
 // Bind follows signature and possession verification. each HTTP request binds
 // separately so cancellation never closes unrelated HTTP/2 request streams.
-func (l *Lease) Bind(permission visitortoken.Permission, source netip.Addr, stop func()) (*Guard, error) {
+func (l *Lease) Bind(permission visitortoken.VerifiedPermission, source netip.Addr, stop func()) (*Guard, error) {
+	if !permission.Valid() {
+		return nil, ErrUpdate
+	}
 	return l.bind(permission, false, source, 0, stop)
 }
 
-func (l *Lease) BindNative(permission visitortoken.Permission, source netip.Addr, metadataRevision int64, stop func()) (*Guard, error) {
-	if metadataRevision < 1 {
+func (l *Lease) BindNative(permission visitortoken.VerifiedPermission, source netip.Addr, metadataRevision int64, stop func()) (*Guard, error) {
+	if metadataRevision < 1 || !permission.Valid() {
 		return nil, ErrUpdate
 	}
 	return l.bind(permission, false, source, metadataRevision, stop)
 }
 
 func (l *Lease) BindAnonymous(source netip.Addr, stop func()) (*Guard, error) {
-	return l.bind(visitortoken.Permission{}, true, source, 0, stop)
+	return l.bind(visitortoken.VerifiedPermission{}, true, source, 0, stop)
 }
 
-func (l *Lease) bind(permission visitortoken.Permission, anonymous bool, source netip.Addr, metadataRevision int64, stop func()) (*Guard, error) {
+func (l *Lease) bind(permission visitortoken.VerifiedPermission, anonymous bool, source netip.Addr, metadataRevision int64, stop func()) (*Guard, error) {
 	if stop == nil {
 		return nil, ErrUpdate
 	}
@@ -307,22 +295,24 @@ func (l *Lease) bind(permission visitortoken.Permission, anonymous bool, source 
 
 func (g *Guard) resetLocked() {
 	view := g.lease.update.View
+	facts := g.permission.Facts()
 	until := view.ValidUntil
 	if !g.anonymous {
-		until = view.LocalDeadline(g.permission.ExpiresAt)
-		if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+		until = view.LocalDeadline(facts.ExpiresAt)
+		if credential := view.CredentialDeadline(facts.Subject); !credential.IsZero() {
 			until = earlier(until, view.LocalDeadline(credential))
 		}
-		if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
+		if g.pending != nil || g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
 		}
 	}
-	subject := g.permission.Subject
+	subject := facts.Subject
 	if certificate, ok := subject.(visitortoken.Certificate); ok {
 		subject = certificate.Source
 	}
 	if workload, ok := subject.(visitortoken.Workload); ok {
-		until = earlier(until, view.LocalDeadline(view.Workloads[workload.SessionID].ExpiresAt))
+		parent, _ := view.Workload(workload.SessionID)
+		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
 	}
 	delay := max(0, until.Sub(g.lease.now()))
 	if g.timer == nil {
@@ -362,17 +352,22 @@ func (g *Guard) Close() {
 
 // Renew follows local verification of a newly issued token for the same source.
 // it cannot change the admitted subject or revive an expired/canceled request.
-func (g *Guard) Renew(permission visitortoken.Permission) error {
+func (g *Guard) Renew(permission visitortoken.VerifiedPermission) error {
+	if !permission.Valid() {
+		return visitortoken.ErrPolicy
+	}
+	facts := permission.Facts()
 	l := g.lease
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if _, active := l.guards[g]; !active || g.anonymous || permission.Subject != g.permission.Subject || permission.Scope != g.permission.Scope ||
-		permission.Hostname != g.permission.Hostname || permission.Port != g.permission.Port || !g.allowedLocked(now) {
+	prior := g.permission.Facts()
+	if _, active := l.guards[g]; !active || g.anonymous || facts.Subject != prior.Subject || facts.Scope != prior.Scope ||
+		facts.Hostname != prior.Hostname || facts.Port != prior.Port || !g.allowedLocked(now) {
 		return visitortoken.ErrPolicy
 	}
-	if g.renewable && permission.VisitorPolicyRevision > l.update.View.VisitorPolicyRevision {
-		if !permission.ExpiresAt.After(l.update.View.AuthorityTime(now)) || len(l.update.View.Keys[permission.SigningKeyID]) != ed25519.PublicKeySize || g.pending != nil && permission.VisitorPolicyRevision < g.pending.VisitorPolicyRevision {
+	if g.renewable && facts.VisitorPolicyRevision > l.update.View.VisitorPolicyRevision {
+		if !facts.ExpiresAt.After(l.update.View.AuthorityTime(now)) || !l.update.View.HasSigningKey(facts.SigningKeyID) || g.pending != nil && facts.VisitorPolicyRevision < g.pending.Facts().VisitorPolicyRevision {
 			return visitortoken.ErrPolicy
 		}
 		copy := permission
@@ -399,19 +394,21 @@ func (g *Guard) Deadline() (time.Time, error) {
 		return time.Time{}, visitortoken.ErrPolicy
 	}
 	view := l.update.View
-	until := earlier(view.ValidUntil, view.LocalDeadline(g.permission.ExpiresAt))
-	if credential := view.CredentialDeadline(g.permission.Subject); !credential.IsZero() {
+	facts := g.permission.Facts()
+	until := earlier(view.ValidUntil, view.LocalDeadline(facts.ExpiresAt))
+	if credential := view.CredentialDeadline(facts.Subject); !credential.IsZero() {
 		until = earlier(until, view.LocalDeadline(credential))
 	}
-	if g.pending != nil || g.renewable && g.permission.VisitorPolicyRevision != view.VisitorPolicyRevision {
+	if g.pending != nil || g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 		until = earlier(until, g.confirmedUntil)
 	}
-	subject := g.permission.Subject
+	subject := facts.Subject
 	if certificate, ok := subject.(visitortoken.Certificate); ok {
 		subject = certificate.Source
 	}
 	if workload, ok := subject.(visitortoken.Workload); ok {
-		until = earlier(until, view.LocalDeadline(view.Workloads[workload.SessionID].ExpiresAt))
+		parent, _ := view.Workload(workload.SessionID)
+		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
 	}
 	return until, nil
 }

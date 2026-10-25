@@ -68,7 +68,7 @@ func (b *Bound) admitNative(ctx context.Context, stream net.Conn, header tunnelv
 			return ErrPrivateStream
 		}
 		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, header.Connector.Subject, header.Connector.SessionID, entry.VisitorConnectionID, header.ServiceRunID, header.RunNumber, entry.MetadataRevision, nil, public, signature, time.Now())
-		if err != nil || next.Subject != permission.Subject {
+		if err != nil || !next.SameSubject(permission) {
 			return ErrPrivateStream
 		}
 		return guard.Renew(next)

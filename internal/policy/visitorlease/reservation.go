@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -47,10 +48,10 @@ type ReservationGuard struct {
 }
 
 func validAllocation(a controlv1.StreamCapacityAllocation, scope visitorscope.Scope) bool {
-	probe := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: a.Id, Sequence: 1, ResourceKind: string(a.Resource.Kind), ResourceID: a.Resource.Id, RunID: a.RunId,
-		RunNumber: uint64(a.RunNumber), VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", IngressID: a.IngressId, IngressRunID: a.IngressRunId, IngressLeaseRevision: uint64(a.IngressLeaseRevision)}
+	binding := tunnelv1.StreamBinding{ResourceKind: string(a.Resource.Kind), ResourceID: a.Resource.Id, RunID: a.RunId,
+		RunNumber: uint64(a.RunNumber), IngressID: a.IngressId, IngressRunID: a.IngressRunId, IngressLeaseRevision: uint64(a.IngressLeaseRevision)}
 	duration := a.ValidUntil.Sub(a.ObservedAt)
-	return probe.Validate() == nil && len(a.ReservationKey) == 32 && a.Resource.Id == scope.ID && string(a.Resource.Kind) == string(scope.Kind) && a.Capacity > 0 && a.Capacity <= 1<<20 && a.RunNumber > 0 && a.IngressLeaseRevision > 0 && !a.ObservedAt.IsZero() && duration > 0 && duration <= 10*time.Second
+	return opaqueid.Valid(a.Id, "salloc_") && binding.Validate() == nil && len(a.ReservationKey) == 32 && a.Resource.Id == scope.ID && string(a.Resource.Kind) == string(scope.Kind) && a.Capacity > 0 && a.Capacity <= 1<<20 && a.RunNumber > 0 && a.IngressLeaseRevision > 0 && !a.ObservedAt.IsZero() && duration > 0 && duration <= 10*time.Second
 }
 
 func (l *Lease) BindReservation(header tunnelv1.StreamReservation, stop func()) (*ReservationGuard, error) {

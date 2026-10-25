@@ -409,7 +409,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 					if index == 0 && err == nil {
 						t.Fatal("revoked browser selected another prepared credential")
 					}
-					if index == 1 && (err != nil || !permission.renewed || permission.permission.Subject != second) {
+					if index == 1 && (err != nil || !permission.renewed || permission.permission.Facts().Subject != second) {
 						t.Fatal("unrelated browser did not use its own already-prepared renewal", err)
 					}
 				}

@@ -56,7 +56,7 @@ func (p *Connector) servicePolicyReady(service string, subject tunnelv1.VisitorS
 		run.capacity.mu.Unlock()
 		view, enabled, _ := run.policy.lease.Current()
 		if subject.Kind == tunnelv1.VisitorWorkloadSession {
-			parent, found := view.Workloads[subject.WorkloadSessionID]
+			parent, found := view.Workload(subject.WorkloadSessionID)
 			if !found || !parent.ExpiresAt.After(view.AuthorityTime(time.Now())) {
 				continue
 			}
