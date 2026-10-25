@@ -21,6 +21,7 @@ func TestIntegrationSplitIngressProxyFailover(t *testing.T) {
 	var mu sync.RWMutex
 	var second string
 	var selected [2]atomic.Int32
+	sockets := runtimeListeners{ingress: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t)}
 	fixture := newSplitPublishFixtureWithOptions(t, "ingress-failover", splitPublishOptions{
 		proxyIngress: true,
 		configureProcess: func(config *daemonconfig.Config) {
@@ -50,7 +51,6 @@ func TestIntegrationSplitIngressProxyFailover(t *testing.T) {
 			return ""
 		},
 	})
-	sockets := runtimeListeners{ingress: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t)}
 	config := fixture.ingressConfig
 	config.IngressID, config.IngressConnectorPort = "ingress-split-b", 4444
 	config.IngressListen, config.MetricsListen = sockets.ingress.Addr().String(), sockets.metrics.Addr().String()

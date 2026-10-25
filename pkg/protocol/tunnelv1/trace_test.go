@@ -34,7 +34,7 @@ func TestTraceContextCanonicalAndBounded(t *testing.T) {
 }
 
 func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
-	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":2,"kind":"visitor","visitor_connection_id":"v","public_url_id":"u","publish_run_id":"r","publish_run_number":1,"publisher_connection_id":"p","connection_assignment_revision":1}`
+	const payload = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"visitor","visitor_connection_id":"v","public_url_id":"u","publish_run_id":"r","publish_run_number":1,"publisher_connection_id":"p","connection_assignment_revision":1}`
 	want := VisitorStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1}
 	var wire bytes.Buffer
 	if err := WriteVisitorStreamHeader(&wire, want); err != nil {
@@ -130,7 +130,7 @@ func FuzzWireTraceContext(f *testing.F) {
 func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 	entry := nativeTestEntry()
 	entry.TraceContext = TraceContext{goldenTraceParent}
-	const golden = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":2,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","metadata_revision":1,"permission":{"visitor_token":"signed-token","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`
+	const golden = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","metadata_revision":1,"permission":{"visitor_token":"signed-token","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`
 	var wire bytes.Buffer
 	if err := WriteConnectorVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)

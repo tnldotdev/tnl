@@ -41,7 +41,7 @@ target: independently selected HTTP/TCP/database transport
 ```
 
 Ingress creates one PROXY v2 header carrying the original source/destination;
-relay preserves it and the TLS bytes. Protocol version 2 and ALPN `tnl-tunnel/2`
+relay preserves it and the TLS bytes. Protocol version 1 and ALPN `tnl-tunnel/1`
 require a coordinated client/server update. Each opening carries bounded metadata
 and up to 64 KiB of initial bytes in one write. Sending does not wait for remote
 acceptance; an opener's return is not proof of publisher admission.

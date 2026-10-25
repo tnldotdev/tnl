@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	Version         = 2
-	ALPN            = "tnl-tunnel/2"
+	Version         = 1
+	ALPN            = "tnl-tunnel/1"
 	MaxControlBytes = 64 << 10
 	// seven 256-byte identifiers may each need six JSON bytes per input byte.
 	// include the fixed keys, uint64 counters, timestamps and bounded traceparent.

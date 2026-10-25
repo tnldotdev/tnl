@@ -21,7 +21,7 @@ func nativeTestEntry() ConnectorVisitorEntry {
 
 func TestManagedAdmissionGoldenFrames(t *testing.T) {
 	entry := nativeTestEntry()
-	const golden = `{"protocol_version":2,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","metadata_revision":1,"permission":{"visitor_token":"signed-token","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`
+	const golden = `{"protocol_version":1,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7,"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","metadata_revision":1,"permission":{"visitor_token":"signed-token","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`
 	var wire bytes.Buffer
 	if err := WriteConnectorVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)

@@ -40,6 +40,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	fixture.ingress = startIntegrationProcessWithOptions(t, fixture.ingressConfig, integrationProcessOptions{acmeHTTPClient: fixture.pebble.httpClient, serviceHTTPClient: fixture.serviceHTTP, relayClientTLS: fixture.roots, owner: fixture.owner})
 	waitForProcessReady(t, fixture.ingress)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForPreparedPublicVisitor(t, fixture.visitor, ready.PublicURL)
 	after := readSplitIngressLease(t, fixture.inspect, fixture.ingressConfig.IngressID)
 	if after.runID == before.runID || after.revision != before.revision+1 {
 		t.Fatalf("restart lease: before=%+v after=%+v", before, after)

@@ -130,7 +130,7 @@ execution role and existing bootstrap contract.
 
 Control API/SQL mapping, publisher AWS discovery, GitHub Action execution, and
 native SDK connections consume this foundation in their owning components.
-Tunnel protocol version 2 carries visitor openings and ordered return frames.
+Tunnel protocol version 1 carries visitor openings and ordered return frames.
 
 ## init type includes
 
