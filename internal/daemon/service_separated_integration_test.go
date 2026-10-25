@@ -112,9 +112,24 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	ports, err := f.controlConfig.ServicePortInventory()
 	if err != nil {
 		t.Fatal(err)
+	}
+	var listener net.Listener
+	for range 32 {
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ports.Contains(listener.Addr().(*net.TCPAddr).Port) {
+			break
+		}
+		_ = listener.Close()
+		listener = nil
+	}
+	if listener == nil {
+		t.Fatal("could not select a private connector port outside the service inventory")
 	}
 	id := fmt.Sprintf("private-ingress-%d", index)
 	hostname := id + ".split.integration.test"
