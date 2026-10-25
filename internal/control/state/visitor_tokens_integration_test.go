@@ -84,6 +84,48 @@ func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testin
 	workers.Wait()
 }
 
+func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_grant_certificate_concurrent")
+	request := oidcRouteRequest(t, d, now)
+	session := newOIDCSession(t, d, now)
+	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
+	ctx := WithControlPrincipal(t.Context(), principal)
+	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "concurrent", "concurrent", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32))
+	device, err := d.EnrollVisitorDevice(ctx, principal.IdentityID, key.Public().(ed25519.PublicKey), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range 4 {
+		workers.Go(func() {
+			<-start
+			issued, err := d.CreateVisitorGrantCredentials(ctx, testVisitorIssuer, scope, "token", now.Add(time.Hour), now)
+			if err != nil || issued.Token == "" {
+				t.Errorf("concurrent grant preparation failed: %v", err)
+			}
+		})
+		workers.Go(func() {
+			<-start
+			issued, err := d.IssueVisitorClientCertificate(ctx, testVisitorIssuer, scope, DeviceTokenSource{DeviceID: device.ID}, csr, now)
+			if err != nil || issued.CertificatePEM == "" {
+				t.Errorf("concurrent certificate preparation failed: %v", err)
+			}
+		})
+	}
+	close(start)
+	workers.Wait()
+}
+
 func TestIntegrationVisitorTokenShareUsesCapturedScopeExpiryAndCurrentIssuer(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_share")
 	request := oidcRouteRequest(t, d, now)

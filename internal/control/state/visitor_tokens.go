@@ -122,23 +122,33 @@ func (r visitorResource) permission(subject visitortoken.Subject, until, now tim
 // key retention in the same transaction. serving processes never call this while
 // admitting a prepared visitor connection or request.
 func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (IssuedVisitorToken, error) {
+		return d.issueVisitorTokenTransaction(ctx, issuer, scope, source, at)
+	})
+}
+
+// retry the whole preparation decision, including current source authority and
+// key retention. a repeatable-read serialization failure rolls back every write.
+func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work func(time.Time) (T, error)) (result T, err error) {
 	for attempt := range 8 {
-		result, retErr = d.issueVisitorTokenTransaction(ctx, issuer, scope, source, now)
-		var pgErr *pgconn.PgError
-		if !errors.As(retErr, &pgErr) || pgErr.Code != "40001" || attempt == 7 {
-			return result, retErr
+		if attempt > 0 {
+			now = time.Now()
 		}
-		// a repeatable-read snapshot may lose a concurrent issuer or key
-		// update. retry authorization and signing in a fresh transaction.
-		timer := time.NewTimer(time.Millisecond << attempt)
+		result, err = work(now)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "40001" && pgErr.Code != "40P01" || attempt == 7 {
+			return result, err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return IssuedVisitorToken{}, ctx.Err()
+			var zero T
+			return zero, context.Cause(ctx)
 		case <-timer.C:
 		}
 	}
-	return result, retErr
+	return result, err
 }
 
 func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {

@@ -30,6 +30,12 @@ func (d *Database) CreateVisitorGrantCredentials(ctx context.Context, issuer str
 	if !opaqueid.Valid(principal.IdentityID, opaqueid.IdentityPrefix) || !opaqueid.Valid(principal.SessionID, opaqueid.ControlSessionPrefix) {
 		return result, ErrVisitorPermission
 	}
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (VisitorGrantCredentials, error) {
+		return d.createVisitorGrantCredentialsTransaction(ctx, issuer, scope, kind, expires, principal, at)
+	})
+}
+
+func (d *Database) createVisitorGrantCredentialsTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, kind string, expires time.Time, principal ControlPrincipal, now time.Time) (result VisitorGrantCredentials, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err

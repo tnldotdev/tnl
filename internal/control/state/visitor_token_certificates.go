@@ -35,6 +35,12 @@ func (d *Database) IssueVisitorClientCertificate(ctx context.Context, issuerURL 
 	if err != nil {
 		return result, err
 	}
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (ServiceClientCertificate, error) {
+		return d.issueVisitorClientCertificateTransaction(ctx, issuerURL, scope, source, csrDER, csr, issuer, at)
+	})
+}
+
+func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context, issuerURL string, scope visitorscope.Scope, source VisitorTokenSource, csrDER []byte, csr *x509.CertificateRequest, issuer *controlvisitor.Issuer, now time.Time) (result ServiceClientCertificate, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
