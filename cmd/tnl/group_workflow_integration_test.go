@@ -44,7 +44,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -196,13 +195,24 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}()
 	defer func() { stopRegistration(); <-registrationDone }()
 	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
+	lastPublicState := ""
 	workflowWait(t, 25*time.Second, func() bool {
 		response, err := visitor.Get(assignment.PublicURL)
 		if err != nil {
+			state := "transport: " + err.Error()
+			if state != lastPublicState {
+				t.Log(state)
+				lastPublicState = state
+			}
 			return false
 		}
 		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
+		state := fmt.Sprintf("HTTP %d, diagnostic %s", response.StatusCode, response.Header.Get("Tnl-Error-Code"))
+		if state != lastPublicState {
+			t.Log(state)
+			lastPublicState = state
+		}
 		return response.StatusCode == 200 && string(body) == "local application"
 	})
 	workflowWait(t, 5*time.Second, func() bool {
@@ -906,7 +916,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, VisitorControl: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,36 +956,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		f.publicAddress = publicListener.Addr().String()
 	}
 	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, LookupPool: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-		entries, reason := controller.LookupAllWithReason(host, time.Now())
-		if reason != ingress.LookupCurrent {
-			return nil, reason
-		}
-		result := make([]ingress.PublicURL, 0, len(entries))
-		for _, entry := range entries {
-			backends, err := forwarder.Backends(entry)
-			if err != nil {
-				return nil, ingress.LookupNoBackends
-			}
-			var policy *ippolicy.Policy
-			if entry.IpPolicy == ingressv1.HashedAllowlist {
-				if entry.IpPolicyKey == nil || len(*entry.IpPolicyKey) != 32 {
-					return nil, ingress.LookupInvalidProjection
-				}
-				var key [32]byte
-				copy(key[:], *entry.IpPolicyKey)
-				hashes := make([]ippolicy.Entry, 0, len(entry.AllowedIpHashes))
-				for _, hash := range entry.AllowedIpHashes {
-					hashes = append(hashes, ippolicy.Entry{Family: string(hash.Family), Bits: hash.PrefixLength, Digest: hash.Digest})
-				}
-				built, err := ippolicy.New(key, hashes)
-				if err != nil {
-					return nil, ingress.LookupInvalidProjection
-				}
-				policy = &built
-			}
-			result = append(result, ingress.PublicURL{ID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), AllowAll: entry.IpPolicy == ingressv1.AllowAll, HashedIPPolicy: policy, Backends: backends, ServiceProtocol: "http", AccessMode: string(entry.AccessMode)})
-		}
-		return result, ingress.LookupCurrent
+		return controller.LookupPublicURLs(host, forwarder, time.Now())
 	}})
 	if err != nil {
 		t.Fatal(err)
