@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -156,6 +157,9 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 	err = runConnectorLifecycle(t.Context(), listener, job, "", connectorLifecycle{
 		services: connectServiceReaderFunc(func(context.Context) ([]controlv1.Service, error) {
 			reads++
+			if reads == 1 {
+				return nil, clientcontrol.ErrUnavailable
+			}
 			return []controlv1.Service{service}, nil
 		}),
 		listen: func(_ context.Context, next supervisor.Job) (net.Listener, error) {
@@ -167,6 +171,11 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 		serve: func(_ context.Context, listener net.Listener, _ supervisor.Job, reportReady func() error) error {
 			defer listener.Close()
 			calls++
+			if calls > 1 {
+				if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second)); err != nil {
+					t.Fatal("recovery tried to serve on a closed listener", err)
+				}
+			}
 			if calls != 2 {
 				if err := reportReady(); err != nil {
 					return err
@@ -183,7 +192,7 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 		},
 		ready: func(supervisor.Job) error { ready++; return nil },
 	})
-	if !errors.Is(err, end) || calls != 3 || reads != 2 || ready != 2 {
+	if !errors.Is(err, end) || calls != 3 || reads != 3 || ready != 2 {
 		t.Fatalf("publisher replacement: err=%v calls=%d inventory=%d ready=%d", err, calls, reads, ready)
 	}
 }

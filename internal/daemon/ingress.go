@@ -209,6 +209,9 @@ func (d *daemon) startIngressRuntime(
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, Region: string(settings.region), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	if runtimeConfig.privateOnly {
+		registration.ConnectorOnly = new(true)
+	}
 	var visitorControl ingress.VisitorPreparationControl
 	if !runtimeConfig.privateOnly {
 		visitorControl, ok = runtimeConfig.client.(ingress.VisitorPreparationControl)

@@ -11,7 +11,8 @@ WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id
 -- name: CountEligibleIngressesByPool :one
 SELECT count(*) FROM control.ingress_leases
 WHERE ingress_pool_id=sqlc.arg(ingress_pool_id) AND lease_expires_at>sqlc.arg(now)
-    AND NOT draining AND protocol_version=sqlc.arg(protocol_version) AND connection_capacity>0;
+    AND NOT draining AND protocol_version=sqlc.arg(protocol_version) AND connection_capacity>0
+    AND (sqlc.arg(resource_kind)::text<>'public_url' OR NOT connector_only);
 
 -- name: SumOwnedStreamCapacityAllocations :one
 SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations

@@ -304,15 +304,19 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 		if ctx.Err() != nil {
 			return nil
 		}
-		services, err := lifecycle.services.ListAvailableServices(ctx)
-		if err != nil {
-			if recovering && errors.Is(err, clientcontrol.ErrUnavailable) {
-				if err := waitConnectorRecovery(ctx); err != nil {
-					return err
-				}
-				continue
+		var services []controlv1.Service
+		for {
+			var err error
+			services, err = lifecycle.services.ListAvailableServices(ctx)
+			if err == nil {
+				break
 			}
-			return err
+			if !recovering || !errors.Is(err, clientcontrol.ErrUnavailable) {
+				return err
+			}
+			if err := waitConnectorRecovery(ctx); err != nil {
+				return err
+			}
 		}
 		service, err := serviceIDSelection(services, job.ServiceID, "")
 		if err != nil {

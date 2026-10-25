@@ -139,6 +139,9 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if lease.Draining {
 		return result, ErrStreamCapacity
 	}
+	if request.Scope.Kind == visitorscope.PublicURL && lease.ConnectorOnly {
+		return result, ErrStreamCapacity
+	}
 	if ingressPool != lease.IngressPoolID {
 		return result, ErrStreamCapacity
 	}
@@ -150,20 +153,16 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if err != nil {
 		return result, err
 	}
-	// for runs smaller than two slots per live ingress, prevent one process
-	// from claiming every slot through its first request or extra request IDs.
-	// large runs retain demand-driven chunks instead of stranding idle capacity.
-	fairShare := capacity
-	live, err := q.CountEligibleIngressesByPool(ctx, controlstatedb.CountEligibleIngressesByPoolParams{IngressPoolID: ingressPool, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version})
+	// leave an initial share for each public-serving ingress, even when existing
+	// replicas are idle. private connector-only processes cannot use those slots.
+	live, err := q.CountEligibleIngressesByPool(ctx, controlstatedb.CountEligibleIngressesByPoolParams{IngressPoolID: ingressPool, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version, ResourceKind: string(request.Scope.Kind)})
 	if err != nil {
 		return result, err
 	}
 	if live < 1 {
 		return result, ErrStreamCapacity
 	}
-	if live >= (capacity+1)/2 {
-		fairShare = (capacity + live - 1) / live
-	}
+	fairShare := (capacity + live - 1) / live
 	owned, err := q.SumOwnedStreamCapacityAllocations(ctx, controlstatedb.SumOwnedStreamCapacityAllocationsParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
 		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), Now: timestamptz(now)})
 	if err != nil {

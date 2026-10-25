@@ -499,6 +499,7 @@ type ControlIngressLease struct {
 	ProtocolVersion        int64
 	ConnectionCapacity     int64
 	IngressPoolID          string
+	ConnectorOnly          bool
 	ServicePorts           []int32
 	ConnectorAddress       string
 	ConnectorTlsServerName string

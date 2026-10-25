@@ -710,6 +710,7 @@ CREATE TABLE control.ingress_leases (
     protocol_version bigint NOT NULL CHECK (protocol_version >= 1),
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
+    connector_only boolean NOT NULL DEFAULT false,
     service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
     connector_address text NOT NULL DEFAULT '',
     connector_tls_server_name text NOT NULL DEFAULT '',

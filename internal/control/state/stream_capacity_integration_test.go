@@ -3,15 +3,94 @@ package state
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func publicCapacityFixture(t *testing.T, connections int) (*Database, time.Time, visitorscope.Scope, PublishRunSetup) {
+	t.Helper()
+	d, now, request, _ := newPublishRunPrerequisites(t)
+	created := oidcRouteRequest(t, d, now)
+	url := createTestPublicURL(t, d, created, now)
+	request.PublicURLID, request.TeamID, request.ActingIdentityID, request.MembershipID = url.ID, created.TeamID, created.ActingIdentityID, created.MembershipID
+	request.CertificateCacheKey, request.CertificateIdentifiers = url.CanonicalHostname, []string{url.CanonicalHostname}
+	run, err := d.CreatePublishRun(t.Context(), request, now, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connections != trafficlimits.Default().Connections {
+		limits := trafficlimits.Default()
+		limits.Connections = connections
+		payload, err := json.Marshal(limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.pool.Exec(t.Context(), `UPDATE control.publish_runs SET traffic_limits=$2 WHERE id=$1`, run.PublishRunID, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return d, now, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}, run
+}
+
+func TestIntegrationPublicCapacitySharesFiveServingIngresses(t *testing.T) {
+	d, now, scope, run := publicCapacityFixture(t, 32)
+	var owners []IngressLeaseIdentity
+	for index := range 6 {
+		connectorOnly := index == 5
+		lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("capacity-ingress-%d", index), IngressRunID: fmt.Sprintf("process-%d", index),
+			ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID, ConnectorOnly: connectorOnly}, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owners = append(owners, lease.IngressLeaseIdentity)
+	}
+	for index, owner := range owners {
+		connectorOnly := index == 5
+		request := StreamCapacityRequest{Owner: owner, Scope: scope, RunID: run.PublishRunID, RunNumber: int64(run.PublishRunNumber), RequestID: fmt.Sprintf("portion-%d", index), Capacity: 8}
+		allocation, err := d.AllocateStreamCapacity(t.Context(), request, now)
+		if connectorOnly {
+			if !errors.Is(err, ErrStreamCapacity) {
+				t.Fatal("connector-only ingress reserved public URL capacity", err)
+			}
+			continue
+		}
+		want := int32(7)
+		if index == 4 {
+			want = 4
+		}
+		if err != nil || allocation.Capacity != want {
+			t.Fatalf("ingress %d received %d slots; want %d: %v", index, allocation.Capacity, want, err)
+		}
+	}
+}
+
+func TestIntegrationPublicCapacityTwoSlotsSkipConnectorOnlyIngress(t *testing.T) {
+	d, now, scope, run := publicCapacityFixture(t, 2)
+	var publicOwner IngressLeaseIdentity
+	for index := range 2 {
+		lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("standalone-ingress-%d", index), IngressRunID: fmt.Sprintf("process-%d", index),
+			ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID, ConnectorOnly: index == 1}, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			publicOwner = lease.IngressLeaseIdentity
+		}
+	}
+	allocation, err := d.AllocateStreamCapacity(t.Context(), StreamCapacityRequest{Owner: publicOwner, Scope: scope, RunID: run.PublishRunID,
+		RunNumber: int64(run.PublishRunNumber), RequestID: "both-public-slots", Capacity: 2}, now)
+	if err != nil || allocation.Capacity != 2 {
+		t.Fatal("connector-only ingress stranded a public visitor slot", allocation, err)
+	}
+}
 
 func capacityFixture(t *testing.T, capacity int32) (publishRunFixture, ServiceRunState, []IngressLeaseIdentity) {
 	t.Helper()
@@ -84,6 +163,16 @@ func TestIntegrationStreamCapacitySmallRunSharesTwoIngresses(t *testing.T) {
 	replayed, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owners[0], "first", 2), f.now.Add(time.Second))
 	if err != nil || replayed.ID != first.ID || replayed.Capacity != first.Capacity {
 		t.Fatal("replaying the first slot spent a sibling's capacity", replayed, err)
+	}
+}
+
+func TestIntegrationServiceRunSixteenSlotsPrepareBothIngressPaths(t *testing.T) {
+	f, run, owners := capacityFixture(t, 16)
+	for index, owner := range owners {
+		allocation, err := f.database.AllocateStreamCapacity(t.Context(), capacityRequest(run, owner, fmt.Sprintf("path-%d", index), 16), f.now)
+		if err != nil || allocation.Capacity != 8 {
+			t.Fatalf("ingress path %d could not prepare its eight slots: %+v %v", index, allocation, err)
+		}
 	}
 }
 

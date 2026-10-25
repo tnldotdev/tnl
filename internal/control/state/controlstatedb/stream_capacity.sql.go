@@ -15,16 +15,23 @@ const countEligibleIngressesByPool = `-- name: CountEligibleIngressesByPool :one
 SELECT count(*) FROM control.ingress_leases
 WHERE ingress_pool_id=$1 AND lease_expires_at>$2
     AND NOT draining AND protocol_version=$3 AND connection_capacity>0
+    AND ($4::text<>'public_url' OR NOT connector_only)
 `
 
 type CountEligibleIngressesByPoolParams struct {
 	IngressPoolID   string
 	Now             pgtype.Timestamptz
 	ProtocolVersion int64
+	ResourceKind    string
 }
 
 func (q *Queries) CountEligibleIngressesByPool(ctx context.Context, arg CountEligibleIngressesByPoolParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countEligibleIngressesByPool, arg.IngressPoolID, arg.Now, arg.ProtocolVersion)
+	row := q.db.QueryRow(ctx, countEligibleIngressesByPool,
+		arg.IngressPoolID,
+		arg.Now,
+		arg.ProtocolVersion,
+		arg.ResourceKind,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
