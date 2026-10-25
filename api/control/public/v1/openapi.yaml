@@ -155,6 +155,8 @@ paths:
     $ref: "./paths/discovery.yaml#/paths/~1v1~1client-ip"
   /v1/discovery:
     $ref: "./paths/discovery.yaml#/paths/~1v1~1discovery"
+  /v1/relay-candidates:
+    $ref: "./paths/discovery.yaml#/paths/~1v1~1relay-candidates"
   /v1/webhook-providers/{provider}/source:
     $ref: "./paths/discovery.yaml#/paths/~1v1~1webhook-providers~1{provider}~1source"
   /v1/guest-demo:
@@ -594,6 +596,10 @@ components:
       $ref: "./schemas/discovery.yaml#/schemas/ClientIPResponse"
     ControlDiscovery:
       $ref: "./schemas/discovery.yaml#/schemas/ControlDiscovery"
+    RelayCandidates:
+      $ref: "./schemas/discovery.yaml#/schemas/RelayCandidates"
+    RelayProbeCandidate:
+      $ref: "./schemas/discovery.yaml#/schemas/RelayProbeCandidate"
     GuestDemoSession:
       $ref: "./schemas/discovery.yaml#/schemas/GuestDemoSession"
     GuestDemoNumber:

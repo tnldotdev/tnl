@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/placement"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -22,9 +23,12 @@ import (
 
 type privateProjectControl struct {
 	publisherservice.RunControl
+	placement.CandidateReader
 	number   atomic.Uint64
 	prepared func(uint64) error
 }
+
+var _ placement.CandidateReader = (*privateProjectControl)(nil)
 
 func (c *privateProjectControl) PrepareServiceRun(ctx context.Context, id, key, access string, declaration controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
 	preparation, err := c.RunControl.PrepareServiceRun(ctx, id, key, access, declaration)
@@ -118,7 +122,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		return observation
 	}
 	return publisherapp.Configuration{CheckPrivate: check, RunPrivate: func(ctx context.Context, observe func(uint64, bool) error) error {
-		control := &privateProjectControl{RunControl: native}
+		control := &privateProjectControl{RunControl: native, CandidateReader: native}
 		control.prepared = func(run uint64) error {
 			pinMu.Lock()
 			pin, pinRun = pending, run

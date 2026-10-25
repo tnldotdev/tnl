@@ -6,6 +6,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/publisher/placement"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -31,14 +32,16 @@ type publicationVisitors interface {
 
 type publicationControl struct {
 	publisher.PublicURLControlClient
+	placement.CandidateReader
 	publicationVisitors
 }
 
 var _ publisher.PublicURLControlClient = publicationControl{}
+var _ placement.CandidateReader = publicationControl{}
 var _ publicationVisitors = (*clientcontrol.Client)(nil)
 
 func nativePublicationControl(native *publisheridentity.Native, control *clientcontrol.Client) publicationControl {
-	return publicationControl{PublicURLControlClient: native, publicationVisitors: control}
+	return publicationControl{PublicURLControlClient: native, CandidateReader: native, publicationVisitors: control}
 }
 
 // guestPublicationControl limits cleanup to the trial session's assigned URL.

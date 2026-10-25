@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/region"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -21,6 +22,7 @@ import (
 // publisherData instruments describe application boundaries, not SQL queries or
 // customer payloads. they share the process SDK's attribute filter and budget.
 type publisherData struct {
+	relayProbes                   metric.Float64Histogram
 	recovery                      metric.Float64Histogram
 	candidates                    metric.Float64Histogram
 	httpDuration, httpHeaders     metric.Float64Histogram
@@ -33,6 +35,7 @@ type publisherData struct {
 
 func (m *Metrics) initPublisherData() {
 	keys := []MetricKey{Component, ServiceProtocol, AccessPath, Exposure}
+	m.publisherData.relayProbes = newHistogram(m.meter, "tnl_publisher_relay_probe_duration_seconds", "Bounded TLS nonce round trip to an eligible relay; includes connection setup and response, not visitor latency.", DurationBucketsSeconds(), append(append([]MetricKey{}, keys...), RelayRegion, OutcomeKey)...).instrument
 	m.publisherData.candidates = newHistogram(m.meter, "tnl_publisher_transport_candidate_duration_seconds", "Publisher transport candidate connection and authentication duration; count includes both raced candidates, not only the winner.", DurationBucketsSeconds(), append(append([]MetricKey{}, keys...), Transport, OutcomeKey)...).instrument
 	m.publisherData.recovery = newHistogram(m.meter, "tnl_publisher_recovery_duration_seconds", "Publisher-local time from unexpected connection loss until an observed target response (HTTP headers or stream bytes); includes waiting for traffic, not visitor delivery or outage duration.", DurationBucketsSeconds(), keys...).instrument
 	httpKeys := append(append([]MetricKey{}, keys...), HTTPMethod, HTTPStatus, ResponseOrigin, OutcomeKey)
@@ -55,6 +58,18 @@ func (m *Metrics) initPublisherData() {
 	describe(m.meter, "tnl_publisher_connections_active", "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.", KindGauge, nil, connectionKeys...)
 	m.publisherData.connections, _ = m.meter.Int64UpDownCounter("tnl_publisher_connections_active")
 	m.publisherData.connectionEvents = declare("tnl_publisher_connection_events_total", "Authenticated publisher connection establishment and expected or unexpected close events.", append(connectionKeys, Event, OutcomeKey)...)
+}
+
+// PublisherRelayProbe records one bounded connection attempt, including timeouts.
+func PublisherRelayProbe(ctx context.Context, value string, elapsed time.Duration, err error) {
+	code, valid := region.Parse(value)
+	if !valid || string(code) != value || elapsed < 0 {
+		return
+	}
+	if m := FromContext(ctx); m != nil {
+		attrs := append(publisherDataAttributes(ctx), RelayRegion.String(value), OutcomeKey.Value(ErrorOutcome(err)))
+		m.publisherData.relayProbes.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
+	}
 }
 
 // PublisherTransportCandidate records each bounded candidate independently of

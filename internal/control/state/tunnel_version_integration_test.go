@@ -42,7 +42,7 @@ func TestIntegrationTunnelVersionPlacementRejectsUnsupportedVersion(t *testing.T
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			selected, err := privateIngressPlacements(t.Context(), tx, now, 2, "", nil)
+			selected, err := privateIngressPlacements(t.Context(), tx, now, 2, "", PrimaryIngressPoolID, nil)
 			if !errors.Is(err, want) || err == nil && len(selected) != 2 {
 				t.Fatal("ingress placement did not enforce the current wire version", err)
 			}

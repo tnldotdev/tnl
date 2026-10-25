@@ -68,7 +68,7 @@ func TestIntegrationIngressTransportCertificateTopologyReview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registration := IngressRegistration{IngressID: fmt.Sprintf("ingress-%d", index), IngressRunID: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8,
+		registration := IngressRegistration{IngressID: fmt.Sprintf("ingress-%d", index), IngressRunID: runID, ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: 8,
 			ConnectorAddress: listener.Addr().String(), ConnectorTLSServerName: "private-ingress.example.test"}
 		lease, err := d.RegisterIngress(t.Context(), registration, now, time.Minute)
 		if err != nil {

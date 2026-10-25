@@ -39,6 +39,10 @@ type NativeControl interface {
 	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
 }
 
+type relayCandidateControl interface {
+	RelayCandidates(context.Context, string) (controlv1.RelayCandidates, error)
+}
+
 // Native is the single grant-scoped adapter for CLI, app, SDK, and guest
 // entrypoints. construct one per selected URL/worker; it owns no local database.
 type Native struct {
@@ -75,6 +79,22 @@ func (n *Native) PublisherIdentityID() string {
 		return ""
 	}
 	return n.identity.clientID
+}
+
+// RelayCandidates reads deployment inventory without broadening this grant.
+func (n *Native) RelayCandidates(ctx context.Context, access string) (controlv1.RelayCandidates, error) {
+	control, ok := n.NativeControl.(relayCandidateControl)
+	if !ok {
+		return controlv1.RelayCandidates{}, ErrRegionUnsupported
+	}
+	if access == "" {
+		var err error
+		access, err = n.Access(ctx)
+		if err != nil {
+			return controlv1.RelayCandidates{}, err
+		}
+	}
+	return control.RelayCandidates(ctx, access)
 }
 
 // ForGrant creates an independent worker adapter for another explicitly issued

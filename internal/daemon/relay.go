@@ -142,7 +142,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	})
 	d.start("serve TLS/TCP publisher connections", func() error {
 		return serveTLSYamuxSessions(ctx, tcpListener, runtime.transportTLS,
-			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept)
+			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept, true)
 	})
 	d.start("serve QUIC publisher connections", func() error {
 		return serveQUICSessions(ctx, udpListener, runtime.publisher.Accept)
@@ -344,7 +344,7 @@ func (d *daemon) startRelayRuntime(
 	d.start("run relay control", func() error { return controller.Run(ctx) })
 	d.start("serve internal forwarding", func() error {
 		return serveTLSYamuxSessions(ctx, runtimeConfig.internalListener, runtimeConfig.transportTLS,
-			muxsession.TLSYamuxConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.Accept)
+			muxsession.TLSYamuxConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.Accept, false)
 	})
 	log.Printf("relay internal forwarding listening on %s", runtimeConfig.internalListener.Addr())
 	return runtime, nil
@@ -380,9 +380,13 @@ func serveTLSYamuxSessions(
 	tlsConfig *tls.Config,
 	transportConfig muxsession.TLSYamuxConfig,
 	accept sessionAcceptFunc,
+	allowProbe bool,
 ) error {
 	var active sync.WaitGroup
 	defer active.Wait()
+	// cap unauthenticated handshakes, including slow probe clients, without
+	// consuming a slot for the lifetime of an authenticated publisher session.
+	setupSlots := make(chan struct{}, 128)
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
@@ -391,11 +395,25 @@ func serveTLSYamuxSessions(
 			}
 			return err
 		}
+		select {
+		case setupSlots <- struct{}{}:
+		default:
+			_ = connection.Close()
+			continue
+		}
 		active.Go(func() {
 			setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
-			transport, err := muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
+			var transport muxsession.Session
+			var probed bool
+			var err error
+			if allowProbe {
+				transport, probed, err = muxsession.AcceptTLSYamuxOrProbe(setupCtx, connection, tlsConfig, transportConfig)
+			} else {
+				transport, err = muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
+			}
 			cancel()
-			if err == nil {
+			<-setupSlots
+			if err == nil && !probed {
 				err = accept(ctx, transport)
 			}
 			if err != nil && ctx.Err() == nil {

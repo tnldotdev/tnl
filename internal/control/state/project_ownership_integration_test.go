@@ -271,7 +271,7 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 	}
 	leases := map[string]IngressLease{}
 	for index := range 2 {
-		lease, e := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("release-%d", index), IngressRunID: fmt.Sprintf("run-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 7400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+		lease, e := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("release-%d", index), IngressRunID: fmt.Sprintf("run-%d", index), ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 7400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 		if e != nil {
 			t.Fatal(e)
 		}

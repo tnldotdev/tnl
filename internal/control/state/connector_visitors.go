@@ -203,7 +203,11 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	placements, err := privateIngressPlacements(ctx, tx, now, count, excludeIngressID, preferences)
+	pool, preferences, err := privateServiceIngressPlacement(ctx, tx, serviceID, now, preferences)
+	if err != nil {
+		return nil, err
+	}
+	placements, err := privateIngressPlacements(ctx, tx, now, count, excludeIngressID, pool, preferences)
 	if err != nil {
 		return nil, err
 	}

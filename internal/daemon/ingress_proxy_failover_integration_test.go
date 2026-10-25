@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,7 +27,11 @@ func TestIntegrationSplitIngressProxyFailover(t *testing.T) {
 	fixture := newSplitPublishFixtureWithOptions(t, "ingress-failover", splitPublishOptions{
 		proxyIngress: true,
 		configureProcess: func(config *daemonconfig.Config) {
+			if config.Role == daemonconfig.RoleRelay {
+				config.Region = "sjc"
+			}
 			if config.Role == daemonconfig.RoleIngress {
+				config.Region = "sjc"
 				config.RequireProxyHeader, config.IngressTrustedProxies = true, []string{"127.0.0.1/32"}
 				config.IngressConnectorPort = 4443
 			}
@@ -53,6 +59,7 @@ func TestIntegrationSplitIngressProxyFailover(t *testing.T) {
 	})
 	config := fixture.ingressConfig
 	config.IngressID, config.IngressConnectorPort = "ingress-split-b", 4444
+	config.Region = "ord"
 	config.IngressListen, config.MetricsListen = sockets.ingress.Addr().String(), sockets.metrics.Addr().String()
 	config.IngressUDPListen = ""
 	process := startIntegrationProcessWithOptions(t, config, integrationProcessOptions{
@@ -92,6 +99,40 @@ func TestIntegrationSplitIngressProxyFailover(t *testing.T) {
 	}
 	if selected[1].Load() < 5 {
 		t.Fatal("fresh requests did not reach the surviving ingress")
+	}
+	byDirection := make(map[string]float64)
+	for _, relay := range []*integrationProcess{fixture.relayA.process, fixture.relayB.process} {
+		response, err := health.Get("http://" + relay.metricsAddress + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatal("read regional relay transfer metrics", err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if !strings.HasPrefix(line, "tnl_relay_ingress_transfer_bytes_total{") ||
+				!strings.Contains(line, `tnl_ingress_region="ord"`) || !strings.Contains(line, `tnl_relay_region="sjc"`) {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) != 2 {
+				t.Fatal("invalid regional relay transfer metric", line)
+			}
+			bytes, err := strconv.ParseFloat(fields[1], 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, direction := range []string{"visitor_to_publisher", "publisher_to_visitor"} {
+				if strings.Contains(line, `tnl_direction="`+direction+`"`) {
+					byDirection[direction] += bytes
+				}
+			}
+		}
+	}
+	if byDirection["visitor_to_publisher"] == 0 || byDirection["publisher_to_visitor"] == 0 {
+		t.Fatal("cross-region traffic lost directional byte accounting", byDirection)
 	}
 	t.Log("shared public url: first ingress stopped; surviving ingress returned HTTP 200 for five fresh requests")
 }

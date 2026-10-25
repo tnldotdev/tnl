@@ -16,6 +16,18 @@ the same meaningful `tnl_*` families in both exports. there are no old-label or
 old-family aliases. the shared API families are `tnl_api_request_duration_seconds`
 and `tnl_api_requests_in_flight`, including ingress and relay APIs.
 
+`tnl_publisher_relay_probe_duration_seconds` times a WebPKI-verified relay TLS
+nonce exchange, including its handshake. it explains placement, not visitor
+latency. `tnl_relay_ingress_transfer_bytes_total` counts bytes written in each
+direction between ingress and relay, labelled with their validated tnl regions.
+the relay counts pipelined first bytes once for public URL and service streams,
+then increments on each copy;
+ingress does not duplicate this counter. it excludes TLS framing and provider
+retransmissions, so calculate a directional cross-region cost estimate outside
+the product using the deployment's actual rate. visitor-observed connection,
+first-body-byte, and total request timings belong to `internal/benchworkload`;
+publisher HTTP timings cannot substitute for those end-to-end measurements.
+
 ## process ownership
 
 `StartProcess(ctx, role)` reads standard exporter configuration once and returns

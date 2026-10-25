@@ -350,6 +350,9 @@ type Querier interface {
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
+	// inventory hints reserve two candidate slots per region before the global cap;
+	// a publisher needs two distinct live services to qualify one region.
+	ListRelayProbeCandidates(ctx context.Context, arg ListRelayProbeCandidatesParams) ([]ListRelayProbeCandidatesRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
 	ListServiceAuditEvents(ctx context.Context, arg ListServiceAuditEventsParams) ([]ControlServiceAuditEvent, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)

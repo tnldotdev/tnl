@@ -279,7 +279,7 @@ func (d *daemon) startIngressRuntime(
 		forwardingTLS.MinVersion = tls.VersionTLS13
 	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
-		Context:   ctx,
+		Context: ctx, Region: settings.region,
 		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
 		OnSessionClosed: func(relayServiceID, relayID, origin string, cause error) {
 			logOperationalError(ctx, "close ingress relay session", failure.ServerConnectionFailed, cause)

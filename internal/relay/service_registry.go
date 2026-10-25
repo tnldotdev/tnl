@@ -328,7 +328,8 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 			return incoming.Promote(promoted)
 		}
 	}
-	stream, err := connection.paths.session.StartServiceForwardingStream(ctx, header, incoming.TakeInitial(), events)
+	initial := incoming.TakeInitial()
+	stream, err := connection.paths.session.StartServiceForwardingStream(ctx, header, initial, events)
 	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
@@ -369,7 +370,8 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
-	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	towardPublisher, towardIngress := a.regionalTransfer(ctx, header.IngressRegion, len(initial))
+	copied, err := streamcopy.CopyObserved(incoming.Stream(), publisher, towardPublisher, towardIngress)
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)

@@ -39,6 +39,7 @@ func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Sess
 
 // ConnectorALPN identifies the shared infrastructure connector listener.
 const ConnectorALPN = "tnl-connector/1"
+const ProbeALPN = "tnl-probe/1"
 
 // ConnectorMuxTLS uses the shared private ALPN; identity authentication
 // happens on the first mux stream, identically to QUIC.
@@ -114,6 +115,45 @@ func AcceptTLSYamux(
 	config TLSYamuxConfig,
 ) (Session, error) {
 	return acceptTLSYamux(ctx, network, tlsConfig, config, ALPN, nil)
+}
+
+// AcceptTLSYamuxOrProbe answers one fixed-size relay RTT probe without creating
+// a publisher session. it accepts the normal v1 publisher ALPN unchanged.
+func AcceptTLSYamuxOrProbe(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, bool, error) {
+	if network == nil {
+		return nil, false, errors.New("muxsession: accepted TLS connection is nil")
+	}
+	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, ALPN)
+	if err != nil {
+		_ = network.Close()
+		return nil, false, err
+	}
+	serverConfig.NextProtos = []string{ALPN, ProbeALPN}
+	secure := tls.Server(network, serverConfig)
+	if err := secure.HandshakeContext(ctx); err != nil {
+		_ = secure.Close()
+		return nil, false, fmt.Errorf("muxsession: accept relay TLS handshake: %w", err)
+	}
+	if secure.ConnectionState().NegotiatedProtocol == ProbeALPN {
+		defer secure.Close()
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = secure.SetDeadline(deadline)
+		}
+		var nonce [16]byte
+		if _, err := io.ReadFull(secure, nonce[:]); err != nil {
+			return nil, false, fmt.Errorf("muxsession: read relay probe: %w", err)
+		}
+		if _, err := secure.Write(nonce[:]); err != nil {
+			return nil, false, fmt.Errorf("muxsession: answer relay probe: %w", err)
+		}
+		return nil, true, nil
+	}
+	if err := requireTransportALPN(secure.ConnectionState(), ALPN); err != nil {
+		_ = secure.Close()
+		return nil, false, err
+	}
+	session, err := newYamuxSession(secure, false, config.MaxIncomingStreams)
+	return session, false, err
 }
 
 // AcceptConnectorTLSYamux authenticates the outer TLS connection before yamux

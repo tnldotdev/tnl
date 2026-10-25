@@ -151,7 +151,11 @@ func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, crede
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude, preferences)
+	pool, preferences, err := privateServiceIngressPlacement(ctx, tx, service, now, preferences)
+	if err != nil {
+		return result, err
+	}
+	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude, pool, preferences)
 	if err != nil {
 		return result, err
 	}

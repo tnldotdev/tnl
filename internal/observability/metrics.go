@@ -66,6 +66,7 @@ type Metrics struct {
 	capacityLimits              *gauge
 	inspectionFailures          *counter
 	forwardedBytes              *counter
+	regionalForwardedBytes      *counter
 	trafficAdmissions           *counter
 	stunBindings                *counter
 	relayAttempts               *counter
@@ -153,6 +154,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.capacityLimits = newGauge(m, "tnl_admission_limit", "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.", CapacityResource)
 	metrics.inspectionFailures = newCounter(m, "tnl_ingress_inspection_failures_total", "Ingress connections rejected before classification by fixed failure stage.", Operation)
 	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", Direction)
+	metrics.regionalForwardedBytes = newCounter(m, "tnl_relay_ingress_transfer_bytes_total", "Bytes successfully copied between ingress and a connected relay by declared regions; excludes TLS framing and retransmissions. Counted once at the relay, incrementally as bytes are written.", IngressRegion, RelayRegion, Direction)
 	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", Operation, OutcomeKey)
 	metrics.stunBindings = newCounter(m, "tnl_relay_stun_bindings_total", "Relay STUN Binding decisions by fixed result; excludes network addresses.", OutcomeKey)
 	metrics.relayAttempts = newCounter(m, "tnl_ingress_relay_attempts_total", "Ingress internal-forwarding attempts by connection slot and bounded outcome.", ConnectionSlot, OutcomeKey)

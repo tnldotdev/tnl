@@ -233,6 +233,8 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(w, f.service)
+	case "/v1/relay-candidates":
+		write(w, controlv1.RelayCandidates{Candidates: []controlv1.RelayProbeCandidate{}})
 	case "/v1/services/" + f.service.Id + "/runs":
 		var declaration controlv1.ServiceRunDeclaration
 		_ = json.NewDecoder(r.Body).Decode(&declaration)

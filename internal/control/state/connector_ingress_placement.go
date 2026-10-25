@@ -21,14 +21,42 @@ type privateIngressPlacement struct {
 	revision, capacity, load     int64
 }
 
+// privateServiceIngressPlacement keeps an assignment inside its service's
+// ingress pool and favors the region of a current ready publisher connection.
+func privateServiceIngressPlacement(ctx context.Context, tx pgx.Tx, service string, now time.Time, preferred []region.Code) (string, []region.Code, error) {
+	var pool string
+	if err := tx.QueryRow(ctx, `SELECT ingress_pool_id FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, service).Scan(&pool); err != nil {
+		return "", nil, err
+	}
+	if len(preferred) > 0 {
+		return pool, preferred, nil
+	}
+	var code string
+	err := tx.QueryRow(ctx, `SELECT relay.region FROM control.service_runs run
+	    JOIN control.service_connection_slots slot ON slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
+	    JOIN control.relay_leases relay ON relay.relay_service_id=slot.relay_service_id AND relay.relay_id=slot.relay_id
+	      AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision
+	    WHERE run.service_id=$1 AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2
+	      AND relay.lease_expires_at>$2 AND NOT relay.draining
+	    ORDER BY run.run_number DESC, slot.connection_slot LIMIT 1`, service, now).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pool, nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return pool, []region.Code{region.Code(code)}, nil
+}
+
 // lock in identity order, then count outstanding assignments in a fresh
 // statement. concurrent setup cannot overbook the same advertised capacity.
-func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, count int, exclude string, preferences []region.Code) ([]privateIngressPlacement, error) {
+func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, count int, exclude, pool string, preferences []region.Code) ([]privateIngressPlacement, error) {
 	rows, err := tx.Query(ctx, `SELECT ingress_id,ingress_run_id,ingress_lease_revision,connector_address,connector_tls_server_name,region,connection_capacity,reported_connections
 	    FROM control.ingress_leases ingress WHERE lease_expires_at>$1 AND NOT draining AND protocol_version=$3 AND connection_capacity>0
+	    AND ingress_pool_id=$4
 	    AND connector_address<>'' AND connector_tls_server_name<>'' AND ingress_id<>$2
 	    AND NOT EXISTS(SELECT 1 FROM control.ingress_leases excluded WHERE excluded.ingress_id=$2 AND excluded.connector_address=ingress.connector_address)
-	    ORDER BY ingress_id LIMIT 256 FOR UPDATE`, now, exclude, tunnelv1.Version)
+	    ORDER BY ingress_id LIMIT 256 FOR UPDATE`, now, exclude, tunnelv1.Version, pool)
 	if err != nil {
 		return nil, err
 	}

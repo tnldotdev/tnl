@@ -76,11 +76,20 @@ func TestManagedAdmissionValidatesExactKindsAndIdentities(t *testing.T) {
 	if err := header.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	forward := ServiceForwardingHeader{ServiceStreamHeader: header, RelayID: "relay-a", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayServiceID: "relay", RelayLeaseRevision: 1, LeaseExpiresAt: header.ExpiresAt}
+	forward := ServiceForwardingHeader{ServiceStreamHeader: header, IngressRegion: "sjc", RelayID: "relay-a", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayServiceID: "relay", RelayLeaseRevision: 1, LeaseExpiresAt: header.ExpiresAt}
 	forward.Kind = ServiceForwardingStream
 	if err := WriteServiceForwardingHeader(&framed, forward); err != nil {
 		t.Fatal(err)
 	}
+	forwarded, err := ReadServiceForwardingHeader(&framed)
+	if err != nil || forwarded.IngressRegion != "sjc" {
+		t.Fatal("private forwarding lost the ingress region", err)
+	}
+	forward.IngressRegion = "user-provided-region"
+	if forward.Validate() == nil {
+		t.Fatal("unbounded private forwarding region accepted")
+	}
+	forward.IngressRegion = ""
 	forward.RelayLeaseRevision = 0
 	if forward.Validate() == nil {
 		t.Fatal("missing relay lease accepted")

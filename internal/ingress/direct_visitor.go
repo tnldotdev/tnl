@@ -144,7 +144,7 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 				ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: projection.ServiceId, ServiceRunID: *projection.ServiceRunId, RunNumber: uint64(*projection.RunNumber),
 				Direct:   &tunnelv1.DirectAdmission{IngressID: lease.IngressId, IngressRunID: lease.IngressRunId, IngressLeaseRevision: uint64(lease.IngressLeaseRevision), DestinationPort: destination.Port()},
 				SourceIP: source.Addr().Unmap().String(), VisitorConnectionID: visitor, PublisherConnectionID: relay.PublisherConnectionId, ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), ExpiresAt: until, Reservation: reservation.header,
-			}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
+			}, IngressRegion: lease.Region, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 			events := &tunnel.ReturnEvents{Promoted: func(promoted tunnelv1.AdmissionHeader) error {
 				current, err := p.liveLease(time.Now())
 				fresh, enabled, _ := run.policy.lease.Current()

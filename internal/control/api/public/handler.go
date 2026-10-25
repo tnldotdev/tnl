@@ -97,6 +97,10 @@ type Store interface {
 	AdminStore
 }
 
+type relayCandidateStore interface {
+	ListRelayProbeCandidates(context.Context, time.Time) ([]controlstate.RelayProbeCandidate, error)
+}
+
 type PreviewStore interface {
 	CreatePreview(context.Context, string, string, string, time.Time) (controlstate.Preview, error)
 	GetPreview(context.Context, string) (controlstate.Preview, error)
@@ -333,6 +337,30 @@ func (h *handler) GetReadiness(response http.ResponseWriter, request *http.Reque
 
 func (h *handler) GetControlDiscovery(response http.ResponseWriter, _ *http.Request) {
 	writeJSON(response, http.StatusOK, controlDiscovery(h.config))
+}
+
+func (h *handler) GetRelayCandidates(response http.ResponseWriter, request *http.Request) {
+	if _, _, ok := h.authenticatePublisher(response, request); !ok {
+		return
+	}
+	store, ok := h.store.(relayCandidateStore)
+	if !ok {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "relay candidate inventory is unavailable")
+		return
+	}
+	candidates, err := store.ListRelayProbeCandidates(request.Context(), time.Now())
+	if err != nil {
+		writeControlStateProblem(response, "list relay candidates", err)
+		return
+	}
+	result := controlv1.RelayCandidates{Candidates: make([]controlv1.RelayProbeCandidate, 0, len(candidates))}
+	for _, candidate := range candidates {
+		result.Candidates = append(result.Candidates, controlv1.RelayProbeCandidate{
+			RelayServiceId: candidate.ServiceID, Region: string(candidate.Region),
+			RelayAddress: candidate.Address, TlsServerName: candidate.TLSServerName,
+		})
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (h *handler) GetClientIP(response http.ResponseWriter, request *http.Request) {

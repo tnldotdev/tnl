@@ -38,6 +38,8 @@ func VocabularyAttributes() []AttributeDefinition {
 		locations = append(locations, string(location.Code))
 	}
 	add(RegionKey, PolicyTraceLog, "validated tnl location code; never a provider region or high-cardinality metric label", locations...)
+	add(IngressRegion, PolicyBounded, "validated ingress location on an observed forwarding path", locations...)
+	add(RelayRegion, PolicyBounded, "validated candidate relay location; a geographic hint, not proof of data-path cost", locations...)
 	for _, k := range []attributeKey{TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID} {
 		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive")
 	}

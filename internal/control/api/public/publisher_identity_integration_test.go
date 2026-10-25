@@ -93,6 +93,16 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := client.RelayCandidates(t.Context(), ""); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatalf("anonymous relay inventory read: %v", err)
+	}
+	if _, err := client.RelayCandidates(t.Context(), session.AccessToken.String()); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatalf("control session read publisher relay inventory: %v", err)
+	}
+	candidates, err := client.RelayCandidates(t.Context(), access)
+	if err != nil || len(candidates.Candidates) != 2 || candidates.Candidates[0].Region != "local" {
+		t.Fatalf("publisher relay inventory: %+v, %v", candidates, err)
+	}
 	proof, err := publisherproof.SignRun(private, u.ID, "http-run")
 	if err != nil {
 		t.Fatal(err)

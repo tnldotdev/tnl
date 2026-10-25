@@ -120,6 +120,19 @@ bundling and external consumers.
   one relay service stays in one region, and its connection slots still belong to
   different relay services. each private ingress address must reach its exact
   assigned process; two hostnames on a load-balanced app are not two paths.
+- before a new public URL or service run, an unconfigured publisher can measure
+  the current relay inventory with bounded, WebPKI-verified TLS nonce exchanges.
+  the worst of two distinct services ranks each measured region; control still
+  checks capacity when reserving slots. explicit preferences take precedence,
+  a failed measurement uses ordinary placement, and a healthy run never moves
+  merely because a new relay appears. private connectors favor a ready relay's
+  region but can use another connected ingress when the preferred one is full.
+- the shared public ingress pool may span regions. DNS continues to point to
+  its stable public address, while each visitor takes only one connected relay.
+  forwarding can cross regions during normal load or recovery; relay transfer
+  counters record both directions by actual declared ingress and relay region.
+  those counters measure successful writes, not provider-billed framing or
+  visitor-observed HTTP latency.
 - Ingress creates PROXY v2 metadata once; relay preserves it. No application
   bytes are replayed after the first visitor byte sent to a relay.
 - A copied relay lease deadline is a routing observation. The connected relay

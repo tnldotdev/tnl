@@ -238,6 +238,7 @@ func validPrivateSourceIP(value string) bool {
 // already authorized service/run/subject binding. it never accepts public URL IDs.
 type ServiceForwardingHeader struct {
 	ServiceStreamHeader
+	IngressRegion      string    `json:"ingress_region,omitempty"`
 	ConnectionSlot     uint8     `json:"connection_slot"`
 	RelayServiceID     string    `json:"relay_service_id"`
 	RelayID            string    `json:"relay_id"`
@@ -251,7 +252,7 @@ func (h ServiceForwardingHeader) Validate() error {
 		return err
 	}
 	if h.ConnectionSlot > 1 || !validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) ||
-		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() {
+		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() || !validForwardingRegion(h.IngressRegion) {
 		return errors.New("tunnelv1: invalid private forwarding header")
 	}
 	return nil

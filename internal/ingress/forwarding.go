@@ -12,6 +12,7 @@ import (
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -22,6 +23,7 @@ const relaySessionSetupTimeout = 10 * time.Second
 
 type ForwarderConfig struct {
 	Context         context.Context
+	Region          region.Code
 	TLSConfig       *tls.Config
 	ClusterSecret   string
 	TransportConfig muxsession.TLSYamuxConfig
@@ -34,6 +36,7 @@ type ForwarderConfig struct {
 // pipelined internal-forwarding streams for visitor connections.
 type Forwarder struct {
 	connector       relayConnector
+	region          region.Code
 	observer        OperationObserver
 	context         context.Context
 	cancel          context.CancelFunc
@@ -50,11 +53,18 @@ type Forwarder struct {
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
+	if config.Region != "" {
+		code, valid := region.Parse(string(config.Region))
+		if !valid || code != config.Region {
+			return nil, errors.New("ingress: forwarding region is invalid")
+		}
+	}
 	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
 	f := newForwarderContext(config.Context, connector)
+	f.region = config.Region
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	f.promote = config.PromoteVisitor
@@ -97,6 +107,7 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]ingres
 		}
 		header := tunnelv1.InternalForwardingHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
+			IngressRegion:       string(f.region),
 			VisitorConnectionID: "visitor", PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId,
 			PublishRunNumber: uint64(entry.PublishRunNumber), PublisherConnectionID: connection.PublisherConnectionId,
 			ConnectionSlot:               uint8(connection.ConnectionSlot),

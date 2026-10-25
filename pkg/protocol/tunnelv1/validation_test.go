@@ -127,4 +127,10 @@ func TestStreamFieldBounds(t *testing.T) {
 			t.Fatalf("slot %s: %v", slot, err)
 		}
 	}
+	for _, site := range []string{"sjc", "local", "SJC", "na", "unknown"} {
+		input := strings.Replace(forward, `"protocol_version":1,`, `"protocol_version":1,"ingress_region":"`+site+`",`, 1)
+		if err := readForwarding(frame(input)); (err == nil) != (site == "sjc" || site == "local") {
+			t.Fatalf("ingress region %s: %v", site, err)
+		}
+	}
 }

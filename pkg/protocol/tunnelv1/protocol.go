@@ -138,6 +138,7 @@ type InternalForwardingHeader struct {
 	Reservation                  StreamReservation `json:"stream_reservation,omitzero"`
 	TraceContext                 TraceContext      `json:"trace_context,omitzero"`
 	ProtocolVersion              uint32            `json:"protocol_version"`
+	IngressRegion                string            `json:"ingress_region,omitempty"`
 	Kind                         StreamKind        `json:"kind"`
 	VisitorConnectionID          string            `json:"visitor_connection_id"`
 	PublicURLID                  string            `json:"public_url_id"`
@@ -325,7 +326,25 @@ func (h InternalForwardingHeader) Validate() error {
 		h.RelayLeaseRevision == 0 || h.PublicUrlExpiresAt.IsZero() || h.LeaseExpiresAt.IsZero() {
 		return errors.New("tunnelv1: invalid internal forwarding header")
 	}
+	if !validForwardingRegion(h.IngressRegion) {
+		return errors.New("tunnelv1: invalid ingress region")
+	}
 	return nil
+}
+
+func validForwardingRegion(value string) bool {
+	if value == "" || value == "local" {
+		return true // older v1 senders omit their region
+	}
+	if len(value) != 3 {
+		return false
+	}
+	for _, letter := range value {
+		if letter < 'a' || letter > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func (r StreamResponse) Validate() error {

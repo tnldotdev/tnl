@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisher/placement"
 	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -202,6 +203,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	// uncertain starts retry the exact prepared run, never a new preparation.
 	var setup controlv1.ServiceRunSetup
+	preferred := config.PreferredRegions
+	if len(preferred) == 0 {
+		if reader, ok := config.Control.(placement.CandidateReader); ok {
+			preferred = placement.PreferredRegions(ctx, reader, access)
+		}
+	}
 	err = recoverControlResponse(ctx, preparation.ExpiresAt, func(attempt context.Context) error {
 		access, err := config.Access(attempt)
 		if err != nil {
@@ -210,14 +217,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		if access == "" {
 			return ErrPrivateStream
 		}
-		if len(config.PreferredRegions) > 0 {
+		if len(preferred) > 0 {
 			control, ok := managedControl.(interface {
 				StartServiceRunInRegions(context.Context, string, string, string, int64, []string) (controlv1.ServiceRunSetup, error)
 			})
 			if !ok {
 				return errors.Join(ErrPrivateStream, region.ErrPreference)
 			}
-			setup, err = control.StartServiceRunInRegions(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber, config.PreferredRegions)
+			setup, err = control.StartServiceRunInRegions(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber, preferred)
 		} else {
 			setup, err = managedControl.StartServiceRun(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber)
 		}

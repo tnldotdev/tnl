@@ -3029,8 +3029,21 @@ type RedeemShareRequest struct {
 	ShareId          *ShareID `json:"share_id,omitempty"`
 }
 
+// RelayCandidates defines model for RelayCandidates.
+type RelayCandidates struct {
+	Candidates []RelayProbeCandidate `json:"candidates"`
+}
+
 // RelayID defines model for RelayID.
 type RelayID = ResourceID
+
+// RelayProbeCandidate defines model for RelayProbeCandidate.
+type RelayProbeCandidate struct {
+	Region         string            `json:"region"`
+	RelayAddress   string            `json:"relay_address"`
+	RelayServiceId RelayServiceID    `json:"relay_service_id"`
+	TlsServerName  CanonicalHostname `json:"tls_server_name"`
+}
 
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
@@ -5268,6 +5281,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRelayCandidates List live relay services for bounded publisher-side locality measurement
+	//
+	// Candidates are hints, not assignments. Publish run creation rechecks leases and capacity.
+	//
+	// Corresponds with GET /v1/relay-candidates (the `GetRelayCandidates` operationId).
+	GetRelayCandidates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcceptServiceInvitationWithBody performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
 	// with any type of body and a specified content type.
@@ -7685,6 +7705,23 @@ func (c *Client) GetPublisherService(ctx context.Context, reqEditors ...RequestE
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRelayCandidates List live relay services for bounded publisher-side locality measurement
+//
+// Candidates are hints, not assignments. Publish run creation rechecks leases and capacity.
+//
+// Corresponds with GET /v1/relay-candidates (the `GetRelayCandidates` operationId).
+func (c *Client) GetRelayCandidates(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRelayCandidatesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -12873,6 +12910,33 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetRelayCandidatesRequest constructs an http.Request for the GetRelayCandidates method
+func NewGetRelayCandidatesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/relay-candidates")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAcceptServiceInvitationRequest calls the generic AcceptServiceInvitation builder with application/json body
 func NewAcceptServiceInvitationRequest(server string, body AcceptServiceInvitationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16133,6 +16197,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+
+	// GetRelayCandidatesWithResponse List live relay services for bounded publisher-side locality measurement
+	//
+	// Candidates are hints, not assignments. Publish run creation rechecks leases and capacity.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/relay-candidates (the `GetRelayCandidates` operationId).
+	GetRelayCandidatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRelayCandidatesResponse, error)
 
 	// AcceptServiceInvitationWithBodyWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
 	// with any type of body and a specified content type.
@@ -20578,6 +20651,54 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
+type GetRelayCandidatesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RelayCandidates
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRelayCandidatesResponse) GetJSON200() *RelayCandidates {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetRelayCandidatesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRelayCandidatesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRelayCandidatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRelayCandidatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRelayCandidatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AcceptServiceInvitationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24578,6 +24699,21 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// GetRelayCandidatesWithResponse List live relay services for bounded publisher-side locality measurement
+//
+// Candidates are hints, not assignments. Publish run creation rechecks leases and capacity.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/relay-candidates (the `GetRelayCandidates` operationId).
+func (c *ClientWithResponses) GetRelayCandidatesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRelayCandidatesResponse, error) {
+	rsp, err := c.GetRelayCandidates(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRelayCandidatesResponse(rsp)
+}
+
 // AcceptServiceInvitationWithBodyWithResponse performs a POST /v1/service-invitations/accept (the `AcceptServiceInvitation` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -28232,6 +28368,39 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	return response, nil
 }
 
+// ParseGetRelayCandidatesResponse parses an HTTP response from a GetRelayCandidatesWithResponse call
+func ParseGetRelayCandidatesResponse(rsp *http.Response) (*GetRelayCandidatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRelayCandidatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RelayCandidates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAcceptServiceInvitationResponse parses an HTTP response from a AcceptServiceInvitationWithResponse call
 func ParseAcceptServiceInvitationResponse(rsp *http.Response) (*AcceptServiceInvitationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30129,6 +30298,9 @@ type ServerInterface interface {
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
+	// GetRelayCandidates List live relay services for bounded publisher-side locality measurement
+	// (GET /v1/relay-candidates)
+	GetRelayCandidates(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/service-invitations/accept)
 	AcceptServiceInvitation(w http.ResponseWriter, r *http.Request)
@@ -33093,6 +33265,20 @@ func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetRelayCandidates operation middleware
+func (siw *ServerInterfaceWrapper) GetRelayCandidates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRelayCandidates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AcceptServiceInvitation operation middleware
 func (siw *ServerInterfaceWrapper) AcceptServiceInvitation(w http.ResponseWriter, r *http.Request) {
 
@@ -34935,6 +35121,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/client-ip", wrapper.GetClientIP)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/discovery", wrapper.GetControlDiscovery)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/relay-candidates", wrapper.GetRelayCandidates)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-providers/{provider}/source", wrapper.GetWebhookProviderSource)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)

@@ -382,6 +382,66 @@ func (q *Queries) GetRelayTransportCertificate(ctx context.Context, arg GetRelay
 	return i, err
 }
 
+const listRelayProbeCandidates = `-- name: ListRelayProbeCandidates :many
+WITH live AS (
+    SELECT DISTINCT ON (s.relay_service_id)
+        s.relay_service_id, s.region, s.relay_address, s.tls_server_name
+    FROM control.relay_services s
+    JOIN control.relay_leases l ON l.relay_service_id = s.relay_service_id
+    WHERE s.enabled AND NOT l.draining AND l.lease_expires_at > $1
+      AND l.protocol_version = $2
+      AND l.connection_capacity > l.reported_connections
+    ORDER BY s.relay_service_id, l.relay_id
+), ranked AS (
+    SELECT relay_service_id, region, relay_address, tls_server_name,
+        row_number() OVER (PARTITION BY region ORDER BY relay_service_id) AS region_slot
+    FROM live
+)
+SELECT relay_service_id, region, relay_address, tls_server_name FROM ranked
+WHERE region_slot <= 2
+ORDER BY region, relay_service_id
+LIMIT 32
+`
+
+type ListRelayProbeCandidatesParams struct {
+	Now             pgtype.Timestamptz
+	ProtocolVersion int64
+}
+
+type ListRelayProbeCandidatesRow struct {
+	RelayServiceID string
+	Region         string
+	RelayAddress   string
+	TlsServerName  string
+}
+
+// inventory hints reserve two candidate slots per region before the global cap;
+// a publisher needs two distinct live services to qualify one region.
+func (q *Queries) ListRelayProbeCandidates(ctx context.Context, arg ListRelayProbeCandidatesParams) ([]ListRelayProbeCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listRelayProbeCandidates, arg.Now, arg.ProtocolVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRelayProbeCandidatesRow
+	for rows.Next() {
+		var i ListRelayProbeCandidatesRow
+		if err := rows.Scan(
+			&i.RelayServiceID,
+			&i.Region,
+			&i.RelayAddress,
+			&i.TlsServerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRelayServiceAssignmentTotals = `-- name: ListRelayServiceAssignmentTotals :many
 SELECT relay_service_id, reserved_slot_count AS assignment_count
 FROM control.relay_service_reservations

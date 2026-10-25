@@ -693,7 +693,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 			ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
 			ExpiresAt:                    validUntil,
 			Reservation:                  reservation.header,
-		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId,
+		}, IngressRegion: lease.Region, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId,
 			RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), LeaseExpiresAt: relay.LeaseExpiresAt}
 		if err := header.Validate(); err != nil {
 			return err

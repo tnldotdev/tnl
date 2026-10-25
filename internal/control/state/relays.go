@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/region"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var (
@@ -28,6 +29,32 @@ var (
 	ErrPublisherConnectionAlreadyClaimed = errors.New("controlstate: publisher connection is already claimed")
 	ErrPublisherConnectionRelayService   = errors.New("controlstate: publisher connection is assigned to another relay service")
 )
+
+// RelayProbeCandidate is a live service address, not a capacity reservation.
+type RelayProbeCandidate struct {
+	ServiceID, Address, TLSServerName string
+	Region                            region.Code
+}
+
+func (d *Database) ListRelayProbeCandidates(ctx context.Context, now time.Time) ([]RelayProbeCandidate, error) {
+	if now.IsZero() {
+		return nil, ErrPublicURLInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return nil, err
+	}
+	rows, err := controlstatedb.New(d.pool).ListRelayProbeCandidates(ctx, controlstatedb.ListRelayProbeCandidatesParams{
+		Now: timestamptz(now), ProtocolVersion: tunnelv1.Version,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("controlstate: list relay probe candidates: %w", err)
+	}
+	result := make([]RelayProbeCandidate, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, RelayProbeCandidate{ServiceID: row.RelayServiceID, Region: region.Code(row.Region), Address: row.RelayAddress, TLSServerName: row.TlsServerName})
+	}
+	return result, nil
+}
 
 // RelayRegistration describes one relay process and its relay service.
 type RelayRegistration struct {

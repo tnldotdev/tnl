@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -54,6 +55,26 @@ func dataMetric(t *testing.T, m *Metrics, name string, labels map[string]string)
 		}
 	}
 	return 0
+}
+
+func TestPublisherRelayProbeKeepsMeasuredRegionAndOutcomeBounded(t *testing.T) {
+	m := New("publisher")
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+	ctx := WithMetrics(t.Context(), m)
+	ctx = WithFields(ctx, Fields{Component: "publisher", ServiceProtocol: ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	PublisherRelayProbe(ctx, "sjc", 30*time.Millisecond, nil)
+	PublisherRelayProbe(ctx, "ord", 2*time.Second, context.DeadlineExceeded)
+	PublisherRelayProbe(ctx, "untrusted-user-region", time.Millisecond, nil)
+	name := "tnl_publisher_relay_probe_duration_seconds"
+	if got := dataMetric(t, m, name, map[string]string{"tnl_relay_region": "sjc", "tnl_outcome": "success"}); got != 1 {
+		t.Fatal("successful verified relay probe was not observed", got)
+	}
+	if got := dataMetric(t, m, name, map[string]string{"tnl_relay_region": "ord", "tnl_outcome": "timeout"}); got != 1 {
+		t.Fatal("timed-out relay probe was not observed", got)
+	}
+	if got := dataMetric(t, m, name, map[string]string{"tnl_relay_region": "untrusted-user-region"}); got != 0 {
+		t.Fatal("untrusted region escaped into probe metrics", got)
+	}
 }
 
 func TestPublisherHTTPObservesLiveStreamingAndSafeFinalResult(t *testing.T) {

@@ -39,7 +39,7 @@ func TestIntegrationPrivateIngressRegionalPreferenceAndFallback(t *testing.T) {
 		{"a-iad", "iad"}, {"b-sjc", "sjc"}, {"c-sjc", "sjc"},
 	} {
 		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: entry.id, IngressRunID: entry.id + "-run", Region: entry.region,
-			ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: entry.id + ".example.test:443", ConnectorTLSServerName: entry.id + ".example.test"}, now, time.Hour); err != nil {
+			ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: 1, ConnectorAddress: entry.id + ".example.test:443", ConnectorTLSServerName: entry.id + ".example.test"}, now, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -70,6 +70,76 @@ func TestIntegrationPrivateIngressRegionalPreferenceAndFallback(t *testing.T) {
 	}
 }
 
+func TestIntegrationPrivateConnectorFavorsItsReadyPublisherRegion(t *testing.T) {
+	d, now, _, leases := newPublishRunPrerequisites(t)
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}},
+		Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Protocol: "http", Target: "app:3000", Access: &ProjectServiceAccess{Team: true}}}}
+	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := d.IssuePublisherGroupEnrollment(ctx, r.TeamID, r.ProjectKey, "production", r.ActorID, 2, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := enrollAppliedGroup(t, d, r, enrollment, now)
+	assignment := replica.assignments.Services[0]
+	access := groupAssignmentAccess(t, d, replica, assignment, now)
+	prepared, err := d.PrepareServiceRun(ctx, assignment.ServiceID, access.PublisherIdentity, "placement", now, ServiceMetadata{Protocol: "http", TrustRevision: assignment.TrustRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := d.StartServiceRun(ctx, assignment.ServiceID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installPrivateTestCertificate(t, d, prepared, run, now)
+	for _, slot := range run.Connections {
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, run.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+		t.Fatal(err)
+	}
+	var servicePool string
+	if err := d.pool.QueryRow(ctx, `SELECT ingress_pool_id FROM control.services WHERE id=$1`, assignment.ServiceID).Scan(&servicePool); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []struct {
+		id     string
+		region region.Code
+	}{{"a-sjc", "sjc"}, {"b-local", "local"}, {"c-local", "local"}} {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: candidate.id, IngressRunID: candidate.id + "-run", Region: candidate.region,
+			ProtocolVersion: tunnelv1.Version, IngressPoolID: servicePool, ConnectionCapacity: 2, ConnectorAddress: candidate.id + ".example.test:443", ConnectorTLSServerName: candidate.id + ".example.test"}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if servicePool != "" {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "other-pool", IngressRunID: "other-pool-run", Region: "local", ProtocolVersion: tunnelv1.Version,
+			ConnectionCapacity: 2, ConnectorAddress: "other-pool.example.test:443", ConnectorTLSServerName: "other-pool.example.test"}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := d.EnrollVisitorDevice(ctx, r.ActorID, public, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := d.CreateVisitorIngressAssignments(ctx, r.ActorID, device.ID, assignment.ServiceID, "auto", now)
+	if err != nil || len(selected) != 2 || selected[0].Region != "local" || selected[1].Region != "local" || selected[0].IngressID == selected[1].IngressID {
+		t.Fatal("automatic placement missed both distinct ingresses near the ready publisher", selected, err)
+	}
+}
+
 func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 	for _, change := range []string{"device", "service", "count", "exclusion", "revoked-device", "revoked-grant", "disabled-identity", "released", "bound", "expired", "lease-expired", "lease-replaced", "draining", "cleanup", "storage-rotation"} {
 		t.Run(change, func(t *testing.T) {
@@ -85,7 +155,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "replay", IngressRunID: "replay-run", ProtocolVersion: tunnelv1.Version,
+			lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "replay", IngressRunID: "replay-run", ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID,
 				ConnectionCapacity: 1, ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 			if err != nil {
 				t.Fatal(err)
@@ -176,7 +246,7 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 					t.Fatal(err)
 				}
 				at = now.Add(2 * time.Second)
-				_, err = d.RegisterIngress(ctx, IngressRegistration{IngressID: lease.IngressID, IngressRunID: "replacement-run", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1,
+				_, err = d.RegisterIngress(ctx, IngressRegistration{IngressID: lease.IngressID, IngressRunID: "replacement-run", ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: 1,
 					ConnectorAddress: "127.0.0.1:9443", ConnectorTLSServerName: "private.example.test"}, at, time.Hour)
 			case "draining":
 				_, err = d.BeginIngressDrain(ctx, lease.IngressLeaseIdentity, now, now.Add(time.Minute))
@@ -228,7 +298,7 @@ func TestIntegrationPrivateVisitorSingleAssignmentRenewalAtCapacity(t *testing.T
 	}
 	leases := map[string]IngressLease{}
 	for index := range 2 {
-		lease, e := d.RegisterIngress(ctx, IngressRegistration{IngressID: fmt.Sprintf("single-%d", index), IngressRunID: fmt.Sprintf("single-run-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+		lease, e := d.RegisterIngress(ctx, IngressRegistration{IngressID: fmt.Sprintf("single-%d", index), IngressRunID: fmt.Sprintf("single-run-%d", index), ProtocolVersion: tunnelv1.Version, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
 		if e != nil {
 			t.Fatal(e)
 		}

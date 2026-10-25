@@ -93,6 +93,10 @@ func (c *Client) Discovery(ctx context.Context) (controlv1.ControlDiscovery, err
 	return request[controlv1.ControlDiscovery](ctx, c, "", c.api.GetControlDiscovery)
 }
 
+func (c *Client) RelayCandidates(ctx context.Context, publisherAccess string) (controlv1.RelayCandidates, error) {
+	return request[controlv1.RelayCandidates](ctx, c, publisherAccess, c.api.GetRelayCandidates)
+}
+
 func (c *Client) ClientIP(ctx context.Context) (controlv1.ClientIPResponse, error) {
 	return request[controlv1.ClientIPResponse](ctx, c, "", c.api.GetClientIP)
 }

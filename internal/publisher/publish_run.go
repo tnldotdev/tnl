@@ -9,6 +9,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/publisher/placement"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -24,16 +25,22 @@ func createPublishRun(ctx context.Context, config Config, publicURL controlv1.Pu
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
+	preferred := config.PreferredRegions
+	if len(preferred) == 0 {
+		if reader, ok := config.Control.(placement.CandidateReader); ok {
+			preferred = placement.PreferredRegions(ctx, reader, "")
+		}
+	}
 	for {
 		var setup controlv1.PublishRunSetup
-		if len(config.PreferredRegions) > 0 {
+		if len(preferred) > 0 {
 			control, ok := config.Control.(interface {
 				CreatePublishRunInRegions(context.Context, string, string, []string) (controlv1.PublishRunSetup, error)
 			})
 			if !ok {
 				return setup, region.ErrPreference
 			}
-			setup, err = control.CreatePublishRunInRegions(ctx, publicURL.Id, idempotencyKey, config.PreferredRegions)
+			setup, err = control.CreatePublishRunInRegions(ctx, publicURL.Id, idempotencyKey, preferred)
 		} else {
 			setup, err = config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey)
 		}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
@@ -184,12 +185,13 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 			return incoming.Promote(incoming.Header.Admission())
 		}
 	}
+	initial := incoming.TakeInitial()
 	var publisher net.Conn
 	var err error
 	if incoming.Header.ConfirmBeforeBytes {
-		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, initial, events)
 	} else {
-		publisher, err = connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+		publisher, err = connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, initial, events)
 	}
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
@@ -209,7 +211,8 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	endSpan(nil)
 	defer incoming.Stream().Close()
 	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
-	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	towardPublisher, towardIngress := a.regionalTransfer(ctx, incoming.Header.IngressRegion, len(initial))
+	copied, err := streamcopy.CopyObserved(incoming.Stream(), publisher, towardPublisher, towardIngress)
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)
@@ -220,6 +223,30 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)
 	}
 	return nil
+}
+
+// regionalTransfer accounts for the pipelined opening once, then each write
+// on the relay's ingress-facing stream. older v1 senders have no region.
+func (a *ForwardingAcceptor) regionalTransfer(ctx context.Context, ingressRegion string, initial int) (func(int64), func(int64)) {
+	observer, ok := a.observer.(interface {
+		ObserveRelayRegionalTransfer(context.Context, region.Code, region.Code, string, int64)
+	})
+	ingressCode, valid := region.Parse(ingressRegion)
+	if !ok || !valid || string(ingressCode) != ingressRegion {
+		return nil, nil
+	}
+	relayRegion, valid := region.Parse(a.currentLease().Region)
+	if !valid {
+		return nil, nil
+	}
+	towardPublisher := func(bytes int64) {
+		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, "visitor_to_publisher", bytes)
+	}
+	towardIngress := func(bytes int64) {
+		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, "publisher_to_visitor", bytes)
+	}
+	towardPublisher(int64(initial))
+	return towardPublisher, towardIngress
 }
 
 func (a *ForwardingAcceptor) acquireStream() bool {

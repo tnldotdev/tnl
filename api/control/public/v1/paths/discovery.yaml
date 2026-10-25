@@ -61,6 +61,22 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/ControlDiscovery"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
+  /v1/relay-candidates:
+    get:
+      operationId: getRelayCandidates
+      summary: List live relay services for bounded publisher-side locality measurement
+      description: Candidates are hints, not assignments. Publish run creation rechecks leases and capacity.
+      security:
+        - publisherAuth: []
+      responses:
+        "200":
+          description: Up to 32 currently eligible relay services
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/RelayCandidates"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/webhook-providers/{provider}/source:
     get:
       operationId: getWebhookProviderSource

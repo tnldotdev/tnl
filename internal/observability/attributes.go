@@ -67,6 +67,8 @@ var (
 	CloudProvider          = stringKey{keyName{"cloud.provider"}}
 	CloudRegion            = stringKey{keyName{"cloud.region"}}
 	RegionKey              = stringKey{keyName{"tnl.region"}}
+	IngressRegion          = metricStringKey{keyName{"tnl.ingress_region"}}
+	RelayRegion            = metricStringKey{keyName{"tnl.relay_region"}}
 	CloudAvailabilityZone  = stringKey{keyName{"cloud.availability_zone"}}
 	TeamID                 = metricStringKey{keyName{"tnl.team_id"}}
 	DeploymentID           = metricStringKey{keyName{"tnl.deployment_id"}}

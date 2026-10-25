@@ -76,6 +76,32 @@ schemas:
         type: string
         minLength: 2
         maxLength: 45
+  RelayCandidates:
+    type: object
+    additionalProperties: false
+    required: [candidates]
+    properties:
+      candidates:
+        type: array
+        maxItems: 32
+        items:
+          $ref: "../openapi.yaml#/components/schemas/RelayProbeCandidate"
+  RelayProbeCandidate:
+    type: object
+    additionalProperties: false
+    required: [relay_service_id, region, relay_address, tls_server_name]
+    properties:
+      relay_service_id:
+        $ref: "../openapi.yaml#/components/schemas/RelayServiceID"
+      region:
+        type: string
+        pattern: "^(local|[a-z]{3})$"
+      relay_address:
+        type: string
+        minLength: 1
+        maxLength: 256
+      tls_server_name:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
   ControlDiscovery:
     type: object
     additionalProperties: false
