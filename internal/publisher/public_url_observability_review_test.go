@@ -211,7 +211,7 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 				}
 				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"},
 					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-						reservation := testPublicStreamReservation(result.peers[1].Ref(), 0)
+						reservation := testPublicStreamReservation(result.peers[1].Ref(), 0, "192.0.2.10")
 						stream, err := result.peers[1].StartVisitor(ctx, reservation.VisitorConnectionID, false, reservation, nil, nil)
 						if err != nil {
 							return nil, err

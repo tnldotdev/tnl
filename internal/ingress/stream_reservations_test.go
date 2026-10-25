@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"errors"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,7 @@ import (
 
 func reservationAllocation(now time.Time) streamAllocation {
 	return streamAllocation{ID: "salloc_" + strings.Repeat("A", 22), ResourceKind: "service", ResourceID: "svc_" + strings.Repeat("B", 22), RunID: "srun_" + strings.Repeat("C", 22), RunNumber: 1,
-		IngressID: "ingress", IngressRunID: "process", IngressLeaseRevision: 2, Capacity: 4, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}
+		IngressID: "ingress", IngressRunID: "process", IngressLeaseRevision: 2, Capacity: 4, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ProofKey: [32]byte{1}}
 }
 
 func TestStreamReservationsShareCapacityAndReleaseExactlyOnce(t *testing.T) {
@@ -29,7 +30,7 @@ func TestStreamReservationsShareCapacityAndReleaseExactlyOnce(t *testing.T) {
 		for index := range 20 {
 			workers.Go(func() {
 				id := "vc_" + strings.Repeat(string(rune('A'+index)), 22)
-				reservation, err := pool.reserve(allocation.ID, id, func() {})
+				reservation, err := pool.reserve(allocation.ID, id, netip.MustParseAddr("192.0.2.1"), func() {})
 				if err == nil {
 					mu.Lock()
 					held = append(held, reservation)
@@ -45,7 +46,7 @@ func TestStreamReservationsShareCapacityAndReleaseExactlyOnce(t *testing.T) {
 		}
 		old := held[0]
 		old.Close()
-		replacement, err := pool.reserve(allocation.ID, old.header.VisitorConnectionID, func() {})
+		replacement, err := pool.reserve(allocation.ID, old.header.VisitorConnectionID, netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +55,7 @@ func TestStreamReservationsShareCapacityAndReleaseExactlyOnce(t *testing.T) {
 		}
 		defer replacement.Close()
 		old.Close()
-		if _, err := pool.reserve(allocation.ID, "vc_"+strings.Repeat("Z", 22), func() {}); !errors.Is(err, ErrStreamReservation) {
+		if _, err := pool.reserve(allocation.ID, "vc_"+strings.Repeat("Z", 22), netip.MustParseAddr("192.0.2.1"), func() {}); !errors.Is(err, ErrStreamReservation) {
 			t.Fatal("stale release freed replacement capacity", err)
 		}
 		for _, reservation := range held[1:] {
@@ -73,7 +74,7 @@ func TestStreamReservationExpiryCancelsAndRejectsOldAllocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stopped atomic.Int64
-		reservation, err := pool.reserve(allocation.ID, "vc_"+strings.Repeat("D", 22), func() { stopped.Add(1) })
+		reservation, err := pool.reserve(allocation.ID, "vc_"+strings.Repeat("D", 22), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,8 +1,10 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,7 +46,7 @@ func (c *capacityClientFixture) AllocateStreamCapacity(_ context.Context, owner 
 	now := time.Now()
 	return controlv1.StreamCapacityAllocation{Id: c.ids[body.RequestId], Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
 		IngressId: owner, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity,
-		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: !c.pending.Load()}, nil
+		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: !c.pending.Load(), ReservationKey: bytes.Repeat([]byte{0x42}, 32)}, nil
 }
 
 func TestStreamCapacityBackgroundExpansionUsesLocalOccupancy(t *testing.T) {
@@ -57,7 +59,7 @@ func TestStreamCapacityBackgroundExpansionUsesLocalOccupancy(t *testing.T) {
 				_ = extra.Close(t.Context())
 			}
 		}()
-		reservation, err := capacity.reserve("vc_"+strings.Repeat("V", 22), func() {})
+		reservation, err := capacity.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +75,7 @@ func TestStreamCapacityBackgroundExpansionUsesLocalOccupancy(t *testing.T) {
 		if client.calls.Load() != 2 {
 			t.Fatal("expansion exceeded the configured run limit")
 		}
-		another, err := run.additional[0].reserve("vc_"+strings.Repeat("W", 22), func() {})
+		another, err := run.additional[0].reserve("vc_"+strings.Repeat("W", 22), netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,13 +91,13 @@ func TestStreamCapacityWaitsForPublisherBackgroundObservation(t *testing.T) {
 		client := &capacityClientFixture{}
 		client.pending.Store(true)
 		c := prepareCapacityFixture(t, client)
-		if _, err := c.reserve("vc_"+strings.Repeat("V", 22), func() {}); !errors.Is(err, ErrStreamReservation) {
+		if _, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {}); !errors.Is(err, ErrStreamReservation) {
 			t.Fatal("unobserved allocation reached a visitor", err)
 		}
 		client.pending.Store(false)
 		time.Sleep(2*time.Second + time.Millisecond)
 		synctest.Wait()
-		reservation, err := c.reserve("vc_"+strings.Repeat("V", 22), func() {})
+		reservation, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +135,7 @@ func TestStreamCapacityPreparedReservationsMakeNoControlCalls(t *testing.T) {
 		c := prepareCapacityFixture(t, client)
 		var first, sequence uint64
 		for range 100 {
-			r, err := c.reserve("vc_"+strings.Repeat("V", 22), func() {})
+			r, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,7 +156,7 @@ func TestStreamCapacityRenewsHeldSlotsAndJoinsOnShutdown(t *testing.T) {
 		client := &capacityClientFixture{}
 		c := prepareCapacityFixture(t, client)
 		var stopped atomic.Int64
-		r, err := c.reserve("vc_"+strings.Repeat("V", 22), func() { stopped.Add(1) })
+		r, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +183,7 @@ func TestStreamCapacityOutageExpiresAndRecoversWithNewIdentity(t *testing.T) {
 		client := &capacityClientFixture{}
 		c := prepareCapacityFixture(t, client)
 		var stopped atomic.Int64
-		old, err := c.reserve("vc_"+strings.Repeat("V", 22), func() { stopped.Add(1) })
+		old, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,13 +193,13 @@ func TestStreamCapacityOutageExpiresAndRecoversWithNewIdentity(t *testing.T) {
 		if stopped.Load() != 1 {
 			t.Fatal("control outage left usable reservations after the fixed deadline")
 		}
-		if _, err := c.reserve(old.header.VisitorConnectionID, func() {}); !errors.Is(err, ErrStreamReservation) {
+		if _, err := c.reserve(old.header.VisitorConnectionID, netip.MustParseAddr("192.0.2.1"), func() {}); !errors.Is(err, ErrStreamReservation) {
 			t.Fatal("expired allocation admitted a new connection", err)
 		}
 		client.fail.Store(false)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
-		next, err := c.reserve(old.header.VisitorConnectionID, func() {})
+		next, err := c.reserve(old.header.VisitorConnectionID, netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}

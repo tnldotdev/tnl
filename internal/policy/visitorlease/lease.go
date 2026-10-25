@@ -204,6 +204,9 @@ func (l *Lease) validateReservationLocked(reservation tunnelv1.StreamReservation
 		a.RunId != reservation.RunID || uint64(a.RunNumber) != reservation.RunNumber || a.IngressId != reservation.IngressID || a.IngressRunId != reservation.IngressRunID || uint64(a.IngressLeaseRevision) != reservation.IngressLeaseRevision {
 		return ErrUpdate
 	}
+	if visitortoken.VerifyReservation(a.ReservationKey, reservation) != nil {
+		return ErrUpdate
+	}
 	return nil
 }
 

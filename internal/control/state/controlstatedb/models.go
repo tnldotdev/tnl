@@ -1482,6 +1482,8 @@ type ControlStreamCapacityAllocation struct {
 	IngressLeaseRevision int64
 	RequestID            string
 	Capacity             int32
+	ProofKeyCiphertext   []byte
+	ProofKeyStorageKeyID string
 	IssuedAt             pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz

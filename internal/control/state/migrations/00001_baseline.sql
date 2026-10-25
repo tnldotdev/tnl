@@ -2866,6 +2866,8 @@ CREATE TABLE control.stream_capacity_allocations (
     ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>=1),
     request_id text NOT NULL,
     capacity integer NOT NULL CHECK (capacity BETWEEN 1 AND 1048576),
+    proof_key_ciphertext bytea NOT NULL,
+    proof_key_storage_key_id text NOT NULL,
     issued_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
     valid_until timestamptz NOT NULL,

@@ -50,7 +50,7 @@ func validAllocation(a controlv1.StreamCapacityAllocation, scope visitorscope.Sc
 	probe := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: a.Id, Sequence: 1, ResourceKind: string(a.Resource.Kind), ResourceID: a.Resource.Id, RunID: a.RunId,
 		RunNumber: uint64(a.RunNumber), VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", IngressID: a.IngressId, IngressRunID: a.IngressRunId, IngressLeaseRevision: uint64(a.IngressLeaseRevision)}
 	duration := a.ValidUntil.Sub(a.ObservedAt)
-	return probe.Validate() == nil && a.Resource.Id == scope.ID && string(a.Resource.Kind) == string(scope.Kind) && a.Capacity > 0 && a.Capacity <= 1<<20 && a.RunNumber > 0 && a.IngressLeaseRevision > 0 && !a.ObservedAt.IsZero() && duration > 0 && duration <= 10*time.Second
+	return probe.Validate() == nil && len(a.ReservationKey) == 32 && a.Resource.Id == scope.ID && string(a.Resource.Kind) == string(scope.Kind) && a.Capacity > 0 && a.Capacity <= 1<<20 && a.RunNumber > 0 && a.IngressLeaseRevision > 0 && !a.ObservedAt.IsZero() && duration > 0 && duration <= 10*time.Second
 }
 
 func (l *Lease) BindReservation(header tunnelv1.StreamReservation, stop func()) (*ReservationGuard, error) {
@@ -60,7 +60,7 @@ func (l *Lease) BindReservation(header tunnelv1.StreamReservation, stop func()) 
 // BindReservationFrom also fences the transport when its trusted source no
 // longer passes current IP policy. it does not authorize application requests.
 func (l *Lease) BindReservationFrom(header tunnelv1.StreamReservation, source netip.Addr, stop func()) (*ReservationGuard, error) {
-	if !source.IsValid() || source.Zone() != "" {
+	if !source.IsValid() || source.Zone() != "" || header.SourceIP != source.Unmap().String() {
 		return nil, ErrUpdate
 	}
 	return l.bindReservation(header, source.Unmap(), stop)
@@ -101,7 +101,7 @@ func (g *ReservationGuard) BindSource(source netip.Addr) error {
 	l := g.lease
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !source.IsValid() || source.Zone() != "" || l.reservations[reservationSlot{g.header.AllocationID, g.header.Slot}] != g ||
+	if !source.IsValid() || source.Zone() != "" || g.header.SourceIP != source.Unmap().String() || l.reservations[reservationSlot{g.header.AllocationID, g.header.Slot}] != g ||
 		l.validateReservationLocked(g.header, l.now()) != nil || g.source.IsValid() && g.source != source.Unmap() || l.update.IP != nil && !l.update.IP.Allows(source.Unmap()) {
 		return ErrUpdate
 	}

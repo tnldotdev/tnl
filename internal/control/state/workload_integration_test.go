@@ -379,7 +379,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if err != nil || !permission.Permission.ExpiresAt.Equal(session.ExpiresAt.Truncate(time.Second)) {
 		t.Fatal("private permission deadline", permission.Permission.ExpiresAt, err)
 	}
-	message, err := visitortoken.NativeProofMessage(permission.Token, assignment.ID, visitor, uint64(service.TrustRevision), nil)
+	message, err := visitortoken.NativeProofMessage(permission.Token, assignment.ID, visitor, run.RunID, uint64(run.RunNumber), uint64(service.TrustRevision), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = visitortoken.VerifyNativeSession(permission.Token, update.View, session.Subject, assignment.ID, visitor, uint64(service.TrustRevision), nil, key.Public().(ed25519.PublicKey), signature, at)
+		_, err = visitortoken.VerifyNativeSession(permission.Token, update.View, session.Subject, assignment.ID, visitor, run.RunID, uint64(run.RunNumber), uint64(service.TrustRevision), nil, key.Public().(ed25519.PublicKey), signature, at)
 		return err == nil
 	}
 	if !nativeAllowed(now.Add(time.Second)) {

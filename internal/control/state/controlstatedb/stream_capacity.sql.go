@@ -30,8 +30,8 @@ func (q *Queries) CountStreamCapacityAllocations(ctx context.Context, arg CountS
 }
 
 const createStreamCapacityAllocation = `-- name: CreateStreamCapacityAllocation :one
-INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,issued_at,renewed_at,valid_until)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12) RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,proof_key_ciphertext,proof_key_storage_key_id,issued_at,renewed_at,valid_until)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14) RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, proof_key_ciphertext, proof_key_storage_key_id, issued_at, renewed_at, valid_until, retired_at
 `
 
 type CreateStreamCapacityAllocationParams struct {
@@ -45,6 +45,8 @@ type CreateStreamCapacityAllocationParams struct {
 	IngressLeaseRevision int64
 	RequestID            string
 	Capacity             int32
+	ProofKeyCiphertext   []byte
+	ProofKeyStorageKeyID string
 	Now                  pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz
 }
@@ -61,6 +63,8 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 		arg.IngressLeaseRevision,
 		arg.RequestID,
 		arg.Capacity,
+		arg.ProofKeyCiphertext,
+		arg.ProofKeyStorageKeyID,
 		arg.Now,
 		arg.ValidUntil,
 	)
@@ -77,6 +81,8 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 		&i.IngressLeaseRevision,
 		&i.RequestID,
 		&i.Capacity,
+		&i.ProofKeyCiphertext,
+		&i.ProofKeyStorageKeyID,
 		&i.IssuedAt,
 		&i.RenewedAt,
 		&i.ValidUntil,
@@ -86,7 +92,7 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 }
 
 const findStreamCapacityAllocation = `-- name: FindStreamCapacityAllocation :one
-SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, proof_key_ciphertext, proof_key_storage_key_id, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND run_id=$3
     AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6
     AND request_id=$7 FOR UPDATE
@@ -125,6 +131,8 @@ func (q *Queries) FindStreamCapacityAllocation(ctx context.Context, arg FindStre
 		&i.IngressLeaseRevision,
 		&i.RequestID,
 		&i.Capacity,
+		&i.ProofKeyCiphertext,
+		&i.ProofKeyStorageKeyID,
 		&i.IssuedAt,
 		&i.RenewedAt,
 		&i.ValidUntil,
@@ -162,7 +170,7 @@ func (q *Queries) ObservePublisherStreamAllocations(ctx context.Context, arg Obs
 }
 
 const readStreamCapacityAllocations = `-- name: ReadStreamCapacityAllocations :many
-SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, proof_key_ciphertext, proof_key_storage_key_id, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND valid_until>$3
 ORDER BY id LIMIT 2049
 `
@@ -194,6 +202,8 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 			&i.IngressLeaseRevision,
 			&i.RequestID,
 			&i.Capacity,
+			&i.ProofKeyCiphertext,
+			&i.ProofKeyStorageKeyID,
 			&i.IssuedAt,
 			&i.RenewedAt,
 			&i.ValidUntil,
@@ -211,7 +221,7 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 
 const renewStreamCapacityAllocation = `-- name: RenewStreamCapacityAllocation :one
 UPDATE control.stream_capacity_allocations SET renewed_at=$1,valid_until=$2
-WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING publisher_observed_at, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, proof_key_ciphertext, proof_key_storage_key_id, issued_at, renewed_at, valid_until, retired_at
 `
 
 type RenewStreamCapacityAllocationParams struct {
@@ -235,6 +245,8 @@ func (q *Queries) RenewStreamCapacityAllocation(ctx context.Context, arg RenewSt
 		&i.IngressLeaseRevision,
 		&i.RequestID,
 		&i.Capacity,
+		&i.ProofKeyCiphertext,
+		&i.ProofKeyStorageKeyID,
 		&i.IssuedAt,
 		&i.RenewedAt,
 		&i.ValidUntil,

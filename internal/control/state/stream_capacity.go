@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"time"
@@ -35,16 +36,31 @@ type StreamCapacityAllocation struct {
 	ObservedAt, ValidUntil time.Time
 	Retired                bool
 	PublisherObserved      bool
+	ProofKey               [32]byte
 }
+
+func (StreamCapacityAllocation) String() string   { return "stream capacity allocation" }
+func (StreamCapacityAllocation) GoString() string { return "stream capacity allocation" }
 
 func (a StreamCapacityAllocation) Wire() controlv1.StreamCapacityAllocation {
 	return controlv1.StreamCapacityAllocation{Id: a.ID, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.Scope.Kind), Id: a.Scope.ID}, RunId: a.RunID, RunNumber: a.RunNumber,
-		IngressId: a.Owner.IngressID, IngressRunId: a.Owner.IngressRunID, IngressLeaseRevision: int64(a.Owner.IngressLeaseRevision), Capacity: int(a.Capacity), ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil, Retired: a.Retired, PublisherObserved: a.PublisherObserved}
+		IngressId: a.Owner.IngressID, IngressRunId: a.Owner.IngressRunID, IngressLeaseRevision: int64(a.Owner.IngressLeaseRevision), Capacity: int(a.Capacity), ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil, Retired: a.Retired, PublisherObserved: a.PublisherObserved,
+		ReservationKey: append([]byte(nil), a.ProofKey[:]...)}
 }
 
-func allocationRecord(row controlstatedb.ControlStreamCapacityAllocation, now time.Time) StreamCapacityAllocation {
-	return StreamCapacityAllocation{ID: row.ID, Scope: visitorscope.Scope{Kind: visitorscope.Kind(row.ResourceKind), ID: row.ResourceID}, RunID: row.RunID, RunNumber: row.RunNumber,
+func streamCapacityProofContext(id string) string { return "stream-capacity-proof:" + id }
+
+func (d *Database) allocationRecord(row controlstatedb.ControlStreamCapacityAllocation, now time.Time) (StreamCapacityAllocation, error) {
+	a := StreamCapacityAllocation{ID: row.ID, Scope: visitorscope.Scope{Kind: visitorscope.Kind(row.ResourceKind), ID: row.ResourceID}, RunID: row.RunID, RunNumber: row.RunNumber,
 		Owner: IngressLeaseIdentity{IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: uint64(row.IngressLeaseRevision)}, Capacity: row.Capacity, ObservedAt: now, ValidUntil: row.ValidUntil.Time, Retired: row.RetiredAt.Valid, PublisherObserved: row.PublisherObservedAt.Valid}
+	key, _, err := d.storageKey.Open(row.ProofKeyStorageKeyID, streamCapacityProofContext(row.ID), row.ProofKeyCiphertext)
+	if err != nil || len(key) != len(a.ProofKey) {
+		clear(key)
+		return StreamCapacityAllocation{}, ErrStreamCapacity
+	}
+	copy(a.ProofKey[:], key)
+	clear(key)
+	return a, nil
 }
 
 // AllocateStreamCapacity holds the existing team/resource/run admission guards.
@@ -143,7 +159,10 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 		if err != nil {
 			return result, err
 		}
-		result = allocationRecord(prior, now)
+		result, err = d.allocationRecord(prior, now)
+		if err != nil {
+			return StreamCapacityAllocation{}, err
+		}
 		return result, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -165,12 +184,25 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if err != nil {
 		return result, err
 	}
-	row, err := q.CreateStreamCapacityAllocation(ctx, controlstatedb.CreateStreamCapacityAllocationParams{ID: id, ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID, RunNumber: request.RunNumber,
-		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), RequestID: request.RequestID, Capacity: amount, Now: timestamptz(now), ValidUntil: timestamptz(until)})
+	proofKey := make([]byte, 32)
+	if _, err := rand.Read(proofKey); err != nil {
+		return result, err
+	}
+	defer clear(proofKey)
+	sealed, err := d.storageKey.Seal(streamCapacityProofContext(id), proofKey)
 	if err != nil {
 		return result, err
 	}
-	result = allocationRecord(row, now)
+	row, err := q.CreateStreamCapacityAllocation(ctx, controlstatedb.CreateStreamCapacityAllocationParams{ID: id, ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID, RunNumber: request.RunNumber,
+		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), RequestID: request.RequestID, Capacity: amount,
+		ProofKeyCiphertext: sealed, ProofKeyStorageKeyID: d.storageKey.CurrentID(), Now: timestamptz(now), ValidUntil: timestamptz(until)})
+	if err != nil {
+		return result, err
+	}
+	result, err = d.allocationRecord(row, now)
+	if err != nil {
+		return StreamCapacityAllocation{}, err
+	}
 	return result, tx.Commit(ctx)
 }
 

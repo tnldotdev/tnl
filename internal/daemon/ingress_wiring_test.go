@@ -41,7 +41,7 @@ func (c *wiringControl) AllocateStreamCapacity(_ context.Context, id string, bod
 	defer c.mu.Unlock()
 	now := time.Now()
 	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.TrimPrefix(body.RunId, "pr_"), Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
-		IngressId: id, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true}
+		IngressId: id, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))}
 	if c.allocations == nil {
 		c.allocations = make(map[string]controlv1.StreamCapacityAllocation)
 	}

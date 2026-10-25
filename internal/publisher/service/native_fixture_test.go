@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"net"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,8 +31,12 @@ func nativeFixtureSubject() tunnelv1.VisitorSubject {
 
 func nativeFixtureReservation(ref tunnelv1.ServicePublisherConnectionRef, visitor string) tunnelv1.StreamReservation {
 	sequence := nativeFixtureSequence.Add(1)
-	return tunnelv1.StreamReservation{ID: "sres_" + strings.Repeat("a", 22), AllocationID: "salloc_" + strings.Repeat("b", 22), Slot: uint32(sequence % 64), Sequence: sequence,
+	reservation := tunnelv1.StreamReservation{ID: "sres_" + strings.Repeat("a", 22), AllocationID: "salloc_" + strings.Repeat("b", 22), Slot: uint32(sequence % 64), Sequence: sequence,
 		ResourceKind: "service", ResourceID: ref.ServiceID, RunID: ref.ServiceRunID, RunNumber: ref.RunNumber, VisitorConnectionID: visitor, IngressID: "fixture-ingress", IngressRunID: "irun_" + strings.Repeat("c", 22), IngressLeaseRevision: 1}
+	if err := visitortoken.SignReservation(bytes.Repeat([]byte{1}, 32), &reservation, netip.MustParseAddr("192.0.2.10")); err != nil {
+		panic(err)
+	}
+	return reservation
 }
 
 func prepareNativeFixturePolicy(t *testing.T, p *Prepared) {
@@ -44,7 +49,7 @@ func prepareNativeFixturePolicy(t *testing.T, p *Prepared) {
 	t.Cleanup(lease.Close)
 	now := time.Now()
 	a := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.Repeat("b", 22), Resource: controlv1.VisitorResourceScope{Kind: "service", Id: scope.ID}, RunId: p.Preparation.ServiceRunId,
-		RunNumber: p.Preparation.RunNumber, Capacity: 64, IngressId: "fixture-ingress", IngressRunId: "irun_" + strings.Repeat("c", 22), IngressLeaseRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}
+		RunNumber: p.Preparation.RunNumber, Capacity: 64, IngressId: "fixture-ingress", IngressRunId: "irun_" + strings.Repeat("c", 22), IngressLeaseRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: bytes.Repeat([]byte{1}, 32)}
 	if err := lease.Apply(lease.Begin(), visitorlease.Update{Snapshot: true, KeyRevision: 1, Enabled: true, Allocations: map[string]controlv1.StreamCapacityAllocation{a.Id: a},
 		View: visitortoken.View{Issuer: "https://control.example.test", Scope: scope, Hostname: p.managedHostname, Port: p.servicePort, MetadataRevision: 1, VisitorPolicyRevision: 1,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"native-fixture": nativeFixtureKey().Public().(ed25519.PublicKey)}}}); err != nil {
@@ -67,7 +72,7 @@ func nativeFixtureOpening(t *testing.T, header tunnelv1.ServiceForwardingHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := visitortoken.NativeProofMessage(token, header.Connector.SessionID, header.VisitorConnectionID, 1, nil)
+	message, err := visitortoken.NativeProofMessage(token, header.Connector.SessionID, header.VisitorConnectionID, header.ServiceRunID, header.RunNumber, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

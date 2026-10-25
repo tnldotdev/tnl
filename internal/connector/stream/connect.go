@@ -500,7 +500,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run, prepared *pr
 		return nil, false, ErrServiceConnection
 	}
 	opening := func(initial []byte) error {
-		permission, proofErr := nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, run.Permission.VisitorToken, initial)
+		permission, proofErr := nativePermission(path.signer, path.Accepted.SessionID, entry.VisitorConnectionID, run.ServiceRunID, run.RunNumber, entry.MetadataRevision, run.Permission.VisitorToken, initial)
 		if proofErr != nil {
 			return proofErr
 		}

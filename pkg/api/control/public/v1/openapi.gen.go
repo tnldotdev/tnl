@@ -3600,6 +3600,9 @@ type StreamCapacityAllocation struct {
 	ObservedAt           time.Time `json:"observed_at"`
 	PublisherObserved    bool      `json:"publisher_observed"`
 
+	// ReservationKey private key shared only with the assigned ingress and publisher for signed visitor reservations.
+	ReservationKey []byte `json:"reservation_key"`
+
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource   VisitorResourceScope `json:"resource"`
 	Retired    bool                 `json:"retired"`

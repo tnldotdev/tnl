@@ -703,7 +703,7 @@ func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, t
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := visitortoken.NativeProofMessage(visitortoken.Token(permission.VisitorToken), hello.SessionID, visitor, 1, nil)
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(permission.VisitorToken), hello.SessionID, visitor, run, 1, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -218,6 +218,7 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 	permission.Scope, permission.Port = visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, 5432
 	view.Scope, view.Port = permission.Scope, permission.Port
 	session, connection := "cns_"+strings.Repeat("A", 22), "vc_"+strings.Repeat("B", 22)
+	runID, runNumber := "srun_"+strings.Repeat("R", 22), uint64(3)
 	view.MetadataRevision = 1
 	initial := []byte("original client hello")
 	for name, subject := range map[string]Subject{
@@ -230,12 +231,12 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 				view.Workloads = map[string]WorkloadLease{workload.SessionID: {KeySHA256: workload.KeySHA256, ExpiresAt: permission.ExpiresAt}}
 			}
 			token := issueToken(t, key, permission, view, now)
-			message, err := NativeProofMessage(token, session, connection, 1, initial)
+			message, err := NativeProofMessage(token, session, connection, runID, runNumber, 1, initial)
 			if err != nil {
 				t.Fatal(err)
 			}
 			signature := ed25519.Sign(visitor, message)
-			if _, err := VerifyNative(token, view, subject, session, connection, 1, initial, public, signature, now); err != nil {
+			if _, err := VerifyNative(token, view, subject, session, connection, runID, runNumber, 1, initial, public, signature, now); err != nil {
 				t.Fatal(err)
 			}
 			peer := tunnelv1.VisitorSubject{}
@@ -245,36 +246,42 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 			case Workload:
 				peer = tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: subject.SessionID}
 			}
-			if _, err := VerifyNativeSession(token, view, peer, session, connection, 1, initial, public, signature, now); err != nil {
+			if _, err := VerifyNativeSession(token, view, peer, session, connection, runID, runNumber, 1, initial, public, signature, now); err != nil {
 				t.Fatal("authenticated peer lost its signed permission", err)
+			}
+			if _, err := VerifyNativeSession(token, view, peer, session, connection, "srun_"+strings.Repeat("Z", 22), runNumber, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+				t.Fatal("native proof was replayed into a different service run", err)
+			}
+			if _, err := VerifyNativeSession(token, view, peer, session, connection, runID, runNumber+1, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+				t.Fatal("native proof crossed a service run number", err)
 			}
 			future := permission
 			future.VisitorPolicyRevision++
 			futureToken := issueToken(t, key, future, view, now)
-			futureMessage, err := NativeProofMessage(futureToken, session, connection, 1, nil)
+			futureMessage, err := NativeProofMessage(futureToken, session, connection, runID, runNumber, 1, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			futureSignature := ed25519.Sign(visitor, futureMessage)
-			if _, err := VerifyNativeSession(futureToken, view, peer, session, connection, 1, nil, public, futureSignature, now); !errors.Is(err, ErrToken) {
+			if _, err := VerifyNativeSession(futureToken, view, peer, session, connection, runID, runNumber, 1, nil, public, futureSignature, now); !errors.Is(err, ErrToken) {
 				t.Fatal("future policy revision admitted a native stream", err)
 			}
-			verifiedFuture, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, 1, nil, public, futureSignature, now)
+			verifiedFuture, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, runID, runNumber, 1, nil, public, futureSignature, now)
 			if err != nil || verifiedFuture.VisitorPolicyRevision != future.VisitorPolicyRevision {
 				t.Fatal("signed future renewal could not wait for policy coverage", err)
 			}
 			if err := CheckCurrent(verifiedFuture, view, now); !errors.Is(err, ErrToken) {
 				t.Fatal("future renewal bypassed current local policy", err)
 			}
-			if _, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, 1, nil, public, signature, now); !errors.Is(err, ErrBinding) {
+			if _, err := VerifyNativeRenewalProof(futureToken, view, peer, session, connection, runID, runNumber, 1, nil, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("future renewal accepted an old token's proof", err)
 			}
-			if _, err := VerifyNativeSession(token, view, peer, session, connection, 2, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+			if _, err := VerifyNativeSession(token, view, peer, session, connection, runID, runNumber, 2, initial, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("proof crossed an approved metadata revision", err)
 			}
 			changedView := view
 			changedView.MetadataRevision = 2
-			if _, err := VerifyNativeSession(token, changedView, peer, session, connection, 2, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+			if _, err := VerifyNativeSession(token, changedView, peer, session, connection, runID, runNumber, 2, initial, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("metadata rewrite was not covered by the possession proof", err)
 			}
 			if peer.Kind == tunnelv1.VisitorHumanDevice {
@@ -282,7 +289,7 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 			} else {
 				peer.WorkloadSessionID = "wls_" + strings.Repeat("Z", 22)
 			}
-			if _, err := VerifyNativeSession(token, view, peer, session, connection, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+			if _, err := VerifyNativeSession(token, view, peer, session, connection, runID, runNumber, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("proof crossed an authenticated session subject", err)
 			}
 			if _, err := VerifyBearer(token, view, now); !errors.Is(err, ErrBinding) {
@@ -300,11 +307,11 @@ func TestNativeProofBindsKeySessionConnectionAndOpeningBytes(t *testing.T) {
 				{session, connection, initial, key.Public().(ed25519.PublicKey), signature},
 				{session, connection, initial, public, nil},
 			} {
-				if _, err := VerifyNative(token, view, subject, wrong.session, wrong.connection, 1, wrong.initial, wrong.public, wrong.signature, now); !errors.Is(err, ErrBinding) {
+				if _, err := VerifyNative(token, view, subject, wrong.session, wrong.connection, runID, runNumber, 1, wrong.initial, wrong.public, wrong.signature, now); !errors.Is(err, ErrBinding) {
 					t.Fatal("wrong native binding accepted", err)
 				}
 			}
-			if _, err := VerifyNative(token, view, Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, session, connection, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
+			if _, err := VerifyNative(token, view, Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, session, connection, runID, runNumber, 1, initial, public, signature, now); !errors.Is(err, ErrBinding) {
 				t.Fatal("native permission changed its authenticated session subject", err)
 			}
 		})

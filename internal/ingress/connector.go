@@ -623,7 +623,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 	if !enabled || view.Scope.ID != entry.ServiceID || subjectErr != nil || keyErr != nil || signatureErr != nil {
 		return ErrServiceAdmission
 	}
-	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, initial, public, signature, time.Now())
+	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, initial, public, signature, time.Now())
 	if err != nil {
 		return ErrServiceAdmission
 	}
@@ -645,7 +645,7 @@ func (p *Connector) handleStream(ctx context.Context, visitor muxsession.Stream,
 		if !enabled || keyErr != nil || signatureErr != nil {
 			return ErrServiceAdmission
 		}
-		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.MetadataRevision, nil, public, signature, time.Now())
+		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, subject, bound.ConnectorSessionId, visitorID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, nil, public, signature, time.Now())
 		if err != nil || next.Subject != permission.Subject {
 			return ErrServiceAdmission
 		}

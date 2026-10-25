@@ -325,7 +325,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := visitortoken.NativeProofMessage(issued.Token, assignment.ID, visitorID, uint64(service.TrustRevision), nil)
+	message, err := visitortoken.NativeProofMessage(issued.Token, assignment.ID, visitorID, badRun, 1, uint64(service.TrustRevision), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err = visitortoken.NativeProofMessage(issued.Token, assignment.ID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+	message, err = visitortoken.NativeProofMessage(issued.Token, assignment.ID, entry.VisitorConnectionID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

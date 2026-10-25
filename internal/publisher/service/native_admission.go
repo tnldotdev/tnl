@@ -30,7 +30,7 @@ func (b *Bound) admitNative(ctx context.Context, stream net.Conn, header tunnelv
 	if !enabled || keyErr != nil || signatureErr != nil {
 		return deny()
 	}
-	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, header.Connector.Subject, header.Connector.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, initial, public, signature, time.Now())
+	permission, err := visitortoken.VerifyNativeSession(visitortoken.Token(entry.Permission.Token), view, header.Connector.Subject, header.Connector.SessionID, entry.VisitorConnectionID, header.ServiceRunID, header.RunNumber, entry.MetadataRevision, initial, public, signature, time.Now())
 	if err != nil {
 		return deny()
 	}
@@ -67,7 +67,7 @@ func (b *Bound) admitNative(ctx context.Context, stream net.Conn, header tunnelv
 		if !enabled || keyErr != nil || signatureErr != nil {
 			return ErrPrivateStream
 		}
-		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, header.Connector.Subject, header.Connector.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil, public, signature, time.Now())
+		next, err := visitortoken.VerifyNativeRenewalProof(visitortoken.Token(proof.Token), view, header.Connector.Subject, header.Connector.SessionID, entry.VisitorConnectionID, header.ServiceRunID, header.RunNumber, entry.MetadataRevision, nil, public, signature, time.Now())
 		if err != nil || next.Subject != permission.Subject {
 			return ErrPrivateStream
 		}

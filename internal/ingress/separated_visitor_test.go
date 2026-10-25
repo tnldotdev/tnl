@@ -39,7 +39,7 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	now := time.Now()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("s", 32)))
 	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.Repeat("C", 22), Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: c.PublicURLID}, RunId: f.entry.PublishRunId, RunNumber: f.entry.PublishRunNumber,
-		IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 32, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}
+		IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 32, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: []byte(strings.Repeat("s", 32))}
 	update := visitorlease.Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID},
 		Hostname: c.Hostname, Port: 443, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Keys: map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}},
 		KeyRevision: 1, Snapshot: true, Enabled: true, Anonymous: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}}
@@ -48,8 +48,10 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	}
 	c.VisitorPolicy = policy
 	pool := newStreamReservations(nil)
+	var proofKey [32]byte
+	copy(proofKey[:], allocation.ReservationKey)
 	if err := pool.apply(streamAllocation{ID: allocation.Id, ResourceKind: "public_url", ResourceID: c.PublicURLID, RunID: f.entry.PublishRunId, RunNumber: uint64(f.entry.PublishRunNumber),
-		IngressID: allocation.IngressId, IngressRunID: allocation.IngressRunId, IngressLeaseRevision: 1, Capacity: allocation.Capacity, ObservedAt: now, ValidUntil: allocation.ValidUntil}, now); err != nil {
+		IngressID: allocation.IngressId, IngressRunID: allocation.IngressRunId, IngressLeaseRevision: 1, Capacity: allocation.Capacity, ObservedAt: now, ValidUntil: allocation.ValidUntil, ProofKey: proofKey}, now); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)

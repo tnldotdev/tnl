@@ -306,7 +306,7 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 	if f.wrongAdmission.Load() || session.Subject != f.device.Subject {
 		return
 	}
-	message, err := visitortoken.NativeProofMessage(visitortoken.Token(entry.Permission.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, initial)
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(entry.Permission.Token), session.SessionID, entry.VisitorConnectionID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, initial)
 	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
 	if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
 		return
@@ -315,7 +315,7 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		return
 	}
 	request := tunnel.NewNativeRequestReader(stream, initial, func(p tunnelv1.NativeVisitorPermission) error {
-		message, err := visitortoken.NativeProofMessage(visitortoken.Token(p.Token), session.SessionID, entry.VisitorConnectionID, entry.MetadataRevision, nil)
+		message, err := visitortoken.NativeProofMessage(visitortoken.Token(p.Token), session.SessionID, entry.VisitorConnectionID, entry.ServiceRunID, entry.RunNumber, entry.MetadataRevision, nil)
 		signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(p.Signature)
 		if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) {
 			return ErrServiceConnection

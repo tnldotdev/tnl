@@ -13,8 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func nativePermission(signer Signer, session, visitor string, revision uint64, token string, initial []byte) (tunnelv1.NativeVisitorPermission, error) {
-	message, err := visitortoken.NativeProofMessage(visitortoken.Token(token), session, visitor, revision, initial)
+func nativePermission(signer Signer, session, visitor, runID string, runNumber, revision uint64, token string, initial []byte) (tunnelv1.NativeVisitorPermission, error) {
+	message, err := visitortoken.NativeProofMessage(visitortoken.Token(token), session, visitor, runID, runNumber, revision, initial)
 	if err != nil || signer.Sign == nil {
 		return tunnelv1.NativeVisitorPermission{}, ErrServiceConnection
 	}
@@ -51,7 +51,7 @@ func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.Nat
 			if next.Permission.VisitorToken == last {
 				continue
 			}
-			permission, err := nativePermission(signer, session, visitor, uint64(run.TrustRevision), next.Permission.VisitorToken, nil)
+			permission, err := nativePermission(signer, session, visitor, run.ServiceRunID, run.RunNumber, uint64(run.TrustRevision), next.Permission.VisitorToken, nil)
 			if err != nil {
 				_ = raw.Close()
 				return

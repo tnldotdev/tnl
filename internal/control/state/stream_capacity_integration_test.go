@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -128,6 +129,13 @@ func TestIntegrationStreamCapacityPublisherObservationIsRunBound(t *testing.T) {
 	observed, err := d.AllocateStreamCapacity(t.Context(), request, f.now)
 	if err != nil || !observed.PublisherObserved {
 		t.Fatal("installed allocation did not become available in background renewal", err)
+	}
+	if observed.ProofKey != first.ProofKey || observed.ProofKey == ([32]byte{}) {
+		t.Fatal("renewal replaced the reservation proof key")
+	}
+	var encrypted []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT proof_key_ciphertext FROM control.stream_capacity_allocations WHERE id=$1`, first.ID).Scan(&encrypted); err != nil || bytes.Contains(encrypted, first.ProofKey[:]) {
+		t.Fatal("reservation proof key was not protected in control state", err)
 	}
 	untouched, err := d.AllocateStreamCapacity(t.Context(), otherRequest, f.now)
 	if err != nil || untouched.PublisherObserved {

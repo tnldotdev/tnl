@@ -29,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -94,15 +95,23 @@ func testPublicAllocations(body controlv1.PublisherVisitorPolicyRequest, now tim
 	allocations := []controlv1.StreamCapacityAllocation{}
 	if opaqueid.Valid(body.RunId, opaqueid.PublishRunPrefix) {
 		allocations = append(allocations, controlv1.StreamCapacityAllocation{Id: "salloc_0123456789abcdefghijkl", Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
-			IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true})
+			IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))})
 	}
 	return allocations
 }
 
-func testPublicStreamReservation(ref tunnelv1.PublisherConnectionRef, slot uint32) tunnelv1.StreamReservation {
-	return tunnelv1.StreamReservation{ID: "sres_0123456789abcdefghijkl", AllocationID: "salloc_0123456789abcdefghijkl", Slot: slot, Sequence: 1,
+func testPublicStreamReservation(ref tunnelv1.PublisherConnectionRef, slot uint32, sources ...string) tunnelv1.StreamReservation {
+	reservation := tunnelv1.StreamReservation{ID: "sres_0123456789abcdefghijkl", AllocationID: "salloc_0123456789abcdefghijkl", Slot: slot, Sequence: 1,
 		ResourceKind: "public_url", ResourceID: ref.PublicURLID, RunID: ref.PublishRunID, RunNumber: ref.PublishRunNumber,
 		VisitorConnectionID: "vc_" + fmt.Sprintf("%022d", slot), IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1}
+	source := "192.0.2.1"
+	if len(sources) != 0 {
+		source = sources[0]
+	}
+	if err := visitortoken.SignReservation([]byte(strings.Repeat("k", 32)), &reservation, netip.MustParseAddr(source)); err != nil {
+		panic(err)
+	}
+	return reservation
 }
 
 func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
@@ -376,9 +385,9 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	openCtx, stopOpen := context.WithTimeout(ctx, 2*time.Second)
 	defer stopOpen()
 	stream, err := acceptedRelay.session.StartVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
-		Reservation:     testPublicStreamReservation(ref, 0),
+		Reservation:     testPublicStreamReservation(ref, 0, "192.0.2.10"),
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
-		VisitorConnectionID: testPublicStreamReservation(ref, 0).VisitorConnectionID, PublicURLID: ref.PublicURLID,
+		VisitorConnectionID: testPublicStreamReservation(ref, 0, "192.0.2.10").VisitorConnectionID, PublicURLID: ref.PublicURLID,
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
 		PublisherConnectionID:        ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,

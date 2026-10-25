@@ -342,13 +342,13 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	admittedVisitorID := newID(opaqueid.VisitorConnectionPrefix)
-	message, err := visitortoken.NativeProofMessage(permission.Token, session.ID, admittedVisitorID, 1, nil)
+	message, err := visitortoken.NativeProofMessage(permission.Token, session.ID, admittedVisitorID, prepared.RunID, uint64(prepared.RunNumber), 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	signature := ed25519.Sign(deviceKeys[visitorID], message)
 	verify := func(subject tunnelv1.VisitorSubject, sessionID, connectionID string) error {
-		_, err := visitortoken.VerifyNativeSession(permission.Token, decoded.View, subject, sessionID, connectionID, 1, nil, deviceKeys[visitorID].Public().(ed25519.PublicKey), signature, now)
+		_, err := visitortoken.VerifyNativeSession(permission.Token, decoded.View, subject, sessionID, connectionID, prepared.RunID, uint64(prepared.RunNumber), 1, nil, deviceKeys[visitorID].Public().(ed25519.PublicKey), signature, now)
 		return err
 	}
 	subject := tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: visitorID, DeviceID: deviceIDs[visitorID]}

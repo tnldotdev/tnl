@@ -2,6 +2,7 @@ package publishingtest
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -125,6 +127,9 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	sequence := f.visitorSequence.Add(1)
 	reservation := tunnelv1.StreamReservation{ID: "sres_" + strings.TrimPrefix(id, "vc_"), AllocationID: "salloc_" + strings.TrimPrefix(r.PublicURLID, "url_"), Slot: sequence % 1024, Sequence: uint64(sequence),
 		ResourceKind: "public_url", ResourceID: r.PublicURLID, RunID: r.PublishRunID, RunNumber: r.PublishRunNumber, VisitorConnectionID: id, IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1}
+	if err := visitortoken.SignReservation(bytes.Repeat([]byte{0x42}, 32), &reservation, netip.MustParseAddr("127.0.0.1")); err != nil {
+		return 0, nil, err
+	}
 	stream, err := selected.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, Reservation: reservation, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, nil)
 	if err != nil {
 		return 0, nil, err

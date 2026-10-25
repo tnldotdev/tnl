@@ -106,7 +106,7 @@ func (r *preparedVisitorRun) expand(ctx context.Context, report func(error)) {
 
 func (r *preparedVisitorRun) reserve(visitor string, source netip.Addr, stop func()) (*streamReservation, *visitorlease.ReservationGuard, error) {
 	for _, capacity := range r.capacities() {
-		reservation, err := capacity.reserve(visitor, stop)
+		reservation, err := capacity.reserve(visitor, source, stop)
 		if err != nil {
 			continue
 		}
