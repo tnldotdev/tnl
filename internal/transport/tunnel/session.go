@@ -402,6 +402,12 @@ func (r *IncomingServiceForwardingStream) Accept() error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
 }
 
+// Acknowledge reports a relay's accepted metadata-only service opening so
+// ingress can try a different relay if this one rejects before visitor bytes.
+func (r *IncomingServiceForwardingStream) Acknowledge() error {
+	return r.response.stream.acknowledge()
+}
+
 func (r *IncomingServiceForwardingStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }

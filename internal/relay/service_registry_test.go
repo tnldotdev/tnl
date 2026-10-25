@@ -231,6 +231,9 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := tunnel.AwaitServiceRelayAcceptance(ctx, stream); err != nil {
+		t.Fatalf("relay rejected valid metadata before visitor bytes: %v", err)
+	}
 	proxy, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.4:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 	if err != nil {
 		t.Fatal(err)
@@ -256,11 +259,15 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	})
 	stale, err := ingress.StartServiceForwardingStream(ctx, header, nil, nil)
 	if err == nil {
-		_, err = stale.Read(make([]byte, 1))
+		err = tunnel.AwaitServiceRelayAcceptance(ctx, stale)
 		_ = stale.Close()
 	}
 	if err == nil {
-		t.Fatal("stale private assignment admitted")
+		t.Fatal("stale private assignment admitted before visitor bytes")
+	}
+	var rejected *tunnel.ProtocolError
+	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+		t.Fatalf("stale relay rejection did not reach ingress before visitor bytes: %v", err)
 	}
 	_ = relayAwait(t, denied)
 	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "success", 1)

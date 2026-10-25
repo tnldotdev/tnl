@@ -246,6 +246,13 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 	if err := header.Validate(); err != nil {
 		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
 	}
+	var overflow []byte
+	if len(proxy) <= tunnelv1.MaxInitialBytes && len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
+		// the inspected ClientHello may fill the whole opening limit. carry its
+		// remainder as raw bytes on this stream, after the PROXY metadata.
+		boundary := tunnelv1.MaxInitialBytes - len(proxy)
+		initial, overflow = initial[:boundary], initial[boundary:]
+	}
 	for attempt := 0; ; attempt++ {
 		session, reused, err := b.forwarder.session(ctx, b.target)
 		if err != nil {
@@ -276,6 +283,12 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 			}}
 		}
 		stream, err := session.StartInternalForwardingStream(ctx, header, proxy, initial, events)
+		if err == nil && len(overflow) != 0 {
+			_, err = writeSetup(ctx, stream, nil, overflow)
+			if err != nil {
+				err = &tunnel.OpeningError{Committed: true, Err: errors.Join(err, stream.Close())}
+			}
+		}
 		b.forwarder.observe("IngressForwardingStart", err, started)
 		if err == nil {
 			if binding != nil {

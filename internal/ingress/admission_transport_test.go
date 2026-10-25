@@ -1,18 +1,21 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
@@ -120,6 +123,42 @@ func openPendingTransportWithContext(t *testing.T, f *admissionTransportFixture,
 		t.Fatal(err)
 	}
 	return c, ingressAwait(t, incoming)
+}
+
+func TestForwardingCarriesMaximumClientHelloAfterProxy(t *testing.T) {
+	f := newAdmissionTransportFixture(t)
+	proxy, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := bytes.Repeat([]byte{0x42}, tunnelv1.MaxInitialBytes)
+	received := make(chan []byte, 1)
+	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
+		incoming, err := f.publisher.AcceptVisitorStream(ingressContext(t))
+		if err != nil {
+			return err
+		}
+		defer incoming.Stream.Close()
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		payload := make([]byte, len(proxy)+len(prefix))
+		_, err = io.ReadFull(incoming.Stream, payload)
+		received <- payload
+		return err
+	})
+	backend := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
+	stream, err := backend.Start(ingressContext(t), "visitor_max_hello", false, proxy, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if got := ingressAwait(t, received); !bytes.Equal(got, append(bytes.Clone(proxy), prefix...)) {
+		t.Fatal("the full ClientHello and its separate PROXY header did not reach the publisher once")
+	}
+	if err := ingressAwait(t, worker); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPendingPromotionSurvivesCompletedOpeningContext(t *testing.T) {

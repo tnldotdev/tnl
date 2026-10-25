@@ -327,6 +327,9 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	if err := incoming.Accept(); err != nil {
 		return err
 	}
+	if err := incoming.Acknowledge(); err != nil {
+		return err
+	}
 	opened = true
 	finishOpen(nil)
 	endSpan(nil)

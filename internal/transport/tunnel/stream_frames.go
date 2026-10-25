@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -24,6 +25,34 @@ type returnStream struct {
 	terminal  error
 	notify    func(tunnelv1.AdmissionHeader) error
 	reject    func(tunnelv1.ErrorCode) error
+}
+
+// AwaitServiceRelayAcceptance checks the relay's metadata-only decision before
+// ingress sends a native visitor byte. the publisher's later reply stays on
+// the same stream and is read normally by the caller.
+func AwaitServiceRelayAcceptance(ctx context.Context, connection net.Conn) error {
+	stream, ok := connection.(*returnStream)
+	if !ok {
+		return tunnelv1.ErrReturnFrame
+	}
+	stream.readMu.Lock()
+	defer stream.readMu.Unlock()
+	finish, err := setupDeadline(ctx, stream.Stream)
+	if err != nil {
+		return err
+	}
+	frame, err := tunnelv1.ReadReturnFrame(stream.Stream)
+	if err == nil {
+		switch frame.Kind {
+		case tunnelv1.ReturnAccepted:
+			stream.accepted = true
+		case tunnelv1.ReturnRejected:
+			err = &ProtocolError{Code: frame.Code}
+		default:
+			err = tunnelv1.ErrReturnFrame
+		}
+	}
+	return errors.Join(err, finish(err == nil))
 }
 
 func (s *returnStream) Read(p []byte) (int, error) {
@@ -192,6 +221,12 @@ func (s *replyStream) startReplyLocked() error {
 		s.sent = s.writeErr == nil
 	}
 	return s.writeErr
+}
+
+func (s *replyStream) acknowledge() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.startReplyLocked()
 }
 
 func (s *replyStream) Write(p []byte) (int, error) {

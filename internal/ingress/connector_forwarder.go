@@ -33,6 +33,12 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 		}
 		started := time.Now()
 		stream, err := session.StartServiceForwardingStream(ctx, header, nil, nil)
+		if err == nil {
+			err = tunnel.AwaitServiceRelayAcceptance(ctx, stream)
+			if err != nil {
+				err = errors.Join(err, stream.Close())
+			}
+		}
 		f.observe("IngressForwardingStart", err, started)
 		if err == nil {
 			return stream, nil
