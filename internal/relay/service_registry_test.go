@@ -257,7 +257,14 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		}
 		return forwarder.forward(ctx, incoming, nil)
 	})
-	stale, err := ingress.StartServiceForwardingStream(ctx, header, nil, nil)
+	var notified atomic.Int32
+	stale, err := ingress.StartServiceForwardingStream(ctx, header, nil, &tunnel.ReturnEvents{Rejected: func(code tunnelv1.ErrorCode) error {
+		if code != tunnelv1.StaleConnectionAssignment {
+			return errors.New("unexpected rejection code")
+		}
+		notified.Add(1)
+		return nil
+	}})
 	if err == nil {
 		err = tunnel.AwaitServiceRelayAcceptance(ctx, stale)
 		_ = stale.Close()
@@ -268,6 +275,9 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	var rejected *tunnel.ProtocolError
 	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
 		t.Fatalf("stale relay rejection did not reach ingress before visitor bytes: %v", err)
+	}
+	if notified.Load() != 1 {
+		t.Fatal("ingress did not notify the direct visitor guard of the relay rejection")
 	}
 	_ = relayAwait(t, denied)
 	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "success", 1)

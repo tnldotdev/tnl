@@ -48,6 +48,9 @@ func AwaitServiceRelayAcceptance(ctx context.Context, connection net.Conn) error
 			stream.accepted = true
 		case tunnelv1.ReturnRejected:
 			err = &ProtocolError{Code: frame.Code}
+			if stream.reject != nil {
+				err = errors.Join(err, stream.reject(frame.Code))
+			}
 		default:
 			err = tunnelv1.ErrReturnFrame
 		}
