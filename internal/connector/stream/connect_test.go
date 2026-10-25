@@ -529,9 +529,17 @@ func TestConnectorTwoAuthenticatedMuxPathsAndSurvivingIngress(t *testing.T) {
 			f.failed[0] = true
 			lost := append([]muxsession.Session(nil), f.sessions[0]...)
 			healthy := len(f.sessions[1])
+			attempts := f.assignments[0].Load()
 			f.mu.Unlock()
 			for _, session := range lost {
 				_ = session.Close()
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for f.assignments[0].Load() == attempts && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if f.assignments[0].Load() == attempts {
+				t.Fatal("connector did not retire the failed ingress path")
 			}
 			conn := f.local(t)
 			_, _ = conn.Write([]byte("surviving"))

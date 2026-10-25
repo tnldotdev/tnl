@@ -47,6 +47,17 @@ type lifecycleDatabaseFixture struct {
 	service        controlv1.Service
 }
 
+// fixturePreparedControl supplies only the missing publisher run; assignments,
+// transport trust, and release still cross the real control HTTP/database path.
+type fixturePreparedControl struct {
+	*controlAdapter
+	run Run
+}
+
+func (f *fixturePreparedControl) ResolveService(context.Context, string) (Run, error) {
+	return f.run, nil
+}
+
 func newLifecycleDatabaseFixture(t *testing.T, intercept func(http.ResponseWriter, *http.Request, http.Handler)) *lifecycleDatabaseFixture {
 	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
@@ -269,6 +280,10 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := Run{ServiceID: f.service.Id, ServiceRunID: connectorID(t, opaqueid.ServiceRunPrefix), RunNumber: 1,
+		ValidUntil: time.Now().Add(time.Minute), Protocol: "tcp", TrustRevision: 1, Endpoint: f.service.Endpoint}
+	run.Permission = fixtureVisitorPermission(run)
+	runner = &fixturePreparedControl{controlAdapter: runner.(*controlAdapter), run: run}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

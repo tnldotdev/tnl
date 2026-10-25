@@ -96,7 +96,7 @@ tasks:
           SEED: '{{default "0" .SEED}}'
           RACE: '{{default "0" .RACE}}'
           VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
-          COORDINATOR_MEMORY: '{{default "512m" .COORDINATOR_MEMORY}}'
+          COORDINATOR_MEMORY: '{{default "768m" .COORDINATOR_MEMORY}}'
           RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
 
   go:test:load:visitors:
