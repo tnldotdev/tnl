@@ -61,7 +61,7 @@ func TestIntegrationConnectorRecoversCommittedAssignments(t *testing.T) {
 	leases := map[string]controlstate.IngressLeaseIdentity{}
 	for index := range 2 {
 		id := fmt.Sprintf("ingress-%d", index)
-		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
+		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, IngressPoolID: controlstate.PrimaryIngressPoolID,
 			ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+index), ConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)

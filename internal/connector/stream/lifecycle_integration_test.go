@@ -138,7 +138,7 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	})
 	leases := make(map[string]controlstate.IngressLeaseIdentity)
 	for i, id := range []string{"ingress-a", "ingress-b"} {
-		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
+		lease, err := f.database.RegisterIngress(t.Context(), controlstate.IngressRegistration{IngressID: id, IngressRunID: connectorID(t, opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, IngressPoolID: controlstate.PrimaryIngressPoolID,
 			ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 9441+i), ConnectorTLSServerName: "ingress.example.test"}, time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)
@@ -343,7 +343,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	leases := make(map[string]controlstate.RelayLeaseIdentity)
 	for _, id := range []string{"relay-a", "relay-b"} {
 		lease, err := f.database.RegisterRelay(t.Context(), controlstate.RelayRegistration{RelayID: id, RelayServiceID: id, RelayRunID: connectorID(t, opaqueid.RelayRunPrefix),
-			ProtocolVersion: 1, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test", InternalRelayAddress: "127.0.0.1:9443", ConnectionCapacity: 2, StreamCapacity: 4}, time.Now(), time.Minute)
+			ProtocolVersion: tunnelv1.Version, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test", InternalRelayAddress: "127.0.0.1:9443", ConnectionCapacity: 2, StreamCapacity: 4}, time.Now(), time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
