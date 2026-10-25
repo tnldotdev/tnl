@@ -36,6 +36,7 @@ func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.Nat
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		last := run.Permission.VisitorToken
+		currentDeadline := run.Permission.ExpiresAt
 		for {
 			select {
 			case <-life.Done():
@@ -55,10 +56,15 @@ func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.Nat
 				_ = raw.Close()
 				return
 			}
-			write, finish := context.WithTimeout(life, 5*time.Second)
+			// a blocked application upload holds the writer lock. the existing
+			// permission, not a short write timeout, bounds how long it may wait.
+			write, finish := context.WithDeadline(life, currentDeadline)
 			closed := make(chan struct{})
 			stop := context.AfterFunc(write, func() { _ = raw.Close(); close(closed) })
 			err = writer.Renew(permission)
+			if err == nil {
+				err = write.Err()
+			}
 			if !stop() {
 				<-closed
 			}
@@ -68,6 +74,7 @@ func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.Nat
 				return
 			}
 			last = next.Permission.VisitorToken
+			currentDeadline = next.Permission.ExpiresAt
 		}
 	}()
 	var once sync.Once
