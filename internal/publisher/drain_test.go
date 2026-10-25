@@ -108,6 +108,54 @@ func TestPublicURLStopAdmissionsKeepsVisitorAdmittedBeforeTLS(t *testing.T) {
 	}
 }
 
+func TestFailedConfirmedVisitorDoesNotExitPublisherConnection(t *testing.T) {
+	ref := tunnelv1.PublisherConnectionRef{PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1,
+		PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
+	publisher, relay := promotionSessionPair(t, ref)
+	certificate := publicURLTestCertificate(t, "route.example")
+	r, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID,
+		PublishRunNumber: 1, Certificate: certificate, AccessMode: "anonymous", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	live, err := r.registerPublisherSession(t.Context(), publisher, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.unregisterPublisherSession(live)
+	proxy, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:4321"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range 2 {
+		reservation := testPublicStreamReservation(ref, uint32(index))
+		stream, err := relay.StartVisitorStream(t.Context(), tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
+			ConfirmBeforeBytes: true, Reservation: reservation, VisitorConnectionID: reservation.VisitorConnectionID, PublicURLID: ref.PublicURLID,
+			PublishRunID: ref.PublishRunID, PublishRunNumber: 1, PublisherConnectionID: ref.PublisherConnectionID,
+			ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision}, proxy, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		incoming, err := publisher.AcceptVisitorStream(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// make the confirmation write fail on the first stream. the next stream
+		// must still enter through the same publisher connection.
+		if index == 0 {
+			_ = incoming.Stream.Close()
+		}
+		if err := r.acceptVisitorContext(t.Context(), incoming, ref); err != nil {
+			t.Fatalf("visitor %d exited the shared publisher connection: %v", index, err)
+		}
+		_ = stream.Close()
+	}
+}
+
 func TestSessionDrainDeadlineClosesActiveVisitor(t *testing.T) {
 	h := newVisitorDrainHarness(t, "tls_yamux", func(_ *certificateTestControl, config *Config) { config.DrainTime = 50 * time.Millisecond })
 	response := h.startVisitor(h.admit(), false)

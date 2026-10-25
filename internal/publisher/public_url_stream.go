@@ -122,12 +122,15 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 	r.handlers.Add(1)
 	r.mu.Unlock()
 	if err := incoming.Accept(); err != nil {
+		_ = incoming.Stream.Close()
 		reservation.Close()
 		r.mu.Lock()
 		delete(r.streams, incoming.Stream)
 		r.mu.Unlock()
 		r.handlers.Done()
-		return err
+		// a confirmation write may fail after the peer closes this stream. keep
+		// the publisher connection and its unrelated visitors alive.
+		return nil
 	}
 	go func() {
 		defer reservation.Close()
