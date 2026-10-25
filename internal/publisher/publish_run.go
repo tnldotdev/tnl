@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"time"
@@ -17,6 +18,15 @@ import (
 
 const activationRetry = 2 * time.Second
 
+// RegionalRunControl is the optional capability needed to use placement hints.
+type RegionalRunControl interface {
+	CreatePublishRunInRegions(context.Context, string, string, []string) (controlv1.PublishRunSetup, error)
+}
+
+type regionalProbeTrust interface {
+	RelayProbeTLSConfig() *tls.Config
+}
+
 func createPublishRun(ctx context.Context, config Config, publicURL controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
 	if _, err := region.Preferences(config.PreferredRegions); err != nil {
 		return controlv1.PublishRunSetup{}, err
@@ -26,21 +36,23 @@ func createPublishRun(ctx context.Context, config Config, publicURL controlv1.Pu
 		return controlv1.PublishRunSetup{}, err
 	}
 	preferred := config.PreferredRegions
-	if len(preferred) == 0 {
+	regional, supportsRegions := config.Control.(RegionalRunControl)
+	if len(preferred) == 0 && supportsRegions {
 		if reader, ok := config.Control.(placement.CandidateReader); ok {
-			preferred = placement.PreferredRegions(ctx, reader, "")
+			var trust *tls.Config
+			if connector, ok := config.TCPConnector.(regionalProbeTrust); ok {
+				trust = connector.RelayProbeTLSConfig()
+			}
+			preferred = placement.PreferredRegions(ctx, reader, "", trust)
 		}
 	}
 	for {
 		var setup controlv1.PublishRunSetup
 		if len(preferred) > 0 {
-			control, ok := config.Control.(interface {
-				CreatePublishRunInRegions(context.Context, string, string, []string) (controlv1.PublishRunSetup, error)
-			})
-			if !ok {
+			if !supportsRegions {
 				return setup, region.ErrPreference
 			}
-			setup, err = control.CreatePublishRunInRegions(ctx, publicURL.Id, idempotencyKey, preferred)
+			setup, err = regional.CreatePublishRunInRegions(ctx, publicURL.Id, idempotencyKey, preferred)
 		} else {
 			setup, err = config.Control.CreatePublishRun(ctx, publicURL.Id, idempotencyKey)
 		}

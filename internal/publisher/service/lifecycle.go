@@ -38,6 +38,11 @@ type RunControl interface {
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
 }
 
+// RegionalRunControl starts an already prepared run using optional region hints.
+type RegionalRunControl interface {
+	StartServiceRunInRegions(context.Context, string, string, string, int64, []string) (controlv1.ServiceRunSetup, error)
+}
+
 type SlotSession = tunnel.SlotSession
 
 type RunConfig struct {
@@ -204,9 +209,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	// uncertain starts retry the exact prepared run, never a new preparation.
 	var setup controlv1.ServiceRunSetup
 	preferred := config.PreferredRegions
-	if len(preferred) == 0 {
+	regional, supportsRegions := managedControl.(RegionalRunControl)
+	if len(preferred) == 0 && supportsRegions {
 		if reader, ok := config.Control.(placement.CandidateReader); ok {
-			preferred = placement.PreferredRegions(ctx, reader, access)
+			preferred = placement.PreferredRegions(ctx, reader, access, config.TransportTLS)
 		}
 	}
 	err = recoverControlResponse(ctx, preparation.ExpiresAt, func(attempt context.Context) error {
@@ -218,13 +224,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return ErrPrivateStream
 		}
 		if len(preferred) > 0 {
-			control, ok := managedControl.(interface {
-				StartServiceRunInRegions(context.Context, string, string, string, int64, []string) (controlv1.ServiceRunSetup, error)
-			})
-			if !ok {
+			if !supportsRegions {
 				return errors.Join(ErrPrivateStream, region.ErrPreference)
 			}
-			setup, err = control.StartServiceRunInRegions(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber, preferred)
+			setup, err = regional.StartServiceRunInRegions(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber, preferred)
 		} else {
 			setup, err = managedControl.StartServiceRun(attempt, config.ServiceID, preparation.ServiceRunId, access, preparation.RunNumber)
 		}

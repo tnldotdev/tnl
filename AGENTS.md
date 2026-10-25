@@ -412,6 +412,33 @@ and its support together instead of leaving forwarding facades. Before combining
 or retiring suites, preserve every unique assertion at the lowest sufficient
 owner and retain its Task selector, tier, fixtures, and execution evidence.
 
+## go types and invariants
+
+Use types where mixing values would cause a real mistake: a verified visitor
+permission is not signing input, and a run number is not a lease revision. Put
+validation with the owner of the value, and remove the replaced internal path
+instead of keeping a parallel unchecked representation. Keep one source for each
+wire shape; generate contracted types from their owning source.
+
+Publish immutable snapshots across goroutines: copy mutable input once, keep
+maps and key bytes private, and expose narrow read methods. Do not make every
+visitor admission copy the whole policy. Only verification can construct signed
+evidence; a current local policy check must still govern its use and renewal.
+
+When a wrapper advertises a capability, expose its whole required method set
+through that wrapper and assert it at compile time. Prefer a small interface
+owned by its consumer over a structural assertion scattered through startup.
+Choose pointer or value receivers for the intended ownership and synchronization
+contract; an interface assertion alone does not establish thread safety. Reject
+typed-nil errors before reading their fields.
+
+Make states and handoffs explicit at lifecycle boundaries. Cancellation joins
+owned work, cleanup happens once, and a visitor stream cannot be retried after
+the first visitor byte is committed. Test newly enabled paths through their real
+consumer, including successful cases; a passing helper test does not establish
+that a command or runtime can reach it. Use generics or sealed variants only
+when they replace a real ambiguity, not to wrap every string.
+
 # development workflow
 
 When adding or changing errors, follow [failure boundaries](docs/maintainers/development/errors.md).

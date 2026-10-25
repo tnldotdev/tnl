@@ -36,6 +36,7 @@ type splitPublishFixture struct {
 	ingressConfig            daemonconfig.Config
 	control, ingress         *integrationProcess
 	relayA, relayB           splitRelayFixture
+	relayC, relayD           splitRelayFixture
 	serviceHTTP, controlHTTP *http.Client
 	identity                 *integrationPublishingIdentity
 	visitor                  *integrationVisitor
@@ -45,6 +46,7 @@ type splitPublishOptions struct {
 	processContext       func(string) context.Context
 	dns                  *integrationRoute53
 	proxyIngress         bool
+	twoRegions           bool
 	selectIngress        func(string) string
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*daemonconfig.Config)
@@ -62,10 +64,14 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlHostname := "control." + serverDomain
 	certificateAuthority := newIntegrationTestCA(t)
 	controlCertificate := certificateAuthority.issueServer(t, controlHostname)
-	var relayACertificate, relayBCertificate integrationCertificate
+	var relayACertificate, relayBCertificate, relayCCertificate, relayDCertificate integrationCertificate
 	if options.dns == nil {
 		relayACertificate = certificateAuthority.issueServer(t, "relay-a."+serverDomain)
 		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain)
+		if options.twoRegions {
+			relayCCertificate = certificateAuthority.issueServer(t, "relay-c."+serverDomain)
+			relayDCertificate = certificateAuthority.issueServer(t, "relay-d."+serverDomain)
+		}
 	}
 	controlProxyListener, privateControlListener, ingressListener := serviceRuntimeListener(t), serviceRuntimeListener(t), serviceRuntimeListener(t)
 	controlAddress, privateControlAddress, ingressAddress := controlProxyListener.Addr().String(), privateControlListener.Addr().String(), ingressListener.Addr().String()
@@ -135,11 +141,23 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	ingressConfig.IngressListen = ingressAddress
 	relayAConfig, relayASockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
 	relayBConfig, relayBSockets := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
+	var relayCConfig, relayDConfig daemonconfig.Config
+	var relayCSockets, relayDSockets runtimeListeners
+	if options.twoRegions {
+		relayCConfig, relayCSockets = splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-c", "relay-c-1", relayCCertificate)
+		relayDConfig, relayDSockets = splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-d", "relay-d-1", relayDCertificate)
+		ingressConfig.Region, relayAConfig.Region, relayBConfig.Region = "sjc", "sjc", "sjc"
+		relayCConfig.Region, relayDConfig.Region = "ord", "ord"
+	}
 	if options.dns != nil {
 		relayAConfig.ControlRetryInterval = 100 * time.Millisecond
 		relayBConfig.ControlRetryInterval = 100 * time.Millisecond
 	}
-	for _, cfg := range []*daemonconfig.Config{&ingressConfig, &relayAConfig, &relayBConfig} {
+	configs := []*daemonconfig.Config{&ingressConfig, &relayAConfig, &relayBConfig}
+	if options.twoRegions {
+		configs = append(configs, &relayCConfig, &relayDConfig)
+	}
+	for _, cfg := range configs {
 		if options.configureProcess != nil {
 			options.configureProcess(cfg)
 		}
@@ -184,16 +202,32 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		control: control, serviceHTTP: serviceHTTP,
 		relayA: splitRelayFixture{config: relayAConfig, listeners: relayASockets}, relayB: splitRelayFixture{config: relayBConfig, listeners: relayBSockets},
 	}
+	if options.twoRegions {
+		f.relayC = splitRelayFixture{config: relayCConfig, listeners: relayCSockets}
+		f.relayD = splitRelayFixture{config: relayDConfig, listeners: relayDSockets}
+	}
 	f.relayA.process = f.startRelay(t, relayAConfig)
 	f.relayB.process = f.startRelay(t, relayBConfig)
+	if options.twoRegions {
+		f.relayC.process = f.startRelay(t, relayCConfig)
+		f.relayD.process = f.startRelay(t, relayDConfig)
+	}
 	f.ingress = startIntegrationProcessWithOptions(t, ingressConfig, integrationProcessOptions{
 		context:        f.contextFor("ingress"),
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, relayClientTLS: f.roots, owner: owner, listeners: ingressSockets,
 	})
-	for _, process := range []*integrationProcess{f.relayA.process, f.relayB.process, f.ingress} {
+	processes := []*integrationProcess{f.relayA.process, f.relayB.process, f.ingress}
+	if options.twoRegions {
+		processes = append(processes, f.relayC.process, f.relayD.process)
+	}
+	for _, process := range processes {
 		waitForProcessReady(t, process)
 	}
-	assertSplitLeases(t, inspect, 1, 2, 0, 0)
+	relayCount := 2
+	if options.twoRegions {
+		relayCount = 4
+	}
+	assertSplitLeases(t, inspect, 1, relayCount, 0, 0)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, certificateAuthority.roots, controlAddress, false, owner)
 	if options.configureControlHTTP != nil {
 		options.configureControlHTTP(controlHTTP)
@@ -297,7 +331,7 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 func (f *splitPublishFixture) startRelay(t *testing.T, cfg daemonconfig.Config) *integrationProcess {
 	t.Helper()
 	options := integrationProcessOptions{context: f.contextFor("relay"), acmeHTTPClient: f.pebble.httpClient, serviceHTTPClient: f.serviceHTTP, owner: f.owner}
-	for _, relay := range []*splitRelayFixture{&f.relayA, &f.relayB} {
+	for _, relay := range []*splitRelayFixture{&f.relayA, &f.relayB, &f.relayC, &f.relayD} {
 		if relay.config.RelayID == cfg.RelayID {
 			options.listeners = relay.listeners
 			relay.listeners = runtimeListeners{}
@@ -317,6 +351,12 @@ func (f *splitPublishFixture) contextFor(role string) context.Context {
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	quicAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayUDPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayUDPListen}
 	tcpAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayTCPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayTCPListen}
+	for _, relay := range []splitRelayFixture{f.relayC, f.relayD} {
+		if relay.config.RelayAddress != "" {
+			quicAddresses[relay.config.RelayAddress] = relay.config.RelayUDPListen
+			tcpAddresses[relay.config.RelayAddress] = relay.config.RelayTCPListen
+		}
+	}
 	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 

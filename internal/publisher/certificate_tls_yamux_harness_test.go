@@ -60,8 +60,8 @@ func startCertificateTLSYamuxHarness(t *testing.T, control *certificateTestContr
 					defer connection.Close()
 					stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 					defer stop()
-					transport, err := muxsession.AcceptTLSYamux(ctx, connection, &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.TLSYamuxConfig{})
-					if err != nil {
+					transport, probe, err := muxsession.AcceptTLSYamuxOrProbe(ctx, connection, &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.TLSYamuxConfig{})
+					if err != nil || probe {
 						return
 					}
 					defer transport.Close()

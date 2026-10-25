@@ -394,11 +394,12 @@ WITH live AS (
     ORDER BY s.relay_service_id, l.relay_id
 ), ranked AS (
     SELECT relay_service_id, region, relay_address, tls_server_name,
-        row_number() OVER (PARTITION BY region ORDER BY relay_service_id) AS region_slot
+        row_number() OVER (PARTITION BY region ORDER BY relay_service_id) AS region_slot,
+        count(*) OVER (PARTITION BY region) AS region_services
     FROM live
 )
 SELECT relay_service_id, region, relay_address, tls_server_name FROM ranked
-WHERE region_slot <= 2
+WHERE region_slot <= 2 AND region_services >= 2
 ORDER BY region, relay_service_id
 LIMIT 32
 `

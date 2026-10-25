@@ -32,16 +32,18 @@ type publicationVisitors interface {
 
 type publicationControl struct {
 	publisher.PublicURLControlClient
+	publisher.RegionalRunControl
 	placement.CandidateReader
 	publicationVisitors
 }
 
 var _ publisher.PublicURLControlClient = publicationControl{}
 var _ placement.CandidateReader = publicationControl{}
+var _ publisher.RegionalRunControl = publicationControl{}
 var _ publicationVisitors = (*clientcontrol.Client)(nil)
 
 func nativePublicationControl(native *publisheridentity.Native, control *clientcontrol.Client) publicationControl {
-	return publicationControl{PublicURLControlClient: native, CandidateReader: native, publicationVisitors: control}
+	return publicationControl{PublicURLControlClient: native, RegionalRunControl: native, CandidateReader: native, publicationVisitors: control}
 }
 
 // guestPublicationControl limits cleanup to the trial session's assigned URL.

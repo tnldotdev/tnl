@@ -227,10 +227,14 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 
 // regionalTransfer accounts for the pipelined opening once, then each write
 // on the relay's ingress-facing stream. older v1 senders have no region.
+type regionalTransferObserver interface {
+	ObserveRelayRegionalTransfer(context.Context, region.Code, region.Code, observability.RelayTransferDirection, int64)
+}
+
+var _ regionalTransferObserver = (*observability.Metrics)(nil)
+
 func (a *ForwardingAcceptor) regionalTransfer(ctx context.Context, ingressRegion string, initial int) (func(int64), func(int64)) {
-	observer, ok := a.observer.(interface {
-		ObserveRelayRegionalTransfer(context.Context, region.Code, region.Code, string, int64)
-	})
+	observer, ok := a.observer.(regionalTransferObserver)
 	ingressCode, valid := region.Parse(ingressRegion)
 	if !ok || !valid || string(ingressCode) != ingressRegion {
 		return nil, nil
@@ -240,10 +244,10 @@ func (a *ForwardingAcceptor) regionalTransfer(ctx context.Context, ingressRegion
 		return nil, nil
 	}
 	towardPublisher := func(bytes int64) {
-		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, "visitor_to_publisher", bytes)
+		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, observability.RelayVisitorToPublisher, bytes)
 	}
 	towardIngress := func(bytes int64) {
-		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, "publisher_to_visitor", bytes)
+		observer.ObserveRelayRegionalTransfer(ctx, ingressCode, relayRegion, observability.RelayPublisherToVisitor, bytes)
 	}
 	towardPublisher(int64(initial))
 	return towardPublisher, towardIngress

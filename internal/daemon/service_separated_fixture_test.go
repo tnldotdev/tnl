@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -71,6 +72,10 @@ func newServiceRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 }
 
 func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+	return newServiceRuntimeFixtureTopology(t, standalone, opened, defaults, processContext, false, configure...)
+}
+
+func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, twoRegions bool, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "service-runtime")
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
@@ -237,7 +242,11 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		f.tcpAddresses[address], f.quicAddresses[address] = f.sharedTCP, f.sharedQUIC
 		return f
 	}
-	for index := 0; index < 2; index++ {
+	relayCount := 2
+	if twoRegions {
+		relayCount = 4
+	}
+	for index := 0; index < relayCount; index++ {
 		id := fmt.Sprintf("private-relay-%d", index)
 		name := id + ".private.integration.test"
 		lifetime, stop := context.WithCancel(context.Background())
@@ -249,9 +258,16 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
 		internalListener := serviceRuntimeListener(t)
 		internal := internalListener.Addr().String()
+		runtime := relaySettingsFrom(config)
+		if twoRegions {
+			runtime.region = region.Code("sjc")
+			if index >= 2 {
+				runtime.region = region.Code("ord")
+			}
+		}
 		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
-			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
+			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: runtime}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
 		}

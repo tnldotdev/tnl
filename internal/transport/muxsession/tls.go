@@ -33,6 +33,10 @@ type TLSYamuxConnector struct {
 	Config    TLSYamuxConfig
 }
 
+// RelayProbeTLSConfig uses the same server trust for relay measurement and
+// publisher connections. each probe still sets its own exact server name.
+func (c TLSYamuxConnector) RelayProbeTLSConfig() *tls.Config { return c.TLSConfig }
+
 func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
 	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ALPN, nil)
 }
@@ -136,6 +140,8 @@ func AcceptTLSYamuxOrProbe(ctx context.Context, network net.Conn, tlsConfig *tls
 	}
 	if secure.ConnectionState().NegotiatedProtocol == ProbeALPN {
 		defer secure.Close()
+		stop := context.AfterFunc(ctx, func() { _ = secure.Close() })
+		defer stop()
 		if deadline, ok := ctx.Deadline(); ok {
 			_ = secure.SetDeadline(deadline)
 		}

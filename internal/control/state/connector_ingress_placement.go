@@ -32,12 +32,17 @@ func privateServiceIngressPlacement(ctx context.Context, tx pgx.Tx, service stri
 		return pool, preferred, nil
 	}
 	var code string
-	err := tx.QueryRow(ctx, `SELECT relay.region FROM control.service_runs run
-	    JOIN control.service_connection_slots slot ON slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-	    JOIN control.relay_leases relay ON relay.relay_service_id=slot.relay_service_id AND relay.relay_id=slot.relay_id
-	      AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision
-	    WHERE run.service_id=$1 AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$2
-	      AND relay.lease_expires_at>$2 AND NOT relay.draining
+	err := tx.QueryRow(ctx, `SELECT relay.region FROM control.publisher_service_runs runtime
+	    JOIN control.service_runs run ON run.id=runtime.id
+	    JOIN control.publisher_grants g ON g.id=runtime.publisher_grant_id
+	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id
+	    JOIN control.publisher_service_connection_slots slot ON slot.run_id=run.id AND slot.state='ready' AND slot.session_open
+	    JOIN control.relay_leases relay ON relay.relay_service_id=slot.relay_service_id AND relay.relay_id=slot.connected_relay_id
+	      AND relay.relay_run_id=slot.connected_relay_run_id AND relay.relay_lease_revision=slot.connected_relay_lease_revision
+	    WHERE runtime.service_id=$1 AND runtime.state='ready' AND runtime.healthy AND runtime.closed_at IS NULL AND runtime.publisher_expires_at>$2
+	      AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$2) AND p.revoked_at IS NULL
+	      AND run.certificate_expires_at>$2 AND runtime.reported_streams<runtime.stream_capacity
+	      AND relay.lease_expires_at>$2 AND NOT relay.draining AND relay.reported_streams<relay.stream_capacity
 	    ORDER BY run.run_number DESC, slot.connection_slot LIMIT 1`, service, now).Scan(&code)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pool, nil, nil

@@ -17,10 +17,17 @@ func (m *Metrics) ObserveSTUNBinding(result string) {
 	}
 }
 
+type RelayTransferDirection string
+
+const (
+	RelayVisitorToPublisher RelayTransferDirection = "visitor_to_publisher"
+	RelayPublisherToVisitor RelayTransferDirection = "publisher_to_visitor"
+)
+
 // ObserveRelayRegionalTransfer counts only successfully written bytes. relay is
 // the sole accounting boundary, so ingress and publisher do not duplicate them.
-func (m *Metrics) ObserveRelayRegionalTransfer(ctx context.Context, ingress, relay region.Code, direction string, bytes int64) {
-	if m == nil || bytes <= 0 || direction != "visitor_to_publisher" && direction != "publisher_to_visitor" {
+func (m *Metrics) ObserveRelayRegionalTransfer(ctx context.Context, ingress, relay region.Code, direction RelayTransferDirection, bytes int64) {
+	if m == nil || bytes <= 0 || direction != RelayVisitorToPublisher && direction != RelayPublisherToVisitor {
 		return
 	}
 	ingressCode, ingressOK := region.Parse(string(ingress))
@@ -29,7 +36,7 @@ func (m *Metrics) ObserveRelayRegionalTransfer(ctx context.Context, ingress, rel
 		return
 	}
 	m.regionalForwardedBytes.instrument.Add(ctx, float64(bytes), metric.WithAttributeSet(metricDimensions(
-		m.regionalForwardedBytes.keys, IngressRegion.Dimension(string(ingress)), RelayRegion.Dimension(string(relay)), Direction.Dimension(direction),
+		m.regionalForwardedBytes.keys, IngressRegion.Dimension(string(ingress)), RelayRegion.Dimension(string(relay)), Direction.Dimension(string(direction)),
 	)))
 }
 

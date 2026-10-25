@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,31 +36,42 @@ type CandidateReader interface {
 }
 
 type measuredRanking struct {
-	preferred []string
+	preferred []region.Code
 	expires   time.Time
+}
+
+type rankingKey struct {
+	inventory [32]byte
+	trust     *tls.Config
 }
 
 type chooser struct {
 	mu      sync.Mutex
-	results map[[32]byte]measuredRanking
-	flights map[[32]byte]chan struct{}
+	results map[rankingKey]measuredRanking
+	flights map[rankingKey]chan struct{}
+	measure func(context.Context, controlv1.RelayCandidates) []region.Code
 }
 
 var sharedChooser chooser
 
 // PreferredRegions is an optional startup hint. transport or control failures
 // leave placement to control's eligible-capacity selector.
-func PreferredRegions(ctx context.Context, reader CandidateReader, publisherAccess string) []string {
+func PreferredRegions(ctx context.Context, reader CandidateReader, publisherAccess string, trust *tls.Config) []string {
 	ctx, stop := context.WithTimeout(ctx, sweepDeadline)
 	defer stop()
 	candidates, err := reader.RelayCandidates(ctx, publisherAccess)
 	if err != nil {
 		return nil
 	}
-	return sharedChooser.choose(ctx, candidates)
+	codes := sharedChooser.choose(ctx, candidates, trust)
+	preferred := make([]string, len(codes))
+	for index, code := range codes {
+		preferred[index] = string(code)
+	}
+	return preferred
 }
 
-func (c *chooser) choose(ctx context.Context, candidates controlv1.RelayCandidates) []string {
+func (c *chooser) choose(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.Config) []region.Code {
 	if len(candidates.Candidates) == 0 || len(candidates.Candidates) > maximumCandidates {
 		return nil
 	}
@@ -67,53 +79,66 @@ func (c *chooser) choose(ctx context.Context, candidates controlv1.RelayCandidat
 	if err != nil {
 		return nil
 	}
-	key := sha256.Sum256(encoded)
-	c.mu.Lock()
-	if entry, ok := c.results[key]; ok && entry.expires.After(time.Now()) {
-		c.mu.Unlock()
-		return slices.Clone(entry.preferred)
-	}
-	if done := c.flights[key]; done != nil {
-		c.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-done:
-		}
+	// distinct transport trust cannot reuse another publisher's probe result.
+	key := rankingKey{inventory: sha256.Sum256(encoded), trust: trust}
+	for ctx.Err() == nil {
 		c.mu.Lock()
-		entry := c.results[key]
-		c.mu.Unlock()
-		if entry.expires.After(time.Now()) {
+		if entry, ok := c.results[key]; ok && entry.expires.After(time.Now()) {
+			c.mu.Unlock()
 			return slices.Clone(entry.preferred)
 		}
-		return nil
-	}
-	if c.flights == nil {
-		c.flights = make(map[[32]byte]chan struct{})
-	}
-	if len(c.flights) >= 16 {
+		if done := c.flights[key]; done != nil {
+			c.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-done:
+			}
+			c.mu.Lock()
+			entry := c.results[key]
+			c.mu.Unlock()
+			if entry.expires.After(time.Now()) {
+				return slices.Clone(entry.preferred)
+			}
+			continue
+		}
+		if c.flights == nil {
+			c.flights = make(map[rankingKey]chan struct{})
+		}
+		if len(c.flights) >= 16 {
+			c.mu.Unlock()
+			return nil
+		}
+		done := make(chan struct{})
+		c.flights[key] = done
 		c.mu.Unlock()
-		return nil
-	}
-	done := make(chan struct{})
-	c.flights[key] = done
-	c.mu.Unlock()
 
-	preferred := Rank(ctx, candidates, nil)
-	c.mu.Lock()
-	if len(preferred) > 0 {
-		if len(c.results) >= 16 {
-			c.results = nil
+		measure := c.measure
+		if measure == nil {
+			measure = func(ctx context.Context, candidates controlv1.RelayCandidates) []region.Code {
+				return Rank(ctx, candidates, trust)
+			}
 		}
-		if c.results == nil {
-			c.results = make(map[[32]byte]measuredRanking)
+		preferred := measure(ctx, candidates)
+		c.mu.Lock()
+		if ctx.Err() == nil && len(preferred) > 0 {
+			if len(c.results) >= 16 {
+				c.results = nil
+			}
+			if c.results == nil {
+				c.results = make(map[rankingKey]measuredRanking)
+			}
+			c.results[key] = measuredRanking{preferred: slices.Clone(preferred), expires: time.Now().Add(10 * time.Minute)}
 		}
-		c.results[key] = measuredRanking{preferred: slices.Clone(preferred), expires: time.Now().Add(10 * time.Minute)}
+		delete(c.flights, key)
+		close(done)
+		c.mu.Unlock()
+		if ctx.Err() != nil {
+			return nil
+		}
+		return preferred
 	}
-	delete(c.flights, key)
-	close(done)
-	c.mu.Unlock()
-	return preferred
+	return nil
 }
 
 type observation struct {
@@ -124,38 +149,69 @@ type observation struct {
 
 // Rank measures two distinct relay services per region. the whole sweep is
 // bounded and a failed measurement leaves control's ordinary placement intact.
-func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.Config) []string {
-	if len(candidates.Candidates) > maximumCandidates || ctx.Err() != nil {
+type regionPair struct {
+	code  region.Code
+	peers [2]muxsession.Endpoint
+}
+
+func candidatePairs(candidates controlv1.RelayCandidates) []regionPair {
+	if len(candidates.Candidates) > maximumCandidates {
 		return nil
 	}
 	groups := make(map[region.Code][]controlv1.RelayProbeCandidate)
+	seen := make(map[string]bool)
+	endpoints := make(map[string]bool)
 	for _, candidate := range candidates.Candidates {
 		code, known := region.Parse(candidate.Region)
-		if !known || string(code) != candidate.Region || candidate.RelayServiceId == "" ||
-			candidate.RelayAddress == "" || candidate.TlsServerName == "" {
+		if !known {
+			continue // a newer server catalog must not hide known usable pairs
+		}
+		if string(code) != candidate.Region || candidate.RelayServiceId == "" || seen[candidate.RelayServiceId] || candidate.TlsServerName == "" {
 			return nil
 		}
-		if _, _, err := net.SplitHostPort(candidate.RelayAddress); err != nil {
+		host, port, err := net.SplitHostPort(candidate.RelayAddress)
+		number, numberErr := strconv.Atoi(port)
+		endpoint := candidate.RelayAddress + "\x00" + candidate.TlsServerName
+		if err != nil || host == "" || numberErr != nil || number < 1 || number > 65535 || endpoints[endpoint] {
 			return nil
 		}
+		seen[candidate.RelayServiceId] = true
+		endpoints[endpoint] = true
 		groups[code] = append(groups[code], candidate)
 	}
-	if len(groups) < 2 || len(groups) > maximumRegions {
+	var pairs []regionPair
+	for code, services := range groups {
+		slices.SortFunc(services, func(a, b controlv1.RelayProbeCandidate) int {
+			return strings.Compare(a.RelayServiceId, b.RelayServiceId)
+		})
+		if len(services) < 2 {
+			continue
+		}
+		pairs = append(pairs, regionPair{code: code, peers: [2]muxsession.Endpoint{
+			{Address: services[0].RelayAddress, ServerName: services[0].TlsServerName},
+			{Address: services[1].RelayAddress, ServerName: services[1].TlsServerName},
+		}})
+	}
+	slices.SortFunc(pairs, func(a, b regionPair) int { return strings.Compare(string(a.code), string(b.code)) })
+	return pairs
+}
+
+func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.Config) []region.Code {
+	if len(candidates.Candidates) > maximumCandidates || ctx.Err() != nil {
+		return nil
+	}
+	pairs := candidatePairs(candidates)
+	if len(pairs) < 2 || len(pairs) > maximumRegions {
 		return nil
 	}
 	ctx, stop := context.WithTimeout(ctx, sweepDeadline)
 	defer stop()
 	gate := make(chan struct{}, 4)
-	results := make(chan observation, 2*len(groups))
+	results := make(chan observation, 2*len(pairs))
 	var workers sync.WaitGroup
-	for code, services := range groups {
-		slices.SortFunc(services, func(a, b controlv1.RelayProbeCandidate) int {
-			return strings.Compare(a.RelayServiceId, b.RelayServiceId)
-		})
-		if len(services) < 2 || services[0].RelayServiceId == services[1].RelayServiceId {
-			continue
-		}
-		for _, candidate := range services[:2] {
+	for _, pair := range pairs {
+		code := pair.code
+		for _, candidate := range pair.peers {
 			workers.Go(func() {
 				select {
 				case gate <- struct{}{}:
@@ -172,7 +228,7 @@ func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.
 					if trust != nil {
 						configuration = trust.Clone()
 					}
-					configuration.MinVersion, configuration.ServerName = tls.VersionTLS13, candidate.TlsServerName
+					configuration.MinVersion, configuration.ServerName = tls.VersionTLS13, candidate.ServerName
 					if configuration.InsecureSkipVerify {
 						cancel()
 						break
@@ -183,9 +239,10 @@ func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.
 						cancel()
 						break
 					}
-					connection, err := (&tls.Dialer{Config: configuration}).DialContext(attempt, "tcp", candidate.RelayAddress)
+					connection, err := (&tls.Dialer{Config: configuration}).DialContext(attempt, "tcp", candidate.Address)
 					if err == nil {
 						secure := connection.(*tls.Conn)
+						stop := context.AfterFunc(attempt, func() { _ = secure.Close() })
 						if deadline, ok := attempt.Deadline(); ok {
 							_ = secure.SetDeadline(deadline)
 						}
@@ -199,12 +256,13 @@ func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.
 							err = errors.New("relay probe did not negotiate its protocol")
 						}
 						_ = connection.Close()
+						stop()
 						if err == nil && subtle.ConstantTimeCompare(nonce[:], echoed[:]) != 1 {
 							err = errors.New("relay probe reply did not match")
 						}
 					}
 					elapsed := time.Since(started)
-					observability.PublisherRelayProbe(ctx, candidate.Region, elapsed, err)
+					observability.PublisherRelayProbe(ctx, string(code), elapsed, err)
 					if err == nil && (!best.ok || elapsed < best.elapsed) {
 						best.ok, best.elapsed = true, elapsed
 					}
@@ -241,9 +299,9 @@ func Rank(ctx context.Context, candidates controlv1.RelayCandidates, trust *tls.
 		}
 		return strings.Compare(string(a.code), string(b.code))
 	})
-	preferred := make([]string, 0, len(choices))
+	preferred := make([]region.Code, 0, len(choices))
 	for _, choice := range choices[:min(len(choices), 8)] {
-		preferred = append(preferred, string(choice.code))
+		preferred = append(preferred, choice.code)
 	}
 	return preferred
 }

@@ -27,7 +27,8 @@ func TestIntegrationRelayProbeCandidatesExcludeDrainingAndExpiredServices(t *tes
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining=true WHERE relay_service_id=$1`, "placement-0"); err != nil {
 		t.Fatal(err)
 	}
-	check(now, 1)
+	// a single surviving service cannot form a usable regional pair.
+	check(now, 0)
 	check(now.Add(2*time.Hour), 0)
 }
 

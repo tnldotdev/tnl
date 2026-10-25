@@ -138,6 +138,18 @@ func TestIntegrationPrivateConnectorFavorsItsReadyPublisherRegion(t *testing.T) 
 	if err != nil || len(selected) != 2 || selected[0].Region != "local" || selected[1].Region != "local" || selected[0].IngressID == selected[1].IngressID {
 		t.Fatal("automatic placement missed both distinct ingresses near the ready publisher", selected, err)
 	}
+	for _, assignment := range selected {
+		if err := d.ReleaseVisitorIngressAssignment(ctx, r.ActorID, assignment.ID, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET certificate_expires_at=$2 WHERE id=$1`, run.RunID, now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	withoutPublisher, err := d.CreateVisitorIngressAssignment(ctx, r.ActorID, device.ID, assignment.ServiceID, "", "expired-certificate", now)
+	if err != nil || withoutPublisher.Region != "sjc" {
+		t.Fatal("expired publisher certificate still anchored private ingress affinity", withoutPublisher, err)
+	}
 }
 
 func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {

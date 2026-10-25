@@ -37,8 +37,15 @@ func redirectIntegrationConnector(address string, connector muxsession.Connector
 	})
 }
 
+type integrationMappedConnector struct {
+	muxsession.Connector
+	trust *tls.Config
+}
+
+func (c integrationMappedConnector) RelayProbeTLSConfig() *tls.Config { return c.trust }
+
 func publicURLIntegrationConnector(addresses map[string]string, connector muxsession.Connector) muxsession.Connector {
-	return muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+	mapped := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 		address := addresses[endpoint.Address]
 		if address == "" {
 			return nil, fmt.Errorf("integration connector has no destination for %q", endpoint.Address)
@@ -46,6 +53,10 @@ func publicURLIntegrationConnector(addresses map[string]string, connector muxses
 		endpoint.Address = address
 		return connector.Connect(ctx, endpoint)
 	})
+	if trust, ok := connector.(interface{ RelayProbeTLSConfig() *tls.Config }); ok {
+		return integrationMappedConnector{Connector: mapped, trust: trust.RelayProbeTLSConfig()}
+	}
+	return mapped
 }
 
 type integrationConnectorStats struct{ attempts, successful atomic.Int64 }
