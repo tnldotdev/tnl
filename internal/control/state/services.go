@@ -16,7 +16,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-var ErrServiceAccess = errors.New("service access denied or no current run")
+var ErrServiceAccess = errors.New("service access denied")
+var ErrServiceRunUnavailable = errors.New("service has no ready publisher run")
 var ErrServiceConflict = errors.New("service name or idempotency key conflicts")
 
 var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)

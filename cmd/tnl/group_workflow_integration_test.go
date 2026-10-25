@@ -197,6 +197,12 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	defer func() { stopRegistration(); <-registrationDone }()
 	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
 	lastPublicState := ""
+	defer func() {
+		if t.Failed() {
+			t.Log("last public visitor result:", lastPublicState)
+			f.logRuns(t)
+		}
+	}()
 	workflowWait(t, 25*time.Second, func() bool {
 		response, err := visitor.Get(assignment.PublicURL)
 		if err != nil {
@@ -209,7 +215,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		}
 		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
-		state := fmt.Sprintf("HTTP %d, diagnostic %s", response.StatusCode, response.Header.Get("Tnl-Error-Code"))
+		state := fmt.Sprintf("HTTP %d, diagnostic %s body=%q", response.StatusCode, response.Header.Get("Tnl-Error-Code"), body)
 		if state != lastPublicState {
 			t.Log(state)
 			lastPublicState = state
@@ -582,6 +588,7 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 		t.Fatal(err)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, _ := net.SplitHostPort(address)
@@ -635,7 +642,7 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 		} else {
 			handler.ServeHTTP(capture, r)
 		}
-		if capture.status >= 400 && capture.status != 404 {
+		if capture.status >= 400 && capture.status != 404 && !(capture.status == 503 && strings.HasSuffix(r.URL.Path, "/select-run")) {
 			var problem controlv1.Problem
 			if json.Unmarshal(capture.body.Bytes(), &problem) == nil {
 				t.Logf("control %s %s: %d %s: %s", r.Method, r.URL.Path, capture.status, problem.Code, problem.Detail)

@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"net/netip"
 	"sync/atomic"
 	"testing"
@@ -140,8 +141,8 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 		if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET certificate_expires_at=$2,certificate_issuance_id=CASE WHEN $2::timestamptz IS NULL THEN NULL ELSE $3 END WHERE id=$1`, run.RunID, expiry, issuance.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.SelectServiceRun(ctx, run.ServiceID, identity, device.ID, now); err == nil {
-			t.Error("missing/expired certificate retained native selection")
+		if _, err := d.SelectServiceRun(ctx, run.ServiceID, identity, device.ID, now); !errors.Is(err, ErrServiceRunUnavailable) {
+			t.Errorf("missing/expired certificate selection = %v, want temporarily unavailable", err)
 		}
 		if _, err := d.AllocateStreamCapacity(ctx, request, now); err == nil {
 			t.Error("missing/expired certificate renewed native capacity")

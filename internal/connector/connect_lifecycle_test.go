@@ -8,6 +8,7 @@ import (
 	"net"
 	"testing"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
@@ -139,5 +140,50 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 				t.Fatal("duplicate readiness callback")
 			}
 		})
+	}
+}
+
+func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	job := supervisor.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "api", Protocol: "http", TrustRevision: 1, Target: listener.Addr().String()}
+	service := controlv1.Service{Id: job.ServiceID, Name: job.Name, Protocol: "http", TrustRevision: 2}
+	reads, calls, ready := 0, 0, 0
+	end := errors.New("finished")
+	err = runConnectorLifecycle(t.Context(), listener, job, "", connectorLifecycle{
+		services: connectServiceReaderFunc(func(context.Context) ([]controlv1.Service, error) {
+			reads++
+			return []controlv1.Service{service}, nil
+		}),
+		listen: func(_ context.Context, next supervisor.Job) (net.Listener, error) {
+			if next.ServiceID != job.ServiceID || next.Target != job.Target || next.TrustRevision != service.TrustRevision {
+				t.Fatal("recovery changed the reserved service or retained stale metadata")
+			}
+			return net.Listen("tcp", next.Target)
+		},
+		serve: func(_ context.Context, listener net.Listener, _ supervisor.Job, reportReady func() error) error {
+			defer listener.Close()
+			calls++
+			if calls != 2 {
+				if err := reportReady(); err != nil {
+					return err
+				}
+			}
+			switch calls {
+			case 1:
+				return connectorstream.ErrSelectionExpired
+			case 2:
+				return clientcontrol.ErrUnavailable
+			default:
+				return end
+			}
+		},
+		ready: func(supervisor.Job) error { ready++; return nil },
+	})
+	if !errors.Is(err, end) || calls != 3 || reads != 2 || ready != 2 {
+		t.Fatalf("publisher replacement: err=%v calls=%d inventory=%d ready=%d", err, calls, reads, ready)
 	}
 }

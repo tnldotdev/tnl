@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -28,6 +29,10 @@ type preparedSelection struct {
 	closed bool
 	once   sync.Once
 }
+
+// ErrSelectionExpired closes the old runner when its last confirmed permission
+// expires. the owner may revalidate the service before starting a new runner.
+var ErrSelectionExpired = fmt.Errorf("%w: prepared selection expired", ErrServiceConnection)
 
 func prepareSelection(ctx context.Context, config Config, stop context.CancelCauseFunc) (*preparedSelection, error) {
 	p := &preparedSelection{config: config, stop: stop, done: make(chan struct{})}
@@ -130,7 +135,7 @@ func (p *preparedSelection) current() (Run, error) {
 	p.mu.Lock()
 	if p.closed || !p.until.After(time.Now()) {
 		p.mu.Unlock()
-		p.stop(ErrServiceConnection)
+		p.stop(ErrSelectionExpired)
 		return Run{}, ErrServiceConnection
 	}
 	run := p.run
@@ -145,7 +150,7 @@ func (p *preparedSelection) expire() {
 	expired := !p.closed && !p.until.After(time.Now())
 	p.mu.Unlock()
 	if expired {
-		p.stop(ErrServiceConnection)
+		p.stop(ErrSelectionExpired)
 	}
 }
 

@@ -5467,13 +5467,13 @@ type ClientInterface interface {
 	// SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 	SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 	SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamShares List manageable shares for one team
@@ -8303,7 +8303,7 @@ func (c *Client) StartServiceRun(ctx context.Context, serviceId ServiceID, servi
 // SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8319,7 +8319,7 @@ func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId Service
 // SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -16384,7 +16384,7 @@ type ClientWithResponsesInterface interface {
 	// SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
@@ -16392,7 +16392,7 @@ type ClientWithResponsesInterface interface {
 	// SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 	SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
 
 	// ListTeamSharesWithResponse List manageable shares for one team
@@ -25074,7 +25074,7 @@ func (c *ClientWithResponses) StartServiceRunWithResponse(ctx context.Context, s
 // SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
@@ -25088,7 +25088,7 @@ func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.C
 // SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
 func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
 	rsp, err := c.SelectServiceRun(ctx, serviceId, body, reqEditors...)
 	if err != nil {

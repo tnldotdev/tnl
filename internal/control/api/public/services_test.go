@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,5 +65,24 @@ func TestServiceRunCapacityIsRetryableWithoutRevokingVisitor(t *testing.T) {
 	serviceVisitorError(w, "select service run", controlstate.ErrServiceRunUnavailable)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("full run response = %d; want a retryable 503", w.Code)
+	}
+}
+
+func TestPrivateSelectionDistinguishesUnavailableRunFromDeniedService(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"no ready run", controlstate.ErrServiceRunUnavailable, http.StatusServiceUnavailable},
+		{"denied service", controlstate.ErrServiceAccess, http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			serviceVisitorError(w, "select service run", errors.Join(test.err, errors.New("selection failed")))
+			if w.Code != test.code || w.Header().Get("Content-Type") != "application/problem+json" {
+				t.Fatalf("selection error response: %d %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

@@ -57,6 +57,8 @@ func serviceVisitorError(w http.ResponseWriter, operation string, err error) {
 		writeProblem(w, 503, controlv1.Unavailable, "no service run has a free visitor stream; retry when capacity returns")
 	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
+	case errors.Is(err, controlstate.ErrServiceRunUnavailable):
+		writeProblem(w, 503, controlv1.Unavailable, "service has no ready publisher run; retry when the publisher is ready")
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "service state or idempotency key conflicts with this request; read the current service and retry")
 	case errors.Is(err, controlstate.ErrInsufficientPrivateIngresses):

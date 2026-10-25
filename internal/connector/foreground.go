@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -274,6 +275,7 @@ type connectorLifecycle struct {
 // metadata boundary can reopen this exact reserved port in the same process.
 // installed connectors already refresh through the supervisor's job attempts.
 func runConnectorLifecycle(ctx context.Context, listener net.Listener, job supervisor.Job, requestedProtocol string, lifecycle connectorLifecycle) error {
+	recovering := false
 	for {
 		if lifecycle.starting != nil {
 			lifecycle.starting(ctx)
@@ -282,13 +284,18 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 			if err := lifecycle.ready(job); err != nil {
 				return err
 			}
+			recovering = false
 			if lifecycle.publicationReady != nil {
 				lifecycle.publicationReady(ctx)
 			}
 			return nil
 		})
 		_ = listener.Close()
-		if !connectorstream.IsMetadataReload(err) {
+		if errors.Is(err, connectorstream.ErrSelectionExpired) {
+			recovering = true
+		} else if recovering && errors.Is(err, clientcontrol.ErrUnavailable) {
+			// a previously verified publisher may still be replacing its run.
+		} else if !connectorstream.IsMetadataReload(err) {
 			return err
 		}
 		if lifecycle.starting != nil {
@@ -299,6 +306,12 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 		}
 		services, err := lifecycle.services.ListAvailableServices(ctx)
 		if err != nil {
+			if recovering && errors.Is(err, clientcontrol.ErrUnavailable) {
+				if err := waitConnectorRecovery(ctx); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		service, err := serviceIDSelection(services, job.ServiceID, "")
@@ -311,10 +324,26 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 		job.Trust = nil
 		job.Name, job.Protocol, job.TrustRevision = service.Name, config.ProtocolName(service.Protocol), service.TrustRevision
 		job.Endpoint = service.Endpoint
+		if recovering {
+			if err := waitConnectorRecovery(ctx); err != nil {
+				return err
+			}
+		}
 		listener, err = lifecycle.listen(ctx, job)
 		if err != nil {
 			return err
 		}
+	}
+}
+
+func waitConnectorRecovery(ctx context.Context) error {
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-timer.C:
+		return nil
 	}
 }
 

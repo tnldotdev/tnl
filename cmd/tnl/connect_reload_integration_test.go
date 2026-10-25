@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -189,18 +191,28 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				previousPublisher := stopPublisher
 				targetTLS.Store(enabled)
 				stopPublisher = startPublisher(service)
-				// this fresh local connection observes the changed revision and ends
-				// the old runner. no bytes from it may reach the target.
-				trigger, err := net.Dial("tcp", address)
-				if err != nil {
-					t.Fatal(err)
+				// a background refresh can close the old listener before this
+				// trigger dials. in either order the old stream must end, and only
+				// a fresh runner may report readiness on the same port.
+				reloaded := false
+				select {
+				case <-ready:
+					reloaded = true
+				default:
 				}
-				_ = trigger.SetReadDeadline(time.Now().Add(5 * time.Second))
-				if _, err := trigger.Read(make([]byte, 1)); err == nil {
-					t.Fatal("metadata trigger forwarded bytes")
+				if !reloaded {
+					trigger, err := net.Dial("tcp", address)
+					if err == nil {
+						_ = trigger.SetReadDeadline(time.Now().Add(5 * time.Second))
+						if _, err := trigger.Read(make([]byte, 1)); err == nil {
+							t.Fatal("metadata trigger forwarded bytes")
+						}
+						_ = trigger.Close()
+					} else if !errors.Is(err, syscall.ECONNREFUSED) {
+						t.Fatal(err)
+					}
+					waitReady()
 				}
-				_ = trigger.Close()
-				waitReady()
 				previousPublisher()
 				_ = old.SetReadDeadline(time.Now().Add(time.Second))
 				if _, err := old.Read(make([]byte, 1)); err == nil {
