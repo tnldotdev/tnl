@@ -17,7 +17,10 @@ import (
 )
 
 var ErrServiceAccess = errors.New("service access denied")
-var ErrServiceRunUnavailable = errors.New("service has no ready publisher run")
+
+// an authorized service can temporarily have no ready run or free stream slot.
+// existing visitor permissions remain valid while selection retries.
+var ErrServiceRunUnavailable = errors.New("service run is unavailable")
 var ErrServiceConflict = errors.New("service name or idempotency key conflicts")
 
 var serviceName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -26,10 +25,6 @@ type VisitorDevice struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
-
-// an authorized service can temporarily have no run with a free stream slot.
-// existing visitor permissions remain valid while selection retries.
-var ErrServiceRunUnavailable = fmt.Errorf("service run has no available stream capacity: %w", ErrServiceAccess)
 
 // release is idempotent for this person's exact device assignment. pending
 // reservations stop counting immediately. the connector closes its bound path;
