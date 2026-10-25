@@ -293,6 +293,9 @@ func providerWork(ctx context.Context, work ...func(context.Context) error) erro
 	for range work {
 		err = errors.Join(err, <-results)
 	}
+	// a provider may report success after its shared deadline has passed.
+	// retain the owner's cancellation cause even when every provider returned nil.
+	err = errors.Join(err, ctx.Err())
 	if err != nil {
 		return safeExportError("observability provider operation failed", err)
 	}

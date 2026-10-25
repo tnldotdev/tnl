@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
@@ -204,7 +205,10 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 	if err != nil {
 		return result, err
 	}
-	result.VisitAllowed, result.Reason, result.ExpiresAt = true, row.Reason, optionalTime(row.ExpiresAt)
+	result.VisitAllowed, result.Reason = true, row.Reason
+	if row.ExpiresAt.InfinityModifier != pgtype.Infinity {
+		result.ExpiresAt = optionalTime(row.ExpiresAt)
+	}
 	deadline, err := q.CompanySubjectDeadline(ctx, controlstatedb.CompanySubjectDeadlineParams{TeamID: url.TeamID, IdentityID: identityID, SessionID: companySessionID(ctx, identityID), Now: timestamptz(now)})
 	if err != nil {
 		return VisitorPermission{}, err

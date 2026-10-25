@@ -191,6 +191,24 @@ type shutdownLogExporter struct {
 	once    sync.Once
 }
 
+func TestProviderWorkRetainsDeadlineWhenProvidersReturnNil(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	started := make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		finished <- providerWork(ctx, func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return nil
+		})
+	}()
+	<-started
+	cancel()
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatal("provider success hid owner cancellation", err)
+	}
+}
+
 func (e *shutdownLogExporter) Export(ctx context.Context, _ []sdklog.Record) error {
 	e.once.Do(func() { close(e.started) })
 	<-ctx.Done()
