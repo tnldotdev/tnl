@@ -72,6 +72,7 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 
 func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_concurrent")
+	prepareVisitorTokenKeys(t, d, now)
 	request := oidcRouteRequest(t, d, now)
 	url := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
