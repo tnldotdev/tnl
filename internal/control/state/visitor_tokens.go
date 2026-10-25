@@ -139,16 +139,18 @@ func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope v
 // retry the whole preparation decision, including current source authority and
 // key retention. a repeatable-read serialization failure rolls back every write.
 func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work func(time.Time) (T, error)) (result T, err error) {
-	for attempt := range 8 {
+	deadline := time.Now().Add(2 * time.Second)
+	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
 			now = time.Now()
 		}
 		result, err = work(now)
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "40001" && pgErr.Code != "40P01" || attempt == 7 {
+		if !errors.As(err, &pgErr) || pgErr.Code != "40001" && pgErr.Code != "40P01" || !time.Now().Before(deadline) {
 			return result, err
 		}
-		timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
+		backoff := min(time.Duration(1<<min(attempt, 5))*5*time.Millisecond, time.Until(deadline))
+		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -157,7 +159,6 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 		case <-timer.C:
 		}
 	}
-	return result, err
 }
 
 func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {

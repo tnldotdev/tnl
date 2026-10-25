@@ -36,6 +36,34 @@ func signStateTestPermission(ctx context.Context, d *Database, issuer string, pe
 	return token, tx.Commit(ctx)
 }
 
+func TestIntegrationShortVisitorPermissionsShareSigningKeyRetention(t *testing.T) {
+	d, _, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_key_short_retention")
+	prepareVisitorTokenKeys(t, d, now)
+	permission := signingTestPermission(now)
+	retained := func() time.Time {
+		t.Helper()
+		var until time.Time
+		if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL`).Scan(&until); err != nil {
+			t.Fatal(err)
+		}
+		return until
+	}
+	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now); err != nil {
+		t.Fatal(err)
+	}
+	first := retained()
+	if !first.After(permission.ExpiresAt) {
+		t.Fatal("short token retention did not cover its expiry")
+	}
+	permission.ExpiresAt = permission.ExpiresAt.Add(time.Second)
+	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if !retained().Equal(first) {
+		t.Fatal("adjacent short token issuance rewrote the shared signing key")
+	}
+}
+
 func stateTestVisitorKeys(t *testing.T, d *Database, now time.Time) map[string]ed25519.PublicKey {
 	t.Helper()
 	tx, err := d.pool.Begin(t.Context())

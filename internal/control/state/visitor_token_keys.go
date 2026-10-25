@@ -143,7 +143,14 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 		return "", err
 	}
 	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
-		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
+		retainUntil := permission.ExpiresAt
+		if permission.ExpiresAt.Sub(now) <= visitortoken.RenewableLifetime {
+			// reserve a little future retention for short renewable permissions.
+			// otherwise every issuance updates this shared key and conflicts with
+			// concurrent repeatable-read authorization decisions.
+			retainUntil = retainUntil.Add(30 * time.Second)
+		}
+		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(retainUntil)})
 		if err != nil {
 			return "", err
 		}

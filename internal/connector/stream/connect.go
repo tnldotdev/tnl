@@ -432,19 +432,25 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	}
 	if !single {
 		probe, cancel := context.WithTimeout(serveCtx, 10*time.Second)
-		err := forward(probe, nil)
-		cancel()
-		if err != nil {
-			reason := failure.ConnectionUnavailable
+		defer cancel()
+		for {
+			err := forward(probe, nil)
+			if err == nil {
+				break
+			}
 			var certificateError *tls.CertificateVerificationError
 			reasonOf, _ := failure.ReasonOf(err)
 			if reasonOf == failure.ServerDenied {
 				return err
 			}
 			if errors.As(err, &certificateError) || reasonOf == failure.TargetTLSRejected {
-				reason = failure.ConnectionTLSRejected
+				return failure.Wrap("verify native service TLS", failure.ConnectionTLSRejected, err)
 			}
-			return failure.Wrap("verify native service TLS", reason, err)
+			select {
+			case <-probe.Done():
+				return failure.Wrap("verify native service TLS", failure.ConnectionUnavailable, errors.Join(err, context.Cause(probe)))
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 		next.Store(0)
 	}

@@ -43,6 +43,9 @@ locks.
 Preparation checks approved protocol, service/run, assignment, trust revision,
 and accepted transport peer before bytes. The connector authenticates two
 ingress paths; ingress observes the source and authorizes each visitor stream.
+Startup retries a transient preflight failure for at most ten seconds while
+ingress finishes preparing the path; denied access or rejected TLS fails at
+once. Only a verified preflight reports ready.
 ingress and publisher verify signed permission and exact reservations locally.
 the connector sends its proof-bound opening with bounded initial TLS bytes,
 without waiting for a per-stream acceptance. server-first protocols send an

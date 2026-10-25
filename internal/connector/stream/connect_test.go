@@ -45,6 +45,7 @@ type connectorFixture struct {
 	opened           atomic.Int64
 	application      atomic.Int64
 	wrongAdmission   atomic.Bool
+	rejectPreflight  atomic.Int32
 	wrongCertificate atomic.Bool
 	badCertificate   tls.Certificate
 	finished         chan struct{}
@@ -289,6 +290,15 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 	}
 }
 
+func TestOpaquePreflightWaitsForPreparedVisitorPaths(t *testing.T) {
+	f := newConfiguredConnectorFixture(t, "tls_tcp", "", func(f *connectorFixture, _ *Config) {
+		f.rejectPreflight.Store(2)
+	})
+	if f.startupOpened != 3 || f.application.Load() != 0 {
+		t.Fatalf("readiness did not recover after both initial paths rejected: opens=%d application=%d", f.startupOpened, f.application.Load())
+	}
+}
+
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {
 	defer transport.Close()
 	session, err := tunnel.AcceptConnector(ctx, transport, func(_ context.Context, hello tunnelv1.ConnectorSessionHello) (tunnelv1.ConnectorSessionAccepted, error) {
@@ -329,6 +339,11 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 		return
 	}
 	f.opened.Add(1)
+	for remaining := f.rejectPreflight.Load(); remaining > 0; remaining = f.rejectPreflight.Load() {
+		if f.rejectPreflight.CompareAndSwap(remaining, remaining-1) {
+			return
+		}
+	}
 	if f.wrongAdmission.Load() || session.Subject != f.device.Subject {
 		return
 	}
