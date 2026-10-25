@@ -187,7 +187,7 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	var publisher net.Conn
 	var err error
 	if incoming.Header.ConfirmBeforeBytes {
-		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, events)
+		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
 	} else {
 		publisher, err = connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
 	}

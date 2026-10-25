@@ -235,6 +235,10 @@ type IncomingVisitorStream struct {
 	response *incomingStreamResponse
 }
 
+// TakeInitial returns the opening bytes before acceptance. a confirmed
+// publisher opening uses these bytes only for ingress-owned PROXY metadata.
+func (r *IncomingVisitorStream) TakeInitial() []byte { return r.response.stream.takeInitial() }
+
 // AcceptVisitorStream reads the next stream header without accepting its assignment identity.
 func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStream, error) {
 	stream, err := s.acceptStream(ctx, "visitor")

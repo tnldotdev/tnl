@@ -31,11 +31,14 @@ func (s *Session) StartVisitorStream(ctx context.Context, h tunnelv1.VisitorStre
 	return s.startStream(ctx, events, func(stream muxsession.Stream) (bool, error) { return tunnelv1.WriteVisitorOpening(stream, h, initial) })
 }
 
-// StartConfirmedVisitorStream waits for publisher admission before the relay
-// acknowledges ingress. ingress can then try another relay before visitor bytes.
-func (s *Session) StartConfirmedVisitorStream(ctx context.Context, h tunnelv1.VisitorStreamHeader, events *ReturnEvents) (muxsession.Stream, error) {
+// StartConfirmedVisitorStream sends trusted PROXY metadata and waits for the
+// publisher to bind its source before ingress commits visitor bytes.
+func (s *Session) StartConfirmedVisitorStream(ctx context.Context, h tunnelv1.VisitorStreamHeader, proxy []byte, events *ReturnEvents) (muxsession.Stream, error) {
+	if len(proxy) == 0 {
+		return nil, &OpeningError{Err: errors.New("confirmed visitor opening requires PROXY metadata")}
+	}
 	h.ConfirmBeforeBytes = true
-	stream, err := s.StartVisitorStream(ctx, h, nil, events)
+	stream, err := s.StartVisitorStream(ctx, h, proxy, events)
 	if err != nil {
 		return nil, err
 	}

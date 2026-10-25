@@ -51,8 +51,8 @@ func (c *PublisherConnection) StartVisitor(ctx context.Context, visitorConnectio
 	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, initial, events, false)
 }
 
-func (c *PublisherConnection) StartConfirmedVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, events *tunnel.ReturnEvents) (net.Conn, error) {
-	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, nil, events, true)
+func (c *PublisherConnection) StartConfirmedVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, proxy []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
+	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, proxy, events, true)
 }
 
 func (c *PublisherConnection) startVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents, confirm bool) (net.Conn, error) {
@@ -71,7 +71,7 @@ func (c *PublisherConnection) startVisitor(ctx context.Context, visitorConnectio
 	var stream net.Conn
 	var err error
 	if confirm {
-		stream, err = c.session.StartConfirmedVisitorStream(ctx, header, events)
+		stream, err = c.session.StartConfirmedVisitorStream(ctx, header, initial, events)
 	} else {
 		stream, err = c.session.StartVisitorStream(ctx, header, initial, events)
 	}

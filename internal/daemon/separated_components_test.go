@@ -298,7 +298,6 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 			}
 		}
 	}
-	t.Logf("separated_visitor_allowed_sources shard=%d prefixes=%v", shard, prefixes)
 	transport := benchworkload.TransportMixed
 	if *runtimeLoadScenario == "udp-fallback" {
 		transport = benchworkload.TransportAuto
@@ -434,11 +433,6 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		return
 	}
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
-	addresses, err := net.InterfaceAddrs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("separated_visitor_source component=%s addresses=%v", component, addresses)
 	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
 	directVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, 4, index-1)

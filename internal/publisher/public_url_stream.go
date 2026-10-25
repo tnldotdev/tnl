@@ -1,9 +1,11 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -81,6 +83,17 @@ func (r *PublicURLServer) ServePublisherConnection(
 }
 
 func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+	var prepared *preparedVisitorProxy
+	if incoming.Header.ConfirmBeforeBytes {
+		// confirmed openings contain only ingress-owned metadata. reject a bad
+		// source before the relay permits ingress to send any visitor bytes.
+		header, reader, err := proxyproto.Decode(bytes.NewReader(incoming.TakeInitial()))
+		if err != nil {
+			_ = incoming.Reject(tunnelv1.InvalidMessage)
+			return nil
+		}
+		prepared = &preparedVisitorProxy{header: header, reader: io.MultiReader(reader, incoming.Stream)}
+	}
 	code := r.validateIncomingPublicURL(incoming.Header, ref)
 	r.mu.Lock()
 	if r.closed || r.draining {
@@ -94,6 +107,9 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 		var err error
 		reservation, err = r.policy.BindReservation(incoming.Header.Reservation, func() { _ = incoming.Stream.Close() })
 		if err != nil {
+			code = tunnelv1.Unauthenticated
+		} else if prepared != nil && reservation.BindSource(prepared.header.Source.Addr()) != nil {
+			reservation.Close()
 			code = tunnelv1.Unauthenticated
 		}
 	}
@@ -121,7 +137,7 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitorHeaderContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header, reservation)
+		r.handleVisitorPreparedContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header, reservation, prepared)
 	}()
 	return nil
 }
@@ -161,6 +177,15 @@ func (r *PublicURLServer) handleVisitorHeader(connection net.Conn, denied bool, 
 }
 
 func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard) {
+	r.handleVisitorPreparedContext(parent, connection, denied, streamHeader, reservation, nil)
+}
+
+type preparedVisitorProxy struct {
+	header proxyproto.Header
+	reader io.Reader
+}
+
+func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard, prepared *preparedVisitorProxy) {
 	defer connection.Close()
 	if parent == nil {
 		parent = context.Background()
@@ -176,15 +201,22 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
 	defer stopClose()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-	header, replay, err := proxyproto.Decode(connection)
-	if err != nil {
-		visitorErr = err
-		return
-	}
-	if reservation != nil {
-		if err := reservation.BindSource(header.Source.Addr()); err != nil {
+	var header proxyproto.Header
+	var replay io.Reader
+	if prepared != nil {
+		header, replay = prepared.header, prepared.reader
+	} else {
+		var err error
+		header, replay, err = proxyproto.Decode(connection)
+		if err != nil {
 			visitorErr = err
 			return
+		}
+		if reservation != nil {
+			if err := reservation.BindSource(header.Source.Addr()); err != nil {
+				visitorErr = err
+				return
+			}
 		}
 	}
 	promote := r.promote
@@ -215,7 +247,7 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)
 	ctx = observability.WithVisitor(ctx, streamHeader.VisitorConnectionID)
 	ctx, finish := observability.PublisherOperation(ctx, "visitor_tls")
-	err = secured.HandshakeContext(ctx)
+	err := secured.HandshakeContext(ctx)
 	visitorErr = err
 	observability.PublisherTLS(ctx, "visitor", secured.ConnectionState(), err)
 	finish(err)

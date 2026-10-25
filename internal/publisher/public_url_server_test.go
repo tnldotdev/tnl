@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -411,6 +412,20 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	badResponse, err := tunnelv1.ReadReturnFrame(malformed)
 	if err != nil || badResponse.Kind != tunnelv1.ReturnRejected || badResponse.Code != tunnelv1.InvalidMessage {
 		t.Fatalf("malformed stream response = %+v, %v", badResponse, err)
+	}
+	// publisher must reject malformed ingress-owned PROXY metadata before
+	// acknowledging a confirmed opening and committing visitor TLS bytes.
+	confirmedReservation := testPublicStreamReservation(ref, 1)
+	_, err = acceptedRelay.session.StartConfirmedVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
+		Reservation: confirmedReservation, ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
+		VisitorConnectionID: confirmedReservation.VisitorConnectionID, PublicURLID: ref.PublicURLID,
+		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
+		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+	}, bytes.Repeat([]byte("x"), 64), nil)
+	var opening *tunnel.OpeningError
+	var rejected *tunnel.ProtocolError
+	if !errors.As(err, &opening) || opening.Committed || !errors.As(err, &rejected) || rejected.Code != tunnelv1.InvalidMessage {
+		t.Fatalf("malformed source committed visitor bytes: %v", err)
 	}
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)

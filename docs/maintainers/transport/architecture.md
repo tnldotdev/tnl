@@ -47,9 +47,9 @@ and up to 64 KiB of initial bytes. On a confirmed relay session, ingress sends
 metadata and initial bytes together without waiting for acceptance. On a newly
 connected relay session, or for a bounded period after a relay session is lost,
 ingress waits for relay and publisher acceptance before sending visitor bytes.
-The relay first checks its connected publisher's local admission, including the
-current stream reservation. This prevents old routing entries or an expired
-publisher allocation from committing a visitor to a rejected stream.
+The relay sends ingress's PROXY metadata ahead, and the publisher checks its
+source and current stream reservation before accepting. This prevents old
+routing entries or a rejected source from committing a visitor to a stream.
 
 The return direction frames acceptance, rejection, promotion, data, and half-close
 in order. Only data reaches visitor TLS. Promotion stays on that visitor's return

@@ -249,8 +249,8 @@ func TestConfirmedVisitorOpeningWaitsForPublisherAdmission(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if initial := incoming.response.stream.takeInitial(); len(initial) != 0 {
-					return errors.New("publisher received visitor bytes before admission")
+				if initial := incoming.response.stream.takeInitial(); string(initial) != "proxy metadata" {
+					return errors.New("publisher did not receive trusted metadata before visitor bytes")
 				}
 				if !incoming.Header.ConfirmBeforeBytes {
 					return errors.New("publisher did not receive confirmation request")
@@ -276,7 +276,7 @@ func TestConfirmedVisitorOpeningWaitsForPublisherAdmission(t *testing.T) {
 			}
 			result := make(chan openedStream, 1)
 			go func() {
-				stream, err := client.StartConfirmedVisitorStream(ctx, visitorStreamHeader(), nil)
+				stream, err := client.StartConfirmedVisitorStream(ctx, visitorStreamHeader(), []byte("proxy metadata"), nil)
 				result <- openedStream{stream: stream, err: err}
 			}()
 			<-opened
