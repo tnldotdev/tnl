@@ -112,10 +112,11 @@ bundling and external consumers.
 - Publisher connection slots use different relay services. Initial routability
   needs the certificate and both connections; afterward one ready connection can
   sustain service while the other is replaced.
-- [region catalog](../../internal/region/catalog.json) codes identify geography,
-  not a provider or authority boundary. ingress and relay registrations use a
-  checked tnl code; unlocated self-hosted processes use `local`. providers map to
-  these codes explicitly. preferences select from currently live, capacity-eligible
+- [region catalog](../../internal/region/catalog.json) codes identify approximate
+  geography, not a provider, deployment, or authority boundary. provider region
+  identifiers map to these codes, sometimes many to one city. ingress and relay
+  registrations use a checked tnl code; unlocated self-hosted processes use
+  `local`. preferences select from currently live, capacity-eligible
   processes; a failed preferred region falls back without granting visit access.
   one relay service stays in one region, and its connection slots still belong to
   different relay services. each private ingress address must reach its exact

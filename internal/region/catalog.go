@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -19,17 +20,25 @@ type Provider string
 const Local Code = "local"
 
 const (
-	AWS   Provider = "aws"
-	GCP   Provider = "gcp"
-	Azure Provider = "azure"
-	Fly   Provider = "fly"
+	AWS          Provider = "aws"
+	GCP          Provider = "gcp"
+	Azure        Provider = "azure"
+	Fly          Provider = "fly"
+	DigitalOcean Provider = "digitalocean"
+	Hetzner      Provider = "hetzner"
+	Linode       Provider = "linode"
+	Vultr        Provider = "vultr"
+	OCI          Provider = "oci"
+	Scaleway     Provider = "scaleway"
 )
 
 type Location struct {
-	Code      Code                `json:"code"`
-	Latitude  float64             `json:"latitude"`
-	Longitude float64             `json:"longitude"`
-	Providers map[Provider]string `json:"providers"`
+	Code      Code                  `json:"code"`
+	Name      string                `json:"name"`
+	Country   string                `json:"country"`
+	Latitude  float64               `json:"latitude"`
+	Longitude float64               `json:"longitude"`
+	Providers map[Provider][]string `json:"providers"`
 }
 
 type catalog struct {
@@ -50,30 +59,69 @@ func loadCatalog() ([]Location, map[Code]Location, map[string]Code) {
 	codes := make(map[Code]Location, len(data.Locations))
 	providers := make(map[string]Code)
 	for _, location := range data.Locations {
-		if location.Code == "" || string(location.Code) != strings.ToLower(string(location.Code)) || len(location.Providers) == 0 ||
-			math.IsNaN(location.Latitude) || math.IsNaN(location.Longitude) || math.Abs(location.Latitude) > 90 || math.Abs(location.Longitude) > 180 {
+		if !validLocationCode(location.Code) || location.Name == "" || strings.TrimSpace(location.Name) != location.Name ||
+			len(location.Country) != 2 || location.Country[0] < 'A' || location.Country[0] > 'Z' || location.Country[1] < 'A' || location.Country[1] > 'Z' ||
+			len(location.Providers) == 0 || math.IsNaN(location.Latitude) || math.IsNaN(location.Longitude) ||
+			math.IsInf(location.Latitude, 0) || math.IsInf(location.Longitude, 0) || math.Abs(location.Latitude) > 90 || math.Abs(location.Longitude) > 180 {
 			panic("invalid region catalog location")
 		}
 		if _, exists := codes[location.Code]; exists {
 			panic("duplicate region code")
 		}
 		codes[location.Code] = location
-		for provider, name := range location.Providers {
-			if !validProvider(provider) || name == "" || name != strings.ToLower(name) {
+		for provider, names := range location.Providers {
+			if !validProvider(provider) || len(names) == 0 {
 				panic("invalid provider region")
 			}
-			key := string(provider) + ":" + name
-			if _, exists := providers[key]; exists {
-				panic("duplicate provider region")
+			for _, name := range names {
+				if !validProviderRegion(name) {
+					panic("invalid provider region")
+				}
+				key := string(provider) + ":" + name
+				if _, exists := providers[key]; exists {
+					panic("duplicate provider region")
+				}
+				providers[key] = location.Code
 			}
-			providers[key] = location.Code
 		}
 	}
 	return data.Locations, codes, providers
 }
 
 func validProvider(value Provider) bool {
-	return value == AWS || value == GCP || value == Azure || value == Fly
+	switch value {
+	case AWS, GCP, Azure, Fly, DigitalOcean, Hetzner, Linode, Vultr, OCI, Scaleway:
+		return true
+	default:
+		return false
+	}
+}
+
+func validLocationCode(value Code) bool {
+	if len(value) != 3 {
+		return false
+	}
+	for _, letter := range value {
+		if letter < 'a' || letter > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+func validProviderRegion(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, letter := range value {
+		if letter >= 'a' && letter <= 'z' || letter >= '0' && letter <= '9' {
+			continue
+		}
+		if letter != '-' || index == 0 || index == len(value)-1 || value[index-1] == '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // All returns independent copies so callers cannot change placement data.
@@ -81,9 +129,9 @@ func All() []Location {
 	copy := make([]Location, len(locations))
 	for index, location := range locations {
 		copy[index] = location
-		copy[index].Providers = make(map[Provider]string, len(location.Providers))
-		for provider, name := range location.Providers {
-			copy[index].Providers[provider] = name
+		copy[index].Providers = make(map[Provider][]string, len(location.Providers))
+		for provider, names := range location.Providers {
+			copy[index].Providers[provider] = slices.Clone(names)
 		}
 	}
 	return copy
