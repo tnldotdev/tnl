@@ -58,3 +58,11 @@ func TestPrivateSelectionReturnsServiceEndpointWithoutStreamCrypto(t *testing.T)
 		t.Fatalf("generated response contract = %+v: %v", parsed, err)
 	}
 }
+
+func TestServiceRunCapacityIsRetryableWithoutRevokingVisitor(t *testing.T) {
+	w := httptest.NewRecorder()
+	serviceVisitorError(w, "select service run", controlstate.ErrServiceRunUnavailable)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("full run response = %d; want a retryable 503", w.Code)
+	}
+}

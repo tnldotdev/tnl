@@ -52,6 +52,8 @@ func serviceVisitorError(w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a ready team domain and a valid source-bound worktree placement")
+	case errors.Is(err, controlstate.ErrServiceRunUnavailable):
+		writeProblem(w, 503, controlv1.Unavailable, "no service run has a free visitor stream; retry when capacity returns")
 	case errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
 	case errors.Is(err, controlstate.ErrServiceConflict):

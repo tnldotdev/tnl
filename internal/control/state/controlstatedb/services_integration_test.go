@@ -228,6 +228,12 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil || selected.ServiceRunID != runs[1].RunID {
 		t.Fatalf("full run selected: %+v %v", selected, err)
 	}
+	if _, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1, ActiveStreams: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SelectServiceRun(ctx, service.ID, person, device.ID, now); !errors.Is(err, controlstate.ErrServiceRunUnavailable) {
+		t.Fatalf("an authorized visitor with no free run must retry selection: %v", err)
+	}
 	if err = d.RetireStreamCapacity(ctx, ingress, active.ID, now); err != nil {
 		t.Fatal(err)
 	}

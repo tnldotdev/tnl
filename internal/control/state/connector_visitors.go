@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,6 +25,10 @@ type VisitorDevice struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
+
+// an authorized service can temporarily have no run with a free stream slot.
+// existing visitor permissions remain valid while selection retries.
+var ErrServiceRunUnavailable = fmt.Errorf("service run has no available stream capacity: %w", ErrServiceAccess)
 
 // release is idempotent for this person's exact device assignment. pending
 // reservations stop counting immediately. the connector closes its bound path;
@@ -302,7 +307,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	    ORDER BY GREATEST(runtime.reported_streams,(SELECT count(*) FROM control.direct_service_visitors stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/runtime.stream_capacity,run.run_number LIMIT 1`, serviceID, now).
 		Scan(&result.ServiceRunID, &result.RunNumber, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
+		return result, ErrServiceRunUnavailable
 	}
 	if err != nil {
 		return result, err
