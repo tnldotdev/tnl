@@ -184,9 +184,9 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			}
 			source, sourceErr := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: result.CookieSecret})
 			if verifyErr == nil {
-				if share, ok := permission.Subject.(visitortoken.Share); ok && share.ShareID == shareID && shareSecret != "" {
+				if share, ok := permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID == shareID && shareSecret != "" {
 					source, sourceErr = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: shareSecret})
-				} else if _, ok := permission.Subject.(visitortoken.Browser); !ok {
+				} else if _, ok := permission.Facts().Subject.(visitortoken.Browser); !ok {
 					sourceErr = visitortoken.ErrBinding
 				}
 			}
@@ -195,7 +195,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 				err = sourceErr
 			}
 			if err == nil {
-				if shareID != "" && permission.Subject == (visitortoken.Share{ShareID: shareID}) {
+				if shareID != "" && permission.Facts().Subject == (visitortoken.Share{ShareID: shareID}) {
 					err = a.prepareSessionToken(request.Context(), source, result.Permission)
 				} else {
 					err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)

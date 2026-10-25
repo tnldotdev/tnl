@@ -326,7 +326,7 @@ func TestBrowserHandoffRetainsShareVisitorPermissionForSignedInReviewer(t *testi
 	}
 	view, _, _ := control.policy.Lease.Current()
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, time.Now())
-	if err != nil || permission.Subject != (visitortoken.Share{ShareID: "shr_0123456789abcdefghijkl"}) {
+	if err != nil || permission.Facts().Subject != (visitortoken.Share{ShareID: "shr_0123456789abcdefghijkl"}) {
 		t.Fatal("sign-in replaced share-backed visitor access", err)
 	}
 }

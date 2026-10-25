@@ -236,7 +236,7 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	}
 	view := decoded.View
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(installed.Permission.VisitorToken), view, time.Now())
-	if err != nil || permission.Subject != (visitortoken.Share{ShareID: share.ID}) {
+	if err != nil || permission.Facts().Subject != (visitortoken.Share{ShareID: share.ID}) {
 		t.Fatal("share reviewer received a browser visitor grant", err)
 	}
 	identity, err := client.CheckBrowserAccess(ctx, run.PublishRunID, run.PublishRunNumber, installed.CookieSecret, run.PublishRunToken)
