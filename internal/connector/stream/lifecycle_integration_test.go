@@ -133,12 +133,8 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	var failTrust atomic.Bool
 	var trustCalls atomic.Int64
 	var pairCalls atomic.Int64
-	var selectionCalls atomic.Int64
 	failTrust.Store(true)
 	f := newLifecycleDatabaseFixture(t, func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/select-run") {
-			selectionCalls.Add(1)
-		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ingress-assignments") {
 			pairCalls.Add(1)
 		}
@@ -274,8 +270,8 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	if _, err := f.database.RenewIngress(t.Context(), controlstate.IngressRenewal{IngressLeaseIdentity: leases[healthy.IngressID]}, time.Now(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// Serve must join its owner before any path is ready, including while the
-	// prepared selection retries a transiently unavailable service run.
+	// Serve must join its owner even if neither path can become ready. supply
+	// only the missing run so assignments and trust still use real control state.
 	runner, err := NewControl(f.client, f.profile, f.identity)
 	if err != nil {
 		t.Fatal(err)
@@ -290,12 +286,13 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	before := selectionCalls.Load()
+	failTrust.Store(true)
+	before := trustCalls.Load()
 	go func() {
 		done <- Serve(ctx, listener, Config{Control: runner, ServiceID: f.service.Id, IdentityID: f.identity, Protocol: "tcp", TrustRevision: 1, Endpoint: f.service.Endpoint, ServiceTLS: &tls.Config{MinVersion: tls.VersionTLS12}})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
-	for selectionCalls.Load() < before+4 && time.Now().Before(deadline) {
+	for trustCalls.Load() < before+4 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()
@@ -307,8 +304,8 @@ func TestIntegrationConnectorReleasesLowCapacityReservations(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("failed connector did not join")
 	}
-	if calls, reserved := selectionCalls.Load(), f.reservations(t); calls < before+4 || reserved != 0 {
-		t.Fatalf("Serve abandoned failed selection: select calls=%d before=%d reserved=%d", calls, before, reserved)
+	if calls, reserved := trustCalls.Load(), f.reservations(t); calls < before+4 || reserved != 0 {
+		t.Fatalf("Serve abandoned failed paths: trust calls=%d before=%d reserved=%d", calls, before, reserved)
 	}
 }
 
