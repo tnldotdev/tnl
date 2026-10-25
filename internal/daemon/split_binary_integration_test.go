@@ -22,6 +22,7 @@ func TestBinaryIntegrationSplitPublishAndVisit(t *testing.T) {
 	}
 	waitForIngressRoutingCurrent(t, inspectStandaloneTestDatabase(t, f.databaseURL), 1)
 	visitor := newIntegrationVisitor(t, f.pebble.roots, "")
+	waitForPreparedPublicVisitor(t, visitor, ready.URL)
 	response, body, err := visitor.requestURL(http.MethodGet, ready.URL+"/split?source=binary", nil)
 	if err != nil {
 		t.Fatal(err)

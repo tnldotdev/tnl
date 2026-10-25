@@ -19,6 +19,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
@@ -56,7 +57,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 			for index := range 2 {
 				name := fmt.Sprintf("authz-relay-%d", index)
 				if _, err := database.RegisterRelay(t.Context(), controlstate.RelayRegistration{
-					RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: 1,
+					RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version,
 					RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test",
 					InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 10,
 				}, now, time.Hour); err != nil {

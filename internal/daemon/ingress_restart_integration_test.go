@@ -44,6 +44,7 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if after.runID == before.runID || after.revision != before.revision+1 {
 		t.Fatalf("restart lease: before=%+v after=%+v", before, after)
 	}
+	waitForPreparedPublicVisitor(t, fixture.visitor, ready.PublicURL)
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
 	if err != nil {
 		t.Fatal(err)

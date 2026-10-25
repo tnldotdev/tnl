@@ -567,6 +567,9 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 	if err := database.SeedHumanAuthentication(t.Context(), "apps.integration.test", controlstate.HumanAuthenticationSeeds{Issuer: provider.URL, Administrators: []string{"developer"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.PrepareVisitorSigningKeys(t.Context(), f.url, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {

@@ -126,7 +126,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		exec(`INSERT INTO control.relay_leases(relay_id, relay_service_id, relay_run_id, relay_lease_revision,
 			protocol_version, internal_relay_address, connection_capacity, stream_capacity,
 			registered_at, renewed_at, lease_expires_at)
-			VALUES ($1, $1, $2, 1, 1, $3, 8, 8, $4, $4, $5)`, relay, runID, relay+":444", now, now.Add(10*time.Minute))
+			VALUES ($1, $1, $2, 1, $6, $3, 8, 8, $4, $4, $5)`, relay, runID, relay+":444", now, now.Add(10*time.Minute), tunnelv1.Version)
 	}
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
 	if err != nil {
@@ -227,11 +227,12 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	ingressRun := newID(opaqueid.IngressRunPrefix)
 	exec(`INSERT INTO control.ingress_leases(ingress_id, ingress_run_id, ingress_lease_revision,
 		protocol_version, connection_capacity, registered_at, renewed_at, lease_expires_at)
-		VALUES ('ingress-a', $1, 1, 1, 8, $2, $2, $3)`, ingressRun, now, now.Add(10*time.Minute))
+		VALUES ('ingress-a', $1, 1, $4, 8, $2, $2, $3)`, ingressRun, now, now.Add(10*time.Minute), tunnelv1.Version)
 	ingress := controlstate.IngressLeaseIdentity{IngressID: "ingress-a", IngressRunID: ingressRun, IngressLeaseRevision: 1}
 	exec(`UPDATE control.ingress_leases SET connector_address='ingress-a.example:443',connector_tls_server_name='ingress-a.example' WHERE ingress_id='ingress-a'`)
 	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at,connector_address,connector_tls_server_name)
-	    VALUES('ingress-b',$1,1,1,8,$2,$2,$3,'ingress-b.example:443','ingress-b.example')`, newID(opaqueid.IngressRunPrefix), now, now.Add(10*time.Minute))
+	    VALUES('ingress-b',$1,1,$4,8,$2,$2,$3,'ingress-b.example:443','ingress-b.example')`, newID(opaqueid.IngressRunPrefix), now, now.Add(10*time.Minute), tunnelv1.Version)
+	exec(`UPDATE control.ingress_leases SET ingress_pool_id=$1`, controlstate.PrimaryIngressPoolID)
 	session := newSession(visitorID)
 	snapshot, err := d.ReadServiceSnapshot(ctx, ingress, now)
 	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].Kind != "upsert" ||

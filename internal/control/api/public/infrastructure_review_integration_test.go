@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
@@ -120,7 +121,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 			address = "127.0.0.1:9442"
 		}
 		name := "private-ingress.example.test"
-		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8, ConnectorAddress: &address, ConnectorTlsServerName: &name}, nodeAuth)
+		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8, ConnectorAddress: &address, ConnectorTlsServerName: &name}, nodeAuth)
 		if err != nil || registration.JSON200 == nil {
 			t.Fatalf("register private endpoint: %+v %v", registration, err)
 		}

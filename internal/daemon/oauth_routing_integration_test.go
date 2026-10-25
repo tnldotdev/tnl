@@ -102,6 +102,9 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	visitor := *fixture.visitor.client
 	visitor.Jar = jar
 	visitor.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	for _, app := range apps {
+		waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+app.hostname)
+	}
 	visit := func(address string) *http.Response {
 		t.Helper()
 		response, err := visitor.Get(address)

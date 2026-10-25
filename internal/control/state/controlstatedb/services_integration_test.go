@@ -67,7 +67,7 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	for _, relay := range []string{"relay-a", "relay-b"} {
 		exec(`INSERT INTO control.relay_services(relay_service_id,relay_address,tls_server_name,created_at,updated_at) VALUES($1,$2,$1,$3,$3)`, relay, relay+":443", now)
 		exec(`INSERT INTO control.relay_leases(relay_id,relay_service_id,relay_run_id,relay_lease_revision,protocol_version,internal_relay_address,connection_capacity,stream_capacity,registered_at,renewed_at,lease_expires_at)
-		    VALUES($1,$1,$2,1,1,$3,8,8,$4,$4,$5)`, relay, id(opaqueid.RelayRunPrefix), relay+":444", now, now.Add(time.Hour))
+		    VALUES($1,$1,$2,1,$6,$3,8,8,$4,$4,$5)`, relay, id(opaqueid.RelayRunPrefix), relay+":444", now, now.Add(time.Hour), tunnelv1.Version)
 	}
 	relayLease := func(relay string) controlstate.RelayLeaseIdentity {
 		t.Helper()
@@ -134,11 +134,12 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	}
 	exec(`UPDATE control.publisher_grants SET expires_at=NULL WHERE id=$1`, publishers[1].GrantID)
 	ingress := controlstate.IngressLeaseIdentity{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1}
-	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at) VALUES($1,$2,1,1,8,$3,$3,$4)`, ingress.IngressID, ingress.IngressRunID, now, now.Add(time.Hour))
+	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at) VALUES($1,$2,1,$5,8,$3,$3,$4)`, ingress.IngressID, ingress.IngressRunID, now, now.Add(time.Hour), tunnelv1.Version)
 	exec(`UPDATE control.ingress_leases SET connector_address='ingress-a.example:443',connector_tls_server_name='ingress-a.example' WHERE ingress_id='ingress-a'`)
 	otherIngress := controlstate.IngressLeaseIdentity{IngressID: "ingress-b", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1}
 	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at,connector_address,connector_tls_server_name)
-	    VALUES($1,$2,1,1,8,$3,$3,$4,'ingress-b.example:443','ingress-b.example')`, otherIngress.IngressID, otherIngress.IngressRunID, now, now.Add(time.Hour))
+	    VALUES($1,$2,1,$5,8,$3,$3,$4,'ingress-b.example:443','ingress-b.example')`, otherIngress.IngressID, otherIngress.IngressRunID, now, now.Add(time.Hour), tunnelv1.Version)
+	exec(`UPDATE control.ingress_leases SET ingress_pool_id=$1`, controlstate.PrimaryIngressPoolID)
 	snapshot, err := d.ReadServiceSnapshot(ctx, ingress, now)
 	if err != nil || len(snapshot.Entries) != 2 {
 		t.Fatalf("pool snapshot: %+v %v", snapshot, err)

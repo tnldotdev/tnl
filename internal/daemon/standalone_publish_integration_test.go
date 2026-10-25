@@ -246,7 +246,9 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 			ready := fixture.waitReady(t, handle)
 
-			const concurrentRequests = 16
+			// the first prepared allocation has eight slots; expansion observes
+			// occupancy in the background rather than blocking a visitor request.
+			const concurrentRequests = 8
 			results := make(chan error, concurrentRequests)
 			for index := range concurrentRequests {
 				go func() {
