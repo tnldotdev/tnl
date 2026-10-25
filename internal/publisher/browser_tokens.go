@@ -46,6 +46,7 @@ type browserTokenSource struct {
 	response       controlv1.VisitorTokenResponse
 	permission     visitortoken.Permission
 	parentDeadline time.Time
+	reprepared     bool
 	used           time.Time
 	aliases        map[[32]byte]time.Time
 	guards         map[*visitorlease.Guard]struct{}
@@ -60,6 +61,7 @@ type browserTokenRenewal struct {
 	request        controlv1.VisitorTokenRequest
 	permission     visitortoken.Permission
 	parentDeadline time.Time
+	reprepared     bool
 }
 
 func (*browserTokens) String() string        { return "publisher browser token renewal" }
@@ -176,6 +178,36 @@ func (b *browserTokens) install(source json.RawMessage, response controlv1.Visit
 	return nil
 }
 
+// an explicit browser/share session exchange is authorized by control, even if
+// the old visitor cookie and its local renewal source have expired. keep an
+// existing source's known deadline; otherwise each new signed token bounds the
+// locally prepared window until control confirms another renewal.
+func (b *browserTokens) installFromSession(source json.RawMessage, response controlv1.VisitorTokenResponse) error {
+	canonical, err := canonicalBrowserTokenSource(source)
+	if err != nil {
+		return err
+	}
+	key := sha256.Sum256(canonical)
+	b.mu.Lock()
+	prior := b.sources[key]
+	parent := response.ExpiresAt
+	if prior != nil {
+		parent = prior.parentDeadline
+	}
+	b.mu.Unlock()
+	if err := b.install(canonical, response, parent); err != nil {
+		return err
+	}
+	if prior == nil {
+		b.mu.Lock()
+		if current := b.sources[key]; current != nil && current.parentDeadline.Equal(parent) {
+			current.reprepared = true
+		}
+		b.mu.Unlock()
+	}
+	return nil
+}
+
 // use follows signature, policy, source-IP, and request admission. an expired
 // cookie is never a handle for selecting another prepared credential.
 func (b *browserTokens) use(token visitortoken.Token, guard *visitorlease.Guard) (controlv1.VisitorTokenResponse, func(), bool) {
@@ -266,7 +298,7 @@ func (b *browserTokens) refresh(ctx context.Context, report func(error)) {
 		}
 		if source.response.VisitorPolicyRevision != view.VisitorPolicyRevision || !source.response.ExpiresAt.After(view.AuthorityTime(now).Add(time.Minute)) {
 			due = append(due, browserTokenRenewal{key: key, source: source, generation: source.generation,
-				request: controlv1.VisitorTokenRequest{Resource: source.response.Resource, Source: bytes.Clone(source.source)}, permission: source.permission, parentDeadline: source.parentDeadline})
+				request: controlv1.VisitorTokenRequest{Resource: source.response.Resource, Source: bytes.Clone(source.source)}, permission: source.permission, parentDeadline: source.parentDeadline, reprepared: source.reprepared})
 		}
 	}
 	b.mu.Unlock()
@@ -314,7 +346,11 @@ func (b *browserTokens) renew(ctx context.Context, job browserTokenRenewal, repo
 	}
 	var permission visitortoken.Permission
 	if err == nil {
-		permission, err = b.verify(response, job.parentDeadline)
+		parent := job.parentDeadline
+		if job.reprepared {
+			parent = response.ExpiresAt
+		}
+		permission, err = b.verify(response, parent)
 		if err == nil && permission.Subject != job.permission.Subject {
 			err = visitortoken.ErrBinding
 		}
@@ -339,6 +375,9 @@ func (b *browserTokens) renew(ctx context.Context, job browserTokenRenewal, repo
 				err = errors.New("browser token renewal aliases are full")
 			} else {
 				source.response, source.permission = response, permission
+				if job.reprepared {
+					source.parentDeadline = response.ExpiresAt
+				}
 				source.aliases[digest], b.tokens[digest] = permission.ExpiresAt, source
 				source.generation++
 			}

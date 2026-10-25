@@ -17,7 +17,9 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -28,6 +30,43 @@ type browserFlowStore struct {
 	issued   controlstate.BrowserAccessSession
 	consumed bool
 	binding  []byte
+}
+
+type shareReviewerTokenIssuer struct {
+	PublicURLStore
+	requested []controlstate.VisitorTokenSource
+}
+
+func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
+	s.requested = append(s.requested, source)
+	if _, ok := source.(controlstate.BrowserSessionTokenSource); ok {
+		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
+	}
+	if share, ok := source.(controlstate.ShareSessionTokenSource); ok && share.ShareID == "shr_0123456789abcdefghijkl" && share.Secret == "share-secret" {
+		return controlstate.IssuedVisitorToken{Token: visitortoken.Token("share-permission"), Permission: visitortoken.Permission{
+			Scope: scope, Hostname: "preview.example.test", Port: 443, VisitorPolicyRevision: 1,
+			Subject: visitortoken.Share{ShareID: share.ShareID}, ExpiresAt: now.Add(time.Minute)}}, nil
+	}
+	return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
+}
+
+func TestShareReviewerBrowserHandoffKeepsIdentityAndShareAccessSeparate(t *testing.T) {
+	store := &shareReviewerTokenIssuer{}
+	h := &handler{store: store, config: Config{ControlURL: "https://control.example.test"}}
+	id, secret := "shr_0123456789abcdefghijkl", "share-secret"
+	result, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{ShareId: &id, ShareSecret: &secret})
+	if err != nil || result.VisitorToken != "share-permission" || len(store.requested) != 2 {
+		t.Fatal("sign-in without a visitor grant displaced share access", err)
+	}
+	if _, ok := store.requested[0].(controlstate.BrowserSessionTokenSource); !ok {
+		t.Fatal("share replaced the browser sign-in identity")
+	}
+	if _, ok := store.requested[1].(controlstate.ShareSessionTokenSource); !ok {
+		t.Fatal("browser sign-in was mistaken for share-backed access")
+	}
+	if _, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{}); !errors.Is(err, controlstate.ErrVisitorPermission) {
+		t.Fatal("sign-in alone granted visitor access", err)
+	}
 }
 
 func (s *browserFlowStore) BeginBrowserLogin(_ context.Context, previewID, publicURLID, path, nonce, verifier string, binding []byte, _ *controlstate.CompanyLoginIntent, _ time.Time) (string, error) {

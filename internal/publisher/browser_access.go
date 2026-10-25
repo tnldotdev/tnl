@@ -14,8 +14,10 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -23,7 +25,7 @@ const browserAccessCookieName = "__Host-tnl-browser"
 const shareAccessHeaderName = "Tnl-Share-Token"
 
 type browserAccessClient interface {
-	RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error)
+	RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error)
 	CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error)
 	RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error
 }
@@ -60,6 +62,23 @@ func browserCookie(response http.ResponseWriter, secret string, expires time.Tim
 		Name: browserAccessCookieName, Value: secret, Path: "/", HttpOnly: true,
 		Secure: true, SameSite: http.SameSiteLaxMode, Expires: expires,
 	})
+}
+
+func shareSessionCookie(request *http.Request) (string, string, error) {
+	count := suppliedCookieCount(request, shareCookieName)
+	if count == 0 {
+		return "", "", nil
+	}
+	cookies := request.CookiesNamed(shareCookieName)
+	if count != 1 || len(cookies) != 1 {
+		return "", "", visitortoken.ErrToken
+	}
+	id, secret, found := strings.Cut(cookies[0].Value, ".")
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+	if !found || !opaqueid.Valid(id, opaqueid.SharePrefix) || err != nil || len(raw) != 32 {
+		return "", "", visitortoken.ErrToken
+	}
+	return id, secret, nil
 }
 
 func (a *browserAccess) checkCurrent(request *http.Request) (controlv1.BrowserAccessResponse, error) {
@@ -128,15 +147,44 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			http.NotFound(response, request)
 			return true
 		}
-		result, err := a.client.RedeemBrowserHandoff(request.Context(), a.runID, a.version, ticket, a.token)
+		shareID, shareSecret, shareErr := "", "", error(nil)
+		if a.subject.Kind == visitorscope.PublicURL {
+			shareID, shareSecret, shareErr = shareSessionCookie(request)
+		}
+		if shareErr != nil {
+			http.Error(response, "invalid share session", http.StatusForbidden)
+			return true
+		}
+		result, err := a.client.RedeemBrowserHandoff(request.Context(), a.runID, a.version, ticket, shareID, shareSecret, a.token)
 		if err != nil || !validBrowserPath(result.ReturnPath) {
 			http.Error(response, "browser sign-in expired", http.StatusForbidden)
 			return true
 		}
 		if a.tokens != nil {
-			source, err := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: result.CookieSecret})
+			permission, verifyErr := a.tokens.verify(result.Permission, result.ExpiresAt)
+			if verifyErr != nil && a.policy != nil {
+				if refreshErr := a.policy.refresh(request.Context()); refreshErr == nil {
+					permission, verifyErr = a.tokens.verify(result.Permission, result.ExpiresAt)
+				}
+			}
+			source, sourceErr := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: result.CookieSecret})
+			if verifyErr == nil {
+				if share, ok := permission.Subject.(visitortoken.Share); ok && share.ShareID == shareID && shareSecret != "" {
+					source, sourceErr = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: shareSecret})
+				} else if _, ok := permission.Subject.(visitortoken.Browser); !ok {
+					sourceErr = visitortoken.ErrBinding
+				}
+			}
+			err = verifyErr
 			if err == nil {
-				err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)
+				err = sourceErr
+			}
+			if err == nil {
+				if shareID != "" && permission.Subject == (visitortoken.Share{ShareID: shareID}) {
+					err = a.prepareSessionToken(request.Context(), source, result.Permission)
+				} else {
+					err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)
+				}
 			}
 			if err != nil {
 				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
@@ -166,6 +214,53 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			return true
 		}
 		http.Redirect(response, request, next, http.StatusSeeOther)
+		return true
+	case request.URL.Path == root+"renew" && request.Method == http.MethodGet:
+		path := request.URL.Query().Get("return")
+		if a.tokens == nil || !validBrowserPath(path) || request.Header.Get(visitorTokenHeader) != "" || request.Header.Get(shareAccessHeaderName) != "" {
+			http.Error(response, "invalid visitor renewal", http.StatusBadRequest)
+			return true
+		}
+		shareID, secret, err := shareSessionCookie(request)
+		if err != nil {
+			http.Error(response, "invalid share session", http.StatusForbidden)
+			return true
+		}
+		var source json.RawMessage
+		if shareID != "" {
+			source, err = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: secret})
+		} else if suppliedCookieCount(request, browserAccessCookieName) == 1 && len(request.CookiesNamed(browserAccessCookieName)) == 1 {
+			cookie := request.CookiesNamed(browserAccessCookieName)[0]
+			raw, decodeErr := base64.RawURLEncoding.Strict().DecodeString(cookie.Value)
+			if decodeErr != nil || len(raw) != 32 {
+				http.Error(response, "invalid browser sign-in", http.StatusForbidden)
+				return true
+			}
+			source, err = json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: cookie.Value})
+		} else {
+			http.Error(response, "browser or share session is missing", http.StatusForbidden)
+			return true
+		}
+		if err != nil {
+			http.Error(response, "invalid visitor renewal", http.StatusBadRequest)
+			return true
+		}
+		result, err := a.tokens.client.IssueVisitorToken(request.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.subject.Kind), Id: a.subject.ID}, Source: source})
+		if err != nil {
+			status := http.StatusForbidden
+			message := "visitor session expired; sign in or reopen the share"
+			var problem *clientcontrol.ProblemError
+			if errors.Is(err, clientcontrol.ErrUnavailable) || errors.As(err, &problem) && problem.Status >= http.StatusInternalServerError {
+				status, message = http.StatusServiceUnavailable, "visitor permission is unavailable; retry"
+			}
+			http.Error(response, message, status)
+			return true
+		}
+		if err := a.prepareSessionToken(request.Context(), source, result); err != nil || visitorPermissionCookie(response, result) != nil {
+			http.Error(response, "visitor permission is unavailable", http.StatusServiceUnavailable)
+			return true
+		}
+		http.Redirect(response, request, path, http.StatusSeeOther)
 		return true
 	case request.URL.Path == root+"session" && request.Method == http.MethodGet:
 		if _, err := request.Cookie(browserAccessCookieName); err != nil {
@@ -236,6 +331,19 @@ func (a *browserAccess) prepareToken(ctx context.Context, source json.RawMessage
 		return err
 	}
 	return a.tokens.install(source, permission, parent)
+}
+
+func (a *browserAccess) prepareSessionToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse) error {
+	if a.policy == nil || a.tokens == nil {
+		return errors.New("browser token preparation is unavailable")
+	}
+	if err := a.tokens.installFromSession(source, permission); err == nil {
+		return nil
+	}
+	if err := a.policy.refresh(ctx); err != nil {
+		return err
+	}
+	return a.tokens.installFromSession(source, permission)
 }
 
 func validBrowserPath(path string) bool {

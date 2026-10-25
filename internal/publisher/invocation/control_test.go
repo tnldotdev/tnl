@@ -42,7 +42,7 @@ func TestPublicationControlPreparesVisitorsWithoutManagementAuthentication(t *te
 	if _, err := control.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{}, "exact-run-token"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := control.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{}); err != nil {
+	if _, err := control.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Source: json.RawMessage(`{"kind":"browser_session","secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if policyCalls != 1 || tokenCalls != 1 {

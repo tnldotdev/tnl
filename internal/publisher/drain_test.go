@@ -199,7 +199,7 @@ type visitorDrainHarness struct {
 
 type drainDecisionControl struct{ *certificateTestControl }
 
-func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("no browser handoff")
 }
 

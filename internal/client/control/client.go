@@ -205,9 +205,13 @@ func (c *Client) EnableShareAccess(ctx context.Context, runID string, version ui
 	return err
 }
 
-func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket, shareID, shareSecret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	input := controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}
+	if shareID != "" && shareSecret != "" {
+		input.ShareId, input.ShareSecret = &shareID, &shareSecret
+	}
 	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}, editors...)
+		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, input, editors...)
 	})
 }
 

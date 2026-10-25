@@ -38,7 +38,7 @@ import (
 // testVisitorControl supplies explicit browser operations for transport fixtures.
 type testVisitorControl struct{}
 
-func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("browser handoff is unavailable")
 }
 

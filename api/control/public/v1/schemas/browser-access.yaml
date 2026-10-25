@@ -171,6 +171,11 @@ schemas:
       token:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
+      share_id:
+        $ref: "../openapi.yaml#/components/schemas/ShareID"
+      share_secret:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"
   BrowserHandoffResponse:
     type: object
     additionalProperties: false

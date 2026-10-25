@@ -66,7 +66,7 @@ func preparedShareAuthority(t *testing.T, client *shareAccessTestClient) *liveHT
 	return authority
 }
 
-func (*shareHeaderDecisionClient) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*shareHeaderDecisionClient) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("no browser handoff")
 }
 

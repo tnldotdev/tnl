@@ -1823,8 +1823,10 @@ type BrowserAccessResponse struct {
 
 // BrowserHandoffRequest defines model for BrowserHandoffRequest.
 type BrowserHandoffRequest struct {
-	PublishRunNumber int64  `json:"publish_run_number"`
-	Token            string `json:"token"`
+	PublishRunNumber int64    `json:"publish_run_number"`
+	ShareId          *ShareID `json:"share_id,omitempty"`
+	ShareSecret      *string  `json:"share_secret,omitempty"`
+	Token            string   `json:"token"`
 }
 
 // BrowserHandoffResponse defines model for BrowserHandoffResponse.

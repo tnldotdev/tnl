@@ -18,6 +18,12 @@ func (a *browserAccess) redirectRestricted(w http.ResponseWriter, r *http.Reques
 	if a == nil || r.Method != http.MethodGet || r.Header.Get("Sec-Fetch-Mode") != "navigate" || r.Header.Get("Sec-Fetch-Dest") != "document" || r.Header.Get("Upgrade") != "" || !validBrowserPath(r.URL.RequestURI()) {
 		return false
 	}
+	if a.tokens != nil && r.Header.Get(visitorTokenHeader) == "" && (suppliedCookieCount(r, shareCookieName) > 0 || suppliedCookieCount(r, browserAccessCookieName) > 0) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		http.Redirect(w, r, "/__tnl/team/renew?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+		return true
+	}
 	if _, err := r.Cookie(browserLoginAttemptCookieName); err == nil {
 		return false
 	}

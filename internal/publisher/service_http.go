@@ -295,7 +295,7 @@ func (a serviceBrowserClient) request(run string, number uint64, secret string, 
 	}
 	return controlv1.ServiceBrowserRequest{RunNumber: f.Number, Secret: secret}, nil
 }
-func (a serviceBrowserClient) RedeemBrowserHandoff(ctx context.Context, run string, number uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (a serviceBrowserClient) RedeemBrowserHandoff(ctx context.Context, run string, number uint64, secret, _, _ string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	input, err := a.request(run, number, secret, token)
 	if err != nil {
 		return controlv1.BrowserHandoffResponse{}, err
