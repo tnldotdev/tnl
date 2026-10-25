@@ -105,7 +105,9 @@ func run() error {
 		defer fixture.Close()
 		command = append(command, fixture.Flags...)
 	case "postgres":
-		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
+		// runner image inspection can report the pinned manifest as present even
+		// when container creation cannot resolve its platform image.
+		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"), testcontainers.WithAlwaysPull())
 		if err != nil {
 			return fmt.Errorf("start disposable PostgreSQL: %w", err)
 		}

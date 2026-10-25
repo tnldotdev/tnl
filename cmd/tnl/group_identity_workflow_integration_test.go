@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -315,13 +316,21 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 				t.Fatal("source-bound service kept old hostname or changed identity")
 			}
 			newClient := workflowNativeHTTPClient(t, f, selected.Endpoint.Hostname)
+			lastRenamedVisitorResult := ""
+			defer func() {
+				if t.Failed() {
+					t.Log("last renamed-service visitor result:", lastRenamedVisitorResult)
+				}
+			}()
 			workflowWait(t, 25*time.Second, func() bool {
 				response, err := newClient.Get("https://" + address + "/renamed-dns")
 				if err != nil {
+					lastRenamedVisitorResult = err.Error()
 					return false
 				}
 				defer response.Body.Close()
 				body, _ := io.ReadAll(response.Body)
+				lastRenamedVisitorResult = fmt.Sprintf("%s body=%q", response.Status, body)
 				return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 			})
 			if response, err := client.Get("https://" + address + "/old-name"); err == nil {

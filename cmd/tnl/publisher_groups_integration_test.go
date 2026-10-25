@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -205,14 +206,23 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	}
 	assertVisitor := func(index int, want string) {
 		t.Helper()
+		last := ""
+		defer func() {
+			if t.Failed() {
+				t.Logf("last group %d visitor result: %s", index, last)
+			}
+		}()
 		workflowWait(t, 10*time.Second, func() bool {
 			response, err := visitorClients[index].Get("https://" + visitorAddresses[index] + "/scoped")
 			if err != nil {
+				last = err.Error()
 				return false
 			}
 			defer response.Body.Close()
 			body, _ := io.ReadAll(response.Body)
-			return response.StatusCode == 200 && string(body) == want && response.TLS != nil && len(response.TLS.PeerCertificates) > 0 && bytes.Equal(response.TLS.PeerCertificates[0].RawSubjectPublicKeyInfo, visitorKeys[index])
+			keyMatches := response.TLS != nil && len(response.TLS.PeerCertificates) > 0 && bytes.Equal(response.TLS.PeerCertificates[0].RawSubjectPublicKeyInfo, visitorKeys[index])
+			last = fmt.Sprintf("%s body=%q expected_body=%q key_matches=%t", response.Status, body, want, keyMatches)
+			return response.StatusCode == 200 && string(body) == want && keyMatches
 		})
 	}
 	jobA := supervisor.JobKey(f.url, "group", identities[0].Member.GroupId+":default")
