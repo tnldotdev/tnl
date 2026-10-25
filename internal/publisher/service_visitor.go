@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"reflect"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
@@ -54,6 +55,7 @@ func (v ConnectorVisitor) authorize(ctx context.Context, _ tls.ConnectionState) 
 // verifies the certificate's signed permission against current local policy.
 type CertificateVisitor struct {
 	Check func(context.Context, tls.ConnectionState) (ServiceVisitorDecision, error)
+	Time  func() time.Time
 }
 
 func (v CertificateVisitor) valid() bool                  { return v.Check != nil }

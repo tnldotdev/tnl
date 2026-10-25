@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,7 +42,11 @@ func TestManagedOpaqueThroughOriginalDestination(t *testing.T) {
 		done <- err
 	}()
 	const host = "opaque.production.storefront.example.test"
-	stream := publisher.ServiceStream{Protocol: config.ProtocolTCP, Hostname: host, Target: target.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}}, Visitor: publisher.CertificateVisitor{Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+	var authorityClockReads atomic.Int32
+	stream := publisher.ServiceStream{Protocol: config.ProtocolTCP, Hostname: host, Target: target.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}, ClientCAs: certificates.roots}, Visitor: publisher.CertificateVisitor{Time: func() time.Time {
+		authorityClockReads.Add(1)
+		return time.Now()
+	}, Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
 		leaf := state.PeerCertificates[0]
 		_, err := leaf.Verify(x509.VerifyOptions{Roots: certificates.roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
 		return publisher.ServiceVisitorDecision{Allowed: err == nil, ValidUntil: time.Now().Add(time.Minute)}, err
@@ -62,5 +67,8 @@ func TestManagedOpaqueThroughOriginalDestination(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if authorityClockReads.Load() == 0 {
+		t.Fatal("TLS verified the client certificate without the prepared authority clock")
 	}
 }

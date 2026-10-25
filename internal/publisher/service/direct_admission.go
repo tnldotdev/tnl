@@ -77,7 +77,10 @@ func (b *Bound) admitDirect(ctx context.Context, stream net.Conn, header tunnelv
 		finish()
 		return deny()
 	}
-	visitor := publisher.CertificateVisitor{Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
+	visitor := publisher.CertificateVisitor{Time: func() time.Time {
+		view, _, _ := policy.Current()
+		return view.AuthorityTime(time.Now())
+	}, Check: func(_ context.Context, state tls.ConnectionState) (publisher.ServiceVisitorDecision, error) {
 		if guard == nil {
 			view, enabled, _ := policy.Current()
 			if !enabled || !view.Public || len(state.PeerCertificates) == 0 {

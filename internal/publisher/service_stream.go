@@ -150,8 +150,11 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS12)
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
 	if frontTLS.ClientCAs != nil {
-		if _, certificate := s.Visitor.(CertificateVisitor); certificate {
+		if certificate, ok := s.Visitor.(CertificateVisitor); ok {
 			frontTLS.ClientAuth = tls.RequireAndVerifyClientCert
+			if certificate.Time != nil {
+				frontTLS.Time = certificate.Time
+			}
 		}
 	}
 	frontTLS.NextProtos = nil
