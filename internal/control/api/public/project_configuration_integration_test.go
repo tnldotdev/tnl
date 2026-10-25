@@ -201,7 +201,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := range 2 {
-		if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: fmt.Sprintf("release-http-%d", index), IngressRunID: fmt.Sprintf("release-http-run-%d", index), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 8400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Minute); err != nil {
+		if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: fmt.Sprintf("release-http-%d", index), IngressRunID: fmt.Sprintf("release-http-run-%d", index), ProtocolVersion: tunnelv1.Version, IngressPoolID: controlstate.PrimaryIngressPoolID, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 8400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -73,7 +73,16 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 			defer func() { cancel(); <-done }()
 			select {
 			case heartbeat := <-fixture.Heartbeat:
-				if !heartbeat.Healthy || fixture.TargetHandshakes.Load() == 0 {
+				if !heartbeat.Healthy {
+					t.Fatal("assigned EKS CA/SNI did not reach native target TLS preflight")
+				}
+				// the client can finish the TLS handshake before the test server
+				// increments its counter. wait for the server-side observation.
+				deadline := time.Now().Add(2 * time.Second)
+				for fixture.TargetHandshakes.Load() == 0 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
+				}
+				if fixture.TargetHandshakes.Load() == 0 {
 					t.Fatal("assigned EKS CA/SNI did not reach native target TLS preflight")
 				}
 			case <-done:
