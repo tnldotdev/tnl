@@ -135,6 +135,12 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal("missing service endpoint", err)
 	}
 	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: service.Endpoint.Hostname}}, Timeout: 2 * time.Second}
+	lastVisitorResult := ""
+	defer func() {
+		if t.Failed() && lastVisitorResult != "" {
+			t.Log("last replacement visitor result:", lastVisitorResult)
+		}
+	}()
 	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -257,10 +263,12 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		workflowWait(t, 10*time.Second, func() bool {
 			response, err := client.Get("https://" + address + "/replacement")
 			if err != nil {
+				lastVisitorResult = err.Error()
 				return false
 			}
 			defer response.Body.Close()
 			body, _ := io.ReadAll(response.Body)
+			lastVisitorResult = response.Status
 			return response.StatusCode == http.StatusOK && string(body) == "portable group worker"
 		})
 		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey)

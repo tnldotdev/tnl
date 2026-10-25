@@ -105,13 +105,14 @@ try {
   let streamControlDelta = 0;
   for (const [key, count] of Object.entries(trafficCalls)) {
     const delta = count - (prepared.calls[key] ?? 0);
-    // pg creates four new sockets; HTTP can reuse its verified keepalive pool.
+    // warm visitors use prepared local selection. background run refresh may
+    // overlap these requests, but each visitor opens without a control call.
     if (key.endsWith("/run")) {
       assert(delta >= 0 && delta <= 4);
       streamControlDelta += delta;
     } else assert.equal(delta, 0, `unexpected warm control work: ${key}`);
   }
-  assert(streamControlDelta >= 4 && streamControlDelta <= 8);
+  assert(streamControlDelta <= 4, "warm visitor traffic triggered excess control work");
 
   const rotated = await request(warm, "both", tokens.rotated);
   assert.equal(rotated.ok, true);

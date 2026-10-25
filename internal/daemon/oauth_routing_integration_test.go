@@ -95,6 +95,10 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher"); err != nil {
 		t.Fatal(err)
 	}
+	for _, app := range apps {
+		waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+app.hostname)
+	}
+	waitForPreparedPublicVisitor(t, fixture.visitor, "https://"+oauthHost)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
