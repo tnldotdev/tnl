@@ -31,6 +31,20 @@ func (s *Session) StartVisitorStream(ctx context.Context, h tunnelv1.VisitorStre
 	return s.startStream(ctx, events, func(stream muxsession.Stream) (bool, error) { return tunnelv1.WriteVisitorOpening(stream, h, initial) })
 }
 
+// StartConfirmedVisitorStream waits for publisher admission before the relay
+// acknowledges ingress. ingress can then try another relay before visitor bytes.
+func (s *Session) StartConfirmedVisitorStream(ctx context.Context, h tunnelv1.VisitorStreamHeader, events *ReturnEvents) (muxsession.Stream, error) {
+	h.ConfirmBeforeBytes = true
+	stream, err := s.StartVisitorStream(ctx, h, nil, events)
+	if err != nil {
+		return nil, err
+	}
+	if err := stream.(*returnStream).awaitAccepted(ctx); err != nil {
+		return nil, &OpeningError{Err: errors.Join(controlContextError(ctx, err), stream.Close())}
+	}
+	return stream, nil
+}
+
 func (s *Session) StartInternalForwardingStream(ctx context.Context, h tunnelv1.InternalForwardingHeader, proxy, initial []byte, events *ReturnEvents) (muxsession.Stream, error) {
 	h.TraceContext = observability.WireTrace(ctx)
 	return s.startStream(ctx, events, func(stream muxsession.Stream) (bool, error) {

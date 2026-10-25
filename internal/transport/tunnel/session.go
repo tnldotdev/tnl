@@ -262,10 +262,17 @@ func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStre
 	}, nil
 }
 
-// Accept records local admission and clears the setup deadline. the first
-// return-side write emits acceptance without holding request reads for an ack.
+// Accept records local admission and clears the setup deadline. confirmed
+// openings send acceptance before visitor bytes; otherwise the first return
+// write emits acceptance without holding request reads for an ack.
 func (r *IncomingVisitorStream) Accept() error {
-	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
+	if err := r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted}); err != nil {
+		return err
+	}
+	if r.Header.ConfirmBeforeBytes {
+		return r.response.stream.sendAccepted()
+	}
+	return nil
 }
 
 // Reject rejects the visitor stream with a stable protocol code.

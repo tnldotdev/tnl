@@ -46,9 +46,10 @@ require a coordinated client/server update. Each opening carries bounded metadat
 and up to 64 KiB of initial bytes. On a confirmed relay session, ingress sends
 metadata and initial bytes together without waiting for acceptance. On a newly
 connected relay session, or for a bounded period after a relay session is lost,
-ingress waits for relay acceptance before sending visitor bytes. This prevents
-old routing entries from committing a visitor to a restarted relay process or
-to a replaced publisher connection on the surviving relay.
+ingress waits for relay and publisher acceptance before sending visitor bytes.
+The relay first checks its connected publisher's local admission, including the
+current stream reservation. This prevents old routing entries or an expired
+publisher allocation from committing a visitor to a rejected stream.
 
 The return direction frames acceptance, rejection, promotion, data, and half-close
 in order. Only data reaches visitor TLS. Promotion stays on that visitor's return
@@ -59,9 +60,10 @@ capacity remains bounded until publisher authorization.
 
 Ingress may try another connected relay before the first visitor byte is sent.
 A local opening failure, failed PROXY-header write, zero-byte ClientHello write,
-or rejection of an unconfirmed relay session can still be retried. A return-side
-rejection after the opening committed visitor bytes cannot be retried. The first
-visitor byte commits the stream, even if the rest of ClientHello fails.
+or rejection of an unconfirmed relay or publisher opening can still be retried.
+A return-side rejection after the opening committed visitor bytes cannot be
+retried. The first visitor byte commits the stream, even if the rest of
+ClientHello fails.
 Copy/close then owns it; live connections are never replayed
 or migrated. Public and private setup reserve time for alternate relays before
 that boundary. A denied visitor may use separate admission to finish TLS at the

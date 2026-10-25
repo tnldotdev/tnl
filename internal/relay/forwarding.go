@@ -184,7 +184,13 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 			return incoming.Promote(incoming.Header.Admission())
 		}
 	}
-	publisher, err := connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+	var publisher net.Conn
+	var err error
+	if incoming.Header.ConfirmBeforeBytes {
+		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, events)
+	} else {
+		publisher, err = connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+	}
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
 		code := tunnelv1.Unavailable

@@ -236,3 +236,75 @@ func TestConfirmedForwardingBoundsBackpressuredBytesAfterAcceptance(t *testing.T
 		t.Fatal(err)
 	}
 }
+
+func TestConfirmedVisitorOpeningWaitsForPublisherAdmission(t *testing.T) {
+	for _, accept := range []bool{false, true} {
+		t.Run(map[bool]string{false: "rejected", true: "accepted"}[accept], func(t *testing.T) {
+			client, server := newAuthenticatedPair(t)
+			ctx := tunnelContext(t)
+			opened := make(chan struct{})
+			continueOpening := make(chan struct{})
+			worker := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				incoming, err := server.AcceptVisitorStream(ctx)
+				if err != nil {
+					return err
+				}
+				if initial := incoming.response.stream.takeInitial(); len(initial) != 0 {
+					return errors.New("publisher received visitor bytes before admission")
+				}
+				if !incoming.Header.ConfirmBeforeBytes {
+					return errors.New("publisher did not receive confirmation request")
+				}
+				close(opened)
+				<-continueOpening
+				if !accept {
+					return incoming.Reject(tunnelv1.Unauthenticated)
+				}
+				if err := incoming.Accept(); err != nil {
+					return err
+				}
+				defer incoming.Stream.Close()
+				byteReceived := make([]byte, len("client hello"))
+				if _, err := io.ReadFull(incoming.Stream, byteReceived); err != nil || string(byteReceived) != "client hello" {
+					return errors.New("publisher lost visitor bytes after admission")
+				}
+				return nil
+			})
+			type openedStream struct {
+				stream net.Conn
+				err    error
+			}
+			result := make(chan openedStream, 1)
+			go func() {
+				stream, err := client.StartConfirmedVisitorStream(ctx, visitorStreamHeader(), nil)
+				result <- openedStream{stream: stream, err: err}
+			}()
+			<-opened
+			select {
+			case <-result:
+				t.Fatal("relay acknowledged visitor before publisher admission")
+			default:
+			}
+			close(continueOpening)
+			got := <-result
+			if accept {
+				if got.err != nil {
+					t.Fatal(got.err)
+				}
+				if _, err := got.stream.Write([]byte("client hello")); err != nil {
+					t.Fatal(err)
+				}
+				_ = got.stream.Close()
+			} else {
+				var opening *OpeningError
+				var rejected *ProtocolError
+				if !errors.As(got.err, &opening) || opening.Committed || !errors.As(got.err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
+					t.Fatalf("publisher rejection crossed retry boundary: %v", got.err)
+				}
+			}
+			if err := await(t, worker); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

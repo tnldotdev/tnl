@@ -48,10 +48,18 @@ func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorCon
 }
 
 func (c *PublisherConnection) StartVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
+	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, initial, events, false)
+}
+
+func (c *PublisherConnection) StartConfirmedVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, events *tunnel.ReturnEvents) (net.Conn, error) {
+	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, nil, events, true)
+}
+
+func (c *PublisherConnection) startVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents, confirm bool) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.session.StartVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
+	header := tunnelv1.VisitorStreamHeader{
 		Reservation:     reservation,
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: visitorConnectionID, PublicURLID: c.ref.PublicURLID,
@@ -59,6 +67,13 @@ func (c *PublisherConnection) StartVisitor(ctx context.Context, visitorConnectio
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
 		AccessPending:                denied,
-	}, initial, events)
+	}
+	var stream net.Conn
+	var err error
+	if confirm {
+		stream, err = c.session.StartConfirmedVisitorStream(ctx, header, events)
+	} else {
+		stream, err = c.session.StartVisitorStream(ctx, header, initial, events)
+	}
 	return c.finishOpen(stream, err)
 }
