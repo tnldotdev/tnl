@@ -21,16 +21,20 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func issueServiceClientPermission(t *testing.T, issuer *controlvisitor.Issuer, csr []byte, service, identity, device string, expires, now time.Time) ([]byte, error) {
+func issueServiceClientPermission(t *testing.T, issuer *controlvisitor.Issuer, csr []byte, service, identity, device string, expires, now time.Time, parentSession ...string) ([]byte, error) {
 	t.Helper()
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{51}, ed25519.SeedSize))
+	session := "cs_" + strings.Repeat("a", 22)
+	if len(parentSession) != 0 {
+		session = parentSession[0]
+	}
 	return issuer.IssuePermission(csr, expires, now, func(serial string, public any, until time.Time) (visitortoken.Token, error) {
 		digest, err := visitortoken.KeyDigest(public)
 		if err != nil {
 			return "", err
 		}
 		return visitortoken.Sign("https://control.example", "fixture", key, visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, Hostname: "service.example.test", Port: 25443, VisitorPolicyRevision: 1, ExpiresAt: until,
-			Subject: visitortoken.Certificate{Serial: serial, KeySHA256: digest, Source: visitortoken.Device{IdentityID: identity, DeviceID: device, SessionID: "cs_" + strings.Repeat("a", 22), KeySHA256: digest}}}, now)
+			Subject: visitortoken.Certificate{Serial: serial, KeySHA256: digest, Source: visitortoken.Device{IdentityID: identity, DeviceID: device, SessionID: session, KeySHA256: digest}}}, now)
 	})
 }
 
@@ -143,6 +147,75 @@ func TestServiceClientCertificateRecoversCSRAndKeepsNativeClientKey(t *testing.T
 	}
 	if _, err = store.EnsureServiceClientCertificate(ctx, identity, service, device, issue); !errors.Is(err, ErrPublisherStateConflict) {
 		t.Fatal("credential export followed a substituted key path", err)
+	}
+}
+
+func TestServiceClientCertificateReauthenticationReplacesLeafWithStableKey(t *testing.T) {
+	db := openFileDatabase(t, filepath.Join(t.TempDir(), "state"))
+	store, err := db.Server(t.Context(), "https://control.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := opaqueid.New(opaqueid.IdentityPrefix)
+	service, _ := opaqueid.New(opaqueid.ServicePrefix)
+	device, _ := opaqueid.New(opaqueid.VisitorDevicePrefix)
+	issuer, err := controlvisitor.New(make([]byte, ed25519.SeedSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalCSR []byte
+	var issued controlv1.ServiceClientCertificate
+	parent := "cs_" + strings.Repeat("a", 22)
+	issuedParent := ""
+	issue := func(_ context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
+		if originalCSR == nil {
+			originalCSR = bytes.Clone(csr)
+		} else if !bytes.Equal(originalCSR, csr) {
+			t.Fatal("reauthentication changed the saved CSR")
+		}
+		if issued.CertificatePem != "" && parent == issuedParent {
+			return issued, nil
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		certificate, err := issueServiceClientPermission(t, issuer, csr, service, identity, device, now.Add(visitortoken.RenewableLifetime), now, parent)
+		if err != nil {
+			return controlv1.ServiceClientCertificate{}, err
+		}
+		issued = controlv1.ServiceClientCertificate{ServiceId: service, CertificatePem: string(certificate), IssuerPem: string(issuer.CertificatePEM()), ExpiresAt: now.Add(visitortoken.RenewableLifetime)}
+		issuedParent = parent
+		return issued, nil
+	}
+	first, err := store.EnsureServiceClientCertificate(t.Context(), identity, service, device, issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCertificate, err := os.ReadFile(first.CertificateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey, err := os.ReadFile(first.KeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent = "cs_" + strings.Repeat("b", 22)
+	second, err := store.EnsureServiceClientCertificate(t.Context(), identity, service, device, issue)
+	if err != nil || first.CertificateFile != second.CertificateFile || first.KeyFile != second.KeyFile {
+		t.Fatal("reauthentication did not replace the issued leaf in place", err)
+	}
+	newCertificate, err := os.ReadFile(second.CertificateFile)
+	if err != nil || bytes.Equal(oldCertificate, newCertificate) {
+		t.Fatal("new parent session retained the old certificate", err)
+	}
+	newKey, err := os.ReadFile(second.KeyFile)
+	if err != nil || !bytes.Equal(oldKey, newKey) {
+		t.Fatal("reissued certificate changed the portable client key", err)
+	}
+	var persistedCSR []byte
+	if err := db.db.QueryRowContext(t.Context(), `SELECT issued_csr_der FROM service_client_certificates WHERE server_origin=? AND identity_id=? AND service_id=? AND device_id=?`, "https://control.example", identity, service, device).Scan(&persistedCSR); err != nil || !bytes.Equal(persistedCSR, originalCSR) {
+		t.Fatal("reissued certificate lost its durable CSR", err)
+	}
+	if _, err := store.EnsureServiceClientCertificate(t.Context(), identity, service, device, issue); err != nil {
+		t.Fatal("same-parent revalidation did not keep the replacement certificate", err)
 	}
 }
 

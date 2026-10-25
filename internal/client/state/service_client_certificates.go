@@ -40,8 +40,8 @@ func (ServiceClientMaterial) GoString() string { return "service client credenti
 // observes mismatched key/certificate files during an atomic certificate update.
 // a pending CSR is saved before the request and reused after an uncertain reply.
 // every call rechecks access and binds the credential to the current control
-// session. the successful CSR is immutable until renewal; replaying it does not
-// issue a new certificate or extend the old session's company proof.
+// session. replaying a CSR keeps the same certificate within one session; a
+// newly authenticated parent can replace the certificate with the same key.
 func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, service, device string, issue func(context.Context, []byte) (controlv1.ServiceClientCertificate, error)) (result ServiceClientMaterial, retErr error) {
 	if s == nil || issue == nil || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(service, opaqueid.ServicePrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) {
 		return result, ErrPublisherStateConflict
@@ -88,9 +88,10 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 		return result, err
 	}
 	var material tls.Certificate
+	var priorSession string
 	refresh := true
 	if len(certificate) != 0 {
-		material, err = validateServiceClientMaterial(der, certificate, issuerPEM, service, identity, device)
+		material, priorSession, err = validateServiceClientMaterial(der, certificate, issuerPEM, service, identity, device)
 		if err != nil {
 			return result, err
 		}
@@ -117,15 +118,20 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 	if err != nil {
 		return result, err
 	}
-	if issued.ServiceId != service || !refresh && (issued.CertificatePem != string(certificate) || issued.IssuerPem != string(issuerPEM)) {
+	if issued.ServiceId != service {
 		return result, ErrPublisherStateConflict
 	}
+	changed := issued.CertificatePem != string(certificate) || issued.IssuerPem != string(issuerPEM)
 	certificate, issuerPEM = []byte(issued.CertificatePem), []byte(issued.IssuerPem)
-	material, err = validateServiceClientMaterial(der, certificate, issuerPEM, service, identity, device)
+	var issuedSession string
+	material, issuedSession, err = validateServiceClientMaterial(der, certificate, issuerPEM, service, identity, device)
 	if err != nil || !material.Leaf.NotAfter.Equal(issued.ExpiresAt) || !issued.ExpiresAt.After(time.Now()) {
 		return result, errors.Join(visitorcert.ErrInvalidCertificate, err)
 	}
-	if refresh {
+	if !refresh && changed && priorSession == issuedSession {
+		return result, ErrPublisherStateConflict
+	}
+	if refresh || changed {
 		if _, err = s.database.db.ExecContext(ctx, `UPDATE service_client_certificates SET csr_der=NULL,issued_csr_der=?,certificate_pem=?,issuer_pem=? WHERE server_origin=? AND identity_id=? AND service_id=? AND device_id=?`, csr, certificate, issuerPEM, s.controlEndpoint, identity, service, device); err != nil {
 			return result, err
 		}
@@ -150,24 +156,24 @@ func (s *Store) EnsureServiceClientCertificate(ctx context.Context, identity, se
 	return result, nil
 }
 
-func validateServiceClientMaterial(key, certificate, issuer []byte, service, identity, device string) (tls.Certificate, error) {
+func validateServiceClientMaterial(key, certificate, issuer []byte, service, identity, device string) (tls.Certificate, string, error) {
 	private := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
 	defer clear(private)
 	material, err := tls.X509KeyPair(certificate, private)
 	if err != nil || len(material.Certificate) == 0 {
-		return material, visitorcert.ErrInvalidCertificate
+		return material, "", visitorcert.ErrInvalidCertificate
 	}
 	leaf, err := x509.ParseCertificate(material.Certificate[0])
 	if err != nil {
-		return material, err
+		return material, "", err
 	}
 	block, rest := pem.Decode(issuer)
 	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
-		return material, visitorcert.ErrInvalidCertificate
+		return material, "", visitorcert.ErrInvalidCertificate
 	}
 	root, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return material, err
+		return material, "", err
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
@@ -179,15 +185,15 @@ func validateServiceClientMaterial(key, certificate, issuer []byte, service, ide
 	}
 	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
 	if err != nil || leaf.IsCA || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
-		return material, visitorcert.ErrInvalidCertificate
+		return material, "", visitorcert.ErrInvalidCertificate
 	}
 	scope, source, err := visitortoken.CertificateIssuanceBinding(chains)
 	human, ok := source.(visitortoken.Device)
 	if err != nil || scope.Kind != visitorscope.Service || scope.ID != service || !ok || human.IdentityID != identity || human.DeviceID != device {
-		return material, visitorcert.ErrInvalidCertificate
+		return material, "", visitorcert.ErrInvalidCertificate
 	}
 	material.Leaf = leaf
-	return material, nil
+	return material, human.SessionID, nil
 }
 
 func writeServiceCredential(directory, name string, data []byte, immutable bool) error {
