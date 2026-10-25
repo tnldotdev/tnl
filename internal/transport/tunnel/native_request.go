@@ -72,9 +72,6 @@ func (s *NativeRequestWriter) Write(p []byte) (int, error) {
 func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ended {
-		return io.ErrClosedPipe
-	}
 	if err := s.startLocked(nil); err != nil {
 		return err
 	}
@@ -93,9 +90,8 @@ func (s *NativeRequestWriter) CloseWrite() error {
 	if s.err == nil {
 		s.err = tunnelv1.WriteNativeRequestFrame(s.Conn, tunnelv1.NativeRequestFrame{Kind: tunnelv1.NativeRequestEnded})
 	}
-	if closer, ok := s.Conn.(interface{ CloseWrite() error }); ok {
-		return errors.Join(s.err, closer.CloseWrite())
-	}
+	// end application bytes, but keep the request stream's write direction
+	// available for permission renewal while the response is still in flight.
 	return s.err
 }
 
@@ -148,9 +144,22 @@ func (s *NativeRequestReader) Read(p []byte) (int, error) {
 			}
 		case tunnelv1.NativeRequestEnded:
 			s.terminal = io.EOF
+			go s.renewAfterEnd()
 		}
 	}
 	return 0, s.terminal
+}
+
+// after the local application sees EOF, only signed permission frames may
+// arrive. a failed renewal closes this visitor stream, not its mux session.
+func (s *NativeRequestReader) renewAfterEnd() {
+	for {
+		frame, err := s.readFrame()
+		if err != nil || frame.Kind != tunnelv1.NativeRequestPermission || s.renew == nil || s.renew(frame.Permission) != nil {
+			_ = s.Conn.Close()
+			return
+		}
+	}
 }
 
 // net/http interrupts idle reads with deadlines when hijacking an upgraded

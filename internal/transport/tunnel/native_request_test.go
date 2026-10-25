@@ -20,6 +20,8 @@ type interruptedNativeConn struct {
 	reported          bool
 }
 
+func (*interruptedNativeConn) Close() error { return nil }
+
 func (c *interruptedNativeConn) Read(p []byte) (int, error) {
 	if c.offset == c.interrupt && !c.reported {
 		c.reported = true
@@ -180,8 +182,85 @@ func TestNativeRequestRenewalNeverEntersVisitorTLSBytes(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Renew(permission); !errors.Is(err, io.ErrClosedPipe) {
-		t.Fatal("ended native stream accepted a renewal", err)
+}
+
+func TestNativeHalfCloseKeepsPermissionAndResponseDirections(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	permission := nativeRequestPermissionFixture()
+	renewed := make(chan struct{}, 1)
+	reader := NewNativeRequestReader(server, nil, func(got tunnelv1.NativeVisitorPermission) error {
+		if got != permission {
+			return errors.New("half-close changed the renewal proof")
+		}
+		renewed <- struct{}{}
+		return nil
+	})
+	writer := NewNativeRequestWriter(client)
+	finished := make(chan error, 1)
+	go func() {
+		if _, err := writer.Write([]byte("request")); err != nil {
+			finished <- err
+			return
+		}
+		if err := writer.CloseWrite(); err != nil {
+			finished <- err
+			return
+		}
+		finished <- writer.Renew(permission)
+	}()
+	request, err := io.ReadAll(reader)
+	if err != nil || string(request) != "request" {
+		t.Fatalf("half-closed application request = %q: %v", request, err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-renewed:
+	case <-time.After(time.Second):
+		t.Fatal("renewal stopped with the application request direction")
+	}
+	go func() { _, _ = server.Write([]byte("response")) }()
+	var response [8]byte
+	if _, err := io.ReadFull(client, response[:]); err != nil || string(response[:]) != "response" {
+		t.Fatalf("half-close truncated the response: %q: %v", response, err)
+	}
+}
+
+func TestNativeHalfCloseRejectsRevokedRenewal(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	denied := make(chan struct{})
+	reader := NewNativeRequestReader(server, nil, func(tunnelv1.NativeVisitorPermission) error {
+		close(denied)
+		return errors.New("visitor permission revoked")
+	})
+	writer := NewNativeRequestWriter(client)
+	finished := make(chan error, 1)
+	go func() {
+		if err := writer.CloseWrite(); err != nil {
+			finished <- err
+			return
+		}
+		finished <- writer.Renew(nativeRequestPermissionFixture())
+	}()
+	if _, err := reader.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatal("half-close did not end application input", err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-denied:
+	case <-time.After(time.Second):
+		t.Fatal("revoked permission was not checked after the application half-close")
+	}
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatal("revoked permission left the response direction open", err)
 	}
 }
 
