@@ -821,7 +821,7 @@ func workflowListen(t *testing.T) net.Listener {
 	}
 	return listener
 }
-func workflowWait(t *testing.T, timeout time.Duration, condition func() bool) {
+func workflowWait(t *testing.T, timeout time.Duration, condition func() bool, label ...string) {
 	t.Helper()
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
@@ -831,6 +831,9 @@ func workflowWait(t *testing.T, timeout time.Duration, condition func() bool) {
 		}
 		select {
 		case <-deadline.C:
+			if len(label) > 0 {
+				t.Fatalf("CLI workflow %s did not become ready", label[0])
+			}
 			t.Fatal("CLI workflow condition did not become ready")
 		case <-time.After(25 * time.Millisecond):
 		}
@@ -865,12 +868,14 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
+	var firstFailure sync.Once
+	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond,
+		Report: func(err error) { firstFailure.Do(func() { t.Logf("relay %s first control error: %v", id, err) }) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
-	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 })
+	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 }, "relay "+id)
 	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
 	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.PublisherConnectionController, *relay.Registry, bool) {
@@ -922,12 +927,14 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, VisitorControl: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	var firstFailure sync.Once
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, VisitorControl: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: tunnelv1.Version, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second,
+		Report: func(err error) { firstFailure.Do(func() { t.Logf("ingress %s first control error: %v", id, err) }) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
-	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) })
+	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) }, "ingress "+id)
 	// certificates expire with their issuing lease deadline. fetch current
 	// material for later connectors after the controller renews that lease.
 	getCertificate := func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {

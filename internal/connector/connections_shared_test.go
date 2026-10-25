@@ -180,6 +180,30 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
 			parts := strings.Split(r.URL.Path, "/")
 			_ = json.NewEncoder(w).Encode(controlv1.WorkloadServiceAuthorization{Subject: session.Subject, ServiceId: parts[len(parts)-2], ValidUntil: session.LeaseExpiresAt, PolicyRevision: 1})
+		case r.URL.Path == "/v1/visitor-tokens":
+			var request controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || json.Unmarshal(request.Source, &source) != nil ||
+				request.Resource.Kind != "service" || source.Kind != controlv1.VisitorTokenWorkload || source.Credential != session.Credential {
+				t.Error("shared owner requested an invalid visitor permission", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			index := -1
+			for i, service := range ids {
+				if request.Resource.Id == service {
+					index = i
+				}
+			}
+			if index < 0 {
+				t.Error("shared owner requested permission for another service")
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{
+				Resource: request.Resource, Hostname: serviceNames[index] + ".example.test", Port: 15443 + index,
+				VisitorPolicyRevision: 1, VisitorToken: "prepared-visitor-permission", ExpiresAt: now.Add(time.Minute),
+			})
 		case strings.HasSuffix(r.URL.Path, "/run"):
 			parts := strings.Split(r.URL.Path, "/")
 			service := parts[len(parts)-2]
