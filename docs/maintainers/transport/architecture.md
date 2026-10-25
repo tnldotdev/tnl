@@ -43,8 +43,11 @@ target: independently selected HTTP/TCP/database transport
 Ingress creates one PROXY v2 header carrying the original source/destination;
 relay preserves it and the TLS bytes. Protocol version 1 and ALPN `tnl-tunnel/1`
 require a coordinated client/server update. Each opening carries bounded metadata
-and up to 64 KiB of initial bytes in one write. Sending does not wait for remote
-acceptance; an opener's return is not proof of publisher admission.
+and up to 64 KiB of initial bytes. On a confirmed relay session, ingress sends
+metadata and initial bytes together without waiting for acceptance. On a newly
+connected relay session, ingress sends metadata first and waits for relay
+acceptance before sending visitor bytes. This prevents an old routing entry from
+committing a visitor to a restarted relay process.
 
 The return direction frames acceptance, rejection, promotion, data, and half-close
 in order. Only data reaches visitor TLS. Promotion stays on that visitor's return
@@ -54,10 +57,11 @@ rejected notification closes that stream without affecting its siblings. Pending
 capacity remains bounded until publisher authorization.
 
 Ingress may try another connected relay before the first visitor byte is sent.
-A local opening failure, failed PROXY-header write, or zero-byte ClientHello write
-can still be retried. A return-side rejection after the opening committed visitor
-bytes cannot be retried. The first visitor byte commits the stream, even if the rest of
-ClientHello fails. Copy/close then owns it; live connections are never replayed
+A local opening failure, failed PROXY-header write, zero-byte ClientHello write,
+or rejection of an unconfirmed relay session can still be retried. A return-side
+rejection after the opening committed visitor bytes cannot be retried. The first
+visitor byte commits the stream, even if the rest of ClientHello fails.
+Copy/close then owns it; live connections are never replayed
 or migrated. Public and private setup reserve time for alternate relays before
 that boundary. A denied visitor may use separate admission to finish TLS at the
 publisher and receive HTTPS 403.

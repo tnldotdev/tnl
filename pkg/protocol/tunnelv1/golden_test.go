@@ -34,6 +34,14 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
 		PublicUrlExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
 	}, WriteInternalForwardingHeader, ReadInternalForwardingHeader)
+	assertGoldenFrame(t, "confirmed-forwarding-header", InternalForwardingHeader{
+		ProtocolVersion: Version, Kind: InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
+		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 1,
+		ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1", RelayID: "relay_1",
+		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
+		PublicUrlExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute), ConfirmBeforeBytes: true,
+	}, WriteInternalForwardingHeader, ReadInternalForwardingHeader)
 	assertGoldenFrame(t, "stream-response", StreamResponse{
 		Type: StreamRejected, Code: StaleConnectionAssignment,
 	}, WriteStreamResponse, ReadStreamResponse)

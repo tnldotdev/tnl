@@ -282,7 +282,16 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 				return nil
 			}}
 		}
-		stream, err := session.StartInternalForwardingStream(ctx, header, proxy, initial, events)
+		confirmed := b.forwarder.confirmedSession(b.target.key(), session)
+		var stream muxsession.Stream
+		if confirmed || len(initial)+len(overflow) == 0 {
+			stream, err = session.StartInternalForwardingStream(ctx, header, proxy, initial, events)
+		} else {
+			stream, err = session.StartConfirmedInternalForwardingStream(ctx, header, proxy, initial, events)
+			if err == nil {
+				b.forwarder.confirmSession(b.target.key(), session)
+			}
+		}
 		if err == nil && len(overflow) != 0 {
 			_, err = writeSetup(ctx, stream, nil, overflow)
 			if err != nil {
@@ -342,10 +351,26 @@ func (t relayTarget) key() relaySessionKey {
 type relaySessionKey relayTarget
 
 type relaySession struct {
-	ready   chan struct{}
-	cancel  context.CancelFunc
-	session *tunnel.Session
-	err     error
+	ready     chan struct{}
+	cancel    context.CancelFunc
+	session   *tunnel.Session
+	confirmed bool
+	err       error
+}
+
+func (f *Forwarder) confirmedSession(key relaySessionKey, session *tunnel.Session) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.sessions[key]
+	return entry != nil && entry.session == session && entry.confirmed
+}
+
+func (f *Forwarder) confirmSession(key relaySessionKey, session *tunnel.Session) {
+	f.mu.Lock()
+	if entry := f.sessions[key]; entry != nil && entry.session == session {
+		entry.confirmed = true
+	}
+	f.mu.Unlock()
 }
 
 func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Session, bool, error) {

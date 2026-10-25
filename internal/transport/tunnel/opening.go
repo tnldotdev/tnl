@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -35,6 +36,33 @@ func (s *Session) StartInternalForwardingStream(ctx context.Context, h tunnelv1.
 	return s.startStream(ctx, events, func(stream muxsession.Stream) (bool, error) {
 		return tunnelv1.WriteForwardingOpening(stream, h, proxy, initial)
 	})
+}
+
+// StartConfirmedInternalForwardingStream sends the opening metadata and waits
+// for relay acceptance before sending the initial visitor bytes. use it until
+// a new relay session proves it holds the assigned publisher connection.
+func (s *Session) StartConfirmedInternalForwardingStream(ctx context.Context, h tunnelv1.InternalForwardingHeader, proxy, initial []byte, events *ReturnEvents) (muxsession.Stream, error) {
+	if len(proxy) > tunnelv1.MaxInitialBytes || len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
+		return nil, &OpeningError{Err: errors.New("initial visitor bytes exceed the opening limit")}
+	}
+	h.ConfirmBeforeBytes = true
+	stream, err := s.StartInternalForwardingStream(ctx, h, proxy, nil, events)
+	if err != nil {
+		return nil, err
+	}
+	if err := stream.(*returnStream).awaitAccepted(ctx); err != nil {
+		return nil, &OpeningError{Err: errors.Join(controlContextError(ctx, err), stream.Close())}
+	}
+	if len(initial) > 0 {
+		n, err := stream.Write(initial)
+		if err == nil && n != len(initial) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			return nil, &OpeningError{Committed: n > 0, Err: errors.Join(controlContextError(ctx, err), stream.Close())}
+		}
+	}
+	return stream, nil
 }
 
 func (s *Session) StartServiceForwardingStream(ctx context.Context, h tunnelv1.ServiceForwardingHeader, initial []byte, events *ReturnEvents) (muxsession.Stream, error) {

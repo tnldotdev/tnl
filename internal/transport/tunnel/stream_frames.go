@@ -35,27 +35,46 @@ func AwaitServiceRelayAcceptance(ctx context.Context, connection net.Conn) error
 	if !ok {
 		return tunnelv1.ErrReturnFrame
 	}
-	stream.readMu.Lock()
-	defer stream.readMu.Unlock()
-	finish, err := setupDeadline(ctx, stream.Stream)
+	return stream.awaitAccepted(ctx)
+}
+
+// awaitAccepted checks the relay's first response before the caller sends any
+// visitor bytes on a newly established forwarding session.
+func (s *returnStream) awaitAccepted(ctx context.Context) (retErr error) {
+	finish, err := setupDeadline(ctx, s.Stream)
 	if err != nil {
 		return err
 	}
-	frame, err := tunnelv1.ReadReturnFrame(stream.Stream)
-	if err == nil {
-		switch frame.Kind {
-		case tunnelv1.ReturnAccepted:
-			stream.accepted = true
-		case tunnelv1.ReturnRejected:
-			err = &ProtocolError{Code: frame.Code}
-			if stream.reject != nil {
-				err = errors.Join(err, stream.reject(frame.Code))
-			}
-		default:
-			err = tunnelv1.ErrReturnFrame
-		}
+	defer func() { retErr = errors.Join(retErr, finish(retErr == nil)) }()
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if s.terminal != nil {
+		return s.terminal
 	}
-	return errors.Join(err, finish(err == nil))
+	if s.accepted {
+		return nil
+	}
+	frame, err := tunnelv1.ReadReturnFrame(s.Stream)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		s.terminal = err
+		return err
+	}
+	switch frame.Kind {
+	case tunnelv1.ReturnAccepted:
+		s.accepted = true
+		return nil
+	case tunnelv1.ReturnRejected:
+		s.terminal = &ProtocolError{Code: frame.Code}
+		if s.reject != nil {
+			s.terminal = errors.Join(s.terminal, s.reject(frame.Code))
+		}
+	default:
+		s.terminal = tunnelv1.ErrReturnFrame
+	}
+	return s.terminal
 }
 
 func (s *returnStream) Read(p []byte) (int, error) {
@@ -236,7 +255,7 @@ func (s *replyStream) startReplyLocked() error {
 	return s.writeErr
 }
 
-func (s *replyStream) acknowledge() error {
+func (s *replyStream) sendAccepted() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.startReplyLocked()

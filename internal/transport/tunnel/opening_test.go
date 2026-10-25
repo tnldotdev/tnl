@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 
@@ -109,5 +110,77 @@ func TestOpeningRejectionNeverReachesVisitorTLS(t *testing.T) {
 	}
 	if err := await(t, worker); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConfirmedForwardingSendsVisitorBytesOnlyAfterRelayAcceptance(t *testing.T) {
+	for _, accept := range []bool{false, true} {
+		t.Run(map[bool]string{false: "rejected", true: "accepted"}[accept], func(t *testing.T) {
+			client, server := newAuthenticatedPair(t)
+			ctx := tunnelContext(t)
+			opened := make(chan struct{})
+			continueOpening := make(chan struct{})
+			worker := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				raw, err := server.transport.AcceptStream(ctx)
+				if err != nil {
+					return err
+				}
+				header, _, initial, err := tunnelv1.ReadForwardingOpening(raw)
+				expected := internalForwardingHeader()
+				expected.ConfirmBeforeBytes = true
+				if err != nil || header != expected || string(initial) != "proxy metadata" {
+					return errors.New("relay received visitor bytes before accepting the new session")
+				}
+				close(opened)
+				<-continueOpening
+				reply := newReplyStream(raw, initial)
+				if !accept {
+					return reply.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.StaleConnectionAssignment})
+				}
+				if err := reply.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted}); err != nil {
+					return err
+				}
+				if err := reply.sendAccepted(); err != nil {
+					return err
+				}
+				bytes := make([]byte, len("proxy metadataclient hello"))
+				if _, err := io.ReadFull(reply, bytes); err != nil || string(bytes) != "proxy metadataclient hello" {
+					return errors.New("relay lost confirmed visitor bytes")
+				}
+				return nil
+			})
+			type openedStream struct {
+				stream net.Conn
+				err    error
+			}
+			result := make(chan openedStream, 1)
+			go func() {
+				stream, err := client.StartConfirmedInternalForwardingStream(ctx, internalForwardingHeader(), []byte("proxy metadata"), []byte("client hello"), nil)
+				result <- openedStream{stream: stream, err: err}
+			}()
+			<-opened
+			select {
+			case <-result:
+				t.Fatal("forwarder returned before relay acceptance")
+			default:
+			}
+			close(continueOpening)
+			got := <-result
+			if accept {
+				if got.err != nil {
+					t.Fatal(got.err)
+				}
+				_ = got.stream.Close()
+			} else {
+				var rejected *ProtocolError
+				var opening *OpeningError
+				if !errors.As(got.err, &opening) || opening.Committed || !errors.As(got.err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+					t.Fatalf("rejection crossed retry boundary: %v", got.err)
+				}
+			}
+			if err := await(t, worker); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

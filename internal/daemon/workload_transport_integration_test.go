@@ -120,7 +120,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			assertWorkloadConnectorProof(t, job, byName["private-tcp"], transport)
 			stopRenew := renewRuntimeWorkload(t, job, session.ExpiresAt)
-			paths := openWorkloadPaths(t, f, job, byName, pg)
+			paths := openWorkloadPaths(t, f, job, byName, pg, "renewed")
 			paths.step(t, 0)
 			unrenewed, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
@@ -132,7 +132,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg)
+			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg, "unrenewed")
 			unrenewedPaths.step(t, 0)
 			// a second ephemeral key cannot steal the execution or reuse its cert.
 			other, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
@@ -148,7 +148,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, claims), keys); err != nil {
 				t.Fatal(err)
 			}
-			revokedPaths := openWorkloadPaths(t, f, other, byName, pg)
+			revokedPaths := openWorkloadPaths(t, f, other, byName, pg, "revoked")
 			revokedPaths.step(t, 0)
 			if err = other.Revoke(t.Context()); err != nil {
 				t.Fatal(err)
@@ -421,7 +421,7 @@ type workloadRuntimePaths struct {
 	database    *pgx.Conn
 }
 
-func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig) *workloadRuntimePaths {
+func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, label string) *workloadRuntimePaths {
 	t.Helper()
 	p := &workloadRuntimePaths{}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
@@ -446,7 +446,11 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		ctx, cancel := context.WithCancel(t.Context())
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, Ready: func() error { close(ready); return nil }})
+			if ctx.Err() == nil {
+				t.Logf("workload connector %s/%s stopped: %v", label, name, err)
+			}
+			done <- err
 		}()
 		t.Cleanup(func() {
 			cancel()

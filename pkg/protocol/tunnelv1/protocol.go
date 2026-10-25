@@ -151,6 +151,7 @@ type InternalForwardingHeader struct {
 	RelayLeaseRevision           uint64            `json:"relay_lease_revision"`
 	PublicUrlExpiresAt           time.Time         `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time         `json:"lease_expires_at"`
+	ConfirmBeforeBytes           bool              `json:"confirm_before_bytes,omitempty"`
 	AccessPending                bool              `json:"access_pending,omitempty"`
 }
 

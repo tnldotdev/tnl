@@ -468,8 +468,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if canPrepare(visitorID, now) {
 		t.Fatal("revoked publisher grant allowed native preparation")
 	}
-	if _, err = d.SelectServiceRun(ctx, service.ID, visitorID, deviceIDs[visitorID], now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("revoked publisher grant selected a run: %v", err)
+	if _, err = d.SelectServiceRun(ctx, service.ID, visitorID, deviceIDs[visitorID], now); !errors.Is(err, controlstate.ErrServiceRunUnavailable) {
+		t.Fatalf("revoked publisher grant did not remove the ready run: %v", err)
 	}
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant renewed run: %v", err)
