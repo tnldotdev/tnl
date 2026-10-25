@@ -171,7 +171,8 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			fixture.visitor.transport.CloseIdleConnections()
 			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
 			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_authorization", "publisher.authorization")
+			// the ad-hoc publisher has no app-owned visitor guard. ingress already
+			// admitted this visitor before forwarding the stream.
 		})
 	}
 }

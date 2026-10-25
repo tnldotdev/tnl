@@ -33,6 +33,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type integrationGuestPublisherControl struct {
@@ -127,7 +128,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	for _, name := range []string{"guest-relay-a", "guest-relay-b"} {
 		if _, err := state.RegisterRelay(t.Context(), controlstate.RelayRegistration{
 			RelayServiceID: name, RelayID: name + "-process", RelayRunID: name + "-run",
-			ProtocolVersion: 1, RelayAddress: name + ".example.test:443",
+			ProtocolVersion: tunnelv1.Version, RelayAddress: name + ".example.test:443",
 			TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445",
 			ConnectionCapacity: 4, StreamCapacity: 4,
 		}, time.Now(), time.Minute); err != nil {
@@ -340,6 +341,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	waitForIngressRoutingCurrent(t, inspect, 2)
 	localDemo.SetPublicURL(ready.PublicURL)
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
+	waitForPreparedPublicVisitor(t, visitor, ready.PublicURL)
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		t.Fatal(err)

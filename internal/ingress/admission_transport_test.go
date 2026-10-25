@@ -97,6 +97,11 @@ func publisherAdmission(h tunnelv1.VisitorStreamHeader) tunnelv1.AdmissionHeader
 
 func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string) (net.Conn, *tunnel.IncomingVisitorStream) {
 	t.Helper()
+	return openPendingTransportWithContext(t, f, id, ingressContext(t))
+}
+
+func openPendingTransportWithContext(t *testing.T, f *admissionTransportFixture, id string, ctx context.Context) (net.Conn, *tunnel.IncomingVisitorStream) {
+	t.Helper()
 	incoming := make(chan *tunnel.IncomingVisitorStream, 1)
 	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
 		v, err := f.publisher.AcceptVisitorStream(ingressContext(t))
@@ -107,7 +112,7 @@ func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string)
 		return v.Accept()
 	})
 	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	c, err := b.OpenPending(ingressContext(t), id)
+	c, err := b.OpenPending(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +120,38 @@ func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string)
 		t.Fatal(err)
 	}
 	return c, ingressAwait(t, incoming)
+}
+
+func TestPendingPromotionSurvivesCompletedOpeningContext(t *testing.T) {
+	f := newAdmissionTransportFixture(t)
+	var decisions atomic.Int32
+	f.forwarder.SetPromotionHandler(func(ctx context.Context, _ tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
+		if ctx.Err() != nil {
+			t.Error("promotion inherited completed opening deadline")
+		}
+		decisions.Add(1)
+		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
+	})
+	opening, cancel := context.WithCancel(ingressContext(t))
+	stream, incoming := openPendingTransportWithContext(t, f, "visitor_after_open", opening)
+	defer stream.Close()
+	defer incoming.Stream.Close()
+	cancel()
+	h := publisherAdmission(incoming.Header)
+	done := ingressWorker(t, func() { _ = incoming.Stream.Close() }, func() error {
+		if err := sendTransportPromotion(t, incoming, h); err != nil {
+			return err
+		}
+		_, err := incoming.Stream.Write([]byte("reply"))
+		return err
+	})
+	var reply [5]byte
+	if _, err := io.ReadFull(stream, reply[:]); err != nil || string(reply[:]) != "reply" {
+		t.Fatalf("promotion after setup did not carry the visitor response: %q, %v", reply, err)
+	}
+	if err := ingressAwait(t, done); err != nil || decisions.Load() != 1 {
+		t.Fatal("promotion was not bound to the live stream once", err, decisions.Load())
+	}
 }
 
 func assertAdmissionCode(t *testing.T, err error, want tunnelv1.ErrorCode) {
