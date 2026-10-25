@@ -164,7 +164,7 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		if a.tokens != nil {
 			permission, verifyErr := a.tokens.verify(result.Permission, result.ExpiresAt)
 			if verifyErr != nil && a.policy != nil {
-				if refreshErr := a.policy.refresh(request.Context()); refreshErr == nil {
+				if refreshErr := a.policy.Refresh(request.Context()); refreshErr == nil {
 					permission, verifyErr = a.tokens.verify(result.Permission, result.ExpiresAt)
 				}
 			}
@@ -341,7 +341,7 @@ func (a *browserAccess) prepareSessionToken(ctx context.Context, source json.Raw
 	if err := a.tokens.installFromSession(source, permission); err == nil {
 		return nil
 	}
-	if err := a.policy.refresh(ctx); err != nil {
+	if err := a.policy.Refresh(ctx); err != nil {
 		return err
 	}
 	return a.tokens.installFromSession(source, permission)

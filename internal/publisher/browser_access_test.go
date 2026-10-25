@@ -180,7 +180,7 @@ func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.
 				policy: control.policy, tokens: control.tokens}
 			server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: certificateTestPublicURLID,
 				Handler:       http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
-				BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens})
+				BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: control.policy.Lease, VisitorTokens: control.tokens})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,7 +282,7 @@ func TestBrowserHandoffRetainsShareVisitorPermissionForSignedInReviewer(t *testi
 			token = cookie.Value
 		}
 	}
-	view, _, _ := control.policy.lease.Current()
+	view, _, _ := control.policy.Lease.Current()
 	permission, err := visitortoken.VerifyBearer(visitortoken.Token(token), view, time.Now())
 	if err != nil || permission.Subject != (visitortoken.Share{ShareID: "shr_0123456789abcdefghijkl"}) {
 		t.Fatal("sign-in replaced share-backed visitor access", err)
