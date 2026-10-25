@@ -62,6 +62,11 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 		waitForReadyPublisherConnections(t, database, ready.PublicURLID, ready.PublishRunNumber, 2)
 	}
 	waitForIngressRoutingCurrentWithin(t, database, len(separatedIngresses()), separatedRoutingAcknowledgmentTimeout)
+	// publishers report installed allocations on background policy updates;
+	// routing acknowledgment alone cannot prove visitor readiness at ingress.
+	for _, ready := range publishers.Ready {
+		waitForPublisherObservedIngressAllocations(t, database, ready.PublicURLID, ready.PublishRunNumber, len(separatedIngresses()))
+	}
 	var orders, installed, distinctPublicURLs int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {

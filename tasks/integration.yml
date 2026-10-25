@@ -142,7 +142,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
   services:
     dir: "{{.ROOT_DIR}}"

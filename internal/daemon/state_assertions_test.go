@@ -77,6 +77,24 @@ func waitForReadyPublisherConnections(t *testing.T, database *sql.DB, publicURLI
 	})
 }
 
+func waitForPublisherObservedIngressAllocations(t *testing.T, database *sql.DB, publicURLID string, publishRunNumber uint64, expected int) {
+	t.Helper()
+	var observed int
+	defer func() {
+		if t.Failed() {
+			t.Logf("publisher-observed ingress allocations for %s run %d: %d of %d", publicURLID, publishRunNumber, observed, expected)
+		}
+	}()
+	waitForIntegrationCondition(t, 25*time.Second, func(ctx context.Context) (bool, error) {
+		err := database.QueryRowContext(ctx, `
+			SELECT count(DISTINCT ingress_id) FROM control.stream_capacity_allocations
+			WHERE resource_kind='public_url' AND resource_id=$1 AND run_number=$2
+			  AND publisher_observed_at IS NOT NULL AND retired_at IS NULL AND valid_until>now()
+		`, publicURLID, publishRunNumber).Scan(&observed)
+		return err == nil && observed == expected, err
+	})
+}
+
 func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -45,7 +45,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
-			t.Parallel()
+			// keep the two real-clock lease lifecycles on independent budgets.
 			opened := make(chan privateObservation, 256)
 			f, issuer := newWorkloadTransportFixture(t, opened)
 			for slot := range 2 {

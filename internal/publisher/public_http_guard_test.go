@@ -454,6 +454,7 @@ func TestPublicHTTPGuardRetainsCachedDecisionAge(t *testing.T) {
 		warm := request("warm")
 		_ = warm.Body.Close()
 		time.Sleep(4 * time.Second)
+		synctest.Wait()
 		control.mu.Lock()
 		revoked = true
 		control.mu.Unlock()
