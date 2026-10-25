@@ -20,6 +20,9 @@ import (
 
 func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	f := newCompanyHTTPFixture(t, "alias_browser_http")
+	if err := f.d.PrepareVisitorSigningKeys(t.Context(), f.server.URL, f.now); err != nil {
+		t.Fatal(err)
+	}
 	owner := f.basic("alias-owner")
 	m := owner.Identity.Memberships[0]
 	p := f.principal(owner)
