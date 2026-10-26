@@ -162,6 +162,9 @@ func testDirectManagedAdmission(t *testing.T, d *Database, request ApplyProjectC
 		t.Fatal(err)
 	}
 	source := netip.MustParseAddr("192.0.2.44")
+	if err := visitortoken.SignReservation(allocation.ProofKey[:], &reservation, source); err != nil {
+		t.Fatal(err)
+	}
 	guard, err := view.BindReservationFrom(reservation, source, func() {})
 	if err != nil {
 		t.Fatal("exact ingress allocation did not reserve local capacity", err)

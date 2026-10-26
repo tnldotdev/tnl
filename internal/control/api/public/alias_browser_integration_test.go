@@ -131,6 +131,9 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 
 func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.T) {
 	f := newCompanyHTTPFixture(t, "share_reviewer_browser")
+	if err := f.d.PrepareVisitorSigningKeys(t.Context(), f.server.URL, f.now); err != nil {
+		t.Fatal(err)
+	}
 	owner, reviewer := f.basic("share-owner"), f.basic("outside-reviewer")
 	m := owner.Identity.Memberships[0]
 	p := f.principal(owner)
@@ -190,6 +193,9 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	shareSession, err := f.d.RedeemShare(ctx, auth, share.ID, secret, nil, f.now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := f.d.IssueVisitorToken(ctx, f.server.URL, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}, controlstate.ShareSessionTokenSource{ShareID: share.ID, Secret: shareSession.CookieSecret}, time.Now()); err != nil {
+		t.Fatal("redeemed share session did not prepare visitor permission", err)
 	}
 	handoff, err := f.d.IssueBrowserHandoff(ctx, controlstate.BrowserLoginAttempt{PreviewID: preview.ID, PublicURLID: u.ID, ReturnPath: "/"}, controlstate.BrowserAccessSession{
 		IdentityID: reviewer.Identity.Identity.Id, DisplayName: "Outside reviewer", AccessToken: reviewer.AccessToken, RefreshToken: reviewer.RefreshToken,

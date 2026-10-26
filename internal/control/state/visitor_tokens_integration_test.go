@@ -95,6 +95,7 @@ func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testin
 
 func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_grant_certificate_concurrent")
+	prepareVisitorTokenKeys(t, d, now)
 	request := oidcRouteRequest(t, d, now)
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
