@@ -2,11 +2,14 @@ package tunnel
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -182,5 +185,54 @@ func TestConfirmedForwardingSendsVisitorBytesOnlyAfterRelayAcceptance(t *testing
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestConfirmedForwardingBoundsBackpressuredBytesAfterAcceptance(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	worker := tunnelWorker(t, func() { unblock(); _ = server.Close() }, func() error {
+		raw, err := server.transport.AcceptStream(tunnelContext(t))
+		if err != nil {
+			return err
+		}
+		defer raw.Close()
+		_, _, initial, err := tunnelv1.ReadForwardingOpening(raw)
+		if err != nil || string(initial) != "proxy metadata" {
+			return errors.New("relay did not receive the metadata-only opening")
+		}
+		reply := newReplyStream(raw, initial)
+		if err := reply.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted}); err != nil {
+			return err
+		}
+		if err := reply.sendAccepted(); err != nil {
+			return err
+		}
+		// leave the initial-byte write backpressured after acceptance.
+		<-release
+		return nil
+	})
+	t.Cleanup(unblock)
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.StartConfirmedInternalForwardingStream(ctx, internalForwardingHeader(), []byte("proxy metadata"), []byte("client hello"), nil)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		var opening *OpeningError
+		var timeout net.Error
+		if !errors.As(err, &opening) || opening.Committed || !errors.Is(err, context.DeadlineExceeded) && (!errors.As(err, &timeout) || !timeout.Timeout()) {
+			t.Fatalf("blocked pre-byte write escaped setup deadline: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("confirmed opening ignored cancellation after relay acceptance")
+	}
+	unblock()
+	if err := await(t, worker); err != nil {
+		t.Fatal(err)
 	}
 }

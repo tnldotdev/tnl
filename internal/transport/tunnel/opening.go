@@ -54,10 +54,15 @@ func (s *Session) StartConfirmedInternalForwardingStream(ctx context.Context, h 
 		return nil, &OpeningError{Err: errors.Join(controlContextError(ctx, err), stream.Close())}
 	}
 	if len(initial) > 0 {
+		finish, err := setupDeadline(ctx, stream)
+		if err != nil {
+			return nil, &OpeningError{Err: errors.Join(err, stream.Close())}
+		}
 		n, err := stream.Write(initial)
 		if err == nil && n != len(initial) {
 			err = io.ErrShortWrite
 		}
+		err = errors.Join(err, finish(err == nil))
 		if err != nil {
 			return nil, &OpeningError{Committed: n > 0, Err: errors.Join(controlContextError(ctx, err), stream.Close())}
 		}

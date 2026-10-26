@@ -171,7 +171,10 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	prior, err := q.FindStreamCapacityAllocation(ctx, controlstatedb.FindStreamCapacityAllocationParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
 		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), RequestID: request.RequestID})
 	if err == nil {
-		if prior.RetiredAt.Valid || !prior.ValidUntil.Time.After(now) || prior.RunNumber != request.RunNumber || used > capacity || owned > fairShare {
+		// scaling out changes the share for new grants, not capacity already
+		// delegated to this live process. keep existing visitors until the
+		// ingress retires its grant during drain or the run limit changes.
+		if prior.RetiredAt.Valid || !prior.ValidUntil.Time.After(now) || prior.RunNumber != request.RunNumber || used > capacity {
 			return result, ErrStreamCapacity
 		}
 		prior, err = q.RenewStreamCapacityAllocation(ctx, controlstatedb.RenewStreamCapacityAllocationParams{ID: prior.ID, Now: timestamptz(now), ValidUntil: timestamptz(until)})

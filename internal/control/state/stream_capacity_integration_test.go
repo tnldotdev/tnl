@@ -176,6 +176,49 @@ func TestIntegrationServiceRunSixteenSlotsPrepareBothIngressPaths(t *testing.T) 
 	}
 }
 
+func TestIntegrationStreamCapacityScaleOutPreservesLiveGrantsUntilDrain(t *testing.T) {
+	f, run, owners := capacityFixture(t, 16)
+	d, now := f.database, f.now
+	firstRequest := capacityRequest(run, owners[0], "first-path", 16)
+	first, err := d.AllocateStreamCapacity(t.Context(), firstRequest, now)
+	if err != nil || first.Capacity != 8 {
+		t.Fatal("first ingress did not receive its share", err)
+	}
+	secondRequest := capacityRequest(run, owners[1], "second-path", 16)
+	second, err := d.AllocateStreamCapacity(t.Context(), secondRequest, now)
+	if err != nil || second.Capacity != 8 {
+		t.Fatal("second ingress did not receive its share", err)
+	}
+	joined, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: "capacity-joining", IngressRunID: "joining-process", ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 10, IngressPoolID: PrimaryIngressPoolID}, now.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []StreamCapacityRequest{firstRequest, secondRequest} {
+		previous := first
+		if request.Owner.IngressID == owners[1].IngressID {
+			previous = second
+		}
+		renewed, err := d.AllocateStreamCapacity(t.Context(), request, now.Add(time.Second))
+		if err != nil || renewed.ID != previous.ID || renewed.Capacity != 8 || renewed.ProofKey != previous.ProofKey {
+			t.Fatal("new ingress revoked a held visitor slot", renewed, err)
+		}
+	}
+	newRequest := capacityRequest(run, joined.IngressLeaseIdentity, "joined-path", 16)
+	if _, err := d.AllocateStreamCapacity(t.Context(), newRequest, now.Add(2*time.Second)); !errors.Is(err, ErrStreamCapacity) {
+		t.Fatal("scale-out oversubscribed existing allocations", err)
+	}
+	if err := d.RetireStreamCapacity(t.Context(), owners[0], first.ID, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AllocateStreamCapacity(t.Context(), newRequest, now.Add(3*time.Second)); !errors.Is(err, ErrStreamCapacity) {
+		t.Fatal("drain reissued slots before the old grant's deadline", err)
+	}
+	joinedAllocation, err := d.AllocateStreamCapacity(t.Context(), newRequest, now.Add(11*time.Second))
+	if err != nil || joinedAllocation.Capacity != 6 {
+		t.Fatal("new ingress did not receive its fair share after the old grant drained", joinedAllocation, err)
+	}
+}
+
 func TestIntegrationStreamCapacityConcurrentOwnersCannotDoubleSpend(t *testing.T) {
 	f, run, owners := capacityFixture(t, 4)
 	var workers sync.WaitGroup
