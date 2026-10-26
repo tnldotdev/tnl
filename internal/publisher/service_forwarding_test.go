@@ -171,6 +171,72 @@ func TestNativeTLSCloseNotifyKeepsOuterPermissionRenewalsAndResponse(t *testing.
 	}
 }
 
+func TestNativeResponseHalfCloseLetsVisitorFinishItsRequest(t *testing.T) {
+	target, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	client, server := privateTCPPair(t)
+	certificate := publicURLTestCertificate(t, "native.test")
+	reader := tunnel.NewNativeRequestReader(server, nil, func(tunnelv1.NativeVisitorPermission) error { return nil })
+	service := ServiceStream{Protocol: config.ProtocolTCP, Hostname: "native.test", Target: target.Addr().String(),
+		TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, Visitor: ConnectorVisitor{Check: func(context.Context) (ServiceVisitorDecision, error) {
+			return ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+		}}}
+	finished := make(chan error, 1)
+	go func() { finished <- service.Forward(t.Context(), reader) }()
+	targetDone := make(chan error, 1)
+	go func() {
+		conn, err := target.AcceptTCP()
+		if err != nil {
+			targetDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		var request [7]byte
+		if _, err := io.ReadFull(conn, request[:]); err != nil || string(request[:]) != "request" {
+			targetDone <- errors.Join(err, errors.New("target did not receive visitor request"))
+			return
+		}
+		if _, err := io.WriteString(conn, "response"); err != nil {
+			targetDone <- err
+			return
+		}
+		if err := conn.CloseWrite(); err != nil {
+			targetDone <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, conn)
+		targetDone <- err
+	}()
+	writer := tunnel.NewNativeRequestWriter(client)
+	secured := tls.Client(writer, &tls.Config{RootCAs: rootsForCertificate(t, certificate), ServerName: "native.test", MinVersion: tls.VersionTLS12})
+	if err := secured.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(secured, "request"); err != nil {
+		t.Fatal(err)
+	}
+	var response [8]byte
+	if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "response" {
+		t.Fatal("response ended before its content", string(response[:]), err)
+	}
+	if _, err := secured.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatal("target response EOF waited for visitor request EOF", err)
+	}
+	if err := writer.CloseTLSWrite(secured); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitPublisherTest(t, targetDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitPublisherTest(t, finished); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrivateDatabaseWrongHostnameNeverReceivesLogin(t *testing.T) {
 	visitor, _ := privateTCPPair(t)
 	provider, target := privateTCPPair(t)

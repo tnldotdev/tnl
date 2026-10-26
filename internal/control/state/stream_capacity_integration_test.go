@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync"
@@ -140,6 +141,67 @@ func TestIntegrationStreamCapacityPublisherObservationIsRunBound(t *testing.T) {
 	untouched, err := d.AllocateStreamCapacity(t.Context(), otherRequest, f.now)
 	if err != nil || untouched.PublisherObserved {
 		t.Fatal("publisher confirmed another resource's allocation", err)
+	}
+}
+
+func TestIntegrationStreamCapacityProofSurvivesStorageKeyRotation(t *testing.T) {
+	f, run, owners := capacityFixture(t, 4)
+	d, now, ctx := f.database, f.now, t.Context()
+	request := capacityRequest(run, owners[0], "rotate-proof-key", 2)
+	first, err := d.AllocateStreamCapacity(ctx, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now); err != nil {
+		t.Fatal(err)
+	}
+	var before []byte
+	var oldID string
+	if err := d.pool.QueryRow(ctx, `SELECT proof_key_ciphertext, proof_key_storage_key_id FROM control.stream_capacity_allocations WHERE id=$1`, first.ID).Scan(&before, &oldID); err != nil || oldID != d.storageKey.CurrentID() {
+		t.Fatal("allocation did not start under the old storage key", err)
+	}
+	url := d.pool.Config().ConnString()
+	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	rotating, err := Open(ctx, url, newKey, testStorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(rotating.Close)
+	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining < 1 {
+		t.Fatal("completion did not count the old allocation key", err)
+	}
+	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining != 0 {
+		t.Fatal("completed rotation retained old allocation keys", remaining, err)
+	}
+	var after []byte
+	var currentID string
+	if err := rotating.pool.QueryRow(ctx, `SELECT proof_key_ciphertext, proof_key_storage_key_id FROM control.stream_capacity_allocations WHERE id=$1`, first.ID).Scan(&after, &currentID); err != nil || currentID != rotating.storageKey.CurrentID() || bytes.Equal(before, after) {
+		t.Fatal("allocation proof was not re-encrypted", err)
+	}
+	reopened, err := Open(ctx, url, newKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reopened.Close)
+	renewed, err := reopened.AllocateStreamCapacity(ctx, request, now.Add(time.Second))
+	if err != nil || renewed.ProofKey != first.ProofKey {
+		t.Fatal("renewal lost its proof key after retiring the old storage key", err)
+	}
+	policy, err := reopened.ReadIngressVisitorPolicy(ctx, owners[0], request.Scope, 0, now.Add(time.Second))
+	if err != nil {
+		t.Fatal("visitor policy cannot read the rotated allocation", err)
+	}
+	var found bool
+	for _, allocation := range policy.Policy.StreamAllocations {
+		if allocation.Id == first.ID && bytes.Equal(allocation.ReservationKey, first.ProofKey[:]) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("visitor policy lost the exact allocation proof after key rotation")
 	}
 }
 

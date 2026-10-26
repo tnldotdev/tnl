@@ -298,7 +298,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 // request stream. continue consuming its permission proofs while target bytes
 // can still flow back to the visitor.
 type nativeTLSRequestConn struct {
-	net.Conn
+	*tls.Conn
 	onEOF func()
 }
 

@@ -63,6 +63,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
+			(SELECT count(*) FROM control.stream_capacity_allocations WHERE proof_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_ingress_assignment_requests WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.workload_ingress_requests WHERE storage_key_id=$1) +
@@ -368,6 +369,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.service_runs
 		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.service_runs", serviceAssignmentSeedContext},
+		{`SELECT ctid::text, id, proof_key_ciphertext FROM control.stream_capacity_allocations
+		  WHERE proof_key_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"proof_key_ciphertext", "proof_key_storage_key_id", "control.stream_capacity_allocations", streamCapacityProofContext},
 		{`SELECT ctid::text, identity_id || '/' || idempotency_key, result_ciphertext FROM control.connector_ingress_assignment_requests
 		  WHERE storage_key_id=$1 ORDER BY identity_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"result_ciphertext", "storage_key_id", "control.connector_ingress_assignment_requests", connectorIngressAssignmentContext},
