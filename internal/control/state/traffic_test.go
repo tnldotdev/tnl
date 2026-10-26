@@ -64,3 +64,17 @@ func TestPublishRunTrafficResolutionAndStoredBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestGuestTrafficCannotRaiseServerLimits(t *testing.T) {
+	connections := trafficlimits.Ceiling().Connections
+	payload, err := resolvePublishRunTraffic(PublishRunRequest{GuestID: "guest",
+		TrafficDefaults: trafficlimits.Ceiling(), TrafficCeiling: trafficlimits.Ceiling(),
+		TrafficSelection: &trafficlimits.Selection{Connections: &connections}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, err := decodePublishRunTraffic(payload)
+	if err != nil || limits != trafficlimits.Guest() || limits.TotalUploadBytes != 0 || limits.TotalDownloadBytes != 0 {
+		t.Fatalf("guest limits = %+v, %v", limits, err)
+	}
+}

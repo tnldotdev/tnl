@@ -32,6 +32,13 @@ func Default() Limits {
 		UploadBytes: 8 << 20, DownloadBytes: 16 << 20}
 }
 
+// Guest bounds a demo's concurrent connections and byte rates without a
+// cumulative transfer allowance. idle ready time consumes the same time budget.
+func Guest() Limits {
+	return Limits{Connections: 8, Rate: 4, RatePer: time.Second, Burst: 8,
+		UploadBytes: 256 << 10, DownloadBytes: 1 << 20}
+}
+
 func Ceiling() Limits {
 	return Limits{Connections: 128, Rate: 100, RatePer: time.Second, Burst: 200,
 		UploadBytes: 64 << 20, DownloadBytes: 128 << 20}

@@ -89,7 +89,7 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
 		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
 	}
-	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != "tnl-control-fresh-v1-visitors" {
+	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
@@ -444,7 +444,7 @@ func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {
 		t.Fatal("guest can publish an unassigned URL")
 	}
-	for _, reason := range []string{"expires_at=$2", "used_ready_ns=900000000000", "used_bytes=5242880"} {
+	for _, reason := range []string{"expires_at=$2", "used_ready_ns=1200000000000"} {
 		query := fmt.Sprintf(`UPDATE control.guest_trials SET %s WHERE id=$1`, reason)
 		args := []any{guest.ID}
 		if strings.Contains(reason, "$2") {
@@ -456,7 +456,7 @@ func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 		if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.7/32", now.Add(2*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
 			t.Fatalf("guest exhaustion accepted: %s", reason)
 		}
-		if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET expires_at=$2, used_ready_ns=0, used_bytes=0 WHERE id=$1`, guest.ID, now.Add(GuestLifetime)); err != nil {
+		if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET expires_at=$2, used_ready_ns=0 WHERE id=$1`, guest.ID, now.Add(GuestLifetime)); err != nil {
 			t.Fatal(err)
 		}
 	}

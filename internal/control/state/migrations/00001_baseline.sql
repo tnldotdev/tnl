@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-visitors')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-peer-paths')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-visitors');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-peer-paths');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1404,18 +1404,22 @@ CREATE TABLE control.guest_trials (
     source_ip_key_id text CHECK (source_ip_key_id <> ''),
     issuance_ip_digest text CHECK (issuance_ip_digest ~ '^[A-Za-z0-9_-]{43}$'),
     expires_at timestamptz NOT NULL,
-    used_ready_ns bigint NOT NULL DEFAULT 0 CHECK (used_ready_ns >= 0),
-    used_bytes bigint NOT NULL DEFAULT 0 CHECK (used_bytes >= 0),
+    used_ready_ns bigint NOT NULL DEFAULT 0 CHECK (used_ready_ns BETWEEN 0 AND 1200000000000),
     first_demo_allocated_at timestamptz,
     first_ready_at timestamptz,
-    end_reason text CHECK (end_reason IN ('expired', 'ready_limit', 'transfer_limit')),
+    end_reason text CHECK (end_reason IN ('expired', 'ready_limit')),
     ended_at timestamptz,
     last_demo_number bigint NOT NULL DEFAULT 0 CHECK (last_demo_number >= 0),
     active_publish_run_id text,
     active_ready_at timestamptz,
+    ready_deadline timestamptz,
+    serving_until timestamptz,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL CHECK (updated_at >= created_at),
     CHECK (active_ready_at IS NULL OR active_publish_run_id IS NOT NULL),
+    CHECK ((active_ready_at IS NULL) = (ready_deadline IS NULL)),
+    CHECK (ready_deadline IS NULL OR ready_deadline > active_ready_at AND ready_deadline <= expires_at),
+    CHECK (serving_until IS NULL OR serving_until <= expires_at),
     CHECK ((source_ip_digest IS NULL) = (source_ip_key_id IS NULL)),
     CHECK ((credential_id IS NULL) = (credential_hash IS NULL)),
     CHECK ((end_reason IS NULL) = (ended_at IS NULL)),
@@ -1427,9 +1431,8 @@ CREATE INDEX guest_trials_created_at ON control.guest_trials(created_at);
 CREATE FUNCTION control.guest_share_live(guest_id text, at_time timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT 1 FROM control.guest_trials guest WHERE guest.id = guest_id
         AND guest.ended_at IS NULL AND guest.expires_at > at_time
-        AND guest.used_bytes < 5242880 AND guest.used_ready_ns < 900000000000
-        AND (guest.active_ready_at IS NULL OR guest.used_ready_ns + GREATEST(0,
-            floor(extract(epoch FROM (at_time - guest.active_ready_at)) * 1000000000)::bigint) < 900000000000))
+        AND guest.used_ready_ns < 1200000000000
+        AND (guest.ready_deadline IS NULL OR guest.ready_deadline > at_time))
 $$;
 CREATE TABLE control.guest_public_urls (
     public_url_id text PRIMARY KEY REFERENCES control.public_urls(id) ON DELETE RESTRICT,
@@ -2816,8 +2819,7 @@ CREATE TRIGGER visitor_policy_domain AFTER UPDATE OR DELETE ON control.domains
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
 CREATE TRIGGER visitor_policy_guest AFTER UPDATE ON control.guest_trials FOR EACH ROW
     WHEN (NEW.ended_at IS DISTINCT FROM OLD.ended_at OR NEW.expires_at<OLD.expires_at
-        OR (OLD.used_bytes<5242880 AND NEW.used_bytes>=5242880)
-        OR (OLD.used_ready_ns<900000000000 AND NEW.used_ready_ns>=900000000000))
+        OR (OLD.used_ready_ns<1200000000000 AND NEW.used_ready_ns>=1200000000000))
     EXECUTE FUNCTION control.visitor_policy_fact_changed('guest');
 
 -- +goose StatementBegin

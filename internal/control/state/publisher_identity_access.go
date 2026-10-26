@@ -50,7 +50,7 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 		if err != nil {
 			return PublisherIdentity{}, g, publisherLookupError(err, ErrPublisherIdentity)
 		}
-		if trial.TeamID != i.TeamID || g.Kind != "saved_public_url" || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.UsedBytes >= GuestByteAllowance || trial.ActiveReadyAt.Valid && time.Duration(trial.UsedReadyNs)+max(time.Duration(0), now.Sub(trial.ActiveReadyAt.Time)) >= GuestReadyAllowance {
+		if trial.TeamID != i.TeamID || g.Kind != "saved_public_url" || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.ReadyDeadline.Valid && !trial.ReadyDeadline.Time.After(now) {
 			return PublisherIdentity{}, g, ErrPublisherIdentity
 		}
 		if sourceIP != "" {

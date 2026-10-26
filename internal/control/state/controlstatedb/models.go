@@ -444,7 +444,6 @@ type ControlGuestTrial struct {
 	IssuanceIpDigest      pgtype.Text
 	ExpiresAt             pgtype.Timestamptz
 	UsedReadyNs           int64
-	UsedBytes             int64
 	FirstDemoAllocatedAt  pgtype.Timestamptz
 	FirstReadyAt          pgtype.Timestamptz
 	EndReason             pgtype.Text
@@ -452,6 +451,8 @@ type ControlGuestTrial struct {
 	LastDemoNumber        int64
 	ActivePublishRunID    pgtype.Text
 	ActiveReadyAt         pgtype.Timestamptz
+	ReadyDeadline         pgtype.Timestamptz
+	ServingUntil          pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 }

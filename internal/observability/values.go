@@ -171,7 +171,6 @@ const (
 	EventReady
 	EventExpired
 	EventReadyLimit
-	EventTransferLimit
 	EventCleanup
 	EventOpened
 	EventClosed
@@ -184,7 +183,7 @@ const (
 	EventPartialFailed
 )
 
-var events = []string{"", "queued", "delivered", "retry", "dropped", "accepted", "duplicate", "connected", "expected_close", "unexpected_close", "operational_failure", "incomplete", "finalized", "retried", "rejected", "issued", "allocated", "ready", "expired", "ready_limit", "transfer_limit", "cleanup", "opened", "closed", "failed", "bound", "registered", "publication_ready", "busy", "completed", "partial_failed"}
+var events = []string{"", "queued", "delivered", "retry", "dropped", "accepted", "duplicate", "connected", "expected_close", "unexpected_close", "operational_failure", "incomplete", "finalized", "retried", "rejected", "issued", "allocated", "ready", "expired", "ready_limit", "cleanup", "opened", "closed", "failed", "bound", "registered", "publication_ready", "busy", "completed", "partial_failed"}
 
 func (v LifecycleEvent) String() string { return enumString(events, int(v)) }
 func ParseEvent(value string) (LifecycleEvent, bool) {

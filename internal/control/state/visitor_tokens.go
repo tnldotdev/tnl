@@ -360,7 +360,7 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 			}
 		} else {
 			var deadline time.Time
-			if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT LEAST(expires_at, ready_deadline) FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
 				return result, err
 			}
 			until = minTime(until, deadline)

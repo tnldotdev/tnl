@@ -168,9 +168,11 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	if scope.Kind == visitorscope.PublicURL {
 		var guest bool
 		var deadline time.Time
-		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(id,$2),LEAST(expires_at,
-		    COALESCE(active_ready_at + (GREATEST(0,900000000000-used_ready_ns)::double precision/1000000000)*interval '1 second',expires_at))
-		    FROM control.guest_trials WHERE team_id=$1`, team, now).Scan(&guest, &deadline)
+		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(guest.id,$2),LEAST(guest.expires_at, run.publisher_expires_at,
+		    COALESCE(guest.ready_deadline, $2::timestamptz +
+		        ((1200000000000-guest.used_ready_ns)::double precision/1000000000)*interval '1 second'))
+		    FROM control.guest_trials guest LEFT JOIN control.publish_runs run ON run.id=guest.active_publish_run_id
+		    WHERE guest.team_id=$1`, team, now).Scan(&guest, &deadline)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}

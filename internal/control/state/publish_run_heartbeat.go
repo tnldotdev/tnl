@@ -94,6 +94,10 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: heartbeat publish run: update lease: %w", err)
 	}
+	session, err = boundGuestServingAuthority(ctx, queries, session)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
 	leaseExtended := session.PublisherExpiresAt.Time.After(previousExpiresAt)
 	connections, err := validReadyPublisherConnections(ctx, queries, session.ID, now)
 	if err != nil {

@@ -222,7 +222,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				)
 			}
 			if o.guestDemo {
-				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
+				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "20 min ready across runs, including idle time"})
 			}
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})

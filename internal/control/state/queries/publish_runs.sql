@@ -36,10 +36,8 @@ WHERE sessions.closed_at IS NULL
       JOIN control.guest_trials AS guest ON guest.id = guest_url.guest_id
       WHERE guest_url.public_url_id = routes.id AND (
           guest.expires_at <= sqlc.arg(now)
-          OR guest.used_bytes >= 5242880
-          OR guest.used_ready_ns >= 900000000000
-          OR guest.active_ready_at IS NOT NULL AND guest.used_ready_ns +
-              GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - guest.active_ready_at)) * 1000000000)::bigint) >= 900000000000
+           OR guest.used_ready_ns >= 1200000000000
+           OR guest.ready_deadline <= sqlc.arg(now)
       )
   ))
 ORDER BY sessions.publisher_expires_at, sessions.id

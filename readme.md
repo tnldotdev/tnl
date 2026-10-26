@@ -40,7 +40,7 @@ match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
 at a time. The link admits this demo without signing in; tnl prints it once
 instead of admitting every visitor from your IP. A guest credential lasts 72 hours
-and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
+and allows 20 cumulative minutes ready across runs, including idle time. Ctrl+C
 stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
 `tnl telemetry off` to disable it.

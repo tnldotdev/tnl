@@ -376,6 +376,11 @@ baseline requires a fresh database and a coordinated stop/start of all serving
 roles. Control checks both the exact migration version and baseline identity
 before serving.
 
+The coordinated peer-path rewrite keeps schema version 1 and uses baseline
+`tnl-control-fresh-v1-peer-paths`. Stop every serving role, create and migrate a
+fresh PostgreSQL database, then start the matching control, ingress, relay, and
+publisher implementation together. The previous version-1 database is rejected.
+
 The single PostgreSQL baseline includes durable publisher certificate-plan
 checkpoints. Fresh identities have an empty plan inventory; submitted plans
 remain required after order cleanup. See [publisher groups](docs/maintainers/publisher/publisher-groups.md).

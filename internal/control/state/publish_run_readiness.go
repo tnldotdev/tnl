@@ -74,6 +74,10 @@ func (d *Database) MarkPublishRunReady(
 		}); err != nil {
 			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark guest run ready: %w", err)
 		}
+		session, err = boundGuestServingAuthority(ctx, queries, session)
+		if err != nil {
+			return PublishRunLifecycle{}, err
+		}
 		publishedEvent, err = pendingEvents.addRouteEvent(
 			ctx, queries, route, session, connections, "public_url_upsert", now,
 		)

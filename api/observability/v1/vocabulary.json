@@ -501,7 +501,6 @@
         "ready",
         "expired",
         "ready_limit",
-        "transfer_limit",
         "cleanup",
         "opened",
         "closed",

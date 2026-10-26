@@ -324,6 +324,7 @@ type Querier interface {
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
 	InvalidatePublisherGroupRuntimeHealth(ctx context.Context, publisherIdentityID string) error
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
+	LimitGuestPublishRunExpiry(ctx context.Context, arg LimitGuestPublishRunExpiryParams) (ControlPublishRun, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
 	ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error)
@@ -631,7 +632,9 @@ type Querier interface {
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateDeviceLogin(ctx context.Context, arg UpdateDeviceLoginParams) error
 	UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error)
-	UpdateGuestTransferredBytes(ctx context.Context, arg UpdateGuestTransferredBytesParams) (int64, error)
+	// retain the latest issued serving horizon, including after the run closes.
+	// a replacement cannot reuse this time while an offline owner may still serve.
+	UpdateGuestServingAuthority(ctx context.Context, publishRunID string) (pgtype.Timestamptz, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)

@@ -206,7 +206,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	if role == RoleControl || role == RoleStandalone {
 		metrics.routingHistorySkipped.Add(0)
 		metrics.gaugeFunc("tnl_control_routing_history_retained_after_revision", "Highest committed routing-history retention floor observed by this process.", func() float64 { return float64(metrics.routingHistoryFloor.Load()) })
-		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit", "transfer_limit"} {
+		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit"} {
 			metrics.guestTrialStats.With(eventDimension(stage)).Set(0)
 		}
 		for _, surface := range []string{"control", "authority", "private_ingress", "private_relay"} {
@@ -287,10 +287,10 @@ func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
 }
 
 // SetGuestTrialStats observes committed service-wide counts without identity labels.
-func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLimit, transferLimit int64) {
+func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLimit int64) {
 	for stage, count := range map[string]int64{
 		"issued": issued, "allocated": allocated, "ready": ready,
-		"expired": expired, "ready_limit": readyLimit, "transfer_limit": transferLimit,
+		"expired": expired, "ready_limit": readyLimit,
 	} {
 		if count >= 0 {
 			m.guestTrialStats.With(eventDimension(stage)).Set(float64(count))

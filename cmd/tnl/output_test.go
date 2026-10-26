@@ -175,7 +175,7 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 	if err := output.ready("https://demo-1.guest-01234567.tnl.dev", 1); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "15 min / about 5 MiB across runs") ||
+	if !strings.Contains(stderr.String(), "20 min ready across runs, including idle time") ||
 		!strings.Contains(stderr.String(), "tnl auth login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
