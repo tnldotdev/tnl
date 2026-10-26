@@ -59,5 +59,25 @@ exchange with a monotonic application counter. it exercises both relay fallbacks
 all-TCP operation, half-close, wrong packet evidence, fragment bounds, and an
 unread TCP carrier. it reports recovery time, queue peaks, drops, and path RTT.
 
-the role migration supplies shared relay demultiplexing, shared-socket STUN/ICE,
-and control-authorized introduction/serving lifetimes around this packet owner.
+## socket and replacement lifetime
+
+`peer.Socket` owns the UDP socket used for relay QUIC and a Pion universal ICE
+mux. quic-go dispatches STUN and v1 peer frames through its non-QUIC reader;
+both have their first two bits clear. STUN discovery, ICE checks, and selected
+direct delivery therefore use the same mapped port as relay QUIC. IPv4, IPv6,
+and eligible local host candidates come from that mux. closing an ICE agent
+leaves sibling agents and relay QUIC alive. library logging is disabled; role
+owners report bounded outcomes through the existing observability boundary.
+
+relay and standalone answer STUN Binding requests on their existing QUIC socket.
+the server bounds request size and response rate and ignores ICE-authenticated
+requests intended for a peer. its operational counter has fixed result labels.
+
+`CarrierSlot` accepts a late ICE result or a replacement relay carrier while
+the logical endpoint keeps serving. installing a carrier fences old queued
+packets and invalidates the previous path's probe evidence. the new carrier must
+complete a fresh peer round trip before direct application delivery. failed
+preparation, network changes, and late setup racing shutdown have joined cleanup.
+
+the role migration supplies shared relay demultiplexing and control-authorized
+introduction/serving lifetimes around these owners.

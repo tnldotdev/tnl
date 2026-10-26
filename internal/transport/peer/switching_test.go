@@ -36,6 +36,8 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 				serverTLS, clientTLS := peerTLS(t)
 				var gate [pathCount]*atomic.Bool
 				var clientPaths, serverPaths [pathCount]Carrier
+				clientDirect, serverDirect := NewCarrierSlot(), NewCarrierSlot()
+				var directLeft, directRight Carrier
 				for index := range pathCount {
 					gate[index] = new(atomic.Bool)
 					var left, right Carrier
@@ -47,6 +49,10 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 					}
 					clientPaths[index] = &gatedCarrier{Carrier: left, drop: gate[index]}
 					serverPaths[index] = &gatedCarrier{Carrier: right, drop: gate[index]}
+					if index == Direct {
+						directLeft, directRight = clientPaths[index], serverPaths[index]
+						clientPaths[index], serverPaths[index] = clientDirect, serverDirect
+					}
 				}
 				var key [32]byte
 				if _, err := rand.Read(key[:]); err != nil {
@@ -165,6 +171,12 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 					t.Fatal("blocked ICE delayed or bypassed relay-first traffic")
 				}
 				if direct {
+					if err := clientDirect.Install(directLeft); err != nil {
+						t.Fatal(err)
+					}
+					if err := serverDirect.Install(directRight); err != nil {
+						t.Fatal(err)
+					}
 					gate[Direct].Store(false)
 					awaitPath(t, ctx, clientEndpoint, serverEndpoint, Direct)
 					exchange()
@@ -180,6 +192,15 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 				t.Logf("alternate-relay application recovery: %s", time.Since(startRecovery))
 				if direct {
 					// recover direct delivery, then lose the other relay service.
+					// a new UDP pair models a changed NAT mapping without changing
+					// the logical endpoint, QUIC session, or application sockets.
+					left, right := directPair(t)
+					if err := clientDirect.Install(&gatedCarrier{Carrier: left, drop: gate[Direct]}); err != nil {
+						t.Fatal(err)
+					}
+					if err := serverDirect.Install(&gatedCarrier{Carrier: right, drop: gate[Direct]}); err != nil {
+						t.Fatal(err)
+					}
 					gate[Direct].Store(false)
 					awaitPath(t, ctx, clientEndpoint, serverEndpoint, Direct)
 					exchange()

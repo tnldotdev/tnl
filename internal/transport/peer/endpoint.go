@@ -45,10 +45,11 @@ type fragment struct {
 }
 
 type path struct {
-	carrier   Carrier
-	queue     chan []byte
-	closeOnce sync.Once
-	closeErr  error
+	carrier    Carrier
+	queue      chan queuedFrame
+	generation uint64
+	closeOnce  sync.Once
+	closeErr   error
 	// health, challenge, and counters are protected by Endpoint.mu.
 	alive, failed bool
 	ack, sent     time.Time
@@ -58,6 +59,27 @@ type path struct {
 	fragments [reassemblySlots]fragment
 	highest   uint64
 	complete  [reassemblySlots]uint64
+}
+
+type queuedFrame struct {
+	generation uint64
+	data       []byte
+}
+
+type changingCarrier interface {
+	Generation() uint64
+	SendGeneration(context.Context, []byte, uint64) error
+}
+
+func (p *path) refreshGenerationLocked() {
+	if carrier, ok := p.carrier.(changingCarrier); ok {
+		if next := carrier.Generation(); p.generation != next {
+			p.generation = next
+			p.alive = false
+			p.ack = time.Time{}
+			p.challenge = [16]byte{}
+		}
+	}
 }
 
 func (p *path) close() error {
@@ -120,7 +142,7 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 		if carrier == nil {
 			continue
 		}
-		p := &path{carrier: carrier, queue: make(chan []byte, packetQueue)}
+		p := &path{carrier: carrier, queue: make(chan queuedFrame, packetQueue)}
 		e.paths[index] = p
 	}
 	for index, p := range e.paths {
@@ -190,6 +212,12 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return 0, net.ErrClosed
 	}
 	e.mu.Lock()
+	for _, p := range e.paths {
+		if p != nil {
+			p.refreshGenerationLocked()
+		}
+	}
+	e.chooseLocked()
 	index := e.active
 	e.mu.Unlock()
 	seq := e.seq.Add(1)
@@ -217,8 +245,13 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
 	if p == nil || p.failed {
 		return
 	}
+	p.refreshGenerationLocked()
+	if index == Direct && packet.Kind == tunnelv1.PeerData && !p.alive {
+		p.stats.DroppedFrames++
+		return
+	}
 	select {
-	case p.queue <- frame:
+	case p.queue <- queuedFrame{p.generation, frame}:
 		p.stats.PeakQueuedFrames = max(p.stats.PeakQueuedFrames, len(p.queue))
 	default:
 		p.stats.DroppedFrames++
@@ -232,7 +265,12 @@ func (e *Endpoint) sendLoop(index int, p *path) {
 			return
 		case frame := <-p.queue:
 			ctx, cancel := context.WithTimeout(e.ctx, e.config.PathTimeout)
-			err := p.carrier.Send(ctx, frame)
+			var err error
+			if changing, ok := p.carrier.(changingCarrier); ok {
+				err = changing.SendGeneration(ctx, frame.data, frame.generation)
+			} else {
+				err = p.carrier.Send(ctx, frame.data)
+			}
 			cancel()
 			if err != nil {
 				e.fail(index)
@@ -273,6 +311,7 @@ func (e *Endpoint) probeLoop() {
 				continue
 			}
 			e.mu.Lock()
+			p.refreshGenerationLocked()
 			if now.Sub(p.ack) > e.config.PathTimeout {
 				p.alive = false
 			}
@@ -323,6 +362,7 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload})
 		case tunnelv1.PeerProbeReply:
 			e.mu.Lock()
+			p.refreshGenerationLocked()
 			if p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
 				p.ack, p.alive = time.Now(), true
 				p.stats.RTT = p.ack.Sub(p.sent)

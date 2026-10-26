@@ -67,6 +67,7 @@ type Metrics struct {
 	inspectionFailures          *counter
 	forwardedBytes              *counter
 	trafficAdmissions           *counter
+	stunBindings                *counter
 	relayAttempts               *counter
 	apiDuration                 *histogram
 	apiInFlight                 *gauge
@@ -158,6 +159,7 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.inspectionFailures = newCounter(m, "tnl_ingress_inspection_failures_total", "Ingress connections rejected before classification by fixed failure stage.", Operation)
 	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", Direction)
 	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", Operation, OutcomeKey)
+	metrics.stunBindings = newCounter(m, "tnl_relay_stun_bindings_total", "Relay STUN Binding decisions by fixed result; excludes network addresses.", OutcomeKey)
 	metrics.relayAttempts = newCounter(m, "tnl_ingress_relay_attempts_total", "Ingress internal-forwarding attempts by connection slot and bounded outcome.", ConnectionSlot, OutcomeKey)
 	metrics.apiDuration = newHistogram(m, "tnl_api_request_duration_seconds", "tnl API handler duration including long polls; count is the request total.", DurationBucketsSeconds(), Component, HTTPMethod, HTTPRoute, OutcomeKey)
 	metrics.apiInFlight = newGauge(m, "tnl_api_requests_in_flight", "tnl API requests currently executing by component.", Component)

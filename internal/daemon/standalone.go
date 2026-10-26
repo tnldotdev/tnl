@@ -234,6 +234,9 @@ func (d *daemon) startStandalone(
 		return fmt.Errorf("listen for standalone QUIC infrastructure: %w", err)
 	}
 	d.relays[0].udpListener = udpListener
+	d.start("serve standalone STUN bindings", func() error {
+		return relay.ServeSTUN(ctx, udpListener.NonQUICPackets(ctx), metrics)
+	})
 	d.start("serve standalone QUIC infrastructure", func() error {
 		return serveQUICSessions(ctx, udpListener, func(ctx context.Context, session muxsession.Session) error {
 			peer, ok := session.(muxsession.AcceptedPeer)

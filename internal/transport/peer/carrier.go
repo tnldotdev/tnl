@@ -68,9 +68,22 @@ func (c *StreamCarrier) Send(ctx context.Context, b []byte) error {
 }
 
 func (c *StreamCarrier) Receive(ctx context.Context) ([]byte, error) {
-	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	stop := interruptOnCancel(ctx, c.Close)
 	defer stop()
 	return tunnelv1.ReadPeerFrame(c.Conn)
+}
+
+func interruptOnCancel(ctx context.Context, interrupt func() error) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = interrupt()
+		close(done)
+	})
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}
 }
 
 func (c *StreamCarrier) Close() error {

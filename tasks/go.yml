@@ -209,6 +209,8 @@ tasks:
     desc: Prove one end-to-end QUIC session survives relay, direct UDP and alternate relay delivery
     cmds:
       - go test {{.CLI_ARGS}} -v ./internal/transport/peer ./pkg/protocol/tunnelv1 -run='^TestPeer' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -v ./internal/daemon -run='^TestPeer' -count=1 -timeout=1m
+      - go test {{.CLI_ARGS}} -v ./internal/relay -run='^TestSTUN' -count=1 -timeout=1m
 
   test:ingress:
     dir: "{{.ROOT_DIR}}"

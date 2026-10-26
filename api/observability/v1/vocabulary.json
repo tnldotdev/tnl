@@ -2612,6 +2612,16 @@
       ]
     },
     {
+      "name": "tnl_relay_stun_bindings_total",
+      "semantics": "Relay STUN Binding decisions by fixed result; excludes network addresses.",
+      "kind": "counter",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
       "name": "tnl_relay_transport_certificate_expiration_timestamp_seconds",
       "semantics": "Earliest locally known relay transport certificate expiry; zero before material is observed.",
       "kind": "gauge",

@@ -136,6 +136,9 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	}
 	runtime.tcpListener = tcpListener
 	runtime.udpListener = udpListener
+	d.start("serve STUN bindings", func() error {
+		return relay.ServeSTUN(ctx, udpListener.NonQUICPackets(ctx), metrics)
+	})
 	d.start("serve TLS/TCP publisher connections", func() error {
 		return serveTLSYamuxSessions(ctx, tcpListener, runtime.transportTLS,
 			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept)
