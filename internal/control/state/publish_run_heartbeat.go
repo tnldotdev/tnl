@@ -118,9 +118,6 @@ func (d *Database) HeartbeatPublishRun(
 			return PublishRunSetup{}, err
 		}
 	}
-	if session.PolicyDenials < 0 {
-		return PublishRunSetup{}, errors.New("controlstate: heartbeat publish run: invalid policy denial count")
-	}
 	if session.ReadyAt.Valid && removedReadyConnection {
 		if err := openPublicURLRecoveryEpisode(ctx, queries, route.ID, session.PublishRunNumber, now); err != nil {
 			return PublishRunSetup{}, err
@@ -136,7 +133,6 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	setup.PolicyDenials = uint64(session.PolicyDenials)
 	setup.VisitorPolicyRevision, err = queries.GetVisitorPolicyRevision(ctx, session.TeamID)
 	if err != nil {
 		return PublishRunSetup{}, err

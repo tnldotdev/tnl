@@ -62,7 +62,3 @@ func (s generatedServer) GetIngressRoutingTableSnapshot(
 ) {
 	s.handler.routingTableSnapshot(response, request, ingressID, params)
 }
-
-func (s generatedServer) ReportIngressUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
-	s.handler.reportUsage(response, request, ingressID)
-}

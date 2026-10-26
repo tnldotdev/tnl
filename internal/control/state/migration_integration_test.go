@@ -46,8 +46,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	for _, table := range []string{
 		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
 		"public_urls", "publish_runs", "publisher_service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
-		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"visitor_network_hash_keys", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
+		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations",
+		"public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {

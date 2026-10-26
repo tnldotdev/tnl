@@ -7,7 +7,7 @@ func controlOperationName(value string) (operationName, bool) {
 	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun",
 		"ReadIngressRoutingTableSnapshot", "ReadIngressRoutingTableEvents",
 		"RefreshPortPoolMetrics", "AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
-		"ReportIngressUsage", "RenewIngress", "ClaimPublisherConnection", "MarkPublisherConnectionReady",
+		"RenewIngress", "ClaimPublisherConnection", "MarkPublisherConnectionReady",
 		"company.authorize_session", "oidc.verify", "oidc.discovery", "oidc.redeem",
 		"publisher_runtime.inspect", "publisher_runtime.start", "publisher_runtime.renew", "publisher_runtime.stop", "publisher_runtime.invalid":
 		return operationName(value), true

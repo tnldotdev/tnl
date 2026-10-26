@@ -29,9 +29,6 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.provisioning("demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.blockedVisitors(1, 3); err != nil {
-		t.Fatal(err)
-	}
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -584,16 +581,9 @@ func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, total := range []uint64{2, 2, 5} {
-		if err := output.blockedVisitors(3, total); err != nil {
-			t.Fatal(err)
-		}
-	}
 	got := stderr.String()
-	if strings.Count(got, "]-- provisioning ") != 2 || strings.Count(got, "]-- ip address not allowed ") != 2 ||
+	if strings.Count(got, "]-- provisioning ") != 2 ||
 		!strings.Contains(got, "certificate and publisher connections") ||
-		!strings.Contains(got, "newly blocked") || !strings.Contains(got, "total blocked") ||
-		!strings.Contains(got, "TNL_IP_POLICY_DENIED") || !strings.Contains(got, "https://tnl.dev/e/ip-policy-denied") ||
 		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("human lifecycle output = %q", got)
 	}

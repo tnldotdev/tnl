@@ -79,15 +79,14 @@ Each entrypoint owns its `paths/` and `schemas/` fragments. The ingress and rela
 coordination contracts are served by control, not by those roles' visitor
 listeners.
 
-| Source                                                                               | Server and caller                                                                                     | Canonical generated Go package             |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| [public control](../../api/control/public/v1/openapi.yaml)                           | `internal/control/api/public`; CLI and native publisher credentials                                   | `pkg/api/control/public/v1`                |
-| [authority](../../api/control/authority/v1/openapi.yaml)                             | `internal/control/api/authority`; identity, sessions, teams, domains, company and workload operations | `pkg/api/control/authority/v1`             |
-| [private ingress coordination](../../api/control/private/ingress/v1/openapi.yaml)    | `internal/control/api/private/ingress`; cluster-authenticated ingress or standalone direct adapter    | `pkg/api/control/private/ingress/v1`       |
-| [private relay coordination](../../api/control/private/relay/v1/openapi.yaml)        | `internal/control/api/private/relay`; cluster-authenticated relay or standalone direct adapter        | `pkg/api/control/private/relay/v1`         |
-| [publisher browser](../../api/publisher/browser/v1/openapi.yaml)                     | Publisher same-origin browser operations after current visitor authorization                          | `pkg/api/publisher/browser/v1`             |
-| [local publisher](../../api/publisher/local/v1/openapi.yaml)                         | `internal/publisher/localapi`; scoped private native registration and observation                     | `pkg/api/publisher/local/v1`               |
-| [public URL usage receiver](../../api/integrations/public-url-usage/v1/openapi.yaml) | External receiver; control usage worker sends authenticated reports                                   | `pkg/api/integrations/public-url-usage/v1` |
+| Source                                                                            | Server and caller                                                                                     | Canonical generated Go package       |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| [public control](../../api/control/public/v1/openapi.yaml)                        | `internal/control/api/public`; CLI and native publisher credentials                                   | `pkg/api/control/public/v1`          |
+| [authority](../../api/control/authority/v1/openapi.yaml)                          | `internal/control/api/authority`; identity, sessions, teams, domains, company and workload operations | `pkg/api/control/authority/v1`       |
+| [private ingress coordination](../../api/control/private/ingress/v1/openapi.yaml) | `internal/control/api/private/ingress`; cluster-authenticated ingress or standalone direct adapter    | `pkg/api/control/private/ingress/v1` |
+| [private relay coordination](../../api/control/private/relay/v1/openapi.yaml)     | `internal/control/api/private/relay`; cluster-authenticated relay or standalone direct adapter        | `pkg/api/control/private/relay/v1`   |
+| [publisher browser](../../api/publisher/browser/v1/openapi.yaml)                  | Publisher same-origin browser operations after current visitor authorization                          | `pkg/api/publisher/browser/v1`       |
+| [local publisher](../../api/publisher/local/v1/openapi.yaml)                      | `internal/publisher/localapi`; scoped private native registration and observation                     | `pkg/api/publisher/local/v1`         |
 
 Each contract generates one package beside its generator configuration. The Go
 SDK's `PublisherIdentity` is an opaque prepared identity; it does not expose an

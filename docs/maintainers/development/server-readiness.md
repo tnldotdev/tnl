@@ -15,8 +15,8 @@ provider readiness. ingress and relay projections include their configured ident
 distinct process run, last successful renewal, confirmed lease deadline/revision,
 drain deadline, routing revision/check time where applicable, and local registered
 publisher connection/visitor stream counts. registered connections are not a count
-of ready database claims. the endpoint projects explicit fields, never a complete
-lease containing credentials or visitor-network keys.
+of ready database claims. the endpoint projects explicit fields rather than raw
+coordination responses.
 
 SIGTERM begins the existing bounded drain and immediately clears process readiness.
 component contexts keep their process-owned observability context through drain;
@@ -28,9 +28,8 @@ start with HTTP 503 and `Retry-After`. existing renewals and cleanup retain thei
 ordinary authentication/state boundaries while admitted work drains.
 
 relay can remain live and unready during control loss, and renews through its
-existing retry loop. ingress has a stricter existing accounting boundary: after
-its confirmed lease expires, its controller ends that process run. its usage and
-audit identity cannot be reused. automatic in-process replacement after ingress
+existing retry loop. after ingress's confirmed lease expires, its controller ends
+that process run. its audit identity cannot be reused. automatic in-process replacement after ingress
 lease loss is not implemented here; a supervisor still needs bounded restart
 backoff for that case. the separated lifecycle tests qualify forwarding, drain,
 and lease fail-closed behavior; they do not qualify a Kubernetes operator.

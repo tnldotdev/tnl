@@ -20,25 +20,6 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/IdentityContext"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/service/teams/{team_id}/usage-authorization:
-    parameters:
-      - { $ref: "../openapi.yaml#/components/parameters/TeamID" }
-      - { $ref: "../openapi.yaml#/components/parameters/ServiceActorToken" }
-    get:
-      operationId: authorizeWebsiteTeamUsage
-      security: [{ webServiceAuth: [] }]
-      description: >-
-        Authorize one website usage read for any current active team member,
-        including a personal-team owner. Requires a fresh configured-issuer
-        assertion with auth_time, a unique jti and nonce using the
-        tnl.team-usage.actor.v1 purpose, bound to the exact method, escaped
-        path, raw query and empty body. Control consumes the assertion and
-        rechecks identity, membership and current company source/eligibility.
-        Success grants no service management or visitor credential and is not
-        reusable authorization. No saved service or inventory read is required.
-      responses:
-        "204": { description: This usage read is currently authorized; do not cache }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/service/teams/{team_id}/services:
     parameters:
       - { $ref: "../openapi.yaml#/components/parameters/TeamID" }

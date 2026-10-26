@@ -12,12 +12,13 @@ import (
 	"time"
 
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	backend := newTLSBackend(t)
-	usage, metrics := newUsageRecorder(), new(testMetrics)
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 1)}
 	type recovery struct {
 		id               string
 		version, episode uint64
@@ -25,7 +26,7 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 	recovered := make(chan recovery, 1)
 	config := publicURLConfig(backend)
-	config.OpenUsage, config.Metrics = usage.Open, metrics
+	config.Metrics = metrics
 	config.ObserveRecovery = func(id string, version, episode uint64, at time.Time) {
 		recovered <- recovery{id, version, episode, at}
 	}
@@ -36,29 +37,23 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	if result.err != nil || result.request != "ping" || !result.header.Source.Addr().IsLoopback() || !result.header.Destination.Addr().IsLoopback() {
 		t.Fatalf("backend = %+v", result)
 	}
-	u := ingressAwait(t, usage.opened)
-	ingressAwait(t, u.closed)
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if u.publicURLID != "public_url_test" || u.publishRunNumber != 1 || !u.source.IsLoopback() || u.openedAt.IsZero() || u.closedAt.IsZero() || u.publisherOpeningAt.IsZero() || u.publisherOpenedAt.IsZero() || u.streams != 1 || u.ingressBytes <= 0 || u.egressBytes <= 0 {
-		t.Fatalf("usage = %+v", u)
-	}
+	ingressAwait(t, metrics.visitorOutcomes)
 	metrics.forwardedMu.Lock()
 	defer metrics.forwardedMu.Unlock()
-	if len(metrics.forwardedBytes) != 2 || metrics.forwardedBytes["visitor_to_publisher"] != u.ingressBytes || metrics.forwardedBytes["publisher_to_visitor"] != u.egressBytes {
-		t.Fatalf("metrics=%v usage=%d/%d", metrics.forwardedBytes, u.ingressBytes, u.egressBytes)
+	if len(metrics.forwardedBytes) != 2 || metrics.forwardedBytes["visitor_to_publisher"] <= 4 || metrics.forwardedBytes["publisher_to_visitor"] <= 4 {
+		t.Fatalf("encrypted forwarded bytes = %v", metrics.forwardedBytes)
 	}
 	r := ingressAwait(t, recovered)
 	if r.id != "public_url_test" || r.version != 1 || r.episode != 7 || r.at.IsZero() {
-		t.Fatalf("recovery=%+v", r)
+		t.Fatalf("recovery = %+v", r)
 	}
 }
 
 func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
-	backend, usage := newTLSBackend(t), newUsageRecorder()
-	metrics := new(testMetrics)
+	backend := newTLSBackend(t)
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, LookupReason) {
+	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Metrics: metrics, Lookup: func(host string) (PublicURL, LookupReason) {
 		lookups.Add(1)
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
@@ -67,7 +62,6 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
-	// write malformed bytes on the underlying connection, before TLS.
 	_, _ = malformed.NetConn().Write([]byte("not TLS"))
 	_ = malformed.Close()
 	allowed := ingressClient(t, address, "route.example", "198.51.100.2:40002")
@@ -76,21 +70,15 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	if result.err != nil || result.header.Source != netip.MustParseAddrPort("198.51.100.2:40002") {
 		t.Fatalf("allowed = %+v", result)
 	}
-	for _, source := range []string{"203.0.113.3:40004"} {
-		client := ingressClient(t, address, "route.example", source)
-		if err := client.Handshake(); err == nil {
-			t.Fatalf("denied source %s completed TLS", source)
-		}
+	denied := ingressClient(t, address, "route.example", "203.0.113.3:40004")
+	if err := denied.Handshake(); err == nil {
+		t.Fatal("denied source completed TLS")
 	}
-	var policies, streams int
 	for range 2 {
-		u := ingressAwait(t, usage.opened)
-		ingressAwait(t, u.closed)
-		policies += u.policyDenials
-		streams += u.streams
+		ingressAwait(t, metrics.visitorOutcomes)
 	}
-	if policies != 1 || streams != 1 || metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
-		t.Fatalf("policy=%d streams=%d allowlist=%d lookups=%d opens=%d", policies, streams, metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
+	if metrics.ipAllowlistDenials.Load() != 1 || lookups.Load() != 2 || backend.opens.Load() != 1 {
+		t.Fatalf("allowlist=%d lookups=%d opens=%d", metrics.ipAllowlistDenials.Load(), lookups.Load(), backend.opens.Load())
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -106,12 +94,20 @@ type gatedOpenBackend struct {
 	err        error
 }
 
-type gatedDeniedBackend struct {
-	*gatedOpenBackend
-}
+type gatedDeniedBackend struct{ *gatedOpenBackend }
 
 func (b gatedDeniedBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
 	return b.Open(ctx, id)
+}
+
+func (b *gatedOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
+	close(b.entered)
+	select {
+	case <-b.release:
+		return b.connection, b.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
@@ -119,9 +115,9 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
 	backend := gatedDeniedBackend{&gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("relay unavailable")}}
-	usage := newUsageRecorder()
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	config := Config{
-		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, OpenUsage: usage.Open,
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, Metrics: metrics,
 		Lookup: func(host string) (PublicURL, LookupReason) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
@@ -142,23 +138,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	if err := ingressAwait(t, result); err == nil {
 		t.Fatal("denied connection completed TLS without a publisher")
 	}
-	for range 2 {
-		observed := ingressAwait(t, usage.opened)
-		ingressAwait(t, observed.closed)
-		if observed.policyDenials != 0 || observed.streams != 0 || observed.publisherFailures+observed.capacityDenials != 1 {
-			t.Fatalf("denial usage = %+v", observed)
-		}
-	}
-}
-
-func (b *gatedOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
-	close(b.entered)
-	select {
-	case <-b.release:
-		return b.connection, b.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	assertFailedIngressOutcomes(t, metrics)
 }
 
 func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
@@ -166,10 +146,9 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
 	backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("publisher unavailable")}
-	usage := newUsageRecorder()
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	config := publicURLConfig(backend)
-	config.OpenUsage = usage.Open
-	config.MaxConnections = 2
+	config.Metrics, config.MaxConnections = metrics, 2
 	config.Traffic.Default = trafficlimits.Default()
 	config.Traffic.Default.Connections = 1
 	_, address := startIngress(t, config)
@@ -184,16 +163,17 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	if err := ingressAwait(t, result); err == nil {
 		t.Fatal("failed publisher completed TLS")
 	}
-	var capacity, failures, streams int
+	assertFailedIngressOutcomes(t, metrics)
+}
+
+func assertFailedIngressOutcomes(t *testing.T, metrics *testMetrics) {
+	t.Helper()
+	outcomes := map[string]int{}
 	for range 2 {
-		u := ingressAwait(t, usage.opened)
-		ingressAwait(t, u.closed)
-		capacity += u.capacityDenials
-		failures += u.publisherFailures
-		streams += u.streams
+		outcomes[ingressAwait(t, metrics.visitorOutcomes)]++
 	}
-	if capacity != 1 || failures != 1 || streams != 0 {
-		t.Fatalf("capacity=%d failure=%d streams=%d", capacity, failures, streams)
+	if outcomes[string(observability.VisitorCapacityDenied)] != 1 || outcomes[string(observability.VisitorOpenFailed)] != 1 {
+		t.Fatalf("visitor outcomes = %v", outcomes)
 	}
 }
 
@@ -208,9 +188,9 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			unblock := sync.OnceFunc(func() { close(release) })
 			t.Cleanup(unblock)
 			backend := &gatedOpenBackend{entered: make(chan struct{}), release: release, connection: a}
-			usage := newUsageRecorder()
+			metrics := &testMetrics{visitorOutcomes: make(chan string, 1)}
 			config := publicURLConfig(backend)
-			config.OpenUsage = usage.Open
+			config.Metrics = metrics
 			server, address := startIngress(t, config)
 			client := ingressClient(t, address, "route.example", "")
 			result := ingressWorker(t, func() { unblock(); _ = client.Close() }, client.Handshake)
@@ -224,10 +204,12 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			if err := ingressAwait(t, result); err == nil {
 				t.Fatal("failed setup completed TLS")
 			}
-			u := ingressAwait(t, usage.opened)
-			ingressAwait(t, u.closed)
-			if u.publisherOpeningAt.IsZero() || u.publisherOpenedAt.IsZero() || u.publisherFailures != 1 || u.streams+u.policyDenials+u.capacityDenials != 0 {
-				t.Fatalf("usage=%+v", u)
+			want := observability.VisitorOpenFailed
+			if tracking {
+				want = observability.VisitorDraining
+			}
+			if outcome := ingressAwait(t, metrics.visitorOutcomes); outcome != string(want) {
+				t.Fatalf("setup failure outcome = %s, want %s", outcome, want)
 			}
 		})
 	}

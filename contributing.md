@@ -411,38 +411,37 @@ AWS settings remain CloudFormation deployment parameters. AWS capacity is exclud
 from control assignments. See [applied projects](docs/maintainers/control/applied-projects.md) and
 the [publisher infrastructure templates](deploy/publisher/fargate/readme.md).
 
-| Authoritative source                                              | Generator / configuration                                                                  | Committed generated output                                                                                  |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `api/control/public/v1/openapi.yaml` and its fragments            | `scripts/generate/openapi.ts`; `pkg/api/control/public/v1/{generate.go,oapi-codegen.yaml}` | `pkg/api/control/public/v1/openapi.gen.go`                                                                  |
-| `api/control/authority/v1/openapi.yaml` and fragments             | Same generator; `pkg/api/control/authority/v1` configuration                               | `pkg/api/control/authority/v1/openapi.gen.go`                                                               |
-| `api/control/private/ingress/v1/openapi.yaml` and fragments       | Same generator; `pkg/api/control/private/ingress/v1` configuration                         | `pkg/api/control/private/ingress/v1/openapi.gen.go`                                                         |
-| `api/control/private/relay/v1/openapi.yaml` and fragments         | Same generator; `pkg/api/control/private/relay/v1` configuration                           | `pkg/api/control/private/relay/v1/openapi.gen.go`                                                           |
-| `api/integrations/public-url-usage/v1/openapi.yaml` and fragments | Same generator; `pkg/api/integrations/public-url-usage/v1` configuration                   | `pkg/api/integrations/public-url-usage/v1/openapi.gen.go`                                                   |
-| `api/publisher/browser/v1/openapi.yaml` and fragments             | Same Go generator plus `scripts/generate/publisher-model.ts`                               | `pkg/api/publisher/browser/v1/openapi.gen.go`, `internal/publisher/browserapi/model.gen.ts`                 |
-| `api/publisher/local/v1/openapi.yaml` and fragments               | Same Go generator; `pkg/api/publisher/local/v1` configuration                              | `pkg/api/publisher/local/v1/openapi.gen.go`                                                                 |
-| `internal/control/state/{migrations,queries,sqlc.yaml}`           | `internal/control/state/generate.go`, sqlc                                                 | `internal/control/state/controlstatedb/*.go`                                                                |
-| `internal/client/state/{migrations,queries,sqlc.yaml}`            | `internal/client/state/generate.go`, sqlc                                                  | `internal/client/state/clientstatedb/*.go`                                                                  |
-| `internal/config` types and project key mappings                  | `internal/config/cmd/configgen`, `scripts/generate/config-types.ts`                        | `schema/v1.json`, `internal/client/project/keys.gen.json`, `packages/ts/src/config.gen.ts`                  |
-| `internal/client/project/loader.ts`                               | `scripts/generate/projectconfig-loader.ts`                                                 | Neighboring `loader.mjs`, embedded by Go                                                                    |
-| `internal/publisher/toolbar` TS/TSX/CSS                           | `scripts/build/feedback-toolbar.ts`                                                        | Neighboring `toolbar.js`, embedded by Go                                                                    |
-| `internal/publisher/deployment` renderer                          | Its `cmd/fixture` and `generate.go`                                                        | `deploy/publisher/fargate/fargate.{yaml,parameters.example.json,manifest.example.json,storage-policy.json}` |
-| `internal/failure/diagnostic/catalog.json`                        | `scripts/generate/diagnostic-codes.ts`                                                     | Neighboring `codes.gen.go`; sibling sync generates public diagnostic pages                                  |
-| `internal/failure/reasons.go`                                     | `internal/failure/cmd/cataloggen`                                                          | `internal/failure/catalog.gen.json`; sibling sync generates public error pages                              |
-| `internal/observability` declarations                             | Its vocabulary generator                                                                   | `api/observability/v1/vocabulary.json`, shared with tnl.dev                                                 |
-| `scripts/installer/install.sh.in` and CLI renderer                | `scripts/installer/generate.go`, `internal/clioutput/generate.go`                          | `scripts/install.sh`, whose public download path is preserved                                               |
-| `connect/src` and its build inputs                                | `connect/scripts`, `task connect:check`                                                    | `connect/dist`, checked separately by `connect:generate-check`                                              |
+| Authoritative source                                        | Generator / configuration                                                                  | Committed generated output                                                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `api/control/public/v1/openapi.yaml` and its fragments      | `scripts/generate/openapi.ts`; `pkg/api/control/public/v1/{generate.go,oapi-codegen.yaml}` | `pkg/api/control/public/v1/openapi.gen.go`                                                                  |
+| `api/control/authority/v1/openapi.yaml` and fragments       | Same generator; `pkg/api/control/authority/v1` configuration                               | `pkg/api/control/authority/v1/openapi.gen.go`                                                               |
+| `api/control/private/ingress/v1/openapi.yaml` and fragments | Same generator; `pkg/api/control/private/ingress/v1` configuration                         | `pkg/api/control/private/ingress/v1/openapi.gen.go`                                                         |
+| `api/control/private/relay/v1/openapi.yaml` and fragments   | Same generator; `pkg/api/control/private/relay/v1` configuration                           | `pkg/api/control/private/relay/v1/openapi.gen.go`                                                           |
+| `api/publisher/browser/v1/openapi.yaml` and fragments       | Same Go generator plus `scripts/generate/publisher-model.ts`                               | `pkg/api/publisher/browser/v1/openapi.gen.go`, `internal/publisher/browserapi/model.gen.ts`                 |
+| `api/publisher/local/v1/openapi.yaml` and fragments         | Same Go generator; `pkg/api/publisher/local/v1` configuration                              | `pkg/api/publisher/local/v1/openapi.gen.go`                                                                 |
+| `internal/control/state/{migrations,queries,sqlc.yaml}`     | `internal/control/state/generate.go`, sqlc                                                 | `internal/control/state/controlstatedb/*.go`                                                                |
+| `internal/client/state/{migrations,queries,sqlc.yaml}`      | `internal/client/state/generate.go`, sqlc                                                  | `internal/client/state/clientstatedb/*.go`                                                                  |
+| `internal/config` types and project key mappings            | `internal/config/cmd/configgen`, `scripts/generate/config-types.ts`                        | `schema/v1.json`, `internal/client/project/keys.gen.json`, `packages/ts/src/config.gen.ts`                  |
+| `internal/client/project/loader.ts`                         | `scripts/generate/projectconfig-loader.ts`                                                 | Neighboring `loader.mjs`, embedded by Go                                                                    |
+| `internal/publisher/toolbar` TS/TSX/CSS                     | `scripts/build/feedback-toolbar.ts`                                                        | Neighboring `toolbar.js`, embedded by Go                                                                    |
+| `internal/publisher/deployment` renderer                    | Its `cmd/fixture` and `generate.go`                                                        | `deploy/publisher/fargate/fargate.{yaml,parameters.example.json,manifest.example.json,storage-policy.json}` |
+| `internal/failure/diagnostic/catalog.json`                  | `scripts/generate/diagnostic-codes.ts`                                                     | Neighboring `codes.gen.go`; sibling sync generates public diagnostic pages                                  |
+| `internal/failure/reasons.go`                               | `internal/failure/cmd/cataloggen`                                                          | `internal/failure/catalog.gen.json`; sibling sync generates public error pages                              |
+| `internal/observability` declarations                       | Its vocabulary generator                                                                   | `api/observability/v1/vocabulary.json`, shared with tnl.dev                                                 |
+| `scripts/installer/install.sh.in` and CLI renderer          | `scripts/installer/generate.go`, `internal/clioutput/generate.go`                          | `scripts/install.sh`, whose public download path is preserved                                               |
+| `connect/src` and its build inputs                          | `connect/scripts`, `task connect:check`                                                    | `connect/dist`, checked separately by `connect:generate-check`                                              |
 
 Edit OpenAPI fragments and generator
 configuration before regenerating; never patch generated public models. Reference
 identical control schemas instead of copying them. The handwritten
 `pkg/protocol/tunnelv1` remains the only tunnel wire source.
 
-`task generate` first runs the seven Go API generators, then browser validators,
+`task generate` first runs the Go API generators, then browser validators,
 then other Go directives while skipping those two scripts. `tasks/generate.yml`
 owns the committed-output inventory used for both `HEAD` comparison and untracked
 output detection. OpenAPI bundles are disposable generator inputs. External source
 consumers can run `node scripts/generate/openapi.ts --bundle-dir <absolute-dir>`
-through `mise exec --` to obtain all seven portable, cross-referencing bundles;
+through `mise exec --` to obtain the portable, cross-referencing bundles;
 copying an entrypoint alone omits its fragments.
 
 `packages/ts/dist` is disposable build output. `tnl generate` writes portable

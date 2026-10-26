@@ -572,44 +572,6 @@ type ControlIngressTransportIssuer struct {
 	NotAfter             pgtype.Timestamptz
 }
 
-type ControlIngressUsageReport struct {
-	ID                        int64
-	IngressID                 string
-	IngressRunID              string
-	PublicURLID               string
-	PublishRunNumber          int64
-	BucketStart               pgtype.Timestamptz
-	BucketEnd                 pgtype.Timestamptz
-	ObservedThrough           pgtype.Timestamptz
-	ReportRevision            int64
-	ConnectionAttempts        int64
-	PolicyDenials             int64
-	CapacityDenials           int64
-	VisitorStreamOpenFailures int64
-	SuccessfulStreams         int64
-	ConnectionNanoseconds     int64
-	IngressBytes              int64
-	EgressBytes               int64
-	HistogramData             []byte
-	Final                     bool
-	ReceivedAt                pgtype.Timestamptz
-}
-
-type ControlIngressUsageRun struct {
-	ID                   int64
-	IngressID            string
-	IngressRunID         string
-	IngressLeaseRevision int64
-	StartedAt            pgtype.Timestamptz
-	LeaseExpiresAt       pgtype.Timestamptz
-	LastReportedAt       pgtype.Timestamptz
-	ObservedThrough      pgtype.Timestamptz
-	EndedAt              pgtype.Timestamptz
-	CoverageComplete     bool
-	IncompleteFrom       pgtype.Timestamptz
-	IncompleteUntil      pgtype.Timestamptz
-}
-
 type ControlLocalProjectService struct {
 	TeamID              string
 	ProjectKey          string
@@ -763,48 +725,6 @@ type ControlPublicUrlRecoveryHistogram struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
-type ControlPublicUrlUsageBucket struct {
-	ID                        int64
-	PublicURLID               string
-	PublishRunNumber          int64
-	TeamID                    string
-	ActingIdentityID          string
-	BucketStart               pgtype.Timestamptz
-	BucketEnd                 pgtype.Timestamptz
-	BucketRevision            int64
-	ObservedThrough           pgtype.Timestamptz
-	ConnectionAttempts        int64
-	PolicyDenials             int64
-	CapacityDenials           int64
-	VisitorStreamOpenFailures int64
-	SuccessfulStreams         int64
-	ConnectionNanoseconds     int64
-	IngressBytes              int64
-	EgressBytes               int64
-	HistogramData             []byte
-	Finalized                 bool
-	CoverageComplete          bool
-	FinalizedAt               pgtype.Timestamptz
-	UpdatedAt                 pgtype.Timestamptz
-}
-
-type ControlPublicUrlUsageDelivery struct {
-	ID              int64
-	BucketID        int64
-	BucketRevision  int64
-	DeliveryKey     string
-	State           string
-	WorkOwner       pgtype.Text
-	WorkEpoch       int64
-	WorkExpiresAt   pgtype.Timestamptz
-	Attempts        int64
-	AvailableAt     pgtype.Timestamptz
-	LastAttemptedAt pgtype.Timestamptz
-	DeliveredAt     pgtype.Timestamptz
-	LastError       pgtype.Text
-	CreatedAt       pgtype.Timestamptz
-}
-
 type ControlPublishRun struct {
 	ID                         string
 	PublicURLID                string
@@ -821,7 +741,6 @@ type ControlPublishRun struct {
 	PublishRunTokenID          string
 	PublishRunTokenDigest      []byte
 	PolicyRevision             int64
-	PolicyDenials              int64
 	CertificateCacheKey        pgtype.Text
 	CertificateScope           pgtype.Text
 	CertificateIdentifiers     []string
@@ -1618,13 +1537,6 @@ type ControlVisitorIpGrant struct {
 
 type ControlVisitorIpPolicySet struct {
 	PublicURLID string
-}
-
-type ControlVisitorNetworkHashKey struct {
-	ID                                      int16
-	VisitorNetworkHashMasterKeyCiphertext   []byte
-	VisitorNetworkHashMasterKeyStorageKeyID string
-	CreatedAt                               pgtype.Timestamptz
 }
 
 type ControlVisitorPolicy struct {

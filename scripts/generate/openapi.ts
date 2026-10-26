@@ -15,7 +15,6 @@ export const contracts = {
   authorityv1: "api/control/authority/v1/openapi.yaml",
   ingressv1: "api/control/private/ingress/v1/openapi.yaml",
   relayv1: "api/control/private/relay/v1/openapi.yaml",
-  publicurlusagev1: "api/integrations/public-url-usage/v1/openapi.yaml",
   publisherv1: "api/publisher/browser/v1/openapi.yaml",
   localpublisherv1: "api/publisher/local/v1/openapi.yaml",
 } as const;
@@ -25,7 +24,6 @@ export const packagePaths: Record<keyof typeof contracts, string> = {
   authorityv1: "control/authority/v1",
   ingressv1: "control/private/ingress/v1",
   relayv1: "control/private/relay/v1",
-  publicurlusagev1: "integrations/public-url-usage/v1",
   publisherv1: "publisher/browser/v1",
   localpublisherv1: "publisher/local/v1",
 };

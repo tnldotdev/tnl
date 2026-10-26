@@ -404,7 +404,6 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 	writeJSON(response, http.StatusOK, controlv1.PublishRunHeartbeat{
 		PublishRun:            publishRunResponse(setup),
 		PublisherConnections:  connectionAssignmentResponses(setup.PublisherConnections),
-		PolicyDenials:         int64(setup.PolicyDenials),
 		VisitorPolicyRevision: setup.VisitorPolicyRevision,
 	})
 }

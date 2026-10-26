@@ -249,13 +249,15 @@ ON CONFLICT (ingress_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
+    AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
     AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.connector_only=EXCLUDED.connector_only
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports
     AND control.ingress_leases.connector_address=EXCLUDED.connector_address
     AND control.ingress_leases.connector_tls_server_name=EXCLUDED.connector_tls_server_name)
-   OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
+   OR (control.ingress_leases.ingress_run_id <> EXCLUDED.ingress_run_id
+       AND control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING id, ingress_id, ingress_run_id, region, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, connector_only, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 `
 

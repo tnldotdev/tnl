@@ -211,54 +211,6 @@ func TestIngressRoutingEventsRequireResnapshotAfterCompaction(t *testing.T) {
 	assertIngressProblemType(t, response, "https://tnl.dev/p/routing-table-resnapshot-required")
 }
 
-func TestReportIngressUsageConvertsCumulativeReports(t *testing.T) {
-	now := time.Now().UTC()
-	var gotIdentity controlstate.IngressLeaseIdentity
-	var gotBatch controlstate.IngressUsageBatch
-	store := &ingressStoreStub{reportUsage: func(
-		_ context.Context,
-		identity controlstate.IngressLeaseIdentity,
-		batch controlstate.IngressUsageBatch,
-		receivedAt time.Time,
-	) error {
-		gotIdentity, gotBatch = identity, batch
-		if !receivedAt.Equal(now) {
-			t.Fatalf("received at = %v, want %v", receivedAt, now)
-		}
-		return nil
-	}}
-	body := ingressv1.IngressUsageReportBatch{
-		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
-		ObservedThrough: &now, Complete: true,
-		Reports: []ingressv1.IngressUsageReport{{
-			PublicUrlId: "route-1", PublishRunNumber: 3, BucketStart: now.Add(-time.Minute), BucketEnd: now,
-			ObservedThrough: now, ReportRevision: 2, ConnectionAttempts: 10, PolicyDenials: 1, CapacityDenials: 2,
-			VisitorStreamOpenFailures: 3, SuccessfulStreams: 4, ConnectionNanoseconds: 5,
-			IngressBytes: 6, EgressBytes: 7, HistogramData: []byte{1, 2, 3}, Final: true,
-		}},
-	}
-	response := serveIngressJSON(
-		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/ingress-1/usage-reports", body,
-	)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusNoContent, response.Body.String())
-	}
-	if gotIdentity.IngressID != "ingress-1" || gotIdentity.IngressRunID != "run-1" ||
-		gotIdentity.IngressLeaseRevision != 7 || len(gotBatch.Reports) != 1 ||
-		gotBatch.ObservedThrough == nil || !gotBatch.ObservedThrough.Equal(now) || !gotBatch.Complete {
-		t.Fatalf("usage request = %#v, %#v", gotIdentity, gotBatch)
-	}
-	got := gotBatch.Reports[0]
-	if got.PublicURLID != "route-1" || got.PublishRunNumber != 3 || got.ReportRevision != 2 ||
-		got.ConnectionAttempts != 10 || got.PolicyDenials != 1 || got.CapacityDenials != 2 ||
-		got.VisitorStreamOpenFailures != 3 || got.SuccessfulStreams != 4 || got.ConnectionNanoseconds != 5 ||
-		got.IngressBytes != 6 || got.EgressBytes != 7 || !got.ObservedThrough.Equal(now) ||
-		!bytes.Equal(got.HistogramData, []byte{1, 2, 3}) || !got.Final {
-		t.Fatalf("usage report = %#v", got)
-	}
-}
-
 func TestObservePublicURLRecoveryUsesExactIngressLease(t *testing.T) {
 	now := time.Now().UTC()
 	var gotIdentity controlstate.IngressLeaseIdentity
@@ -304,33 +256,25 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 		problemType string
 	}{
 		{name: "lease stale", err: controlstate.ErrIngressLeaseStale, status: http.StatusConflict, problemType: "ingress_lease_stale"},
-		{name: "invalid usage", err: controlstate.ErrIngressUsageReportInvalid, status: http.StatusBadRequest, problemType: "invalid_usage_report"},
-		{name: "usage route missing", err: controlstate.ErrIngressUsagePublicURLNotFound, status: http.StatusNotFound, problemType: "usage_route_not_found"},
-		{name: "usage conflict", err: controlstate.ErrIngressUsageReportConflict, status: http.StatusConflict, problemType: "usage_report_conflict"},
-		{name: "bucket finalized", err: controlstate.ErrPublicURLUsageBucketFinalized, status: http.StatusConflict, problemType: "usage_bucket_finalized"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &ingressStoreStub{reportUsage: func(
-				context.Context, controlstate.IngressLeaseIdentity, controlstate.IngressUsageBatch, time.Time,
-			) error {
-				return test.err
+			store := &ingressStoreStub{renewIngress: func(
+				context.Context, controlstate.IngressRenewal, time.Time, time.Duration,
+			) (controlstate.IngressLease, error) {
+				return controlstate.IngressLease{}, test.err
 			}}
-			body := ingressv1.IngressUsageReportBatch{
+			body := ingressv1.IngressRenewal{
 				IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
-				Reports: []ingressv1.IngressUsageReport{{
-					PublicUrlId: "route-1", PublishRunNumber: 1, BucketStart: now.Add(-time.Minute), BucketEnd: now,
-					ObservedThrough: now, ReportRevision: 1, HistogramData: []byte{},
-				}},
 			}
 			response := serveIngressJSON(
 				t, testIngressHandler(t, store, now, nil), http.MethodPost,
-				"/internal/v1/ingresses/ingress-1/usage-reports", body,
+				"/internal/v1/ingresses/ingress-1/renew", body,
 			)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
-			wire, err := ingressv1.ParseReportIngressUsageResponse(response.Result())
+			wire, err := ingressv1.ParseRenewIngressResponse(response.Result())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -338,7 +282,7 @@ func TestIngressStoreErrorsHaveStableProblems(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.ReportIngressUsage(t.Context(), body.IngressId, body)
+			_, err = client.RenewIngress(t.Context(), body.IngressId, body)
 			var direct *serviceapi.ProblemError
 			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
 				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
@@ -419,7 +363,6 @@ type ingressStoreStub struct {
 	beginIngressDrain   func(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
 	readRoutingSnapshot func(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressRoutingTableSnapshot, error)
 	readRoutingEvents   func(context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time) (controlstate.IngressRoutingTablePage, error)
-	reportUsage         func(context.Context, controlstate.IngressLeaseIdentity, controlstate.IngressUsageBatch, time.Time) error
 	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.PublicURLRecoveryObservation, error)
 }
 
@@ -451,15 +394,6 @@ func (s *ingressStoreStub) ReadIngressRoutingTableEvents(
 	ctx context.Context, identity controlstate.IngressLeaseIdentity, after uint64, limit int, now time.Time,
 ) (controlstate.IngressRoutingTablePage, error) {
 	return s.readRoutingEvents(ctx, identity, after, limit, now)
-}
-
-func (s *ingressStoreStub) ReportIngressUsage(
-	ctx context.Context,
-	identity controlstate.IngressLeaseIdentity,
-	batch controlstate.IngressUsageBatch,
-	now time.Time,
-) error {
-	return s.reportUsage(ctx, identity, batch, now)
 }
 
 func (s *ingressStoreStub) ObservePublicURLRecovery(

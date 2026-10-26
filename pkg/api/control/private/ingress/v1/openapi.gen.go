@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -98,16 +97,11 @@ const (
 	Internal                       ProblemCode = "internal"
 	InvalidJson                    ProblemCode = "invalid_json"
 	InvalidRequest                 ProblemCode = "invalid_request"
-	InvalidUsageReport             ProblemCode = "invalid_usage_report"
 	NotFound                       ProblemCode = "not_found"
 	RecoveryEpisodeStale           ProblemCode = "recovery_episode_stale"
 	RoutingTableResnapshotRequired ProblemCode = "routing_table_resnapshot_required"
-	StaleUsageReport               ProblemCode = "stale_usage_report"
 	Unauthenticated                ProblemCode = "unauthenticated"
 	UnsupportedMediaType           ProblemCode = "unsupported_media_type"
-	UsageBucketFinalized           ProblemCode = "usage_bucket_finalized"
-	UsageReportConflict            ProblemCode = "usage_report_conflict"
-	UsageRouteNotFound             ProblemCode = "usage_route_not_found"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -123,25 +117,15 @@ func (e ProblemCode) Valid() bool {
 		return true
 	case InvalidRequest:
 		return true
-	case InvalidUsageReport:
-		return true
 	case NotFound:
 		return true
 	case RecoveryEpisodeStale:
 		return true
 	case RoutingTableResnapshotRequired:
 		return true
-	case StaleUsageReport:
-		return true
 	case Unauthenticated:
 		return true
 	case UnsupportedMediaType:
-		return true
-	case UsageBucketFinalized:
-		return true
-	case UsageReportConflict:
-		return true
-	case UsageRouteNotFound:
 		return true
 	default:
 		return false
@@ -226,9 +210,6 @@ type IngressLease struct {
 	RenewedAt            time.Time  `json:"renewed_at"`
 	ReportedConnections  int64      `json:"reported_connections"`
 	RoutingTableRevision int64      `json:"routing_table_revision"`
-
-	// VisitorNetworkHashKeys Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one public URL.
-	VisitorNetworkHashKeys []VisitorNetworkHashKey `json:"visitor_network_hash_keys"`
 }
 
 // IngressLeaseIdentity defines model for IngressLeaseIdentity.
@@ -373,36 +354,6 @@ type IngressTransportCertificate struct {
 	Trust         externalRef0.IngressTransportTrust `json:"trust"`
 }
 
-// IngressUsageReport defines model for IngressUsageReport.
-type IngressUsageReport struct {
-	BucketEnd                 time.Time  `json:"bucket_end"`
-	BucketStart               time.Time  `json:"bucket_start"`
-	CapacityDenials           int64      `json:"capacity_denials"`
-	ConnectionAttempts        int64      `json:"connection_attempts"`
-	ConnectionNanoseconds     int64      `json:"connection_nanoseconds"`
-	EgressBytes               int64      `json:"egress_bytes"`
-	Final                     bool       `json:"final"`
-	HistogramData             []byte     `json:"histogram_data"`
-	IngressBytes              int64      `json:"ingress_bytes"`
-	ObservedThrough           time.Time  `json:"observed_through"`
-	PolicyDenials             int64      `json:"policy_denials"`
-	PublicUrlId               Identifier `json:"public_url_id"`
-	PublishRunNumber          int64      `json:"publish_run_number"`
-	ReportRevision            int64      `json:"report_revision"`
-	SuccessfulStreams         int64      `json:"successful_streams"`
-	VisitorStreamOpenFailures int64      `json:"visitor_stream_open_failures"`
-}
-
-// IngressUsageReportBatch defines model for IngressUsageReportBatch.
-type IngressUsageReportBatch struct {
-	Complete             bool                 `json:"complete"`
-	IngressId            Identifier           `json:"ingress_id"`
-	IngressLeaseRevision int64                `json:"ingress_lease_revision"`
-	IngressRunId         Identifier           `json:"ingress_run_id"`
-	ObservedThrough      *time.Time           `json:"observed_through,omitempty"`
-	Reports              []IngressUsageReport `json:"reports"`
-}
-
 // IngressVisitorPolicyRequest defines model for IngressVisitorPolicyRequest.
 type IngressVisitorPolicyRequest struct {
 	AfterRevision        int64      `json:"after_revision"`
@@ -513,12 +464,6 @@ type StreamCapacityRetirement struct {
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
 
-// VisitorNetworkHashKey defines model for VisitorNetworkHashKey.
-type VisitorNetworkHashKey struct {
-	Key     []byte             `json:"key"`
-	UtcDate openapi_types.Date `json:"utc_date"`
-}
-
 // VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
 type VisitorPolicyUpdate = externalRef0.VisitorPolicyUpdate
 
@@ -604,9 +549,6 @@ type RetireStreamCapacityJSONRequestBody = StreamCapacityRetirement
 
 // GetIngressTransportCertificateJSONRequestBody defines body for GetIngressTransportCertificate for application/json ContentType.
 type GetIngressTransportCertificateJSONRequestBody GetIngressTransportCertificateJSONBody
-
-// ReportIngressUsageJSONRequestBody defines body for ReportIngressUsage for application/json ContentType.
-type ReportIngressUsageJSONRequestBody = IngressUsageReportBatch
 
 // ReadIngressVisitorPolicyJSONRequestBody defines body for ReadIngressVisitorPolicy for application/json ContentType.
 type ReadIngressVisitorPolicyJSONRequestBody = IngressVisitorPolicyRequest
@@ -814,20 +756,6 @@ type ClientInterface interface {
 	//
 	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
 	GetIngressTransportCertificate(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReportIngressUsageWithBody Store cumulative public URL usage from one ingress process run
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-	ReportIngressUsageWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReportIngressUsage Store cumulative public URL usage from one ingress process run
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-	ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
 	// with any type of body and a specified content type.
@@ -1182,40 +1110,6 @@ func (c *Client) GetIngressTransportCertificateWithBody(ctx context.Context, ing
 // Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
 func (c *Client) GetIngressTransportCertificate(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetIngressTransportCertificateRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReportIngressUsageWithBody Store cumulative public URL usage from one ingress process run
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-func (c *Client) ReportIngressUsageWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReportIngressUsageRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReportIngressUsage Store cumulative public URL usage from one ingress process run
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-func (c *Client) ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReportIngressUsageRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2019,53 +1913,6 @@ func NewGetIngressTransportCertificateRequestWithBody(server string, ingressId I
 	return req, nil
 }
 
-// NewReportIngressUsageRequest calls the generic ReportIngressUsage builder with application/json body
-func NewReportIngressUsageRequest(server string, ingressId IngressID, body ReportIngressUsageJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewReportIngressUsageRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewReportIngressUsageRequestWithBody constructs an http.Request for the ReportIngressUsage method, with any body, and a specified content type
-func NewReportIngressUsageRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/usage-reports", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewReadIngressVisitorPolicyRequest calls the generic ReadIngressVisitorPolicy builder with application/json body
 func NewReadIngressVisitorPolicyRequest(server string, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2304,20 +2151,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
 	GetIngressTransportCertificateWithResponse(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetIngressTransportCertificateResponse, error)
-
-	// ReportIngressUsageWithBodyWithResponse Store cumulative public URL usage from one ingress process run
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-	ReportIngressUsageWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error)
-
-	// ReportIngressUsageWithResponse Store cumulative public URL usage from one ingress process run
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-	ReportIngressUsageWithResponse(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error)
 
 	// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
 	// with any type of body and a specified content type.
@@ -2958,47 +2791,6 @@ func (r GetIngressTransportCertificateResponse) ContentType() string {
 	return ""
 }
 
-type ReportIngressUsageResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReportIngressUsageResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReportIngressUsageResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReportIngressUsageResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReportIngressUsageResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReportIngressUsageResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ReadIngressVisitorPolicyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3325,32 +3117,6 @@ func (c *ClientWithResponses) GetIngressTransportCertificateWithResponse(ctx con
 		return nil, err
 	}
 	return ParseGetIngressTransportCertificateResponse(rsp)
-}
-
-// ReportIngressUsageWithBodyWithResponse Store cumulative public URL usage from one ingress process run
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-func (c *ClientWithResponses) ReportIngressUsageWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error) {
-	rsp, err := c.ReportIngressUsageWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReportIngressUsageResponse(rsp)
-}
-
-// ReportIngressUsageWithResponse Store cumulative public URL usage from one ingress process run
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
-func (c *ClientWithResponses) ReportIngressUsageWithResponse(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error) {
-	rsp, err := c.ReportIngressUsage(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReportIngressUsageResponse(rsp)
 }
 
 // ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
@@ -3811,35 +3577,6 @@ func ParseGetIngressTransportCertificateResponse(rsp *http.Response) (*GetIngres
 	return response, nil
 }
 
-// ParseReportIngressUsageResponse parses an HTTP response from a ReportIngressUsageWithResponse call
-func ParseReportIngressUsageResponse(rsp *http.Response) (*ReportIngressUsageResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReportIngressUsageResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseReadIngressVisitorPolicyResponse parses an HTTP response from a ReadIngressVisitorPolicyWithResponse call
 func ParseReadIngressVisitorPolicyResponse(rsp *http.Response) (*ReadIngressVisitorPolicyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3914,9 +3651,6 @@ type ServerInterface interface {
 
 	// (POST /internal/v1/ingresses/{ingress_id}/transport-certificate)
 	GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-	// ReportIngressUsage Store cumulative public URL usage from one ingress process run
-	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
-	ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 
 	// (POST /internal/v1/ingresses/{ingress_id}/visitor-policy)
 	ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request, ingressId IngressID)
@@ -4472,32 +4206,6 @@ func (siw *ServerInterfaceWrapper) GetIngressTransportCertificate(w http.Respons
 	handler.ServeHTTP(w, r)
 }
 
-// ReportIngressUsage operation middleware
-func (siw *ServerInterfaceWrapper) ReportIngressUsage(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReportIngressUsage(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ReadIngressVisitorPolicy operation middleware
 func (siw *ServerInterfaceWrapper) ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request) {
 
@@ -4657,7 +4365,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/drain", wrapper.DrainIngress)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/snapshot", wrapper.GetIngressRoutingTableSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/routing-table/events", wrapper.GetIngressRoutingTableEvents)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/usage-reports", wrapper.ReportIngressUsage)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed", wrapper.ObservePublicURLRecovery)
 
 	return m

@@ -225,27 +225,6 @@ func (s *service) GetIngressRoutingTableEvents(
 	}
 }
 
-func (s *service) ReportIngressUsage(
-	ctx context.Context,
-	ingressID ingressv1.IngressID,
-	body ingressv1.IngressUsageReportBatch,
-) error {
-	if ingressID != body.IngressId {
-		return pathMismatchError()
-	}
-	identity, ok := ingressLeaseIdentity(body.IngressId, body.IngressRunId, body.IngressLeaseRevision)
-	batch, batchOK := ingressUsageBatch(body)
-	if !ok || !batchOK {
-		return serviceapi.NewProblemError(
-			http.StatusBadRequest, "invalid_request", "Ingress usage reports are invalid",
-		)
-	}
-	if err := s.store.ReportIngressUsage(ctx, identity, batch, s.now()); err != nil {
-		return s.storeError(ctx, err)
-	}
-	return nil
-}
-
 func (s *service) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,

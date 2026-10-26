@@ -209,11 +209,6 @@ schemas:
       - ingress_already_running
       - ingress_lease_stale
       - recovery_episode_stale
-      - invalid_usage_report
-      - usage_route_not_found
-      - stale_usage_report
-      - usage_report_conflict
-      - usage_bucket_finalized
       - routing_table_resnapshot_required
   Problem:
     type: object

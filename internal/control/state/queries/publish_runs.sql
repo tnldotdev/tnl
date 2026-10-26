@@ -1,7 +1,6 @@
 -- name: LockPublicURLForRun :one
--- publish run operations serialize with public URL mutations without changing
--- public URL identity. NO KEY UPDATE permits usage's KEY SHARE references;
--- overlapping usage pages could starve a stronger UPDATE heartbeat lock.
+-- serialize publish-run operations with public URL mutations without changing
+-- identity or blocking concurrent foreign-key references.
 SELECT *
 FROM control.public_urls
 WHERE id = sqlc.arg(public_url_id)

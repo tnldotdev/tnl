@@ -8,13 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 )
 
 // a finite shutdown workload with one-hour logical leases, not a cadence test.
-// half the public URLs stop while the other half heartbeat and both ingress sources
-// account for every public URL. publisher transports and visitor sockets
+// half the public URLs stop while the other half heartbeat and ingress consumes
+// their routing updates. publisher transports and visitor sockets
 // are absent; the separate runtime load test exercises them.
 func TestLoadShutdown(t *testing.T) {
 	f := newControlLoadFixture(t)
@@ -53,20 +51,16 @@ func TestLoadShutdown(t *testing.T) {
 			cancel()
 		})
 	}
-	var heartbeats, pages, closed, maximumClose atomic.Int64
-	var usageRevisions [2][]uint64
-	for index := range usageRevisions {
-		usageRevisions[index] = make([]uint64, len(sessions))
-	}
+	var heartbeats, closed, maximumClose atomic.Int64
 	stopBackground := make(chan struct{})
 	allWritesDone := make(chan struct{})
-	ready := make(chan struct{}, 5)
+	ready := make(chan struct{}, 3)
 	var heartbeatReady sync.Once
 	var background sync.WaitGroup
 	f.startMetrics(t)
 	started := time.Now()
 	defer func() {
-		t.Logf("shutdown routes=%d closed=%d heartbeats=%d usage_pages_including_replays=%d close_workers=16 heartbeat_workers=48 max_close=%s elapsed=%s", f.routes, closed.Load(), heartbeats.Load(), pages.Load(), time.Duration(maximumClose.Load()), time.Since(started))
+		t.Logf("shutdown routes=%d closed=%d heartbeats=%d close_workers=16 heartbeat_workers=48 max_close=%s elapsed=%s", f.routes, closed.Load(), heartbeats.Load(), time.Duration(maximumClose.Load()), time.Since(started))
 		f.logStats(t)
 	}()
 	for worker := range 48 {
@@ -106,51 +100,13 @@ func TestLoadShutdown(t *testing.T) {
 		})
 	}
 	for index, ingress := range ingresses {
-		background.Add(1)
-		actors.Go(func() {
-			defer background.Done()
-			bucket := f.now.Truncate(time.Minute)
-			for revision := uint64(1); ctx.Err() == nil; revision++ {
-				for offset := 0; offset < len(sessions); offset += 16 {
-					var reports []IngressUsageReport
-					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
-						n := revision * uint64(index+1)
-						reports = append(reports, IngressUsageReport{PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
-							BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: f.now, ReportRevision: revision,
-							ConnectionAttempts: 2 * n, SuccessfulStreams: n, PolicyDenials: n, IngressBytes: 100 * n, EgressBytes: 200 * n,
-							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})
-					}
-					for range 2 {
-						callCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-						err := f.controls[index].ReportIngressUsage(callCtx, ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: reports}, f.now)
-						stop()
-						if err != nil {
-							fail(fmt.Errorf("usage ingress=%d offset=%d: %w", index, offset, err))
-							return
-						}
-						pages.Add(1)
-					}
-					for route := offset; route < min(offset+16, len(sessions)); route++ {
-						usageRevisions[index][route] = revision
-					}
-					if revision == 1 && offset == 0 {
-						ready <- struct{}{}
-					}
-				}
-				select {
-				case <-stopBackground:
-					return
-				default:
-				}
-			}
-		})
 		actors.Go(func() {
 			if err := observeShutdownLoad(t, ctx, f.controls[index], ingress, f.now, uint64(initialRevision), byID, closing, allWritesDone, ready); err != nil {
 				fail(err)
 			}
 		})
 	}
-	for range 5 {
+	for range 3 {
 		select {
 		case <-ready:
 		case <-ctx.Done():
@@ -192,10 +148,10 @@ func TestLoadShutdown(t *testing.T) {
 		closers.Wait()
 	}
 	closeStarted := time.Now()
-	beforeHeartbeats, beforePages := heartbeats.Load(), pages.Load()
+	beforeHeartbeats := heartbeats.Load()
 	closeRange(0, closing)
-	duringHeartbeats, duringPages := heartbeats.Load()-beforeHeartbeats, pages.Load()-beforePages
-	t.Logf("shutdown_under_load closed=%d elapsed=%s background_heartbeats=%d background_pages=%d", closed.Load(), time.Since(closeStarted), duringHeartbeats, duringPages)
+	duringHeartbeats := heartbeats.Load() - beforeHeartbeats
+	t.Logf("shutdown_under_load closed=%d elapsed=%s background_heartbeats=%d", closed.Load(), time.Since(closeStarted), duringHeartbeats)
 	close(stopBackground)
 	background.Wait()
 	close(allWritesDone)
@@ -205,7 +161,7 @@ func TestLoadShutdown(t *testing.T) {
 	}
 	// tiny smoke fixtures can close between the 100ms heartbeat sweeps. larger
 	// load cases must demonstrate completed background work during closure itself.
-	if f.routes >= 128 && (duringHeartbeats == 0 || duringPages == 0) {
+	if f.routes >= 128 && duringHeartbeats == 0 {
 		t.Fatal("background work made no progress while closing routes")
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(len(sessions)-closing)*2)
@@ -219,19 +175,6 @@ func TestLoadShutdown(t *testing.T) {
 			t.Fatalf("unexpected surviving route %s", event.PublicURLID)
 		}
 	}
-	// usage remains accepted for closed historical publish run numbers and must not be lost
-	// or counted again by replay. verify every public URL, not only global totals.
-	for index, session := range sessions {
-		want := int64(usageRevisions[0][index] + 2*usageRevisions[1][index])
-		var matches bool
-		if err := f.database.pool.QueryRow(ctx, `SELECT b.connection_attempts = $2*2 AND b.successful_streams = $2
-			AND b.policy_denials = $2 AND b.ingress_bytes = $2*100 AND b.egress_bytes = $2*200
-			AND s.policy_denials = $2 AND (s.closed_at IS NOT NULL) = $3
-			FROM control.public_url_usage_buckets b JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number
-			WHERE s.id = $1`, session.setup.PublishRunID, want, index < closing).Scan(&matches); err != nil || !matches {
-			t.Fatalf("shutdown accounting route=%s want=%d: %v", session.setup.PublicURLID, want, err)
-		}
-	}
 	closeRange(closing, len(sessions))
 	if firstErr != nil || ctx.Err() != nil {
 		t.Fatalf("final close: %v (context %v)", firstErr, ctx.Err())
@@ -243,10 +186,6 @@ func TestLoadShutdown(t *testing.T) {
 		t.Fatalf("remaining sessions=%d connections=%d: %v", openSessions, activeConnections, err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
-	var buckets int
-	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_url_usage_buckets`).Scan(&buckets); err != nil || buckets != len(sessions) {
-		t.Fatalf("usage bucket count=%d: %v", buckets, err)
-	}
 	// a repeated close must not publish another tombstone or release capacity twice.
 	if err := f.controls[0].ClosePublishRun(ctx, sessions[0].setup.PublishRunID, sessions[0].setup.PublishRunToken, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -256,7 +195,7 @@ func TestLoadShutdown(t *testing.T) {
 	if err != nil || len(final.Entries) != 0 || final.RoutingTableRevision != wantRevision {
 		t.Fatalf("final routing rows=%d revision=%d want=%d: %v", len(final.Entries), final.RoutingTableRevision, wantRevision, err)
 	}
-	t.Logf("shutdown_verified sessions=%d connections=%d usage_buckets=%d final_revision=%d", len(sessions), 2*len(sessions), len(sessions), wantRevision)
+	t.Logf("shutdown_verified sessions=%d connections=%d final_revision=%d", len(sessions), 2*len(sessions), wantRevision)
 }
 
 func observeShutdownLoad(t *testing.T, ctx context.Context, database *Database, ingress IngressLease, now time.Time, cursor uint64, routes map[string]int, closing int, finished <-chan struct{}, ready chan<- struct{}) error {

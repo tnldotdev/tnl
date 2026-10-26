@@ -20,7 +20,7 @@ steady-state run:
 mise exec -- task go:test:load:database PUBLIC_URLS=32 RUN='^TestLoadSteadyState$'
 ```
 
-The tests cover placement, routing reads, usage, relay recovery, and bounded
+The tests cover placement, routing reads, relay recovery, and bounded
 shutdown. `HISTORY` seeds routing events per public URL for steady-state and
 recovery runs; it defaults to one. `DELAY=5ms` or `20ms` adds a synthetic delay
 after successful SQL commands. It models sensitivity to round trips, not
@@ -179,5 +179,5 @@ aggregation; `COORDINATOR_MEMORY` remains an explicit resource override.
 Raw HTTP samples include negotiated protocol, socket reuse, response-header time,
 and first body-byte time. `*-latency.json` retains exact request-start and
 scheduled-slot distributions. the ordinary resource, rejection, offer-accounting,
-usage-flush, and joined-cleanup assertions still apply. use the same settings on
+and joined-cleanup assertions still apply. use the same settings on
 the baseline and cutover trees; full tracing adds measurement overhead.

@@ -37,7 +37,6 @@ const (
 	PublicURLPrefix                  = "url_"
 	PublishRunPrefix                 = "pr_"
 	PublicURLCertificateWorkerPrefix = "ucw_"
-	PublicURLUsageWorkerPrefix       = "uuw_"
 	PublisherConnectionPrefix        = "pc_"
 	PublisherIdentityPrefix          = "pub_"
 	PublisherIdentityKeyPrefix       = "pkey_"

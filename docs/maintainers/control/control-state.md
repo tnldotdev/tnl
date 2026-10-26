@@ -1,7 +1,7 @@
 # control-state invariants
 
 Audience: tnl maintainers working on `internal/control/state`, routing
-publication, usage aggregation, or recovery. Product and operator documentation
+publication or recovery. Product and operator documentation
 does not depend on these implementation details.
 
 ## start from a fresh baseline
@@ -28,9 +28,8 @@ boundaries on reads and writes. A slot keeps its `id` and
 count open, assigned slots and use an advisory guard during placement. Historical
 process-run IDs do not require live ingress or relay lease rows.
 
-Control stores the guest retry key in `control.guest_retry_keys` and the visitor
-network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
-the storage key and must participate in key rotation. IP-policy and request
+Control stores the guest retry key in `control.guest_retry_keys`, encrypted with
+the storage key and included in key rotation. IP-policy and request
 digests elsewhere retain their own ciphertext and storage-key IDs.
 
 storage-key rotation claims every recoverable encrypted row, including visitor
@@ -161,7 +160,7 @@ Both retain the clock through commit. Revision visibility therefore follows
 commit order without another round trip in the common single-event path.
 
 Session operations use `NO KEY UPDATE` route guards. Route identity is
-immutable, and usage's `KEY SHARE` references can coexist with heartbeats. Public URL
+immutable, and foreign-key references can coexist with heartbeats. Public URL
 mutations still conflict.
 
 ## publish member namespace dns
@@ -216,25 +215,6 @@ lock. It does not take the publication clock or route and placement guards.
 Concurrent publication can make an anchor unnecessary, but cannot make a
 superseded event current again. Failed batches retain their scan cursor. Sweeps
 advance past anchors even when a batch deletes nothing.
-
-## process usage in stable order
-
-Usage pages hold ingress and process-run guards while prefetching bounded latest
-report metadata. Reports are processed in route, version, bucket, and revision
-order.
-
-Page-local history advances after each successful fresh report. Multiple
-revisions for one key therefore preserve cumulative and replay behavior.
-Histogram payloads are loaded only for an exact replay or for the aggregate
-being updated.
-
-Fresh usage combines its route reference and session guards in one statement,
-with the route guard materialized first. The later bucket read can see a bucket
-created by another ingress while the session lock was waiting.
-
-The immutable report insertion, aggregate delta, and optional session denial
-update use one dependent write statement. A rejected write rolls back the whole
-page.
 
 ## coordinate certificate challenges
 

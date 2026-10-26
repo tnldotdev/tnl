@@ -219,60 +219,6 @@ func integrationRouteOrderCount(t *testing.T, database *sql.DB, publicURLID stri
 	return count
 }
 
-func assertStandaloneUsage(t *testing.T, databaseURL string, database *sql.DB, publicURLID string, publishRunNumber uint64) {
-	t.Helper()
-	var reportCount int
-	var allFinal bool
-	var attempts, policyDenials, capacityDenials, publisherFailures, successful, ingressBytes, egressBytes int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `
-		WITH latest AS (
-			SELECT DISTINCT ON (bucket_start)
-				final, connection_attempts, policy_denials, capacity_denials,
-				visitor_stream_open_failures, successful_streams, ingress_bytes, egress_bytes
-			FROM control.ingress_usage_reports
-			WHERE public_url_id = $1 AND publish_run_number = $2
-			ORDER BY bucket_start, report_revision DESC
-		)
-		SELECT count(*), coalesce(bool_and(final), false),
-			coalesce(sum(connection_attempts), 0), coalesce(sum(policy_denials), 0),
-			coalesce(sum(capacity_denials), 0), coalesce(sum(visitor_stream_open_failures), 0),
-			coalesce(sum(successful_streams), 0), coalesce(sum(ingress_bytes), 0), coalesce(sum(egress_bytes), 0)
-		FROM latest
-	`, publicURLID, publishRunNumber).Scan(&reportCount, &allFinal, &attempts, &policyDenials, &capacityDenials, &publisherFailures, &successful, &ingressBytes, &egressBytes); err != nil {
-		t.Fatal(err)
-	}
-	if reportCount == 0 || !allFinal || attempts < 1 || successful < 1 || ingressBytes == 0 || egressBytes == 0 || policyDenials != 0 || capacityDenials != 0 || publisherFailures != 0 {
-		t.Fatalf("final usage reports = count %d, final %t, attempts/denials/failures/successes %d/%d/%d/%d/%d, bytes %d/%d",
-			reportCount, allFinal, attempts, policyDenials, capacityDenials, publisherFailures, successful, ingressBytes, egressBytes)
-	}
-	var bucketCount int
-	var through time.Time
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), max(bucket_end)
-		FROM control.public_url_usage_buckets WHERE public_url_id = $1 AND publish_run_number = $2`, publicURLID, publishRunNumber).Scan(&bucketCount, &through); err != nil {
-		t.Fatal(err)
-	}
-	if bucketCount == 0 {
-		t.Fatal("public URL usage bucket was not created")
-	}
-	state, err := controlstate.Open(integrationOperationContext(t), databaseURL, testStorageKey, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	finalized, err := state.FinalizePublicURLUsageBuckets(integrationOperationContext(t), through, through)
-	if err != nil || finalized != bucketCount {
-		t.Fatalf("public URL usage finalization = %d, %v; want %d", finalized, err, bucketCount)
-	}
-	var allFinalized, allComplete bool
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT coalesce(bool_and(finalized), false), coalesce(bool_and(coverage_complete), false)
-		FROM control.public_url_usage_buckets WHERE public_url_id = $1 AND publish_run_number = $2`, publicURLID, publishRunNumber).Scan(&allFinalized, &allComplete); err != nil {
-		t.Fatal(err)
-	}
-	if !allFinalized || !allComplete {
-		t.Fatalf("public URL usage buckets = finalized %t, complete %t", allFinalized, allComplete)
-	}
-}
-
 func assertSplitLeases(t *testing.T, database *sql.DB, activeIngress, activeRelays, drainingIngress, drainingRelays int) {
 	t.Helper()
 	var gotActiveIngress, gotActiveRelays, gotDrainingIngress, gotDrainingRelays int

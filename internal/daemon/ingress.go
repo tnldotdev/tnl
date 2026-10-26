@@ -33,7 +33,6 @@ type ingressRuntime struct {
 	controller         *ingress.Controller
 	server             *ingress.Server
 	forwarder          *ingress.Forwarder
-	usage              *ingress.UsageReporter
 	recovery           *ingress.RecoveryReporter
 	private            *ingress.Connector
 	privateQUIC        *muxsession.QUICListener
@@ -262,15 +261,6 @@ func (d *daemon) startIngressRuntime(
 		})
 	}
 	var recovery *ingress.RecoveryReporter
-	// every ingress lease participates in usage coverage, including an empty
-	// private-only identity sharing the public listener. its idle and final
-	// watermarks must not hold public URL usage buckets open.
-	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { logOperationalError(ctx, "report ingress usage", failure.ServerWorkerFailed, err) })
-	if err != nil {
-		return err
-	}
-	usage.SetObserver(metrics)
-	runtime.usage = usage
 	if !runtimeConfig.privateOnly {
 		recovery, err = ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
 			logOperationalError(ctx, "report ingress recovery", failure.ServerWorkerFailed, err)
@@ -329,9 +319,6 @@ func (d *daemon) startIngressRuntime(
 			return !d.draining.Load() && controller.Ready(now) && publicServer != nil && publicServer.Ready() &&
 				(runtime.serviceCertificate == nil || runtime.serviceCertificate.ready(now))
 		}
-	}
-	if usage != nil {
-		ingressConfig.OpenUsage = usage.Open
 	}
 	if recovery != nil {
 		ingressConfig.ObserveRecovery = recovery.Observe
@@ -402,7 +389,6 @@ func (d *daemon) startIngressRuntime(
 		d.publishIngressRuntime(runtime)
 		owned = true
 		d.start("run private ingress control", func() error { return controller.Run(ctx) })
-		d.start("report private ingress idle coverage", func() error { return usage.Run(ctx) })
 		return nil
 	}
 	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
@@ -434,7 +420,6 @@ func (d *daemon) startIngressRuntime(
 	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
-	d.start("report ingress usage", func() error { return usage.Run(ctx) })
 	d.start("serve public ingress", server.Serve)
 	if runtime.privateQUIC != nil {
 		d.start("serve private QUIC ingress", func() error { return serveQUICSessions(ctx, runtime.privateQUIC, runtime.private.AcceptQUIC) })

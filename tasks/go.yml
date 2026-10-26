@@ -48,12 +48,6 @@ tasks:
     cmds:
       - go test -race ./internal/control/oidc ./internal/control/api/authority ./internal/client/authority ./internal/client/auth ./internal/client/state ./internal/security/credentials ./internal/daemon/config
 
-  test:team-usage:
-    dir: "{{.ROOT_DIR}}"
-    desc: Check signed website usage authorization and safe failure classification
-    cmds:
-      - go test -race -v ./internal/control/api/authority -run='^TestWebsiteTeamUsage' -count=1
-
   test:config-contracts:
     dir: "{{.ROOT_DIR}}"
     desc: Check config serialization, evaluated owner snapshots, target trust, references and local status protocols

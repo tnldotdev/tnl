@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
@@ -73,9 +72,6 @@ func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRe
 	now := time.Now()
 	l := ingressv1.IngressLease{IngressId: r.IngressId, IngressRunId: r.IngressRunId, IngressLeaseRevision: 1, ProtocolVersion: r.ProtocolVersion,
 		ConnectionCapacity: r.ConnectionCapacity, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
-	for i := range 2 {
-		l.VisitorNetworkHashKeys = append(l.VisitorNetworkHashKeys, ingressv1.VisitorNetworkHashKey{UtcDate: types.Date{Time: now.UTC().Truncate(24*time.Hour).AddDate(0, 0, i)}, Key: make([]byte, 32)})
-	}
 	c.mu.Lock()
 	c.lease = l
 	c.mu.Unlock()
@@ -94,9 +90,6 @@ func (c *wiringControl) GetIngressRoutingTableSnapshot(context.Context, ingressv
 func (c *wiringControl) GetIngressRoutingTableEvents(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error) {
 	<-ctx.Done()
 	return ingressv1.IngressRoutingTablePage{}, ctx.Err()
-}
-func (c *wiringControl) ReportIngressUsage(context.Context, ingressv1.IngressID, ingressv1.IngressUsageReportBatch) error {
-	return nil
 }
 func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlstate.IngressLeaseIdentity, batch serviceaudit.Batch) (controlstate.ServiceObservationResult, error) {
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil

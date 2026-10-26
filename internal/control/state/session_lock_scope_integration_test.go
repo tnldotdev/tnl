@@ -48,22 +48,21 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 	}
 }
 
-func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
+func TestIntegrationHeartbeatProgressesWithPublicURLReference(t *testing.T) {
 	f := newPublishRunFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	usage, err := f.database.pool.Begin(ctx)
+	reference, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, usage)
-	if _, err := controlstatedb.New(usage).LockPublicURLForUsage(ctx, f.setup.PublicURLID); err != nil {
+	defer rollbackTestTransaction(t, reference)
+	if _, err := reference.Exec(ctx, `SELECT id FROM control.public_urls WHERE id=$1 FOR KEY SHARE`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	// usage retains this reference until its page commits. a heartbeat may
-	// serialize on the publish run, but must not wait for a public URL identity reference.
+	// another transaction's identity reference does not block a heartbeat.
 	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
-		t.Fatalf("heartbeat blocked behind usage's route reference: %v", err)
+		t.Fatalf("heartbeat blocked behind a public URL reference: %v", err)
 	}
 }
 

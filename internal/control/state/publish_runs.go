@@ -94,7 +94,6 @@ type PublishRunSetup struct {
 	ExpiresAt             time.Time
 	ReadyAt               *time.Time
 	ClosedAt              *time.Time
-	PolicyDenials         uint64
 	VisitorPolicyRevision int64
 	Traffic               trafficlimits.Limits
 	PublisherConnections  [publishRunConnectionCount]ConnectionAssignment
@@ -604,7 +603,6 @@ func publishRunSetup(
 		MembershipID: session.MembershipID.String, PublishRunNumber: uint64(session.PublishRunNumber),
 		PolicyRevision: uint64(session.PolicyRevision), PublishRunToken: token, State: PublishRunState(session.State),
 		CreatedAt: session.CreatedAt.Time, ExpiresAt: session.PublisherExpiresAt.Time,
-		PolicyDenials: uint64(session.PolicyDenials),
 	}
 	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
 	if err != nil {

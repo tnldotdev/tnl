@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -71,8 +70,6 @@ func TestLoadRelayRecovery(t *testing.T) {
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
 	var recovered, healthyPublicURLs, heartbeats atomic.Int64
-	var pages [2]atomic.Int64
-	var usageRevisions [2]uint64 // one writer per ingress; read only after joining.
 	recoveryTimes := make([]time.Duration, f.routes)
 	f.startMetrics(t)
 	started := time.Now()
@@ -82,8 +79,8 @@ func TestLoadRelayRecovery(t *testing.T) {
 			total += elapsed
 			maximum = max(maximum, elapsed)
 		}
-		t.Logf("affected=%d recovered=%d unaffected_verified=%d/%d healthy_heartbeats=%d usage_pages=%d+%d usage_revisions=%d+%d workflows=64 elapsed=%s",
-			len(affected), recovered.Load(), healthyPublicURLs.Load(), len(unaffected), heartbeats.Load(), pages[0].Load(), pages[1].Load(), usageRevisions[0], usageRevisions[1], time.Since(started))
+		t.Logf("affected=%d recovered=%d unaffected_verified=%d/%d healthy_heartbeats=%d workflows=64 elapsed=%s",
+			len(affected), recovered.Load(), healthyPublicURLs.Load(), len(unaffected), heartbeats.Load(), time.Since(started))
 		t.Logf("successful_slot_recovery_mean=%s max=%s (heartbeat through readiness)", total/time.Duration(max(1, recovered.Load())), maximum)
 		f.logStats(t)
 	}()
@@ -100,12 +97,12 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 
 	// 32 recovery workflows and 32 healthy workflows share the same two pools.
-	// healthy heartbeats and the two serial usage writers finish their current
-	// sweep only after every affected slot has actually been marked ready.
+	// healthy heartbeats finish their current sweep only after every affected
+	// slot has actually been marked ready.
 	restartReady := make(chan struct{})
-	backgroundReady := make(chan struct{}, 3+len(ingresses))
+	backgroundReady := make(chan struct{}, 1+len(ingresses))
 	var work sync.WaitGroup
-	work.Add(64 + len(ingresses))
+	work.Add(64)
 	var restarted RelayLease // published to recovery workflows by restartReady.
 	for worker := range 32 {
 		workers.Go(func() {
@@ -125,7 +122,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 				}
 				current[index], recoveryTimes[index] = setup, time.Since(began)
 				if recovered.Add(1) == int64(len(affected)) {
-					t.Logf("all_slots_ready_elapsed=%s healthy_heartbeats=%d usage_pages=%d+%d", time.Since(started), heartbeats.Load(), pages[0].Load(), pages[1].Load())
+					t.Logf("all_slots_ready_elapsed=%s healthy_heartbeats=%d", time.Since(started), heartbeats.Load())
 				}
 			}
 		})
@@ -173,44 +170,6 @@ func TestLoadRelayRecovery(t *testing.T) {
 			}
 		})
 	}
-	bucketStart := f.now.Truncate(time.Minute)
-	for index, ingress := range ingresses {
-		workers.Go(func() {
-			defer work.Done()
-			for revision := uint64(1); ctx.Err() == nil; revision++ {
-				for offset := 0; offset < len(sessions) && ctx.Err() == nil; offset += 16 {
-					var reports []IngressUsageReport
-					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
-						n := revision * uint64(index+1)
-						reports = append(reports, IngressUsageReport{
-							PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
-							BucketStart: bucketStart, BucketEnd: bucketStart.Add(time.Minute), ObservedThrough: f.now,
-							ReportRevision: revision, ConnectionAttempts: n, PolicyDenials: n,
-							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
-						})
-					}
-					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					err := f.controls[index].ReportIngressUsage(callCtx, ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: reports}, now)
-					stop()
-					if err != nil {
-						fail(fmt.Errorf("usage ingress=%d offset=%d revision=%d: %w", index, offset, revision, err))
-						return
-					}
-					pages[index].Add(1)
-					if revision == 1 && offset == 0 {
-						backgroundReady <- struct{}{}
-					}
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				usageRevisions[index] = revision
-				if recovered.Load() == int64(len(affected)) {
-					return
-				}
-			}
-		})
-	}
 	workDone := make(chan struct{})
 	workers.Go(func() { work.Wait(); close(workDone) })
 	for index, ingress := range ingresses {
@@ -222,7 +181,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 	// require successful background work after the failure before releasing the
 	// recovery workflows, rather than counting goroutine starts as progress.
-	for range 3 + len(ingresses) {
+	for range 1 + len(ingresses) {
 		select {
 		case <-backgroundReady:
 		case <-ctx.Done():
@@ -252,7 +211,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	if err != nil || renewed.RelayLeaseIdentity != restarted.RelayLeaseIdentity || !renewed.LeaseExpiresAt.After(now) {
 		t.Fatalf("new relay run renewal: %v", err)
 	}
-	t.Logf("relay_restarted_elapsed=%s healthy_heartbeats=%d usage_pages=%d+%d", time.Since(started), heartbeats.Load(), pages[0].Load(), pages[1].Load())
+	t.Logf("relay_restarted_elapsed=%s healthy_heartbeats=%d", time.Since(started), heartbeats.Load())
 	close(restartReady)
 	workers.Wait()
 	if firstErr != nil {
@@ -260,11 +219,6 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 	if ctx.Err() != nil || recovered.Load() != int64(len(affected)) || healthyPublicURLs.Load() != int64(len(unaffected)) {
 		t.Fatalf("incomplete recovery workload: %v", ctx.Err())
-	}
-	for index, revision := range usageRevisions {
-		if revision == 0 || pages[index].Load() != int64(revision)*int64((f.routes+15)/16) {
-			t.Fatalf("incomplete usage stream ingress=%d", index)
-		}
 	}
 
 	// verification uses the undelayed setup pool. walk the bounded event history
@@ -324,38 +278,6 @@ func TestLoadRelayRecovery(t *testing.T) {
 		}
 		seen[event.PublicURLID] = true
 		verified++
-	}
-	// check committed usage per public URL and publish run, not merely successful calls or a
-	// global total. both serial streams finish complete cumulative revisions.
-	units := usageRevisions[0] + 2*usageRevisions[1]
-	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-	defer stop()
-	rows, err := f.database.pool.Query(callCtx, `
-		SELECT b.public_url_id, b.publish_run_number, s.id,
-			(b.bucket_start = $1 AND b.bucket_end = $2 AND b.observed_through = $3
-			 AND b.connection_attempts = $4 AND b.policy_denials = $4 AND s.policy_denials = $4) IS TRUE
-		FROM control.public_url_usage_buckets b
-		JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number`,
-		bucketStart, bucketStart.Add(time.Minute), f.now, int64(units))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var publicURLID, sessionID string
-		var version uint64
-		var matches bool
-		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
-			t.Fatal(err)
-		}
-		index, ok := byID[publicURLID]
-		if !ok || !matches || version != sessions[index].setup.PublishRunNumber || sessionID != sessions[index].setup.PublishRunID {
-			t.Fatalf("unexpected recovery usage bucket route=%s", publicURLID)
-		}
-		delete(byID, publicURLID)
-	}
-	if err := rows.Err(); err != nil || len(byID) != 0 || ctx.Err() != nil {
-		t.Fatalf("recovery usage verification: missing=%d err=%v context=%v", len(byID), err, ctx.Err())
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }

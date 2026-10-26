@@ -323,7 +323,7 @@ matter when reading it:
   they do not measure a CA quota or orders outside this deployment.
 - service audit events are `queued|delivered|retry|dropped|accepted|duplicate`.
   they describe separate queue/ingestion stages, not distinct visitors or durable
-  audit totals. usage item events likewise count different item types.
+  audit totals.
 - service audit cleanup is measured by the runtime worker once per database call,
   including its committed row count. the instrumented database does not record
   that same cleanup again.

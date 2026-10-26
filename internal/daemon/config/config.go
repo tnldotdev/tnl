@@ -87,10 +87,8 @@ type Config struct {
 	RefreshTokenLifetime  time.Duration     `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 	GuestDemoEnabled      bool              `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
 
-	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
-	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
-	EmailURL            string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
-	WebhookSecret       string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
+	EmailURL      string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
+	WebhookSecret string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`

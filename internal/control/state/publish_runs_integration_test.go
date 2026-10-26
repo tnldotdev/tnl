@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -383,16 +382,8 @@ func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET publisher_connection_credential_expires_at = $2 WHERE publish_run_id = $1`, f.setup.PublishRunID, heartbeatAt.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	lease := registerTestIngress(t, database, now)
-	bucket := heartbeatAt.Truncate(time.Minute)
-	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{{
-		PublicURLID: f.setup.PublicURLID, PublishRunNumber: f.setup.PublishRunNumber, BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: heartbeatAt,
-		ReportRevision: 1, ConnectionAttempts: 3, PolicyDenials: 3, HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
-	}}}, heartbeatAt); err != nil {
-		t.Fatal(err)
-	}
 	heartbeat, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt, 30*time.Second, time.Minute)
-	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber || heartbeat.PolicyDenials != 3 {
+	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber {
 		t.Fatalf("heartbeat = %#v, %v", heartbeat, err)
 	}
 	publicURL, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)

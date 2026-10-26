@@ -2649,8 +2649,6 @@ type PublishRun struct {
 
 // PublishRunHeartbeat Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
 type PublishRunHeartbeat struct {
-	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
-	PolicyDenials        int64                  `json:"policy_denials"`
 	PublishRun           PublishRun             `json:"publish_run"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 

@@ -89,7 +89,7 @@ func runSession(
 	if err := progress("heartbeat"); err != nil {
 		return err
 	}
-	heartbeat, observedHeartbeat, err := heartbeatResponseOnce(
+	heartbeat, _, err := heartbeatResponseOnce(
 		sessionCtx, authority, setup.PublishRun.ExpiresAt,
 	)
 	if err != nil {
@@ -105,15 +105,6 @@ func runSession(
 	}
 	if len(heartbeat.PublisherConnections) != 0 {
 		setup.PublisherConnections = heartbeat.PublisherConnections
-	}
-	var observedPolicyDenials uint64
-	observePolicyDenials := func(value int64) error {
-		return observeHeartbeatPolicyDenials(config, setup, value, &observedPolicyDenials)
-	}
-	if observedHeartbeat {
-		if err := observePolicyDenials(heartbeat.PolicyDenials); err != nil {
-			return err
-		}
 	}
 	ctx = sessionCtx
 	var visitorClient any = config.Control
@@ -319,7 +310,7 @@ func runSession(
 	go func() {
 		err := heartbeatSessionAfterUpdate(
 			sessionCtx, authority, heartbeat.PublishRun.ExpiresAt,
-			connections.Update, observePolicyDenials, config.heartbeatInterval,
+			connections.Update, config.heartbeatInterval,
 		)
 		if err != nil && parentCanceledSession(parentCtx, sessionCtx) {
 			err = nil

@@ -298,11 +298,7 @@ For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/pub
 
 ## how much does it cost?
 
-tnl.dev is free for now. Teams have a soft limit of 50 GiB of transfer per
-month across their public URLs, counting traffic in both directions.
-
-Accounts and teams created while it is free will keep a free plan
-if paid options arrive.
+tnl.dev is free for now. Future plans and limits are not yet decided.
 
 ## license
 

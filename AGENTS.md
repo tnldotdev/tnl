@@ -238,33 +238,25 @@ membership or grant rules.
 
 ## teams and domains
 
-| Term                               | Definition                                                                                                      |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **team**                           | The stored ownership and authorization boundary for domains and public URLs.                                    |
-| **team name**                      | A stable, server-unique lowercase DNS label that selects a team in project configuration and the CLI.           |
-| **personal team**                  | The permanent, single-owner team created for each identity.                                                     |
-| **organization team**              | A team created for collaboration among multiple identities.                                                     |
-| **membership**                     | The relationship between an identity and a team, including team role and immutable member slug.                 |
-| **invitation**                     | A time-limited offer to create a membership with a reserved member slug and initial team role.                  |
-| **member slug**                    | A team-unique, immutable DNS label chosen or derived when a membership is created and used with custom domains. |
-| **managed label**                  | A server-generated, immutable DNS label used with the managed domain.                                           |
-| **namespace**                      | A complete hostname built from a membership and domain.                                                         |
-| **managed domain**                 | A server-controlled domain beneath which namespaces are generated.                                              |
-| **custom domain**                  | A domain added by a team and assigned exclusively to it after DNS authority verification.                       |
-| **team domain**                    | A managed domain or custom domain available to one team.                                                        |
-| **default domain**                 | The ready team domain used when a command does not select another domain.                                       |
-| **DNS authority**                  | State control uses to manage public URL DNS beneath one custom domain.                                          |
-| **shared public URL**              | A team-owned public URL outside individual namespaces.                                                          |
-| **public URL scope**               | Whether a public URL belongs to one membership or to the team collectively.                                     |
-| **maintenance control**            | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance.        |
-| **public URL usage bucket report** | A usage report for one public URL, publish run number, time bucket, and report revision.                        |
-
-## public url usage
-
-| Term                          | Definition                                                                                            |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **public URL usage receiver** | An external HTTPS service that accepts public URL usage bucket reports from control.                  |
-| **visitor network estimate**  | An approximate count of distinct visitor IPv4 /32 or IPv6 /64 networks for one public URL and bucket. |
+| Term                    | Definition                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **team**                | The stored ownership and authorization boundary for domains and public URLs.                                    |
+| **team name**           | A stable, server-unique lowercase DNS label that selects a team in project configuration and the CLI.           |
+| **personal team**       | The permanent, single-owner team created for each identity.                                                     |
+| **organization team**   | A team created for collaboration among multiple identities.                                                     |
+| **membership**          | The relationship between an identity and a team, including team role and immutable member slug.                 |
+| **invitation**          | A time-limited offer to create a membership with a reserved member slug and initial team role.                  |
+| **member slug**         | A team-unique, immutable DNS label chosen or derived when a membership is created and used with custom domains. |
+| **managed label**       | A server-generated, immutable DNS label used with the managed domain.                                           |
+| **namespace**           | A complete hostname built from a membership and domain.                                                         |
+| **managed domain**      | A server-controlled domain beneath which namespaces are generated.                                              |
+| **custom domain**       | A domain added by a team and assigned exclusively to it after DNS authority verification.                       |
+| **team domain**         | A managed domain or custom domain available to one team.                                                        |
+| **default domain**      | The ready team domain used when a command does not select another domain.                                       |
+| **DNS authority**       | State control uses to manage public URL DNS beneath one custom domain.                                          |
+| **shared public URL**   | A team-owned public URL outside individual namespaces.                                                          |
+| **public URL scope**    | Whether a public URL belongs to one membership or to the team collectively.                                     |
+| **maintenance control** | An administrator-controlled gate for public URL creation, publish run creation, or certificate issuance.        |
 
 ## machine field names
 
@@ -347,7 +339,7 @@ for runtime invariants, trust boundaries, and package/API ownership. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
-- The seven HTTP OpenAPI contracts under `api/{control,publisher,integrations}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
+- HTTP OpenAPI contracts under `api/{control,publisher,integrations}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` orders Go API generation, browser validators, then the remaining Go directives; `task format` formats the resulting tree.
 - `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
