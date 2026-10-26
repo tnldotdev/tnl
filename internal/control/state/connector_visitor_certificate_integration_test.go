@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -130,6 +131,9 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	header := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: initial.ID, Sequence: 1, ResourceKind: "service", ResourceID: run.ServiceID, RunID: run.RunID, RunNumber: uint64(run.RunNumber), VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", IngressID: ingress.IngressID, IngressRunID: ingress.IngressRunID, IngressLeaseRevision: ingress.IngressLeaseRevision}
+	if err := visitortoken.SignReservation(initial.ProofKey[:], &header, source); err != nil {
+		t.Fatal(err)
+	}
 	if err := local.ValidateReservation(header); err != nil {
 		t.Fatal("current prepared reservation denied", err)
 	}
