@@ -103,14 +103,17 @@ func TestIntegrationConcurrentVisitorTokenIssuanceAfterRetentionHorizon(t *testi
 	close(start)
 	workers.Wait()
 	close(results)
-	keys := stateTestVisitorKeys(t, d, now)
+	// retrying the authority transaction uses fresh control time. verify after
+	// issuance rather than before a retried token's signed iat.
+	verifiedAt := time.Now().UTC()
+	keys := stateTestVisitorKeys(t, d, verifiedAt)
 	var latestExpiry time.Time
 	for result := range results {
 		if result.err != nil || result.issued.Token == "" {
 			t.Fatalf("concurrent visitor token issuance failed after bounded retry: %v", result.err)
 		}
 		permission := result.issued.Permission
-		if _, err := visitortoken.VerifyBearer(result.issued.Token, stateTestVisitorView(permission, keys, now), now); err != nil {
+		if _, err := visitortoken.VerifyBearer(result.issued.Token, stateTestVisitorView(permission, keys, verifiedAt), verifiedAt); err != nil {
 			t.Fatalf("concurrently issued token did not verify: %v", err)
 		}
 		if permission.ExpiresAt.After(latestExpiry) {

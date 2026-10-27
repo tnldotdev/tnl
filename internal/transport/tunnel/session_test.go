@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -95,6 +96,22 @@ func TestSessionRejectsHello(t *testing.T) {
 	}
 }
 
+// the pipe fixture exposes writes to the reader before its writer returns.
+// wait for server deadline cleanup before the client deliberately closes it.
+type handshakeCloseBarrier struct {
+	muxsession.Session
+	completed <-chan struct{}
+	ctx       context.Context
+}
+
+func (s handshakeCloseBarrier) Close() error {
+	select {
+	case <-s.completed:
+	case <-s.ctx.Done():
+	}
+	return s.Session.Close()
+}
+
 func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 	proof := tunnelv1.NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 1,
 		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
@@ -121,10 +138,12 @@ func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			ctx := tunnelContext(t)
+			handshakeDone := make(chan struct{})
 			done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
 				s, _, err := AcceptWithResult(ctx, server, func(context.Context, tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
 					return test.response, nil
 				})
+				close(handshakeDone)
 				if s != nil {
 					if incoming, streamErr := s.AcceptVisitorStream(ctx); streamErr == nil || incoming != nil {
 						return errors.New("native receipt admitted a visitor stream without a peer owner")
@@ -133,7 +152,7 @@ func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 				}
 				return err
 			})
-			s, got, err := DialNative(ctx, client, hello, test.expected)
+			s, got, err := DialNative(ctx, handshakeCloseBarrier{Session: client, completed: handshakeDone, ctx: ctx}, hello, test.expected)
 			if (err == nil) != test.ok || test.ok && got != receipt {
 				t.Fatalf("native handshake: receipt=%+v err=%v", got, err)
 			}

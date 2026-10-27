@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -876,8 +877,13 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
+	peerPublic, peerPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { clear(peerPrivate) })
 	var firstFailure sync.Once
-	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, Region: string(region.Local), RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond,
+	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: tunnelv1.Version, Region: string(region.Local), RelayServiceId: id, RelayId: id, RelayRunId: runID, PeerSigningPublicKey: base64.RawURLEncoding.EncodeToString(peerPublic), RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond,
 		Report: func(err error) { firstFailure.Do(func() { t.Logf("relay %s first control error: %v", id, err) }) }})
 	if err != nil {
 		t.Fatal(err)
