@@ -41,9 +41,14 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(t.TempDir(), "tnl")
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+	// the integration tier already builds race-instrumented dependencies. reuse
+	// that cache instead of rebuilding the entire CLI without race coverage
+	// inside the child workflow's fixed runtime budget.
+	buildStarted := time.Now()
+	if output, err := exec.CommandContext(t.Context(), "go", "build", "-race", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build detached CLI: %v %s", err, output)
 	}
+	t.Logf("built detached CLI in %s", time.Since(buildStarted))
 	task := f.state(t, "detached-task")
 	caFile := filepath.Join(t.TempDir(), "root.pem")
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw}), 0600); err != nil {
