@@ -23,7 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingHeader, tls.ConnectionState) {
+func directCertificateFixture(t *testing.T, observe func() time.Time) (*Bound, tunnelv1.ServiceForwardingHeader, tls.ConnectionState) {
 	t.Helper()
 	p, bound, ref, _ := privateFixture(t, "127.0.0.1:1")
 	p.managedPublic = true
@@ -39,7 +39,7 @@ func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingH
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
+	now := observe()
 	view, _, _ := p.policy.Current()
 	digest, err := visitortoken.KeyDigest(key.Public().(ed25519.PublicKey))
 	if err != nil {
@@ -69,7 +69,9 @@ func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingH
 	if err != nil {
 		t.Fatal(err)
 	}
-	view.Public, view.ObservedAt, view.ValidUntil = true, now, now.Add(10*time.Second)
+	// this is a new control observation, not the previously translated local
+	// snapshot. carrying its old clock origin can make a new JWT look future-issued.
+	view.Public, view.ControlTime, view.ObservedAt, view.ValidUntil = true, time.Time{}, now, now.Add(10*time.Second)
 	state := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: chains}
 	token, err := visitortoken.CertificateToken(leaf)
 	if err != nil {
@@ -98,7 +100,7 @@ func directCertificateFixture(t *testing.T) (*Bound, tunnelv1.ServiceForwardingH
 func TestCertificateAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *testing.T) {
 	for _, infrastructureFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "publisher-promotion", true: "infrastructure-failure"}[infrastructureFailure], func(t *testing.T) {
-			bound, header, state := directCertificateFixture(t)
+			bound, header, state := directCertificateFixture(t, time.Now)
 			peer, stream := net.Pipe()
 			defer peer.Close()
 			defer stream.Close()
@@ -159,4 +161,10 @@ func TestCertificateAuthorizationWaitsForAdmissionAndPreservesInfrastructureCaus
 			}
 		})
 	}
+}
+
+func TestCertificateAdmissionFixtureRefreshesAuthorityTime(t *testing.T) {
+	// policy and issuance can straddle a JWT second. a later control observation
+	// must not retain the previous snapshot's translated authority time.
+	directCertificateFixture(t, func() time.Time { return time.Now().Add(time.Second) })
 }
