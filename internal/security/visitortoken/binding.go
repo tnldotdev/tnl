@@ -4,12 +4,14 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"math"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -93,7 +95,53 @@ func NativeSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
 	}
 }
 
+// VerifyNativePeerSession admits only a native visitor whose opening matches
+// independently attested pair, relay source, subject and current publisher run.
+// the caller must check the relay HelloAccepted receipt and current pair/run
+// before supplying expected; the entry's SourceIP cannot attest itself. the
+// caller still binds the permission to local IP policy and stream capacity.
+// verification is pure: it does not reserve a stream or dial a target.
+func VerifyNativePeerSession(entry tunnelv1.NativePeerVisitorEntry, initial []byte, expected tunnelv1.NativePeerSession, view View, now time.Time) (VerifiedPermission, error) {
+	wireFacts := expected
+	wireFacts.ExpiresAt = time.Time{}
+	if entry.Validate() != nil || len(initial) > tunnelv1.MaxInitialBytes || expected.Validate() != nil ||
+		!expected.ExpiresAt.After(now) || entry.Session() != wireFacts || view.Scope.Kind != visitorscope.Service || view.Scope.ID != expected.ServiceID ||
+		view.MetadataRevision < 1 || uint64(view.MetadataRevision) != entry.MetadataRevision {
+		return VerifiedPermission{}, ErrBinding
+	}
+	permission, err := verifySignature(Token(entry.Permission.Token), view, now)
+	if err != nil {
+		return VerifiedPermission{}, err
+	}
+	peer, err := NativeSubject(permission.Subject)
+	if err != nil || peer != expected.Subject {
+		return VerifiedPermission{}, ErrBinding
+	}
+	public, keyErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.PublicKey)
+	signature, signatureErr := base64.RawURLEncoding.Strict().DecodeString(entry.Permission.Signature)
+	message, messageErr := tunnelv1.NativePeerProofMessage(entry, initial)
+	if keyErr != nil || signatureErr != nil || messageErr != nil {
+		return VerifiedPermission{}, ErrBinding
+	}
+	verified, err := verifyNativeKeySignature(permission, public, signature, message)
+	if err != nil {
+		return VerifiedPermission{}, err
+	}
+	if err := CheckCurrent(verified, view, now); err != nil {
+		return VerifiedPermission{}, err
+	}
+	return verified, nil
+}
+
 func verifyNativePossession(token Token, permission Permission, session, connection, runID string, runNumber, metadataRevision uint64, initial []byte, public ed25519.PublicKey, signature []byte) (VerifiedPermission, error) {
+	message, err := NativeProofMessage(token, session, connection, runID, runNumber, metadataRevision, initial)
+	if err != nil {
+		return VerifiedPermission{}, ErrBinding
+	}
+	return verifyNativeKeySignature(permission, public, signature, message)
+}
+
+func verifyNativeKeySignature(permission Permission, public ed25519.PublicKey, signature, message []byte) (VerifiedPermission, error) {
 	var expectedKey string
 	switch subject := permission.Subject.(type) {
 	case Device:
@@ -107,8 +155,7 @@ func verifyNativePossession(token Token, permission Permission, session, connect
 	if err != nil || digest != expectedKey || len(public) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
 		return VerifiedPermission{}, ErrBinding
 	}
-	message, err := NativeProofMessage(token, session, connection, runID, runNumber, metadataRevision, initial)
-	if err != nil || !ed25519.Verify(public, message, signature) {
+	if !ed25519.Verify(public, message, signature) {
 		return VerifiedPermission{}, ErrBinding
 	}
 	return VerifiedPermission{facts: permission}, nil

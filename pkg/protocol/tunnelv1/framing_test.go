@@ -10,12 +10,13 @@ import (
 	"testing"
 )
 
-func readControl(r io.Reader) error         { _, err := ReadControl(r); return err }
-func readVisitor(r io.Reader) error         { _, err := ReadVisitorStreamHeader(r); return err }
-func readForwarding(r io.Reader) error      { _, err := ReadInternalForwardingHeader(r); return err }
-func readResponse(r io.Reader) error        { _, err := ReadStreamResponse(r); return err }
-func readAdmission(r io.Reader) error       { _, err := ReadAdmissionHeader(r); return err }
-func readAdmissionResult(r io.Reader) error { _, err := ReadAdmissionResult(r); return err }
+func readControl(r io.Reader) error           { _, err := ReadControl(r); return err }
+func readVisitor(r io.Reader) error           { _, err := ReadVisitorStreamHeader(r); return err }
+func readForwarding(r io.Reader) error        { _, err := ReadInternalForwardingHeader(r); return err }
+func readResponse(r io.Reader) error          { _, err := ReadStreamResponse(r); return err }
+func readAdmission(r io.Reader) error         { _, err := ReadAdmissionHeader(r); return err }
+func readAdmissionResult(r io.Reader) error   { _, err := ReadAdmissionResult(r); return err }
+func readNativePeerVisitor(r io.Reader) error { _, err := ReadNativePeerVisitorEntry(r); return err }
 
 var frameReaders = []struct {
 	name  string
@@ -26,6 +27,7 @@ var frameReaders = []struct {
 	{"control-native-hello", MaxControlBytes, readControl},
 	{"control-native-accepted", MaxControlBytes, readControl},
 	{"control-accepted", MaxControlBytes, readControl},
+	{"native-peer-visitor-entry", MaxHeaderBytes, readNativePeerVisitor},
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
 	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
 	{"stream-response", MaxHeaderBytes, readResponse},

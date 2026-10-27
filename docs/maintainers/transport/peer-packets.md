@@ -41,6 +41,14 @@ application stream. publishers still verify signed permission, run/peer binding,
 and one logical capacity reservation. a path change creates none of those values.
 the role owner cancels the endpoint at its fixed serving deadline.
 
+the [peer visitor opening](../../../pkg/protocol/tunnelv1/native_peer_opening.go)
+is separate from ingress forwarding. its signed native proof binds the pair,
+delivery ID, run, subject, visitor ID, relay-attested source, token, and first
+bytes. [local verification](../../../internal/security/visitortoken/binding.go)
+requires a current publisher-supplied pair deadline and compares the body's
+source to the checked relay claim. the publisher must still bind current IP
+policy and reserve one run-wide stream slot before dialing any target.
+
 logical addresses stay stable. quic-go's connection migration APIs do not drive
 this delivery switch. inner QUIC detects loss and adjusts its congestion state;
 per-carrier probes measure delivery RTT separately from that end-to-end state.

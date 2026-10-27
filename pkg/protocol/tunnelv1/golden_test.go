@@ -34,6 +34,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
 			ExpiresAt: time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
+	assertGoldenFrame(t, "native-peer-visitor-entry", peerOpeningFixture(), WriteNativePeerVisitorEntry, ReadNativePeerVisitorEntry)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
@@ -83,6 +84,9 @@ func TestInvalidFixtures(t *testing.T) {
 		{"invalid-native-receipt-on-ping", readControl},
 		{"invalid-native-receipt-source", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
+		{"invalid-native-peer-unknown-field", readNativePeerVisitor},
+		{"invalid-native-peer-missing-field", readNativePeerVisitor},
+		{"invalid-native-peer-wrong-subject", readNativePeerVisitor},
 		{"invalid-admission-missing-relay", readAdmission},
 	} {
 		t.Run(test.name, func(t *testing.T) {
