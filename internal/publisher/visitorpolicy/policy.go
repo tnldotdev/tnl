@@ -104,7 +104,7 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	case <-call.Done():
 		return context.Cause(call)
 	}
-	if err := context.Cause(call); err != nil {
+	if err := refreshContextError(call); err != nil {
 		return err
 	}
 	request := p.Lease.Begin()
@@ -118,7 +118,7 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := call.Err(); err != nil {
+	if err := refreshContextError(call); err != nil {
 		return err
 	}
 	update, err := visitorlease.Decode(response)
@@ -126,6 +126,18 @@ func (p *Policy) Refresh(ctx context.Context) error {
 		return err
 	}
 	return p.Lease.Apply(request, update)
+}
+
+// timer callbacks can lag their deadline. neither a newly acquired gate nor a
+// late control response may spend that delay as additional preparation time.
+func refreshContextError(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func (p *Policy) Close() {

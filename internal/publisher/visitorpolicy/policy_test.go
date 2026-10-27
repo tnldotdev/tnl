@@ -246,6 +246,57 @@ func TestPublisherVisitorPolicyWaitingRefreshIsCancelableAndBounded(t *testing.T
 	}
 }
 
+// model the interval after a deadline passes but before its timer callback runs.
+// the embedded context still supplies cancellation and values normally.
+type timerLagContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c timerLagContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestPublisherVisitorPolicyAbsoluteDeadlineFencesTimerLag(t *testing.T) {
+	for _, lateResponse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before fetch", true: "control response"}[lateResponse], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				base := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
+				client := startupPolicyClient(func(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+					if base.calls.Load() > 0 && lateResponse {
+						time.Sleep(time.Second)
+						if ctx.Err() != nil {
+							t.Error("fixture did not retain the delayed timer callback")
+						}
+					}
+					return base.ReadPublisherVisitorPolicy(ctx, body, token)
+				})
+				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer policy.Close()
+				before, _, _ := policy.Lease.Current()
+				call := timerLagContext{Context: t.Context(), deadline: time.Now().Add(time.Second)}
+				wantCalls := int64(2)
+				if !lateResponse {
+					time.Sleep(time.Second)
+					wantCalls = 1
+				}
+				if err := policy.Refresh(call); !errors.Is(err, context.DeadlineExceeded) {
+					t.Error("refresh accepted an expired absolute deadline", err)
+				}
+				if base.calls.Load() != wantCalls {
+					t.Error("expired preparation issued another control call", base.calls.Load())
+				}
+				current, enabled, _ := policy.Lease.Current()
+				if !enabled || !current.ControlTime.Equal(before.ControlTime) || !current.ValidUntil.Equal(before.ValidUntil) {
+					t.Error("expired preparation installed a late observation")
+				}
+			})
+		})
+	}
+}
+
 func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
 	f.calls.Add(1)
 	if credential != "run-secret" {
