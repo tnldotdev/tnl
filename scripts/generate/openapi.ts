@@ -15,6 +15,7 @@ export const contracts = {
   authorityv1: "api/control/authority/v1/openapi.yaml",
   ingressv1: "api/control/private/ingress/v1/openapi.yaml",
   relayv1: "api/control/private/relay/v1/openapi.yaml",
+  telemetryv1: "api/integrations/telemetry/v1/openapi.yaml",
   publisherv1: "api/publisher/browser/v1/openapi.yaml",
   localpublisherv1: "api/publisher/local/v1/openapi.yaml",
 } as const;
@@ -24,6 +25,7 @@ export const packagePaths: Record<keyof typeof contracts, string> = {
   authorityv1: "control/authority/v1",
   ingressv1: "control/private/ingress/v1",
   relayv1: "control/private/relay/v1",
+  telemetryv1: "integrations/telemetry/v1",
   publisherv1: "publisher/browser/v1",
   localpublisherv1: "publisher/local/v1",
 };
@@ -334,6 +336,44 @@ async function main(): Promise<void> {
         cwd: root,
         stdio: "inherit",
       });
+      if (name === "telemetryv1") {
+        const components = record(graph.bundle(name).components);
+        const histogram = record(record(components.schemas).Histogram);
+        const bounds = histogram["x-tnl-upper-bounds-ms"];
+        if (
+          !Array.isArray(bounds) ||
+          !bounds.every(
+            (value: unknown): value is number =>
+              typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+          )
+        )
+          throw new Error("invalid telemetry histogram boundaries");
+        if (
+          bounds.some((value, index) => index > 0 && value <= (bounds[index - 1] ?? 0)) ||
+          histogram.minItems !== bounds.length + 1 ||
+          histogram.maxItems !== bounds.length + 1
+        )
+          throw new Error("invalid telemetry histogram boundaries");
+        await writeFile(
+          join(cwd, "validation.gen.json"),
+          execFileSync(
+            "pnpm",
+            ["exec", "oxfmt", "--stdin-filepath", join(cwd, "validation.gen.json")],
+            {
+              cwd: root,
+              input: `${JSON.stringify({ components }, null, 2)}\n`,
+              encoding: "utf8",
+            },
+          ),
+        );
+        await writeFile(
+          join(cwd, "histogram.gen.go"),
+          execFileSync("gofmt", [], {
+            input: `// Code generated from the telemetry v1 contract. DO NOT EDIT.\npackage telemetryv1\n\nfunc HistogramUpperBoundsMilliseconds() [${bounds.length}]int64 {\nreturn [${bounds.length}]int64{${bounds.join(",")}}\n}\n`,
+            encoding: "utf8",
+          }),
+        );
+      }
       if (["controlv1", "authorityv1", "publisherv1"].includes(name)) {
         execFileSync(
           process.execPath,

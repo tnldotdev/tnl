@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
@@ -16,10 +18,11 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		tracked bool
 	}{
 		{[]string{"publish"}, telemetryPublish, "", true},
-		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team invite", "revoke", true},
-		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
+		{[]string{"team", "invite", "revoke", "ivt_secret"}, api.CommandOutcomeCommandTeam, api.CommandOutcomeActionRevoke, true},
+		{[]string{"feedback", "inspect", "fb_secret"}, api.CommandOutcomeCommandFeedback, api.CommandOutcomeActionOther, true},
 		{[]string{"version"}, "", "", false},
 		{[]string{"telemetry", "on"}, "", "", false},
+		{[]string{"runtime", "connections", "capabilities"}, "", "", false},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -38,15 +41,19 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 }
 
 func TestTelemetryCommandWireExcludesArguments(t *testing.T) {
-	payload := newTelemetryStarted("team invite")
-	payload.Action = "revoke"
-	payload.InvocationID = "ivk_0123456789abcdefghijkl"
-	encoded, err := json.Marshal(payload.wireEvent("tev_0123456789abcdefghijkl"))
+	var flags cli
+	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(encoded, []byte(`"command":"team invite"`)) ||
-		!bytes.Contains(encoded, []byte(`"action":"revoke"`)) || bytes.Contains(encoded, []byte("ivt_secret")) {
-		t.Fatalf("command telemetry = %s", encoded)
+	parsed, err := parser.Parse([]string{"team", "invite", "revoke", "ivt_secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, action, _ := selectedTelemetryCommand(parsed)
+	event := clienttelemetry.Observation{Event: clienttelemetry.CommandCompleted, Command: command, Action: action}
+	encoded, err := json.Marshal(event)
+	if err != nil || !bytes.Contains(encoded, []byte(`"Command":"team"`)) || !bytes.Contains(encoded, []byte(`"Action":"revoke"`)) || bytes.Contains(encoded, []byte("ivt_secret")) {
+		t.Fatalf("command observation includes arguments: %s %v", encoded, err)
 	}
 }

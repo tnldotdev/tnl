@@ -1,0 +1,15 @@
+paths:
+  /api/telemetry:
+    post:
+      operationId: recordTelemetryBatch
+      summary: Accept bounded pseudonymous CLI outcomes and publisher reports
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Batch" }
+      responses:
+        "204": { description: Accepted, including already-received event IDs }
+        "400": { description: Invalid telemetry batch }
+        "413": { description: Batch exceeds 64 KiB }
+        "500": { description: Telemetry could not be saved }

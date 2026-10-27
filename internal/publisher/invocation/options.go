@@ -16,31 +16,32 @@ import (
 
 // PublicOptions contains selected publication inputs, independent of CLI flags.
 type PublicOptions struct {
-	Target           string
-	PreferredRegions []string
-	TargetCAFile     string
-	TargetTLSName    string
-	ProjectRoot      string
-	Project          clientproject.Project
-	Service          string
-	StateDir         string
-	ServerURL        string
-	AccessToken      string
-	PublicURL        string
-	Name             string
-	Domain           string
-	Team             string
-	SelectedTeam     string
-	Ephemeral        bool
-	Demo             bool
-	Anonymous        bool
-	IP               []string
-	Access           *config.Access
-	Limits           publisher.ApplicationLimits
-	InspectionMode   config.InspectionMode
-	Inspection       *config.Inspection
-	Resolver         target.TargetResolver
-	Authenticate     func(context.Context, *clientstate.Database, string, string) (*auth.Client, error)
+	Target            string
+	PreferredRegions  []string
+	TargetCAFile      string
+	TargetTLSName     string
+	ProjectRoot       string
+	Project           clientproject.Project
+	Service           string
+	StateDir          string
+	ServerURL         string
+	AccessToken       string
+	PublicURL         string
+	Name              string
+	Domain            string
+	Team              string
+	SelectedTeam      string
+	Ephemeral         bool
+	Demo              bool
+	Anonymous         bool
+	IP                []string
+	Access            *config.Access
+	Limits            publisher.ApplicationLimits
+	InspectionMode    config.InspectionMode
+	Inspection        *config.Inspection
+	Resolver          target.TargetResolver
+	TelemetryDisabled bool
+	Authenticate      func(context.Context, *clientstate.Database, string, string) (*auth.Client, error)
 }
 
 type ServiceOptions struct {

@@ -24,26 +24,27 @@ type connectCommand struct {
 }
 
 type connectStartCommand struct {
-	scopedTeamFlags `embed:""`
-	Name            string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
-	Listen          string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
-	Protocol        string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
-	PreferRegion    []string         `name:"prefer-region" help:"Preferred tnl region or provider:region; repeat to set fallback order."`
-	Kubeconfig      string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
-	Namespace       string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
-	KubeUserConfig  string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
-	KubeUser        string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
-	KubeTokenFile   string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
-	Foreground      bool             `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach          bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install         bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
-	System          bool             `name:"system" hidden:""`
-	SystemStateDir  string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
-	DetachedChild   string           `name:"detached-child" hidden:""`
-	Stdio           bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
-	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
-	project         projectConfiguration
-	detach          func() error
+	scopedTeamFlags   `embed:""`
+	Name              string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Listen            string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
+	Protocol          string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
+	PreferRegion      []string         `name:"prefer-region" help:"Preferred tnl region or provider:region; repeat to set fallback order."`
+	Kubeconfig        string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
+	Namespace         string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
+	KubeUserConfig    string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
+	KubeUser          string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
+	KubeTokenFile     string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
+	Foreground        bool             `name:"foreground" help:"Run in this terminal (the default)."`
+	Detach            bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Install           bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
+	System            bool             `name:"system" hidden:""`
+	SystemStateDir    string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
+	DetachedChild     string           `name:"detached-child" hidden:""`
+	Stdio             bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
+	Output            statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
+	project           projectConfiguration
+	detach            func() error
+	telemetryDisabled bool
 }
 
 type connectListCommand struct {
@@ -76,7 +77,7 @@ func (flags connectStartCommand) options() connector.StartOptions {
 	remote := flags.selection()
 	return connector.StartOptions{SessionOptions: connector.SessionOptions{ServerURL: remote.ServerURL, StateDir: remote.StateDir, AccessToken: remote.AccessToken, ProjectTeam: remote.ProjectTeam, SelectedTeam: remote.SelectedTeam}, Team: flags.Team, Project: flags.project.Project,
 		Name: flags.Name, Listen: flags.Listen, Protocol: flags.Protocol, PreferredRegions: flags.PreferRegion, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
-		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
+		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach, TelemetryDisabled: flags.telemetryDisabled,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
 			return writeNativeConnection(destination, profile, flags.Output, listen)
 		}, Starting: detachedPublicationStarting, PublicationReady: detachedPublicationReady, Prepared: detachedConnectorPrepared}

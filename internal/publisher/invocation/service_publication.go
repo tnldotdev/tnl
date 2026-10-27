@@ -323,7 +323,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	}
 	job := supervisor.Job{Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
-		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
+		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool, TelemetryDisabled: flags.TelemetryDisabled}
 	job.Limits = flags.Limits
 	if flags.Service != "" {
 		job.Project, job.ProjectService = &project.Project, flags.Service

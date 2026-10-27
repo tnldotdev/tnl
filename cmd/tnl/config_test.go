@@ -12,6 +12,7 @@ import (
 	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
@@ -77,9 +78,9 @@ export default {};`
 	t.Chdir(directory)
 
 	var stdout, stderr bytes.Buffer
-	var events []telemetryPayload
+	var events []clienttelemetry.Observation
 	if err := run(t.Context(), []string{"check"}, &stdout, &stderr, func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
+		return telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) })
 	}); err != nil {
 		t.Fatal(err)
 	}

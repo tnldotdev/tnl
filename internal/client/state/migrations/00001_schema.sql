@@ -84,7 +84,8 @@ CREATE TABLE installation_settings (
         installation_id IS NULL OR (length(installation_id) = 27 AND substr(installation_id, 1, 5) = 'inst_')
     ),
     worktree_hash_salt BLOB CHECK (worktree_hash_salt IS NULL OR length(worktree_hash_salt) = 32),
-    telemetry_enabled INTEGER NOT NULL DEFAULT 1 CHECK (telemetry_enabled IN (0, 1))
+    telemetry_enabled INTEGER NOT NULL DEFAULT 1 CHECK (telemetry_enabled IN (0, 1)),
+    telemetry_epoch INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_epoch >= 0)
 ) STRICT;
 
 INSERT INTO installation_settings (id) VALUES (1);
@@ -206,7 +207,8 @@ CREATE TABLE project_previews (
 CREATE TABLE telemetry_outbox (
     event_id TEXT PRIMARY KEY CHECK (length(event_id) = 26 AND substr(event_id, 1, 4) = 'tev_'),
     created_at INTEGER NOT NULL,
-    event_json TEXT NOT NULL CHECK (json_valid(event_json))
+    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+    client_json TEXT NOT NULL CHECK (json_valid(client_json))
 ) STRICT;
 CREATE INDEX telemetry_outbox_oldest_idx ON telemetry_outbox (created_at, event_id);
 

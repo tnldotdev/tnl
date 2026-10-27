@@ -89,12 +89,13 @@ type Job struct {
 	VerifyReadiness     bool                            `json:"verify_readiness,omitempty"`
 	ReadinessPath       string                          `json:"readiness_path,omitempty"`
 	// trust is captured at install time, so boot never depends on a user's files.
-	TargetCAPEM []byte                      `json:"target_ca_pem,omitempty"`
-	ServerCAPEM []byte                      `json:"server_ca_pem,omitempty"`
-	Limits      publisher.ApplicationLimits `json:"limits"`
-	Enabled     bool                        `json:"enabled"`
-	Revision    uint64                      `json:"revision"`
-	Status      Status                      `json:"status"`
+	TargetCAPEM       []byte                      `json:"target_ca_pem,omitempty"`
+	ServerCAPEM       []byte                      `json:"server_ca_pem,omitempty"`
+	Limits            publisher.ApplicationLimits `json:"limits"`
+	Enabled           bool                        `json:"enabled"`
+	Revision          uint64                      `json:"revision"`
+	Status            Status                      `json:"status"`
+	TelemetryDisabled bool                        `json:"telemetry_disabled,omitempty"`
 }
 
 // String keeps private key material out of incidental diagnostic formatting.

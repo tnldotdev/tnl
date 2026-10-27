@@ -5,6 +5,7 @@ import { openServer, openFetch } from "../../src/internal/publisher/open.js";
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { record } from "../../src/internal/project/runtime.js";
+import { withProcessEnvironment } from "../helpers/environment.js";
 
 const id = `reg_${"a".repeat(32)}`;
 const publicURL = "https://temporary.member.example";
@@ -173,6 +174,42 @@ test("default invocation rediscovery retains automatic publisher selection after
   expect(starts).toBe(2);
   expect(ids[0]).toBe(ids[1]);
   await handle.close();
+});
+
+test("an opted-out SDK invocation carries its own decision to a shared owner", async () => {
+  await withProcessEnvironment({ TNL_NO_TELEMETRY: "1" }, async () => {
+    let service = "";
+    let target = "";
+    const handle = await openFetch(
+      () => new Response("app"),
+      {},
+      {
+        start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+          service = selection?.invocationID ?? "";
+          return {
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: service,
+          };
+        },
+        request: async (_endpoint, operation, body) => {
+          if (operation === "ad-hoc/register") {
+            const request = record(body, "invocation");
+            expect(request.telemetry_disabled).toBe(true);
+            target = String(request.target);
+            return { version: 1, registration_id: id, owner: request.owner, target };
+          }
+          if (operation === "status") return snapshot(service, target);
+          return undefined;
+        },
+        pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
+      },
+    );
+    await handle.close();
+  });
 });
 
 test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {

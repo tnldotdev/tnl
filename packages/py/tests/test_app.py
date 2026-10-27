@@ -15,10 +15,12 @@ import pytest
 
 @pytest.mark.parametrize("reload", [False, True])
 @pytest.mark.parametrize("service", [False, True])
+@pytest.mark.parametrize("telemetry_off", [False, True])
 def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
     tmp_path: Path,
     reload: bool,
     service: bool,
+    telemetry_off: bool,
     native_app_assignment: dict[str, object],
 ) -> None:
     async def scenario() -> None:
@@ -56,6 +58,7 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     active.update(payload)
                     active["registration_id"] = "reg_" + str(len(requests) % 10) * 32
                     assert payload["framework"] == "python"
+                    assert payload["telemetry_disabled"] is telemetry_off
                     native_app_assignment["registration_id"] = active["registration_id"]
                     if service:
                         native_app_assignment["hostname"] = ""
@@ -141,6 +144,7 @@ if __name__ == "__main__":
             directory={str(tmp_path)!r}, service="web", reload_dirs=[{str(tmp_path)!r}])
 """)
         environment = {**os.environ, "TNL_APP_ENDPOINT": str(descriptor)}
+        environment["TNL_NO_TELEMETRY"] = "1" if telemetry_off else "0"
         environment["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
         child = await asyncio.create_subprocess_exec(
             sys.executable,

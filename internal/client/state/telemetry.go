@@ -10,6 +10,20 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/client/state/sqlite"
 )
 
+// TelemetryPreference fences reports collected across persistent preference changes.
+type TelemetryPreference struct {
+	Enabled bool
+	Epoch   int64
+}
+
+func (d *Database) TelemetryPreference(ctx context.Context) (TelemetryPreference, error) {
+	row, err := d.queries.GetTelemetryPreference(ctx)
+	if err != nil {
+		return TelemetryPreference{}, fmt.Errorf("read telemetry preference: %w", err)
+	}
+	return TelemetryPreference{Enabled: row.TelemetryEnabled == 1, Epoch: row.TelemetryEpoch}, nil
+}
+
 // TelemetryEnabled returns the saved preference for this client state.
 func (d *Database) TelemetryEnabled(ctx context.Context) (bool, error) {
 	enabled, err := d.queries.GetTelemetryEnabled(ctx)

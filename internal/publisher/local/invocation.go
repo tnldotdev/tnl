@@ -156,7 +156,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
+	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled != nil && *request.TelemetryDisabled}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err

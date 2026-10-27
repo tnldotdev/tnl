@@ -18,7 +18,7 @@ import (
 // parent CLI resolves project/config flags and calls this for named services.
 // replacement owners are rediscovered and receive a fresh lease; an old owner
 // capability or registration is never replayed against the replacement.
-func PublishNamed(ctx context.Context, project clientproject.Project, name, stateDir string, resolveOwner func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error), output *Presentation) (result error) {
+func PublishNamed(ctx context.Context, project clientproject.Project, name, stateDir string, telemetryDisabled bool, resolveOwner func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error), output *Presentation) (result error) {
 	ctx, finishStartup := observability.ClientOperation(ctx, "client.publish.startup")
 	defer func() { finishStartup(result) }()
 	if _, found := project.Config.Services[name]; !found {
@@ -48,7 +48,7 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 	}
 	lease := &localapi.LeaseClient{Resolve: func(ctx context.Context) (publisherprotocol.Endpoint, error) {
 		return resolveOwner(ctx, project, root)
-	}, Request: publisherprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest}}
+	}, Request: publisherprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest, TelemetryDisabled: &telemetryDisabled}}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 10*time.Second)
 		defer cancel()

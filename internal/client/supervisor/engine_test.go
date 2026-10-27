@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -23,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type jobAuthority struct {
@@ -157,6 +160,72 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 			if inspects != 1 || starts != 1 {
 				t.Fatal("retry reclaimed another runtime epoch")
 			}
+		})
+	}
+}
+
+func TestInstalledPublisherRespectsSavedPerJobTelemetryOptOut(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(disabled), func(t *testing.T) {
+			registry := testRegistry(t)
+			job, identity, key := fixture(t, "web")
+			job.TelemetryDisabled = disabled
+			control, authority := jobBoundary(job, identity, key)
+			if err := registry.Install(t.Context(), job, identity, key); err != nil {
+				t.Fatal(err)
+			}
+			received := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				received <- body
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			root := filepath.Join(t.TempDir(), "telemetry")
+			collector, err := clienttelemetry.New(t.Context(), clienttelemetry.Config{Root: root, Endpoint: server.URL, FlushInterval: time.Hour})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer collector.Close(context.Background())
+			ready := make(chan struct{}, 1)
+			engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, RetryMin: time.Second, RetryMax: time.Second,
+				Telemetry: func() *clienttelemetry.Collector { return collector },
+				Clients: func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
+					return control, authority, nil
+				},
+				Publish: func(ctx context.Context, cfg publisher.Config) error {
+					if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 2, PublicURL: "https://web.example"}); err != nil {
+						return err
+					}
+					ready <- struct{}{}
+					<-ctx.Done()
+					return nil
+				},
+			}
+			cancel, done := startEngine(t, engine)
+			select {
+			case <-ready:
+			case <-time.After(5 * time.Second):
+				t.Fatal("installed publisher did not become ready")
+			}
+			collector.Flush()
+			if !disabled {
+				select {
+				case body := <-received:
+					if err := api.ValidateBatch(body); err != nil {
+						t.Fatalf("installed publisher report violated v1: %s %v", body, err)
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("eligible installed publisher did not report readiness")
+				}
+			} else {
+				select {
+				case body := <-received:
+					t.Fatalf("opted-out installed publisher reported: %s", body)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			joinEngine(t, cancel, done)
 		})
 	}
 }

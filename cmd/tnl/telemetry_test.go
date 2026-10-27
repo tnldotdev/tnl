@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -10,38 +10,34 @@ import (
 	"sync"
 	"testing"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
-type telemetryReporterFunc func(telemetryPayload)
+type telemetryReporterFunc func(clienttelemetry.Observation)
 
-func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
+func (f telemetryReporterFunc) Report(event clienttelemetry.Observation) { f(event) }
 
-func TestTelemetryInstallationIDRetries(t *testing.T) {
+func TestTelemetryCollectorRetriesInvalidStateRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reporter := newTelemetryReporter(root)
-	if id, err := reporter.installationID(t.Context()); err == nil {
-		t.Fatalf("installation ID = %q after invalid state root", id)
+	if collector := newTelemetryReporter(t.Context(), root); collector != nil {
+		collector.Close(context.Background())
+		t.Fatal("opened telemetry under invalid state root")
 	}
 	if err := os.Remove(root); err != nil {
 		t.Fatal(err)
 	}
-	id, err := reporter.installationID(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	collector := newTelemetryReporter(t.Context(), root)
+	if collector == nil {
+		t.Fatal("previous open failure prevented creating telemetry state")
 	}
-	cached, err := reporter.installationID(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id == "" || cached != id {
-		t.Fatalf("installation IDs = %q, %q", id, cached)
-	}
+	collector.Close(context.Background())
 }
 
 func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
@@ -51,7 +47,7 @@ func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
 		t.Fatalf("disabled telemetry reporter = %#v", reporter)
 	}
 	observed := false
-	observer := withTelemetryObserver(reporter, telemetryPublish, defaultServerURL, nil, func(publisher.Event) error {
+	observer := withTelemetryObserver(reporter, defaultServerURL, nil, func(publisher.Event) error {
 		observed = true
 		return nil
 	})
@@ -60,17 +56,11 @@ func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
 	}
 }
 
-func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
-	var events []telemetryPayload
-	invocation, err := newTelemetryInvocation(telemetryReporterFunc(func(event telemetryPayload) {
-		events = append(events, event)
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestDemoTelemetryReportsOnlyFirstPingWithoutPageData(t *testing.T) {
+	var events []clienttelemetry.Observation
+	invocation := newTelemetryInvocation(telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) }))
 	invocation.SetPublishMode(telemetryPublishDemo)
-	invocation.Report(newTelemetryStarted(telemetryPublish))
-	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, ""))
+	invocation.Report(newTelemetryReady(telemetryHosted, ""))
 	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, io.Discard, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -81,117 +71,80 @@ func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(events) != 3 || events[0].PublishMode != telemetryPublishDemo ||
-		events[1].PublishMode != telemetryPublishDemo ||
-		events[2].Event != telemetryDemoPingReceived || events[2].PublishMode != telemetryPublishDemo {
-		t.Fatalf("demo telemetry = %+v", events)
+	if len(events) != 2 || events[0].Event != clienttelemetry.PublicationReady || events[0].PublishMode != telemetryPublishDemo || events[1].Event != clienttelemetry.DemoFirstPing {
+		t.Fatalf("demo observations = %+v", events)
 	}
 	for _, event := range events {
-		wire, err := json.Marshal(event)
-		if err != nil || bytes.Contains(wire, []byte("private.example")) || bytes.Contains(wire, []byte("secret time")) {
-			t.Fatalf("demo telemetry leaked page data: %q, %v", wire, err)
+		if bytes.Contains([]byte(event.ServerKind), []byte("private.example")) || bytes.Contains([]byte(event.Framework), []byte("secret time")) {
+			t.Fatal("demo event included page data")
 		}
 	}
 }
 
-func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
+type flushingReporter struct {
+	observations []clienttelemetry.Observation
+	flushes      int
+}
+
+func (r *flushingReporter) Report(event clienttelemetry.Observation) {
+	r.observations = append(r.observations, event)
+}
+func (r *flushingReporter) Flush() { r.flushes++ }
+
+func TestTelemetryObserverReportsReadyAndFlushesOnce(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		serverURL  string
-		serverKind telemetryServerKind
+		name, serverURL string
+		kind            telemetryServerKind
 	}{
-		{name: "hosted", serverURL: defaultServerURL, serverKind: telemetryHosted},
-		{name: "self hosted", serverURL: "https://control.example.com", serverKind: telemetrySelfHosted},
+		{"hosted", defaultServerURL, telemetryHosted},
+		{"self hosted", "https://control.example.com", telemetrySelfHosted},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var payloads []telemetryPayload
-			var events []publisher.Event
-			observe := withTelemetryObserver(
-				telemetryReporterFunc(func(payload telemetryPayload) {
-					payloads = append(payloads, payload)
-				}),
-				telemetryPublish,
-				test.serverURL,
-				nil,
-				func(event publisher.Event) error {
-					events = append(events, event)
-					return nil
-				},
-			)
-			for _, event := range []publisher.Event{
-				{Type: publisher.EventPublicURLAssigned},
-				{Type: publisher.EventReady},
-				{Type: publisher.EventReady},
-			} {
+			reporter := &flushingReporter{}
+			invocation := newTelemetryInvocation(reporter)
+			invocation.SetPublishMode(telemetryPublishApp)
+			var observed []publisher.Event
+			observe := withTelemetryObserver(invocation, test.serverURL, nil, func(event publisher.Event) error {
+				observed = append(observed, event)
+				return nil
+			})
+			for _, event := range []publisher.Event{{Type: publisher.EventPublicURLAssigned}, {Type: publisher.EventReady}, {Type: publisher.EventReady}} {
 				if err := observe(event); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if len(events) != 3 {
-				t.Fatalf("forwarded events = %d, want 3", len(events))
-			}
-			if len(payloads) != 1 || payloads[0].Event != telemetryPublishRunStarted ||
-				payloads[0].Command != telemetryPublish || payloads[0].ServerKind != test.serverKind {
-				t.Fatalf("telemetry payloads = %#v", payloads)
+			if len(observed) != 3 || len(reporter.observations) != 1 || reporter.flushes != 1 || reporter.observations[0].ServerKind != test.kind || reporter.observations[0].PublishMode != telemetryPublishApp {
+				t.Fatalf("observer lost ready or flush: observations=%+v flushes=%d", reporter.observations, reporter.flushes)
 			}
 		})
 	}
-
-	wantErr := errors.New("observe failed")
+	want := errors.New("observe failed")
 	reported := false
-	observe := withTelemetryObserver(
-		telemetryReporterFunc(func(telemetryPayload) { reported = true }),
-		telemetryPublish,
-		defaultServerURL,
-		nil,
-		func(publisher.Event) error { return wantErr },
-	)
-	if err := observe(publisher.Event{Type: publisher.EventReady}); !errors.Is(err, wantErr) {
-		t.Fatalf("observer error = %v, want %v", err, wantErr)
-	}
-	if reported {
-		t.Fatal("reported readiness after wrapped observer failed")
+	observe := withTelemetryObserver(telemetryReporterFunc(func(clienttelemetry.Observation) { reported = true }), defaultServerURL, nil, func(publisher.Event) error { return want })
+	if err := observe(publisher.Event{Type: publisher.EventReady}); !errors.Is(err, want) || reported {
+		t.Fatalf("observer reported readiness after failure: %v, %t", err, reported)
 	}
 }
 
 func TestTelemetryFramework(t *testing.T) {
 	for _, test := range []struct {
-		framework string
-		want      telemetryFrameworkName
+		name string
+		want telemetryFrameworkName
 	}{
-		{framework: "", want: ""},
-		{framework: "vite", want: telemetryVite},
-		{framework: "next", want: telemetryNext},
-		{framework: "astro", want: telemetryOther},
-		{framework: "private-project-name", want: telemetryOther},
+		{"", ""}, {"vite", telemetryVite}, {"next", telemetryNext}, {"astro", telemetryOther}, {"private-project-name", telemetryOther},
 	} {
-		if got := telemetryFramework(test.framework); got != test.want {
-			t.Errorf("telemetryFramework(%q) = %q, want %q", test.framework, got, test.want)
+		if got := telemetryFramework(test.name); got != test.want {
+			t.Errorf("framework %q = %q, want %q", test.name, got, test.want)
 		}
 	}
 }
 
-func TestTelemetryInvocationEmitsBoundedFailureOnceBeforeReady(t *testing.T) {
-	var events []telemetryPayload
-	invocation, err := newTelemetryInvocation(telemetryReporterFunc(func(event telemetryPayload) {
-		events = append(events, event)
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	invocation.Report(newTelemetryStarted(telemetryPublish))
-	invocation.failed(telemetryPublish, telemetryCommandStage, diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
-	if len(events) != 2 || events[0].InvocationID != invocation.id || events[1].InvocationID != invocation.id ||
-		events[1].FailureStage != telemetryLocalServiceStage || events[1].DiagnosticCode != diagnostic.TargetUnavailable {
-		t.Fatalf("invocation events = %#v", events)
-	}
-	if events[1].Framework != "" || events[1].ServerKind != "" {
-		t.Fatalf("failure included a URL or target: %#v", events[1])
-	}
-	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, telemetryVite))
-	invocation.failed(telemetryPublish, telemetryCommandStage, io.EOF)
-	if len(events) != 3 {
-		t.Fatalf("failure after readiness = %#v", events)
+func TestTelemetryFailureStageIsBounded(t *testing.T) {
+	var events []clienttelemetry.Observation
+	invocation := newTelemetryInvocation(telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) }))
+	invocation.failed(telemetryPublish, api.CommandOutcomeActionStart, telemetryCommandStage, diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("private target URL")))
+	if len(events) != 1 || events[0].Event != clienttelemetry.CommandFailed || events[0].FailureStage != telemetryLocalServiceStage || events[0].Command != telemetryPublish || events[0].Action != api.CommandOutcomeActionStart {
+		t.Fatalf("failure included the wrong semantic facts: %+v", events)
 	}
 }
 
@@ -201,68 +154,39 @@ func TestTelemetryReportsConfigurationFailureBeforePublishing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TNL_STATE_DIR", filepath.Join(t.TempDir(), "state"))
-	var events []telemetryPayload
+	var events []clienttelemetry.Observation
 	factory := func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
+		return telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) })
 	}
 	if err := run(t.Context(), []string{"--config", config, "publish", "3000"}, io.Discard, io.Discard, factory); err == nil {
 		t.Fatal("invalid configuration was accepted")
 	}
-	if len(events) != 2 || events[0].Event != "command_started" || events[1].Event != "command_failed" ||
-		events[1].FailureStage != "setup" || events[0].InvocationID != events[1].InvocationID {
-		t.Fatalf("configuration telemetry = %#v", events)
+	if len(events) != 1 || events[0].Event != clienttelemetry.CommandFailed || events[0].FailureStage != telemetrySetupStage {
+		t.Fatalf("configuration outcome = %+v", events)
 	}
 	events = nil
 	_ = run(t.Context(), []string{"--no-telemetry", "--config", config, "publish", "3000"}, io.Discard, io.Discard, factory)
 	if len(events) != 0 {
-		t.Fatalf("disabled telemetry = %#v", events)
+		t.Fatalf("disabled telemetry = %+v", events)
 	}
 }
 
-func TestTypedTelemetryKeepsWireValues(t *testing.T) {
-	ready := newTelemetryReady(telemetryPublish, telemetryHosted, telemetryVite)
-	ready.InstallationID = "installation_0123456789abcdef0123456789abcdef"
-	ready.InvocationID = "invocation_0123456789abcdef0123456789abcdef"
-	body, err := json.Marshal(ready)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(body, &wire); err != nil {
-		t.Fatal(err)
-	}
-	for field, want := range map[string]string{
-		"event": "publish_run_started", "command": "publish", "server_kind": "hosted", "framework": "vite",
-	} {
-		if wire[field] != want {
-			t.Errorf("%s = %v, want %q", field, wire[field], want)
-		}
-	}
-	if _, ok := wire["failure_stage"]; ok {
-		t.Fatal("ready report included failure stage")
-	}
-}
-
-func TestIntegrationTelemetryIsTypedPrivateAndOncePerInvocation(t *testing.T) {
+func TestIntegrationTelemetryIntegrationOutcomesOnce(t *testing.T) {
 	var mu sync.Mutex
-	var events []telemetryPayload
-	reporter := telemetryReporterFunc(func(event telemetryPayload) {
+	var events []clienttelemetry.Observation
+	invocation := newTelemetryInvocation(telemetryReporterFunc(func(event clienttelemetry.Observation) {
 		mu.Lock()
 		defer mu.Unlock()
 		events = append(events, event)
-	})
-	invocation, err := newTelemetryInvocation(reporter)
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 	var workers sync.WaitGroup
 	for range 8 {
 		workers.Go(func() {
-			for _, event := range []telemetryPayload{
-				newIntegrationTelemetry(telemetryOAuthReady, ""),
-				newIntegrationTelemetry(telemetryOAuthRedirected, ""),
-				newIntegrationTelemetry(telemetryWebhookReady, telemetrySelected),
-				newIntegrationTelemetry(telemetryWebhookReached, telemetryFanout),
+			for _, event := range []clienttelemetry.Observation{
+				newIntegrationTelemetry("oauth_callback_url_ready", ""),
+				newIntegrationTelemetry("oauth_callback_redirected", ""),
+				newIntegrationTelemetry("webhook_endpoint_ready", telemetrySelected),
+				newIntegrationTelemetry("webhook_delivery_reached_receiver", telemetryFanout),
 			} {
 				invocation.Report(event)
 			}
@@ -270,37 +194,16 @@ func TestIntegrationTelemetryIsTypedPrivateAndOncePerInvocation(t *testing.T) {
 	}
 	workers.Wait()
 	if len(events) != 4 {
-		t.Fatalf("integration events = %d, want four once-only types", len(events))
+		t.Fatalf("integration observations = %+v", events)
 	}
-	want := map[telemetryEventName]string{
-		telemetryOAuthReady: "oauth.callback_url.ready", telemetryOAuthRedirected: "oauth.callback.redirected",
-		telemetryWebhookReady: "webhook.endpoint.ready", telemetryWebhookReached: "webhook.delivery.reached_receiver",
-	}
+	want := map[clienttelemetry.EventKind]bool{clienttelemetry.OAuthReady: true, clienttelemetry.OAuthRedirected: true, clienttelemetry.WebhookReady: true, clienttelemetry.WebhookReached: true}
 	for _, event := range events {
-		encoded, err := json.Marshal(event.wireEvent("tev_0123456789abcdefghijkl"))
-		if err != nil || bytes.Contains(encoded, []byte("secret-code")) || bytes.Contains(encoded, []byte("secret-state")) || bytes.Contains(encoded, []byte("stripe")) || bytes.Contains(encoded, []byte("https://")) {
-			t.Fatalf("integration event exposed request data: %s, %v", encoded, err)
-		}
-		var body struct {
-			Name    string          `json:"name"`
-			Payload json.RawMessage `json:"payload"`
-		}
-		if err := json.Unmarshal(encoded, &body); err != nil || body.Name != want[event.Event] {
-			t.Fatalf("integration event = %s, %v", encoded, err)
-		}
-		if event.Event == telemetryOAuthReady || event.Event == telemetryOAuthRedirected {
-			if string(body.Payload) != "{}" {
-				t.Fatalf("OAuth payload = %s", body.Payload)
-			}
-		} else if string(body.Payload) != `{"delivery":"`+string(event.Delivery)+`"}` {
-			t.Fatalf("webhook payload = %s", body.Payload)
-		}
-		if event.InvocationID != invocation.id {
-			t.Fatal("integration event used another invocation ID")
+		if !want[event.Event] {
+			t.Fatalf("duplicate or unexpected integration observation: %+v", event)
 		}
 		delete(want, event.Event)
 	}
 	if len(want) != 0 {
-		t.Fatalf("missing integration events: %v", want)
+		t.Fatalf("missing integration observations: %+v", want)
 	}
 }

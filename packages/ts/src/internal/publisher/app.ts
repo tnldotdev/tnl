@@ -81,7 +81,7 @@ export function prepareService(
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
-  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
+  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}\0${process.env.TNL_NO_TELEMETRY === "1"}`;
   const existing = preparations.get(key);
   if (existing !== undefined) return existing;
   const prepared = createPreparedService(options, framework, defaultDependencies, () =>
@@ -123,6 +123,7 @@ async function createPreparedServiceUntraced(
     framework,
     owner,
     pid: process.pid,
+    telemetry_disabled: process.env.TNL_NO_TELEMETRY === "1",
   };
   let endpoint = await dependencies.start(directory, undefined, selection);
   let assignment = parseAssignment(await dependencies.request(endpoint, "prepare", prepareRequest));

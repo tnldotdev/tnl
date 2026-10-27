@@ -84,6 +84,24 @@ test("accepts the native private protocol golden assignment", async () => {
   await handle.close();
 });
 
+test("captures per-app telemetry opt-out in the exact registration", async () => {
+  await withProcessEnvironment({ TNL_NO_TELEMETRY: "1" }, async () => {
+    const request = vi.fn(async (_endpoint: RuntimeEndpoint, operation: string) =>
+      operation === "prepare" ? assignment() : undefined,
+    );
+    const prepared = await createPreparedService({}, "node", {
+      start: async () => testEndpoint,
+      request,
+    });
+    expect(request).toHaveBeenCalledWith(
+      testEndpoint,
+      "prepare",
+      expect.objectContaining({ telemetry_disabled: true }),
+    );
+    await prepared.close();
+  });
+});
+
 function assignment(registration = "a") {
   return {
     version: 1,

@@ -95,6 +95,7 @@ class PreparedService:
             "framework": "python",
             "owner": self._owner,
             "pid": os.getpid(),
+            "telemetry_disabled": os.environ.get("TNL_NO_TELEMETRY") == "1",
         }
         if self._service is not None:
             payload["service"] = self._service

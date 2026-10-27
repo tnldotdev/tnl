@@ -146,7 +146,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 	if err := ValidateBackground(flags, selection, background); err != nil {
 		return err
 	}
-	job := supervisor.Job{Kind: supervisor.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName}
+	job := supervisor.Job{Kind: supervisor.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName, TelemetryDisabled: flags.TelemetryDisabled}
 	job.ReadinessPath = flags.ReadinessPath
 	job.Limits = flags.Limits
 	var err error

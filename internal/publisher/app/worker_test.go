@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,17 +15,19 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type trip func(*http.Request) (*http.Response, error)
 
 func (f trip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func testWorkers(t *testing.T) (*Workers, <-chan publisher.Config) {
+func testWorkers(t *testing.T, services ...Service) (*Workers, <-chan publisher.Config) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -60,7 +63,10 @@ func testWorkers(t *testing.T) (*Workers, <-chan publisher.Config) {
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	w.Manager, err = New(t.Context(), root, database, []Service{{Name: "web", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}}}, w.Run)
+	if len(services) == 0 {
+		services = []Service{{Name: "web", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}}}
+	}
+	w.Manager, err = New(t.Context(), root, database, services, w.Run)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +82,61 @@ func receiveConfig(t *testing.T, ready <-chan publisher.Config) publisher.Config
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not become routable")
 		return publisher.Config{}
+	}
+}
+
+func TestSharedPublisherReportsOnlyEligibleRegistration(t *testing.T) {
+	w, ready := testWorkers(t,
+		Service{Name: "web", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}},
+		Service{Name: "private", ServiceProtocol: "http", Readiness: Readiness{Path: "/health"}},
+	)
+	received := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(output http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		received <- body
+		output.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	collector, err := clienttelemetry.New(t.Context(), clienttelemetry.Config{
+		Root: filepath.Join(t.TempDir(), "telemetry-state"), Endpoint: server.URL, FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close(context.Background())
+	previous := w.Configure
+	w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
+		configuration, err := previous(ctx, service)
+		configuration.Telemetry = collector
+		configuration.TelemetryDisabled = service.Name == "private"
+		return configuration, err
+	}
+	for _, name := range []string{"web", "private"} {
+		id, err := w.Manager.Reserve(name, name, 1, "https://public.example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Manager.Register(id, name, "http://127.0.0.1:3000", "node"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receiveConfig(t, ready)
+	receiveConfig(t, ready)
+	collector.Flush()
+	select {
+	case body := <-received:
+		if err := api.ValidateBatch(body); err != nil {
+			t.Fatalf("publisher report violates v1 contract: %s %v", body, err)
+		}
+		var batch api.Batch
+		if err := json.Unmarshal(body, &batch); err != nil || len(batch.Events) != 1 {
+			t.Fatalf("shared publisher reported opted-out sibling: %s %v", body, err)
+		}
+		if event, err := batch.Events[0].AsReadyEvent(); err != nil || event.Payload.PublishMode != api.App {
+			t.Fatalf("eligible publisher readiness = %+v %v", event, err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("eligible publication did not send its independent ready observation")
 	}
 }
 

@@ -135,6 +135,9 @@ func TestAdHocRegisterAcceptsDefaultOrOneExplicitPublisher(t *testing.T) {
 	var calls atomic.Int32
 	server.Config.Handler = (&Server{Capabilities: caps, Invocation: func(_ context.Context, request publisherprotocol.Invocation) (publisherprotocol.Registration, error) {
 		calls.Add(1)
+		if request.TelemetryDisabled == nil || !*request.TelemetryDisabled {
+			t.Error("ad-hoc registration lost its invocation-specific opt-out")
+		}
 		if request.PublisherCredentialFile == "/private/missing.json" {
 			return publisherprotocol.Registration{}, credentialfile.ErrInvalid
 		}
@@ -146,6 +149,8 @@ func TestAdHocRegisterAcceptsDefaultOrOneExplicitPublisher(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	request := publisherprotocol.Invocation{Version: 1, InvocationId: id, Owner: "0123456789abcdef0123456789abcdef", Pid: 1, Target: "http://127.0.0.1:3000"}
+	request.TelemetryDisabled = new(bool)
+	*request.TelemetryDisabled = true
 	for _, test := range []struct{ file, id, code string }{
 		{"", "", "runtime.publisher_setup_required"},
 		{"/private/missing.json", "", "runtime.publisher_credential_file_invalid"},

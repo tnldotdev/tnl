@@ -109,6 +109,7 @@ type InstallationSetting struct {
 	InstallationID       sql.NullString
 	WorktreeHashSalt     []byte
 	TelemetryEnabled     int64
+	TelemetryEpoch       int64
 }
 
 type IntegrationUrlHostname struct {
@@ -330,9 +331,10 @@ type StateProtection struct {
 }
 
 type TelemetryOutbox struct {
-	EventID   string
-	CreatedAt int64
-	EventJson string
+	EventID    string
+	CreatedAt  int64
+	EventJson  string
+	ClientJson string
 }
 
 type VisitorDevice struct {

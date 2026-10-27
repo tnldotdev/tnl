@@ -114,6 +114,7 @@ async function openServerUntraced(
     owner,
     pid: process.pid,
     target,
+    telemetry_disabled: process.env.TNL_NO_TELEMETRY === "1",
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherIdentityID === undefined
       ? {}

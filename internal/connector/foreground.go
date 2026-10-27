@@ -28,6 +28,7 @@ type StartOptions struct {
 	PreferredRegions                                               []string
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
 	Foreground, Detach, Install, System, Stdio                     bool
+	TelemetryDisabled                                              bool
 	SystemStateDir, DetachedChild, Output                          string
 	Project                                                        clientproject.Project
 	project                                                        projectConfiguration
@@ -200,7 +201,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	}
 	job := supervisor.Job{Kind: supervisor.KindConnector, ID: jobID, Name: service.Name,
 		Server: session.authenticated.ServerEndpoint, ServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
-		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision, PreferredRegions: append([]string(nil), flags.PreferredRegions...)}
+		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision, PreferredRegions: append([]string(nil), flags.PreferredRegions...), TelemetryDisabled: flags.TelemetryDisabled}
 	job.Endpoint = service.Endpoint
 	writeReady := func(job supervisor.Job, destination io.Writer) error {
 		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
