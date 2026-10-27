@@ -27,15 +27,17 @@ const (
 type MessageType string
 
 const (
-	Hello         MessageType = "hello"
-	HelloAccepted MessageType = "hello_accepted"
-	Ping          MessageType = "ping"
-	Pong          MessageType = "pong"
-	Drain         MessageType = "drain"
-	Draining      MessageType = "draining"
-	Drained       MessageType = "drained"
-	GoAway        MessageType = "goaway"
-	Error         MessageType = "error"
+	Hello            MessageType = "hello"
+	HelloAccepted    MessageType = "hello_accepted"
+	Ping             MessageType = "ping"
+	Pong             MessageType = "pong"
+	Drain            MessageType = "drain"
+	Draining         MessageType = "draining"
+	Drained          MessageType = "drained"
+	GoAway           MessageType = "goaway"
+	Error            MessageType = "error"
+	NativeLegRenew   MessageType = "native_leg_renew"
+	NativeLegRenewed MessageType = "native_leg_renewed"
 )
 
 type PeerRole string
@@ -206,7 +208,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 	}
 	if _, present := fields["native_pair_leg_accepted"]; present {
 		var kind MessageType
-		if err := json.Unmarshal(fields["type"], &kind); err != nil || kind != HelloAccepted || role != "" || bytes.Equal(bytes.TrimSpace(fields["native_pair_leg_accepted"]), []byte("null")) {
+		if err := json.Unmarshal(fields["type"], &kind); err != nil || (kind != HelloAccepted && kind != NativeLegRenewed) || role != "" || bytes.Equal(bytes.TrimSpace(fields["native_pair_leg_accepted"]), []byte("null")) {
 			return Message{}, errors.New("tunnelv1: native receipt outside hello_accepted")
 		}
 	}
@@ -306,6 +308,16 @@ func (m Message) Validate() error {
 		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.Code != "" ||
 			(m.NativePairLegAccepted != nil && m.NativePairLegAccepted.Validate() != nil) {
 			return errors.New("tunnelv1: invalid hello_accepted")
+		}
+	case NativeLegRenew:
+		if !validIdentifier(m.RequestID) || m.Role != NativeConnector || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil ||
+			m.NativePairLegProof == nil || m.NativePairLegProof.Validate() != nil || m.NativePairLegAccepted != nil || m.Code != "" {
+			return errors.New("tunnelv1: invalid native leg renewal")
+		}
+	case NativeLegRenewed:
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil ||
+			m.NativePairLegProof != nil || m.NativePairLegAccepted == nil || m.NativePairLegAccepted.Validate() != nil || m.Code != "" {
+			return errors.New("tunnelv1: invalid native leg renewal receipt")
 		}
 	case Ping, Pong, Drain, Draining, Drained:
 		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.NativePairLegAccepted != nil || m.Code != "" {

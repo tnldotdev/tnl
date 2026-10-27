@@ -156,7 +156,7 @@ claim before acknowledging. before the control claim, its local owner reserves
 one of 64 native sessions by default, with at most two reservations per exact
 pair, generation, and leg. the reservation covers claims in progress and the
 acknowledged session; denial, close, cancellation, relay drain (checked every
-100 ms), and the fixed claim deadline release it. it does not use publisher
+100 ms), and claim expiration release it. it does not use publisher
 connection capacity. without a configured publisher registry, this remains a
 claim-only proof that closes after at most ten seconds. production relay
 listeners do not configure native admission yet, so native connector hellos fail
@@ -179,6 +179,18 @@ deadline when delivery begins. publisher replacement, drain, close, cancellation
 or claim expiry interrupt and join the packet workers and partial introductions.
 closing one pair removes its live registration while retaining the generation
 tombstone; it leaves sibling pairs and the borrowed publisher session alive.
+
+pair renewal alone never advances an existing relay claim. connector background
+work sends a fresh `native_leg_renew` proof on the existing native control
+stream only after local preparation has obtained a later pair deadline. the
+relay rechecks the accepted socket, process lease, exact publisher assignment,
+and current control authority before returning `native_leg_renewed`. both ends
+require the same pair, delivery ID/generation, key, slot, and source. the new
+deadline uses request start plus observed remaining authority. the old deadline
+still governs while control checks the request; a stopped owner or late response
+cannot revive it. a synchronized temporary denial retains only the old deadline.
+renewal changes no packet registration, replay history, inner connection, or
+application admission. cancellation joins control readers and expiry watchers.
 
 a relay behind a load balancer sees the balancer's address on its socket. that
 socket cannot prove the connector source. a future PROXY source mode needs an
@@ -247,7 +259,8 @@ and IP policy are verified before managed visitor TLS or target work. a carrier
 change does not create a second admission. the owner keeps at most 4096 visitor
 IDs per pair and 64 pair owners per run, including stopped pairs retained for
 the five-minute token replay window. close, assignment replacement, and the fixed
-pair deadline interrupt and join its streams.
+pair deadline interrupt and join its streams; only a new independently prepared
+binding can renew that deadline while the owner remains live.
 [packet serving](../../../internal/publisher/service/peer_packets.go) attaches
 one inner QUIC connection to that owner using already-authorized carriers. it
 uses the prepared service certificate, bounds stream readers, and preserves
@@ -288,10 +301,12 @@ QUIC and TLS/TCP publishers each serve all connector carrier combinations.
 UDP packet loss and closing a native outer TCP session leave one target socket
 and its monotonic application counter intact. this fixture does not qualify
 load-balancer source handling or assignment replacement.
+the renewal case also retains that target past the original pair deadline,
+checks that both durable leg claims advanced, then applies the carrier faults.
 
 production publishers and connectors do not enable `NativePeers` yet, and
 production relays leave native admission disabled. a relay hello receipt proves
 its own checked claim, not publisher installation or application permission.
-pair renewal does not extend an existing relay leg's fixed claim deadline.
-checked leg renewal, assignment/source rebinding, and ICE integration remain
-required before enabling the native path.
+pair renewal does not bypass the separate checked relay renewal. assignment/source
+rebinding, deployed listener source handling, and ICE integration remain required
+before enabling the native path.

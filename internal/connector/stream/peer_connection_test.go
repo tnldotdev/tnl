@@ -116,7 +116,7 @@ func preparedPeerFixture(t *testing.T) (Config, *preparedSelection, *peerPrepara
 	return config, prepared, owner
 }
 
-func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change func(*tunnelv1.NativePairLegAccepted), before func(), datagrams bool) *peerTestSession {
+func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change func(*tunnelv1.NativePairLegAccepted), before func(), datagrams bool, renew ...func(tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error)) *peerTestSession {
 	t.Helper()
 	return newPeerTestSession(t, datagrams, func(stream muxsession.Stream) {
 		hello, err := tunnelv1.ReadControl(stream)
@@ -145,7 +145,33 @@ func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change 
 		if err := tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version, NativePairLegAccepted: &receipt}); err != nil {
 			return
 		}
-		_, _ = io.Copy(io.Discard, stream)
+		if len(renew) == 0 {
+			_, _ = io.Copy(io.Discard, stream)
+			return
+		}
+		for {
+			request, err := tunnelv1.ReadControl(stream)
+			if err != nil {
+				return
+			}
+			if request.Type != tunnelv1.NativeLegRenew || request.NativePairLegProof == nil || !proof.SameLeg(*request.NativePairLegProof) {
+				t.Error("renewal changed its original leg")
+				return
+			}
+			message, err := request.NativePairLegProof.Message()
+			if err != nil || !ed25519.Verify(signer.PublicKey, message, request.NativePairLegProof.Signature) || bytes.Equal(proof.Nonce, request.NativePairLegProof.Nonce) {
+				t.Error("renewal did not sign a fresh exact proof")
+				return
+			}
+			receipt, err := renew[0](*request.NativePairLegProof)
+			response := tunnelv1.Message{Type: tunnelv1.NativeLegRenewed, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, NativePairLegAccepted: &receipt}
+			if err != nil {
+				response.Type, response.Code, response.NativePairLegAccepted = tunnelv1.Error, tunnelv1.Unavailable, nil
+			}
+			if err := tunnelv1.WriteControl(stream, response); err != nil {
+				return
+			}
+		}
 	})
 }
 
@@ -270,6 +296,48 @@ func TestNativePeerRelayDeadlineDoesNotFollowPairRenewal(t *testing.T) {
 			t.Fatal("expired relay leg retained its transport")
 		}
 	})
+}
+
+func TestNativePeerRelayRenewalRequiresCheckedCurrentReceipt(t *testing.T) {
+	for _, outcome := range []string{"accepted", "temporary denial", "changed source", "late success"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				_, prepared, owner := preparedPeerFixture(t)
+				initial := *prepared.peer
+				var calls atomic.Int32
+				session := peerHelloSession(t, initial, owner.signer, nil, nil, true, func(proof tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+					calls.Add(1)
+					if outcome == "temporary denial" {
+						return tunnelv1.NativePairLegAccepted{}, &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
+					}
+					receipt := tunnelv1.NativePairLegAccepted{PairID: initial.pair.PairId, DeliveryID: initial.pair.DeliveryId,
+						DeliveryGeneration: 1, ConnectionSlot: proof.ConnectionSlot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(30 * time.Second)}
+					if outcome == "changed source" {
+						receipt.SourceIP = "127.0.0.2"
+					}
+					if outcome == "late success" {
+						time.Sleep(16 * time.Second)
+					}
+					return receipt, nil
+				})
+				connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return session, nil })
+				leg, err := dialPeerRelayLeg(t.Context(), t.Context(), connector, initial, owner.signer, 0, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prepared.peer.expiresAt, prepared.peer.until, prepared.until = time.Now().Add(40*time.Second), time.Now().Add(40*time.Second), time.Now().Add(40*time.Second)
+				joined := make(chan struct{})
+				go func() { defer close(joined); leg.renewPrepared(prepared, initial, owner.signer, 0) }()
+				time.Sleep(21 * time.Second)
+				synctest.Wait()
+				if calls.Load() == 0 || (leg.ctx.Err() == nil) != (outcome == "accepted") {
+					t.Fatal("relay renewal installed unchecked or expired authority", outcome, calls.Load(), leg.ctx.Err())
+				}
+				leg.Close()
+				<-joined
+			})
+		})
+	}
 }
 
 func TestNativePeerPacketStartupRequiresMatchingSourcesAndPublisherConfirmation(t *testing.T) {

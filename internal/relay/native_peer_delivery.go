@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -90,11 +91,15 @@ type nativePairDelivery struct {
 	towardPublisher peer.Carrier
 	towardConnector peer.Carrier
 	connection      *serviceConnection
+	transport       muxsession.Session
 	done            chan struct{}
 	mu              sync.Mutex
 	closed, serving bool
 	workers         sync.WaitGroup
 	once            sync.Once
+	deadline        time.Time
+	changed         chan struct{}
+	authorityDone   chan struct{}
 }
 
 func (*nativePairDelivery) String() string   { return "native pair packet delivery" }
@@ -133,8 +138,9 @@ func (a *NativeConnectorAcceptor) prepareDelivery(setup, lifetime context.Contex
 	if parseErr != nil || claim.key == [32]byte{} || !claim.receipt.ExpiresAt.After(a.now()) {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
-	ctx, cancel := context.WithDeadline(lifetime, claim.receipt.ExpiresAt)
-	d := &nativePairDelivery{ctx: ctx, cancel: cancel, publisher: connection.packets, connection: connection, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(lifetime)
+	d := &nativePairDelivery{ctx: ctx, cancel: cancel, publisher: connection.packets, connection: connection, done: make(chan struct{}),
+		transport: transport, deadline: claim.receipt.ExpiresAt, changed: make(chan struct{}), authorityDone: make(chan struct{})}
 	d.stopPublisher = context.AfterFunc(d.publisher.ctx, cancel)
 	d.publisher.mu.Lock()
 	if d.publisher.closed || d.publisher.ctx.Err() != nil {
@@ -145,6 +151,7 @@ func (a *NativeConnectorAcceptor) prepareDelivery(setup, lifetime context.Contex
 	}
 	d.publisher.jobs[d] = struct{}{}
 	d.publisher.mu.Unlock()
+	go d.watchAuthority(a)
 	defer func() {
 		if err != nil {
 			d.Close()
@@ -179,7 +186,12 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 		return net.ErrClosed
 	}
 	d.serving = true
-	finished := make(chan error, 2)
+	finished := make(chan error, 3)
+	d.workers.Go(func() {
+		finished <- session.HandleNativeLegRenewals(d.ctx, func(ctx context.Context, proof tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+			return d.renewClaim(ctx, a, d.transport, proof, claim)
+		})
+	})
 	connectorReady := make(chan struct{})
 	d.workers.Go(func() {
 		finished <- forwardNativePackets(d.ctx, d.towardConnector, d.towardPublisher, connectorReady)
@@ -205,7 +217,7 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 		case <-session.Done():
 			return nil
 		case err := <-finished:
-			if errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
@@ -247,6 +259,7 @@ func (d *nativePairDelivery) Close() {
 		d.mu.Unlock()
 		d.cancel()
 		d.stopPublisher()
+		<-d.authorityDone
 		if d.towardPublisher != nil {
 			_ = d.towardPublisher.Close()
 		}

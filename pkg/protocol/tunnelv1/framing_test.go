@@ -26,6 +26,8 @@ var frameReaders = []struct {
 	{"control-hello", MaxControlBytes, readControl},
 	{"control-native-hello", MaxControlBytes, readControl},
 	{"control-native-accepted", MaxControlBytes, readControl},
+	{"control-native-renew", MaxControlBytes, readControl},
+	{"control-native-renewed", MaxControlBytes, readControl},
 	{"control-accepted", MaxControlBytes, readControl},
 	{"native-peer-visitor-entry", MaxHeaderBytes, readNativePeerVisitor},
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},

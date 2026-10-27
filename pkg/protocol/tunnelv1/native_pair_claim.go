@@ -37,6 +37,15 @@ var ErrNativePairLegProof = errors.New("tunnelv1: invalid native pair leg proof"
 
 const MaxNativePairLegProofBytes = 4 << 10
 
+// SameLeg compares the immutable binding, not freshness or authorization.
+// renewal still requires a fresh signed proof checked by control.
+func (p NativePairLegProof) SameLeg(other NativePairLegProof) bool {
+	return p.PairID == other.PairID && p.DeliveryGeneration == other.DeliveryGeneration && p.ServiceID == other.ServiceID &&
+		p.ServiceRunID == other.ServiceRunID && p.RunNumber == other.RunNumber && p.PublisherIdentityID == other.PublisherIdentityID &&
+		p.ConnectionSlot == other.ConnectionSlot && p.PublisherConnectionID == other.PublisherConnectionID && p.AssignmentRevision == other.AssignmentRevision &&
+		p.RelayServiceID == other.RelayServiceID && p.RelayID == other.RelayID && p.RelayRunID == other.RelayRunID && p.RelayLeaseRevision == other.RelayLeaseRevision
+}
+
 // Message is signed with the enrolled connector key, independent of pair
 // preparation and visitor opening proofs. the signature is never part of it.
 func (p NativePairLegProof) Message() ([]byte, error) {

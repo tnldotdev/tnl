@@ -131,14 +131,19 @@ func TestIntegrationPeerPacketsKeepNativeTargetAcrossRelayPacketLoss(t *testing.
 				{"tcp-tcp-lose-b", [2]bool{true, true}, 1},
 			} {
 				t.Run(carriers.name, func(t *testing.T) {
-					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP)
+					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP, false)
 				})
 			}
 		})
 	}
 }
 
-func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int) {
+func TestIntegrationPeerPacketsRenewNativeClaimsWithoutReopeningTarget(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true)
+}
+
+func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew bool) {
 	t.Helper()
 	f, issuer := newWorkloadTransportFixtureTopology(t, nil, serviceRuntimeTopologyOptions{nativePeers: true})
 	// health probes may connect and close, but only a socket that receives
@@ -181,6 +186,11 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub,
 		Github:   &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}},
 		Services: []string{"echo"}, MaxDurationSeconds: 60}}
+	if renew {
+		policy := policies["test"]
+		policy.MaxDurationSeconds = 300
+		policies["test"] = policy
+	}
 	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),
 		Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}},
 			Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {PublisherGroup: &group, Protocol: &protocol, Target: target.Addr().String()}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
@@ -281,6 +291,47 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 	}
 	check(1)
 	counter := uint64(1)
+	if renew {
+		var original, firstClaim time.Time
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT expires_at FROM control.native_peer_pairs WHERE service_id=$1`, run.ServiceID).Scan(&original); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT max(requested_at) FROM control.native_peer_pair_leg_claims`).Scan(&firstClaim); err != nil {
+			t.Fatal(err)
+		}
+		if original.After(time.Now().Add(95 * time.Second)) {
+			t.Fatal("pair exceeded its original 90-second workload lease")
+		}
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		nextRenewal := time.Now().Add(30 * time.Second)
+		for time.Now().Before(original.Add(2 * time.Second)) {
+			select {
+			case <-ctx.Done():
+				t.Fatal(context.Cause(ctx))
+			case <-ticker.C:
+			}
+			if !time.Now().Before(nextRenewal) {
+				if _, err := job.Renew(t.Context()); err != nil {
+					t.Fatal("renew parent workload lease", err)
+				}
+				nextRenewal = time.Now().Add(30 * time.Second)
+			}
+			counter++
+			check(counter)
+		}
+		var current, lastClaim time.Time
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT expires_at FROM control.native_peer_pairs WHERE service_id=$1`, run.ServiceID).Scan(&current); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT min(requested_at) FROM control.native_peer_pair_leg_claims`).Scan(&lastClaim); err != nil {
+			t.Fatal(err)
+		}
+		if !current.After(original) || !lastClaim.After(firstClaim.Add(time.Second)) {
+			t.Fatal("application survived without renewing both checked relay claims", original, current, firstClaim, lastClaim)
+		}
+		t.Logf("one target survived the original pair deadline; both relay claims advanced by at least %s", lastClaim.Sub(firstClaim).Round(time.Millisecond))
+	}
 	for slot := range 2 {
 		if tcp[slot] {
 			continue

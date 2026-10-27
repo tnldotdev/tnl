@@ -1,0 +1,24 @@
+{
+  "type": "native_leg_renew",
+  "protocol_version": 1,
+  "request_id": "renew_1",
+  "role": "native_connector",
+  "native_pair_leg_proof": {
+    "pair_id": "npp_1234567890123456789012",
+    "delivery_generation": 3,
+    "service_id": "svc_1234567890123456789012",
+    "service_run_id": "srun_1234567890123456789012",
+    "run_number": 2,
+    "publisher_identity_id": "pub_1234567890123456789012",
+    "connection_slot": 0,
+    "publisher_connection_id": "pc_1234567890123456789012",
+    "assignment_revision": 5,
+    "relay_service_id": "relay-a",
+    "relay_id": "node-a",
+    "relay_run_id": "process-a",
+    "relay_lease_revision": 3,
+    "requested_at": "2026-01-02T03:04:05Z",
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

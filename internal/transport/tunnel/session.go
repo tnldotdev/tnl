@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,8 @@ type Session struct {
 	role                tunnelv1.PeerRole
 	publisherConnection *tunnelv1.PublisherConnectionRef
 	serviceConnection   *tunnelv1.ServicePublisherConnectionRef
+	nativeLeg           *tunnelv1.NativePairLegProof
+	nativeControl       sync.Mutex
 
 	closeOnce sync.Once
 	closeErr  error
@@ -221,6 +224,11 @@ func authenticatedSession(transport muxsession.Session, control muxsession.Strea
 	if hello.ServiceConnection != nil {
 		ref := *hello.ServiceConnection
 		s.serviceConnection = &ref
+	}
+	if hello.NativePairLegProof != nil {
+		proof := *hello.NativePairLegProof
+		proof.Nonce, proof.Signature = bytes.Clone(proof.Nonce), bytes.Clone(proof.Signature)
+		s.nativeLeg = &proof
 	}
 	return s
 }

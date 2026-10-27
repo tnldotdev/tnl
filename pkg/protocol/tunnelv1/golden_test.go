@@ -20,7 +20,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
-	assertGoldenFrame(t, "control-native-hello", Message{
+	nativeHello := Message{
 		Type: Hello, ProtocolVersion: Version, Role: NativeConnector,
 		NativePairLegProof: &NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 3,
 			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 2,
@@ -28,12 +28,20 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 5,
 			RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 3,
 			RequestedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Nonce: make([]byte, 32), Signature: make([]byte, 64)},
-	}, WriteControl, ReadControl)
-	assertGoldenFrame(t, "control-native-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version,
+	}
+	assertGoldenFrame(t, "control-native-hello", nativeHello, WriteControl, ReadControl)
+	nativeRenew := nativeHello
+	nativeRenew.Type, nativeRenew.RequestID = NativeLegRenew, "renew_1"
+	assertGoldenFrame(t, "control-native-renew", nativeRenew, WriteControl, ReadControl)
+	nativeAccepted := Message{Type: HelloAccepted, ProtocolVersion: Version,
 		NativePairLegAccepted: &NativePairLegAccepted{PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ",
 			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
 			ObservedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-			ExpiresAt:  time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}, WriteControl, ReadControl)
+			ExpiresAt:  time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}
+	assertGoldenFrame(t, "control-native-accepted", nativeAccepted, WriteControl, ReadControl)
+	nativeRenewed := nativeAccepted
+	nativeRenewed.Type, nativeRenewed.RequestID = NativeLegRenewed, "renew_1"
+	assertGoldenFrame(t, "control-native-renewed", nativeRenewed, WriteControl, ReadControl)
 	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "native-peer-visitor-entry", peerOpeningFixture(), WriteNativePeerVisitorEntry, ReadNativePeerVisitorEntry)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{

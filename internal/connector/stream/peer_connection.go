@@ -33,6 +33,7 @@ type peerConnection struct {
 	cancel    context.CancelCauseFunc
 	done      chan struct{}
 	once      sync.Once
+	renewals  sync.WaitGroup
 }
 
 type peerRelayLeg struct {
@@ -42,6 +43,10 @@ type peerRelayLeg struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	done    chan struct{}
+	mu      sync.Mutex
+	until   time.Time
+	changed chan struct{}
+	retired bool
 }
 
 func (l *peerRelayLeg) Close() {
@@ -96,6 +101,9 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 		return nil, ErrServiceConnection
 	}
 	p.source = p.legs[0].receipt.SourceIP
+	for slot, leg := range p.legs {
+		p.renewals.Go(func() { leg.renewPrepared(prepared, initial, signer, slot) })
+	}
 	// both relay claims can now be discovered by the publisher. do not start
 	// even packet probes until it has installed its independent registrations.
 	var run Run
@@ -185,6 +193,7 @@ func (p *peerConnection) closeResources() {
 			leg.Close()
 		}
 	}
+	p.renewals.Wait()
 	if p.socket != nil {
 		_ = p.socket.Close()
 	}
@@ -259,22 +268,9 @@ func racePeerRelayCandidates(ctx, life context.Context, connectors [2]muxsession
 
 func dialPeerRelayLeg(ctx, lifetime context.Context, connector muxsession.Connector, binding preparedPeer, signer Signer, slot int, datagrams bool) (_ *peerRelayLeg, retErr error) {
 	relay := binding.pair.Relays[slot]
-	proof := tunnelv1.NativePairLegProof{PairID: binding.pair.PairId, DeliveryGeneration: binding.pair.DeliveryGeneration,
-		ServiceID: binding.pair.ServiceId, ServiceRunID: binding.pair.ServiceRunId, RunNumber: binding.pair.RunNumber,
-		PublisherIdentityID: binding.pair.PublisherIdentityId, ConnectionSlot: slot,
-		PublisherConnectionID: relay.PublisherConnectionId, AssignmentRevision: relay.AssignmentRevision,
-		RelayServiceID: relay.RelayLease.RelayServiceId, RelayID: relay.RelayLease.RelayId, RelayRunID: relay.RelayLease.RelayRunId,
-		RelayLeaseRevision: uint64(relay.RelayLease.RelayLeaseRevision), RequestedAt: time.Now().UTC().Truncate(time.Microsecond), Nonce: make([]byte, 32)}
-	if _, err := rand.Read(proof.Nonce); err != nil {
-		return nil, err
-	}
-	message, err := proof.Message()
+	proof, err := newPeerLegProof(binding, signer, slot)
 	if err != nil {
 		return nil, err
-	}
-	proof.Signature = signer.Sign(message)
-	if !ed25519.Verify(signer.PublicKey, message, proof.Signature) {
-		return nil, ErrServiceConnection
 	}
 	started := time.Now()
 	outer, err := connector.Connect(ctx, muxsession.Endpoint{Address: relay.RelayAddress, ServerName: relay.TlsServerName})
@@ -301,7 +297,7 @@ func dialPeerRelayLeg(ctx, lifetime context.Context, connector muxsession.Connec
 	if !until.After(time.Now()) || ctx.Err() != nil {
 		return nil, ErrSelectionExpired
 	}
-	life, cancel := context.WithDeadline(lifetime, until)
+	life, cancel := context.WithCancel(lifetime)
 	defer func() {
 		if retErr != nil {
 			cancel()
@@ -337,16 +333,38 @@ func dialPeerRelayLeg(ctx, lifetime context.Context, connector muxsession.Connec
 		_ = closePackets()
 		return nil, err
 	}
-	leg := &peerRelayLeg{session: session, carrier: carrier, receipt: receipt, ctx: life, cancel: cancel, done: make(chan struct{})}
+	leg := &peerRelayLeg{session: session, carrier: carrier, receipt: receipt, ctx: life, cancel: cancel, done: make(chan struct{}), until: until, changed: make(chan struct{})}
 	go func() {
 		defer close(leg.done)
-		select {
-		case <-life.Done():
-		case <-session.Done():
-		}
+		leg.watchAuthority()
 		cancel()
 		_ = session.Close()
 		_ = closePackets()
 	}()
 	return leg, nil
+}
+
+func newPeerLegProof(binding preparedPeer, signer Signer, slot int) (tunnelv1.NativePairLegProof, error) {
+	relay := binding.pair.Relays[slot]
+	proof := tunnelv1.NativePairLegProof{PairID: binding.pair.PairId, DeliveryGeneration: binding.pair.DeliveryGeneration,
+		ServiceID: binding.pair.ServiceId, ServiceRunID: binding.pair.ServiceRunId, RunNumber: binding.pair.RunNumber,
+		PublisherIdentityID: binding.pair.PublisherIdentityId, ConnectionSlot: slot,
+		PublisherConnectionID: relay.PublisherConnectionId, AssignmentRevision: relay.AssignmentRevision,
+		RelayServiceID: relay.RelayLease.RelayServiceId, RelayID: relay.RelayLease.RelayId, RelayRunID: relay.RelayLease.RelayRunId,
+		RelayLeaseRevision: uint64(relay.RelayLease.RelayLeaseRevision), RequestedAt: time.Now().UTC().Truncate(time.Microsecond), Nonce: make([]byte, 32)}
+	if _, err := rand.Read(proof.Nonce); err != nil {
+		return tunnelv1.NativePairLegProof{}, err
+	}
+	message, err := proof.Message()
+	if err != nil {
+		return tunnelv1.NativePairLegProof{}, err
+	}
+	if signer.Sign == nil {
+		return tunnelv1.NativePairLegProof{}, ErrServiceConnection
+	}
+	proof.Signature = signer.Sign(message)
+	if !ed25519.Verify(signer.PublicKey, message, proof.Signature) {
+		return tunnelv1.NativePairLegProof{}, ErrServiceConnection
+	}
+	return proof, nil
 }
