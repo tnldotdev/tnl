@@ -11,7 +11,21 @@ import (
 type workloadCleanupFixture struct {
 	t      *testing.T
 	calls  int
+	pairs  int
 	cancel context.CancelFunc
+}
+
+func (s *workloadCleanupFixture) CleanupExpiredNativePeerPairs(ctx context.Context, _ time.Time, limit int) (int64, error) {
+	s.t.Helper()
+	deadline, bounded := ctx.Deadline()
+	if limit != 1000 || !bounded || time.Until(deadline) > 5*time.Second {
+		s.t.Fatal("peer pair cleanup lacks its batch or operation bound")
+	}
+	s.pairs++
+	if s.pairs == 1 {
+		return 1, nil
+	}
+	return 0, ctx.Err()
 }
 
 func (s *workloadCleanupFixture) CleanupWorkloads(ctx context.Context, _ time.Time, limit int) (int64, error) {
@@ -34,8 +48,8 @@ func TestWorkloadCleanupDrainsAndJoins(t *testing.T) {
 	defer cancel()
 	store := &workloadCleanupFixture{t: t, cancel: cancel}
 	metrics := observability.New("control")
-	if err := RunWorkloadCleanup(ctx, store, metrics); err != nil || store.calls != 2 {
-		t.Fatalf("cleanup did not drain and join cancellation: calls=%d err=%v", store.calls, err)
+	if err := RunWorkloadCleanup(ctx, store, metrics); err != nil || store.calls != 2 || store.pairs != 2 {
+		t.Fatalf("cleanup did not drain and join cancellation: workload=%d pairs=%d err=%v", store.calls, store.pairs, err)
 	}
 	families, err := metrics.Gather()
 	if err != nil {

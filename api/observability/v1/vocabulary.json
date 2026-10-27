@@ -400,7 +400,8 @@
         "routing_prune",
         "service_audit",
         "guest_private_state",
-        "workloads"
+        "workloads",
+        "native_peer_pairs"
       ],
       "semantics": "cleanup domain",
       "dimension_policy": "bounded"

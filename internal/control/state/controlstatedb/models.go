@@ -612,6 +612,29 @@ type ControlMemberSlugReservation struct {
 	ReleasedAt           pgtype.Timestamptz
 }
 
+type ControlNativePeerPair struct {
+	ID                  string
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	SubjectKind         string
+	SubjectID           string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	LastRenewalDigest   []byte
+	KeyDigest           []byte
+	KeyCiphertext       []byte
+	StorageKeyID        string
+	Slots               []byte
+	DeliveryGeneration  int64
+	CreatedAt           pgtype.Timestamptz
+	LastAuthorizedAt    pgtype.Timestamptz
+	LastRequestAt       pgtype.Timestamptz
+	ReplayFenceUntil    pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+}
+
 type ControlOidcAssertionExchange struct {
 	ID              int64
 	AssertionDigest []byte

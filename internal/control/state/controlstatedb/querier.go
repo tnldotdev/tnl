@@ -59,6 +59,7 @@ type Querier interface {
 	CleanupBrowserAccess(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupConnectorIngressAssignmentRequests(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupConnectorSessions(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupExpiredNativePeerPairs(ctx context.Context, arg CleanupExpiredNativePeerPairsParams) (int64, error)
 	CleanupServiceAuditEvents(ctx context.Context, arg CleanupServiceAuditEventsParams) (int64, error)
 	CleanupServiceHTTPLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupServiceHTTPSessions(ctx context.Context, now pgtype.Timestamptz) error
@@ -202,6 +203,7 @@ type Querier interface {
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetLocalProjectService(ctx context.Context, arg GetLocalProjectServiceParams) (GetLocalProjectServiceRow, error)
 	GetManagedCertificateDomainKind(ctx context.Context, domainID string) (string, error)
+	GetNativePeerPair(ctx context.Context, arg GetNativePeerPairParams) (ControlNativePeerPair, error)
 	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
@@ -279,6 +281,7 @@ type Querier interface {
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertIngressTransportIssuer(ctx context.Context, arg InsertIngressTransportIssuerParams) (ControlIngressTransportIssuer, error)
+	InsertNativePeerPair(ctx context.Context, arg InsertNativePeerPairParams) (ControlNativePeerPair, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
 	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
@@ -311,6 +314,8 @@ type Querier interface {
 	InvalidatePublisherGroupRuntimeHealth(ctx context.Context, publisherIdentityID string) error
 	LatestIngressRoutingEntryRevision(ctx context.Context, arg LatestIngressRoutingEntryRevisionParams) (int64, error)
 	LimitGuestPublishRunExpiry(ctx context.Context, arg LimitGuestPublishRunExpiryParams) (ControlPublishRun, error)
+	// an uncertain delivery retry may only shorten the existing deadline.
+	LimitNativePeerPair(ctx context.Context, arg LimitNativePeerPairParams) (ControlNativePeerPair, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListActiveShareCookiesForPublicURL(ctx context.Context, arg ListActiveShareCookiesForPublicURLParams) ([]ListActiveShareCookiesForPublicURLRow, error)
 	ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error)
@@ -517,10 +522,14 @@ type Querier interface {
 	RemoveVisitorIPGrant(ctx context.Context, arg RemoveVisitorIPGrantParams) (int64, error)
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
+	// only a fresh signed renewal after the last successful authorization can
+	// extend the same pair; an expired row never regains serving authority.
+	RenewNativePeerPair(ctx context.Context, arg RenewNativePeerPairParams) (ControlNativePeerPair, error)
 	RenewPublisherRuntime(ctx context.Context, arg RenewPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	RenewServiceRun(ctx context.Context, arg RenewServiceRunParams) (ControlServiceRun, error)
 	RenewStreamCapacityAllocation(ctx context.Context, arg RenewStreamCapacityAllocationParams) (ControlStreamCapacityAllocation, error)
+	ReplaceNativePeerPair(ctx context.Context, id string) (int64, error)
 	// a failed ready connection can keep its existing service reservation. this
 	// atomic ready -> assigned transition has zero counter delta and needs only the
 	// caller's public URL/publish run locks, not placement's global/service/lease guards.

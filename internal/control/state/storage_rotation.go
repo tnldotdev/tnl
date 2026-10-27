@@ -62,6 +62,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
+			(SELECT count(*) FROM control.native_peer_pairs WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.stream_capacity_allocations WHERE proof_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_ingress_assignment_requests WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
@@ -139,6 +140,7 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 				return errors.New("stored secret does not match the configured previous storage key")
 			}
 			rotatedCiphertext, err := d.sealSecret(secret.context, plaintext)
+			clear(plaintext)
 			if err != nil {
 				return err
 			}
@@ -346,6 +348,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.service_runs
 		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.service_runs", serviceAssignmentSeedContext},
+		{`SELECT ctid::text, id, key_ciphertext FROM control.native_peer_pairs
+		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"key_ciphertext", "storage_key_id", "control.native_peer_pairs", nativePeerPairKeyContext},
 		{`SELECT ctid::text, id, proof_key_ciphertext FROM control.stream_capacity_allocations
 		  WHERE proof_key_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"proof_key_ciphertext", "proof_key_storage_key_id", "control.stream_capacity_allocations", streamCapacityProofContext},

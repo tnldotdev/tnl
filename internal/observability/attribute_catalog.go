@@ -71,7 +71,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)
 	add(CertificateKind, PolicyBounded, "certificate worker domain", "public_url", "relay", "service", "control", "service_queue")
 	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "public_url", "service", "public_url_challenge", "service_challenge", "relay_challenge")
-	add(CleanupKind, PolicyBounded, "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")
+	add(CleanupKind, PolicyBounded, "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads", "native_peer_pairs")
 	add(CapacityResource, PolicyBounded, "admission capacity domain", admissionResources...)
 	add(HTTPMethod, PolicyBounded, "standard HTTP method; unknown methods normalize to _OTHER", "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "_OTHER")
 	add(HTTPStatus, PolicyBounded, "HTTP response status code, 100 through 599")

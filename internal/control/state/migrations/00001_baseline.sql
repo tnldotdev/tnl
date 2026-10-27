@@ -1928,6 +1928,38 @@ CREATE TABLE control.visitor_devices (
     UNIQUE (identity_id, public_key), UNIQUE (id, identity_id)
 );
 
+-- one prepared native pair per enrolled subject and exact service run. this
+-- record is delivery/claim evidence only; it never authorizes a visitor stream.
+CREATE SEQUENCE control.native_peer_delivery_generation AS bigint;
+CREATE TABLE control.native_peer_pairs (
+    id text PRIMARY KEY CHECK (id ~ '^npp_[A-Za-z0-9]{22}$'),
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    service_run_id text NOT NULL,
+    run_number bigint NOT NULL CHECK (run_number >= 1),
+    publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
+    subject_kind text NOT NULL CHECK (subject_kind IN ('human_device','workload_session')),
+    subject_id text NOT NULL,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    last_renewal_digest bytea CHECK (last_renewal_digest IS NULL OR octet_length(last_renewal_digest)=32),
+    key_digest bytea NOT NULL CHECK (octet_length(key_digest)=32),
+    key_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL CHECK (storage_key_id<>''),
+    slots jsonb NOT NULL CHECK (jsonb_typeof(slots)='array' AND jsonb_array_length(slots)=2),
+    delivery_generation bigint NOT NULL CHECK (delivery_generation>=1),
+    created_at timestamptz NOT NULL,
+    last_authorized_at timestamptz NOT NULL,
+    last_request_at timestamptz NOT NULL,
+    replay_fence_until timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
+    UNIQUE (subject_kind,subject_id,service_run_id),
+    CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
+        AND expires_at<=last_authorized_at+interval '5 minutes'),
+    CHECK (replay_fence_until=last_request_at+interval '5 minutes')
+);
+CREATE INDEX native_peer_pairs_expiry ON control.native_peer_pairs(expires_at);
+
 -- one authenticated mux session binds an identity and enrolled device
 -- to ingress-observed source metadata. its credential is claimed once.
 CREATE TABLE control.service_client_certificates (
