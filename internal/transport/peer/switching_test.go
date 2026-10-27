@@ -59,7 +59,7 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 					t.Fatal(err)
 				}
 				makeEndpoint := func(role uint8, paths [pathCount]Carrier) *Endpoint {
-					e, err := New(ctx, Config{Key: key, Role: role, Paths: paths, ProbeInterval: 25 * time.Millisecond, PathTimeout: 150 * time.Millisecond})
+					e, err := New(ctx, Config{Kind: NativePeer, Key: key, Role: role, Paths: paths, ProbeInterval: 25 * time.Millisecond, PathTimeout: 150 * time.Millisecond})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -428,8 +428,8 @@ func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 
 type streamConn struct{ *quic.Stream }
 
-func (s *streamConn) LocalAddr() net.Addr  { return logicalAddr(0) }
-func (s *streamConn) RemoteAddr() net.Addr { return logicalAddr(1) }
+func (s *streamConn) LocalAddr() net.Addr  { return logicalAddr{kind: NativePeer, role: 0} }
+func (s *streamConn) RemoteAddr() net.Addr { return logicalAddr{kind: NativePeer, role: 1} }
 func (s *streamConn) CloseWrite() error    { return s.Stream.Close() }
 func (s *streamConn) Close() error {
 	s.CancelRead(0)

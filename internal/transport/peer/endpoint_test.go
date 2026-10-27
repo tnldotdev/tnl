@@ -59,18 +59,20 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	left, attacker := memoryPair()
 	sibling, _ := memoryPair()
 	key := [32]byte{1}
-	e, err := New(ctx, Config{Key: key, Role: 1, Paths: [pathCount]Carrier{left, sibling}, ProbeInterval: time.Second})
+	e, err := New(ctx, Config{Kind: NativePeer, Key: key, Role: 1, Paths: [pathCount]Carrier{left, sibling}, ProbeInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close() })
 	valid := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")}
-	encode := func(p tunnelv1.PeerPacket, key [32]byte) []byte {
+	encode := func(p tunnelv1.PeerPacket, key [32]byte, kind Kind) []byte {
 		unsigned, err := p.AuthenticatedBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
 		mac := hmac.New(sha256.New, key[:])
+		_, _ = mac.Write([]byte(kind))
+		_, _ = mac.Write([]byte{0})
 		_, _ = mac.Write(unsigned)
 		copy(p.MAC[:], mac.Sum(nil))
 		b, err := p.MarshalBinary()
@@ -86,11 +88,14 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	} {
 		p, k := valid, key
 		mutate(&p, &k)
-		if err := attacker.Send(ctx, encode(p, k)); err != nil {
+		if err := attacker.Send(ctx, encode(p, k, NativePeer)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := attacker.Send(ctx, encode(valid, key)); err != nil {
+	if err := attacker.Send(ctx, encode(valid, key, PublicIngress)); err != nil {
+		t.Fatal(err)
+	}
+	if err := attacker.Send(ctx, encode(valid, key, NativePeer)); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
@@ -100,7 +105,7 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	if n, _, err := e.ReadFrom(b[:]); err != nil || string(b[:n]) != "abc" {
 		t.Fatal("valid packet missing", err)
 	}
-	if err := attacker.Send(ctx, encode(valid, key)); err != nil {
+	if err := attacker.Send(ctx, encode(valid, key, NativePeer)); err != nil {
 		t.Fatal(err)
 	}
 	_ = e.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
@@ -158,7 +163,7 @@ func TestPeerBlockedTCPCarrierCannotBlockAlternateRelay(t *testing.T) {
 	c, d := memoryPair()
 	key := [32]byte{1}
 	makeEndpoint := func(role uint8, paths [pathCount]Carrier) *Endpoint {
-		e, err := New(ctx, Config{Key: key, Role: role, Paths: paths, ProbeInterval: 10 * time.Millisecond, PathTimeout: 60 * time.Millisecond})
+		e, err := New(ctx, Config{Kind: NativePeer, Key: key, Role: role, Paths: paths, ProbeInterval: 10 * time.Millisecond, PathTimeout: 60 * time.Millisecond})
 		if err != nil {
 			t.Fatal(err)
 		}

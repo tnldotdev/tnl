@@ -75,7 +75,7 @@ func TestPeerCarrierReplacementRequiresFreshValidation(t *testing.T) {
 	if err := slot.Install(old); err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(ctx, Config{Role: 0, Key: [32]byte{1}, Paths: [pathCount]Carrier{a, c, slot}})
+	e, err := New(ctx, Config{Kind: NativePeer, Role: 0, Key: [32]byte{1}, Paths: [pathCount]Carrier{a, c, slot}})
 	if err != nil {
 		t.Fatal(err)
 	}

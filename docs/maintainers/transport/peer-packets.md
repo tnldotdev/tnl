@@ -5,14 +5,16 @@ QUIC session. changing the selected carrier changes packet delivery while QUIC
 keeps its connection, streams, retransmission, and ordering state.
 
 ```text
-connecting peer          relay a/b           publisher
-      |-- encrypted packets -->|-- packets ------>|
-      |                        |                  |
-      |<---------- authenticated path probes ---->|
-      |<============ direct packets =============>|
-      |                        |                  |
-      |       direct delivery stops               |
-      |-- encrypted packets -->|-- packets ------>|
+public:
+publisher                   ingress
+    |---- outbound UDP/TCP ---->|
+    |<--- authenticated probes ->|
+
+native:
+connector                relay a/b               publisher
+    |-- encrypted packets -->|-- packets ------------>|
+    |<------------- authenticated probes ------------>|
+    |<============== direct packets ==================>|
 ```
 
 the shared owner is needed because ingress and native connectors need the same
@@ -23,8 +25,14 @@ an introduction key bound to one exact peer pair and publisher run.
 
 ## path and authorization boundary
 
-the two relay carriers start warm. direct delivery becomes eligible only after
-a fresh, key-bound challenge completes on that carrier. probes bind the sender,
+public peers use two publisher-initiated ingress carriers, UDP and framed
+TLS/TCP-yamux. they do not use relay placement or ICE. native peers use two
+distinct relay carriers and may later upgrade delivery to direct UDP. the mode
+is explicit at endpoint creation; a public endpoint rejects a direct carrier,
+and the packet MAC separates public from native even if a key is misused.
+
+the two native relay carriers start warm. direct delivery becomes eligible only
+after a fresh, key-bound challenge completes on that carrier. probes bind the sender,
 path, sequence, and challenge; replaying relay evidence cannot validate direct
 delivery. the production socket/ICE owner must also provide connectivity consent.
 
@@ -57,7 +65,9 @@ run `mise exec -- task go:test:peer-transport -- -race`. the proof uses real
 QUIC-datagram and TLS/TCP-yamux relay legs, direct UDP, and one real TCP target
 exchange with a monotonic application counter. it exercises both relay fallbacks,
 all-TCP operation, half-close, wrong packet evidence, fragment bounds, and an
-unread TCP carrier. it reports recovery time, queue peaks, drops, and path RTT.
+unread TCP carrier. a public peer proof switches its existing inner QUIC stream
+from UDP to TCP and back with no relay or ICE path. both report recovery time,
+queue peaks, drops, and path RTT.
 
 ## socket and replacement lifetime
 

@@ -25,10 +25,24 @@ const (
 	reassemblySlots = 64
 )
 
+// public delivery uses the first two slots without introducing relays or ICE.
+const (
+	IngressUDP = RelayA
+	IngressTCP = RelayB
+)
+
+type Kind string
+
+const (
+	PublicIngress Kind = "public_ingress"
+	NativePeer    Kind = "native_peer"
+)
+
 var ErrConfiguration = errors.New("peer packet configuration is invalid")
 
 type Config struct {
 	// key and role belong to one exact authorized peer pair, never an installation.
+	Kind  Kind
 	Key   [32]byte
 	Role  uint8
 	Paths [pathCount]Carrier
@@ -112,18 +126,28 @@ type Endpoint struct {
 	err    error
 }
 
-type logicalAddr uint8
+type logicalAddr struct {
+	kind Kind
+	role uint8
+}
 
 func (a logicalAddr) Network() string { return "tnl-peer" }
 func (a logicalAddr) String() string {
-	if a == 0 {
-		return "connecting-peer"
+	if a.kind == PublicIngress {
+		if a.role == 0 {
+			return "publisher"
+		}
+		return "ingress"
+	}
+	if a.role == 0 {
+		return "connector"
 	}
 	return "publisher"
 }
 
 func New(parent context.Context, config Config) (*Endpoint, error) {
-	if config.Role > 1 || config.Key == [32]byte{} || config.Paths[RelayA] == nil || config.Paths[RelayB] == nil {
+	if config.Role > 1 || config.Key == [32]byte{} || config.Paths[RelayA] == nil || config.Paths[RelayB] == nil ||
+		(config.Kind != PublicIngress && config.Kind != NativePeer) || config.Kind == PublicIngress && config.Paths[Direct] != nil {
 		return nil, ErrConfiguration
 	}
 	if config.ProbeInterval == 0 {
@@ -164,8 +188,10 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 	return e, nil
 }
 
-func (e *Endpoint) LocalAddr() net.Addr  { return logicalAddr(e.config.Role) }
-func (e *Endpoint) RemoteAddr() net.Addr { return logicalAddr(1 - e.config.Role) }
+func (e *Endpoint) LocalAddr() net.Addr { return logicalAddr{kind: e.config.Kind, role: e.config.Role} }
+func (e *Endpoint) RemoteAddr() net.Addr {
+	return logicalAddr{kind: e.config.Kind, role: 1 - e.config.Role}
+}
 
 func (e *Endpoint) ActivePath() int {
 	e.mu.Lock()
@@ -236,6 +262,8 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
 		return
 	}
 	mac := hmac.New(sha256.New, e.config.Key[:])
+	_, _ = mac.Write([]byte(e.config.Kind))
+	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
 	copy(packet.MAC[:], mac.Sum(nil))
 	frame, _ := packet.MarshalBinary()
@@ -350,6 +378,8 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 		}
 		unsigned, _ := packet.AuthenticatedBytes()
 		mac := hmac.New(sha256.New, e.config.Key[:])
+		_, _ = mac.Write([]byte(e.config.Kind))
+		_, _ = mac.Write([]byte{0})
 		_, _ = mac.Write(unsigned)
 		if !hmac.Equal(packet.MAC[:], mac.Sum(nil)) {
 			continue

@@ -200,9 +200,9 @@ tasks:
 
   test:peer-transport:
     dir: "{{.ROOT_DIR}}"
-    desc: Prove one end-to-end QUIC session survives relay, direct UDP and alternate relay delivery
+    desc: Prove public ingress UDP/TCP and native relay/direct carrier switching retain inner QUIC streams
     cmds:
-      - go test {{.CLI_ARGS}} -v ./internal/transport/peer ./pkg/protocol/tunnelv1 -run='^TestPeer' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -v ./internal/transport/peer ./pkg/protocol/tunnelv1 -run='^Test(Peer|PublicIngressChanges)' -count=1 -timeout=3m
       - go test {{.CLI_ARGS}} -v ./internal/daemon -run='^TestPeer' -count=1 -timeout=1m
       - go test {{.CLI_ARGS}} -v ./internal/relay -run='^TestSTUN' -count=1 -timeout=1m
 
