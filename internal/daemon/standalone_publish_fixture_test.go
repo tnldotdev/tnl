@@ -55,7 +55,14 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
-	waitForProcessReady(t, process)
+	defer func() {
+		if t.Failed() {
+			t.Log(integrationPublisherDiagnostics(inspect, pebble.logPath))
+		}
+	}()
+	// startup includes real ACME issuance for both relay services and private
+	// ingress hostnames. this is a setup budget, not a visitor recovery bound.
+	waitForProcessReadyWithin(t, process, 30*time.Second)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
 	return &standalonePublishFixture{owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,

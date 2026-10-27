@@ -118,8 +118,17 @@ func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) str
 		)::text
 		FROM control.acme_orders AS orders ORDER BY created_at DESC, id LIMIT 1
 	`).Scan(&order)
+	var relayOrders string
+	relayQueryErr := database.QueryRowContext(ctx, `
+		SELECT COALESCE(jsonb_agg(jsonb_build_object(
+			'relay_service_id', relay_service_id, 'state', state,
+			'available_at', available_at, 'last_error', last_error,
+			'work_expires_at', work_expires_at, 'order_revision', order_revision
+		) ORDER BY relay_service_id), '[]'::jsonb)::text
+		FROM control.relay_certificate_orders
+	`).Scan(&relayOrders)
 	pebbleLog, _ := os.ReadFile(pebbleLogPath)
-	return fmt.Sprintf("; latest certificate order = %s, query error = %v\n%s", order, queryErr, pebbleLog)
+	return fmt.Sprintf("; latest certificate order = %s, query error = %v; relay certificate orders = %s, query error = %v\n%s", order, queryErr, relayOrders, relayQueryErr, pebbleLog)
 }
 
 type splitConnectionState struct {

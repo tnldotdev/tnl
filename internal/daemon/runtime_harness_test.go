@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -213,8 +214,29 @@ func waitForIntegrationProcess(t *testing.T, process *integrationProcess) {
 
 func waitForProcessReady(t *testing.T, process *integrationProcess) {
 	t.Helper()
+	waitForProcessReadyWithin(t, process, 10*time.Second)
+}
+
+func waitForProcessReadyWithin(t *testing.T, process *integrationProcess, timeout time.Duration) {
+	t.Helper()
 	client := &http.Client{Timeout: time.Second}
-	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+	ready := false
+	defer func() {
+		if ready {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		response, err := integrationGET(ctx, client, "http://"+process.metricsAddress+"/debug/roles")
+		if err != nil {
+			t.Logf("role readiness diagnostics unavailable: %v", err)
+			return
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		t.Logf("role readiness diagnostics: %s (read error %v)", body, err)
+	}()
+	waitForIntegrationCondition(t, timeout, func(ctx context.Context) (bool, error) {
 		select {
 		case <-process.done:
 			t.Fatalf("tnld %s process exited before readiness: %v", process.name, process.result())
@@ -230,6 +252,7 @@ func waitForProcessReady(t *testing.T, process *integrationProcess) {
 		}
 		return true, nil
 	})
+	ready = true
 }
 
 func waitForIntegrationCondition(t *testing.T, timeout time.Duration, check func(context.Context) (bool, error)) {
