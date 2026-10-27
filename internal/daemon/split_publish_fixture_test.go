@@ -90,6 +90,11 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		dnsAddress = localDNS.address
 	}
 	pebble := startIntegrationPebble(t, integrationPort(t, publicIngressAddress), dnsAddress)
+	defer func() {
+		if t.Failed() {
+			t.Logf("split preparation diagnostics: %s", integrationPublisherDiagnostics(inspect, pebble.logPath))
+		}
+	}()
 	for _, configure := range configureACME {
 		configure(pebble.httpClient)
 	}

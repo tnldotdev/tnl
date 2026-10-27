@@ -254,6 +254,11 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
+	defer func() {
+		if t.Failed() {
+			logIntegrationPublishRunAuthority(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "failure")
+		}
+	}()
 	initial, initialBody, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/before-control-restart", nil)
 	if err != nil || initial.StatusCode != http.StatusOK || string(initialBody) != "control restart" {
 		t.Fatalf("initial visitor did not establish a current access decision: %+v %q %v", initial, initialBody, err)
@@ -271,6 +276,7 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 		}
 	}
 
+	logIntegrationPublishRunAuthority(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "before control shutdown")
 	stopIntegrationProcess(t, fixture.control)
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/without-control", nil)
 	if err != nil {
