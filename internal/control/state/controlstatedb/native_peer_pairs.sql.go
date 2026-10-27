@@ -7,6 +7,7 @@ package controlstatedb
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -186,6 +187,38 @@ func (q *Queries) LimitNativePeerPair(ctx context.Context, arg LimitNativePeerPa
 	return i, err
 }
 
+const lockNativePeerPairForLegClaim = `-- name: LockNativePeerPairForLegClaim :one
+SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockNativePeerPairForLegClaim(ctx context.Context, id string) (ControlNativePeerPair, error) {
+	row := q.db.QueryRow(ctx, lockNativePeerPairForLegClaim, id)
+	var i ControlNativePeerPair
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.ServiceRunID,
+		&i.RunNumber,
+		&i.PublisherIdentityID,
+		&i.SubjectKind,
+		&i.SubjectID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.LastRenewalDigest,
+		&i.KeyDigest,
+		&i.KeyCiphertext,
+		&i.StorageKeyID,
+		&i.Slots,
+		&i.DeliveryGeneration,
+		&i.CreatedAt,
+		&i.LastAuthorizedAt,
+		&i.LastRequestAt,
+		&i.ReplayFenceUntil,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const renewNativePeerPair = `-- name: RenewNativePeerPair :one
 UPDATE control.native_peer_pairs SET expires_at=$1,last_authorized_at=$2,
     last_request_at=$3,replay_fence_until=$3::timestamptz+interval '5 minutes',
@@ -248,4 +281,49 @@ func (q *Queries) ReplaceNativePeerPair(ctx context.Context, id string) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const saveNativePeerPairLegClaim = `-- name: SaveNativePeerPairLegClaim :one
+INSERT INTO control.native_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
+    relay_id,relay_run_id,relay_lease_revision)
+VALUES ($1,$2,$3,$4,
+    $5,$6,$7,$8)
+ON CONFLICT (pair_id,connection_slot) DO UPDATE SET
+    requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest
+WHERE control.native_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
+    AND control.native_peer_pair_leg_claims.nonce_digest<>EXCLUDED.nonce_digest
+    AND control.native_peer_pair_leg_claims.source_ip=EXCLUDED.source_ip
+    AND control.native_peer_pair_leg_claims.relay_id=EXCLUDED.relay_id
+    AND control.native_peer_pair_leg_claims.relay_run_id=EXCLUDED.relay_run_id
+    AND control.native_peer_pair_leg_claims.relay_lease_revision=EXCLUDED.relay_lease_revision
+RETURNING pair_id
+`
+
+type SaveNativePeerPairLegClaimParams struct {
+	PairID             string
+	ConnectionSlot     int16
+	RequestedAt        pgtype.Timestamptz
+	NonceDigest        []byte
+	SourceIp           netip.Addr
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+}
+
+// two rows maximum per pair. an uncertain response requires a fresh proof from
+// the same observed source and the same relay process, never the old nonce.
+func (q *Queries) SaveNativePeerPairLegClaim(ctx context.Context, arg SaveNativePeerPairLegClaimParams) (string, error) {
+	row := q.db.QueryRow(ctx, saveNativePeerPairLegClaim,
+		arg.PairID,
+		arg.ConnectionSlot,
+		arg.RequestedAt,
+		arg.NonceDigest,
+		arg.SourceIp,
+		arg.RelayID,
+		arg.RelayRunID,
+		arg.RelayLeaseRevision,
+	)
+	var pair_id string
+	err := row.Scan(&pair_id)
+	return pair_id, err
 }

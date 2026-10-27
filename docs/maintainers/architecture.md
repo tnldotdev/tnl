@@ -138,6 +138,11 @@ bundling and external consumers.
 - A copied relay lease deadline is a routing observation. The connected relay
   checks its current lease, process identity, and exact connection claim before
   accepting a stream.
+- native peer-pair leg claims in control state require a fresh enrolled connector
+  signature for one exact ready relay slot and a source IP observed by the relay
+  socket. the claim returns a pair key with a fixed deadline for relay delivery;
+  it does not admit application streams. relay registration must supply its own
+  trusted socket source and current process lease, not connector metadata.
 - Visitor TLS, relay transport TLS, connector authentication, and
   publisher-to-target TLS are separate trust boundaries. Application
   authentication remains application-owned.

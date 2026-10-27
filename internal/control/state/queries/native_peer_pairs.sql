@@ -35,3 +35,23 @@ DELETE FROM control.native_peer_pairs victim WHERE victim.id IN (
         AND candidate.replay_fence_until<=sqlc.arg(now)
     ORDER BY candidate.expires_at,candidate.id LIMIT sqlc.arg(batch_size) FOR UPDATE OF candidate SKIP LOCKED
 );
+
+-- name: LockNativePeerPairForLegClaim :one
+SELECT * FROM control.native_peer_pairs WHERE id=sqlc.arg(id) FOR UPDATE;
+
+-- name: SaveNativePeerPairLegClaim :one
+-- two rows maximum per pair. an uncertain response requires a fresh proof from
+-- the same observed source and the same relay process, never the old nonce.
+INSERT INTO control.native_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
+    relay_id,relay_run_id,relay_lease_revision)
+VALUES (sqlc.arg(pair_id),sqlc.arg(connection_slot),sqlc.arg(requested_at),sqlc.arg(nonce_digest),
+    sqlc.arg(source_ip),sqlc.arg(relay_id),sqlc.arg(relay_run_id),sqlc.arg(relay_lease_revision))
+ON CONFLICT (pair_id,connection_slot) DO UPDATE SET
+    requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest
+WHERE control.native_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
+    AND control.native_peer_pair_leg_claims.nonce_digest<>EXCLUDED.nonce_digest
+    AND control.native_peer_pair_leg_claims.source_ip=EXCLUDED.source_ip
+    AND control.native_peer_pair_leg_claims.relay_id=EXCLUDED.relay_id
+    AND control.native_peer_pair_leg_claims.relay_run_id=EXCLUDED.relay_run_id
+    AND control.native_peer_pair_leg_claims.relay_lease_revision=EXCLUDED.relay_lease_revision
+RETURNING pair_id;

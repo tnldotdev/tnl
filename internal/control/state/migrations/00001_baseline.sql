@@ -1960,6 +1960,20 @@ CREATE TABLE control.native_peer_pairs (
 );
 CREATE INDEX native_peer_pairs_expiry ON control.native_peer_pairs(expires_at);
 
+-- at most one relay claim per pair leg. a fresh signed proof can recover an
+-- uncertain response, but an old proof can never recover the key again.
+CREATE TABLE control.native_peer_pair_leg_claims (
+    pair_id text NOT NULL REFERENCES control.native_peer_pairs(id) ON DELETE CASCADE,
+    connection_slot smallint NOT NULL CHECK (connection_slot IN (0,1)),
+    requested_at timestamptz NOT NULL,
+    nonce_digest bytea NOT NULL CHECK (octet_length(nonce_digest)=32),
+    source_ip inet NOT NULL,
+    relay_id text NOT NULL,
+    relay_run_id text NOT NULL,
+    relay_lease_revision bigint NOT NULL CHECK (relay_lease_revision>0),
+    PRIMARY KEY(pair_id,connection_slot)
+);
+
 -- one authenticated mux session binds an identity and enrolled device
 -- to ingress-observed source metadata. its credential is claimed once.
 CREATE TABLE control.service_client_certificates (

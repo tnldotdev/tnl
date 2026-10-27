@@ -218,6 +218,9 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 		if err != nil {
 			return result, publisherLookupError(err, ErrServiceAccess)
 		}
+		if slot.RelayAddress != address || slot.TlsServerName != serverName {
+			return NativePeerPair{}, ErrServiceAccess
+		}
 		lease.RelayLeaseRevision = uint64(leaseRevision)
 		// a lease is required now and again at relay claim, but its short
 		// renewal interval is not the pair's serving authority deadline.

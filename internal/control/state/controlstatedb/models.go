@@ -635,6 +635,17 @@ type ControlNativePeerPair struct {
 	ExpiresAt           pgtype.Timestamptz
 }
 
+type ControlNativePeerPairLegClaim struct {
+	PairID             string
+	ConnectionSlot     int16
+	RequestedAt        pgtype.Timestamptz
+	NonceDigest        []byte
+	SourceIp           netip.Addr
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+}
+
 type ControlOidcAssertionExchange struct {
 	ID              int64
 	AssertionDigest []byte
