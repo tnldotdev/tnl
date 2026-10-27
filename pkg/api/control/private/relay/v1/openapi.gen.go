@@ -127,9 +127,12 @@ type Identifier = string
 
 // NativePeerPairLegClaim defines model for NativePeerPairLegClaim.
 type NativePeerPairLegClaim struct {
-	ConnectionSlot     int       `json:"connection_slot"`
-	DeliveryGeneration int64     `json:"delivery_generation"`
-	ExpiresAt          time.Time `json:"expires_at"`
+	ConnectionSlot     int   `json:"connection_slot"`
+	DeliveryGeneration int64 `json:"delivery_generation"`
+
+	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
+	DeliveryId string    `json:"delivery_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
 
 	// Key secret pair key; never log.
 	Key    string `json:"key"`

@@ -3,6 +3,7 @@ package tunnelv1
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -44,6 +45,24 @@ type PeerDelivery struct {
 	Generation uint64
 }
 
+// ParsePeerDeliveryIdentifier decodes the control-issued header identifier,
+// never a saved pair ID. possessing this identifier grants no access.
+func ParsePeerDeliveryIdentifier(encoded string) ([16]byte, error) {
+	var id [16]byte
+	if len(encoded) != base64.RawURLEncoding.EncodedLen(len(id)) {
+		return id, ErrPeerPacket
+	}
+	b, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(b) != len(id) || base64.RawURLEncoding.EncodeToString(b) != encoded {
+		return id, ErrPeerPacket
+	}
+	copy(id[:], b)
+	if id == [16]byte{} {
+		return [16]byte{}, ErrPeerPacket
+	}
+	return id, nil
+}
+
 func (d PeerDelivery) Valid() bool { return d.Pair != [16]byte{} && d.Generation != 0 }
 
 func (d PeerDelivery) Header() ([PeerDeliveryHeaderBytes]byte, error) {
@@ -70,8 +89,8 @@ func ParsePeerDeliveryHeader(b []byte) (PeerDelivery, error) {
 	return d, nil
 }
 
-// Seal authenticates the version, exact pair, generation, mode,
-// and entire inner frame, including the inner MAC. the pair ID is not a grant.
+// Seal authenticates the version, exact delivery identifier, generation, mode,
+// and entire inner frame, including the inner MAC. the identifier is not a grant.
 func (d PeerDelivery) Seal(mode PeerDeliveryMode, key [32]byte, frame []byte) ([]byte, error) {
 	header, err := d.Header()
 	if err != nil || !mode.valid() || key == [32]byte{} {

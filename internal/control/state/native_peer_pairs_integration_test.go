@@ -11,12 +11,14 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/netip"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -58,6 +60,21 @@ func testNativePairRelays(run ServiceRunState, leases map[string]RelayLease) (re
 			RelayLease: lease.RelayLeaseIdentity, RelayAddress: lease.RelayAddress, TLSServerName: lease.TLSServerName}
 	}
 	return
+}
+
+func assertNativeDeliveryID(t *testing.T, d *Database, pair NativePeerPair) {
+	t.Helper()
+	if pair.DeliveryID == [16]byte{} {
+		t.Fatal("zero delivery identifier")
+	}
+	var saved []byte
+	if err := d.pool.QueryRow(t.Context(), `SELECT delivery_id FROM control.native_peer_pairs WHERE id=$1`, pair.ID).Scan(&saved); err != nil || !bytes.Equal(saved, pair.DeliveryID[:]) {
+		t.Fatal("state did not return the exact durable delivery identifier", err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(pair.DeliveryID[:])
+	if decoded, err := tunnelv1.ParsePeerDeliveryIdentifier(encoded); err != nil || decoded != pair.DeliveryID {
+		t.Fatal("state identifier cannot bind the delivery header", err)
+	}
 }
 
 func rotateNativePairStorage(t *testing.T, d *Database, pair NativePeerPair) *Database {
@@ -213,6 +230,20 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if first.ID == "" || first.Key == "" || first.DeliveryGeneration < 1 || !first.ExpiresAt.After(now) || first.ExpiresAt.After(run.ExpiresAt) || first.Relays[0].RelayLease.RelayServiceID == first.Relays[1].RelayLease.RelayServiceID {
 		t.Fatal("pair escaped its exact ready run and two distinct leases")
 	}
+	assertNativeDeliveryID(t, d, first)
+	// the database refuses reused or zero header identifiers independently of
+	// the saved pair ID, even when the remaining fields are valid.
+	for _, duplicate := range [][]byte{first.DeliveryID[:], make([]byte, 16)} {
+		id, err := opaqueid.New("npp_")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = d.pool.Exec(ctx, `INSERT INTO control.native_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
+		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,idempotency_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.native_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.native_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
+		if err == nil {
+			t.Fatal("database accepted duplicate or zero delivery identifier")
+		}
+	}
 	sourceIP := netip.MustParseAddr("192.0.2.10")
 	leg0 := testNativeLegProof(t, first, 0, now, private)
 	claimMessage, err := leg0.RelayClaimMessage(sourceIP)
@@ -242,7 +273,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	}
 	claim0, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, now)
 	if err != nil || claim0.Key != first.Key || claim0.SourceIP != sourceIP || claim0.ExpiresAt.After(first.ExpiresAt) ||
-		claim0.PairID != first.ID || claim0.DeliveryGeneration != first.DeliveryGeneration {
+		claim0.PairID != first.ID || claim0.DeliveryGeneration != first.DeliveryGeneration || claim0.DeliveryID != first.DeliveryID {
 		t.Fatal("exact relay leg did not receive bounded delivery", err)
 	}
 	if bytes.Contains([]byte(claim0.String()+claim0.GoString()), []byte(first.Key)) {
@@ -252,7 +283,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("replayed proof recovered key", err)
 	}
 	other := testNativeLegProof(t, first, 1, now, private)
-	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, other, now); err != nil || claim.Key != first.Key || claim.ConnectionSlot != 1 {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, other, now); err != nil || claim.Key != first.Key || claim.ConnectionSlot != 1 || claim.DeliveryID != first.DeliveryID {
 		t.Fatal("sibling relay could not claim its own leg", err)
 	}
 	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
@@ -292,7 +323,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("wrong relay lease revision obtained key", err)
 	}
 	writtenAgain := testNativeLegProof(t, first, 0, now.Add(time.Microsecond), private)
-	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, writtenAgain, writtenAgain.RequestedAt); err != nil || claim.Key != first.Key {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, writtenAgain, writtenAgain.RequestedAt); err != nil || claim.Key != first.Key || claim.DeliveryID != first.DeliveryID {
 		t.Fatal("fresh same-source retry lost delivery", err)
 	}
 	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, writtenAgain.RequestedAt); !errors.Is(err, ErrServiceAccess) {
@@ -306,14 +337,14 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("claim retries exceeded one stored nonce per relay leg", claimCount, err)
 	}
 	again, err := d.PrepareNativePeerPair(visitor, request, now)
-	if err != nil || again.ID != first.ID || again.Key != first.Key || again.DeliveryGeneration != first.DeliveryGeneration || !again.ExpiresAt.Equal(first.ExpiresAt) {
+	if err != nil || again.ID != first.ID || again.Key != first.Key || again.DeliveryID != first.DeliveryID || again.DeliveryGeneration != first.DeliveryGeneration || !again.ExpiresAt.Equal(first.ExpiresAt) {
 		t.Fatal("uncertain response retry changed the exact delivery", err)
 	}
 	var retries sync.WaitGroup
 	for range 4 {
 		retries.Go(func() {
 			got, err := d.PrepareNativePeerPair(visitor, request, now)
-			if err != nil || got.ID != first.ID || got.Key != first.Key || got.DeliveryGeneration != first.DeliveryGeneration {
+			if err != nil || got.ID != first.ID || got.Key != first.Key || got.DeliveryID != first.DeliveryID || got.DeliveryGeneration != first.DeliveryGeneration {
 				t.Errorf("concurrent uncertain delivery changed the pair: %v", err)
 			}
 		})
@@ -321,7 +352,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	retries.Wait()
 	d = rotateNativePairStorage(t, d, first)
 	rotatedRetry, err := d.PrepareNativePeerPair(visitor, request, now)
-	if err != nil || rotatedRetry.ID != first.ID || rotatedRetry.Key != first.Key || rotatedRetry.DeliveryGeneration != first.DeliveryGeneration {
+	if err != nil || rotatedRetry.ID != first.ID || rotatedRetry.Key != first.Key || rotatedRetry.DeliveryID != first.DeliveryID || rotatedRetry.DeliveryGeneration != first.DeliveryGeneration {
 		t.Fatal("retry lost the exact pair or advanced delivery after retiring the old storage key", err)
 	}
 	grantDeadline := now.Add(2 * time.Second)
@@ -399,9 +430,10 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	replacement.RequestedAt = now.Add(time.Millisecond)
 	sign(&replacement)
 	second, err := d.PrepareNativePeerPair(visitor, replacement, replacement.RequestedAt)
-	if err != nil || second.ID == first.ID || second.Key == first.Key || second.DeliveryGeneration <= first.DeliveryGeneration {
+	if err != nil || second.ID == first.ID || second.Key == first.Key || second.DeliveryID == first.DeliveryID || second.DeliveryGeneration <= first.DeliveryGeneration {
 		t.Fatal("signed replacement did not rotate the exact delivery", err)
 	}
+	assertNativeDeliveryID(t, d, second)
 	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key {
 		t.Fatal("new delivery could not claim its own leg", err)
 	}
@@ -410,7 +442,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("replacement retained old relay claims", oldClaims, err)
 	}
 	replacedRetry, err := d.PrepareNativePeerPair(visitor, replacement, replacement.RequestedAt)
-	if err != nil || replacedRetry.ID != second.ID || replacedRetry.Key != second.Key || replacedRetry.DeliveryGeneration != second.DeliveryGeneration {
+	if err != nil || replacedRetry.ID != second.ID || replacedRetry.Key != second.Key || replacedRetry.DeliveryID != second.DeliveryID || replacedRetry.DeliveryGeneration != second.DeliveryGeneration {
 		t.Fatal("uncertain replacement response advanced delivery twice", err)
 	}
 	if _, err := d.PrepareNativePeerPair(visitor, request, replacement.RequestedAt); !errors.Is(err, ErrServiceConflict) {
@@ -580,7 +612,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 		t.Fatal(err)
 	}
 	unchanged, err := d.PrepareNativePeerPair(ctx, request, now.Add(31*time.Second))
-	if err != nil || unchanged.ID != pair.ID || unchanged.Key != pair.Key || unchanged.DeliveryGeneration != pair.DeliveryGeneration || !unchanged.ExpiresAt.Equal(pair.ExpiresAt) {
+	if err != nil || unchanged.ID != pair.ID || unchanged.Key != pair.Key || unchanged.DeliveryID != pair.DeliveryID || unchanged.DeliveryGeneration != pair.DeliveryGeneration || !unchanged.ExpiresAt.Equal(pair.ExpiresAt) {
 		t.Fatal("creation retry extended pair after parent leases renewed", err)
 	}
 	renew := request
@@ -592,7 +624,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	renew.Signature = ed25519.Sign(private, message)
 	firstRenewal, err := d.RenewNativePeerPair(ctx, renew, renew.RequestedAt)
-	if err != nil || firstRenewal.ID != pair.ID || firstRenewal.Key != pair.Key || firstRenewal.DeliveryGeneration != pair.DeliveryGeneration || !firstRenewal.ExpiresAt.After(pair.ExpiresAt) {
+	if err != nil || firstRenewal.ID != pair.ID || firstRenewal.Key != pair.Key || firstRenewal.DeliveryID != pair.DeliveryID || firstRenewal.DeliveryGeneration != pair.DeliveryGeneration || !firstRenewal.ExpiresAt.After(pair.ExpiresAt) {
 		t.Fatal("fresh recheck did not extend the pair after the first run heartbeat", err)
 	}
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second)); err != nil {
@@ -602,7 +634,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 		t.Fatal(err)
 	}
 	uncertain, err := d.RenewNativePeerPair(ctx, renew, now.Add(63*time.Second))
-	if err != nil || !uncertain.ExpiresAt.Equal(firstRenewal.ExpiresAt) || uncertain.DeliveryGeneration != pair.DeliveryGeneration {
+	if err != nil || !uncertain.ExpiresAt.Equal(firstRenewal.ExpiresAt) || uncertain.DeliveryID != pair.DeliveryID || uncertain.DeliveryGeneration != pair.DeliveryGeneration {
 		t.Fatal("replayed renewal silently extended the serving deadline", err)
 	}
 	renew.RequestedAt = now.Add(64 * time.Second)
@@ -612,7 +644,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	renew.Signature = ed25519.Sign(private, message)
 	secondRenewal, err := d.RenewNativePeerPair(ctx, renew, renew.RequestedAt)
-	if err != nil || secondRenewal.ID != pair.ID || secondRenewal.Key != pair.Key || secondRenewal.DeliveryGeneration != pair.DeliveryGeneration || !secondRenewal.ExpiresAt.After(firstRenewal.ExpiresAt) {
+	if err != nil || secondRenewal.ID != pair.ID || secondRenewal.Key != pair.Key || secondRenewal.DeliveryID != pair.DeliveryID || secondRenewal.DeliveryGeneration != pair.DeliveryGeneration || !secondRenewal.ExpiresAt.After(firstRenewal.ExpiresAt) {
 		t.Fatal("second fresh recheck did not extend inner pair lifetime", err)
 	}
 	var lastAuthorized time.Time
@@ -650,7 +682,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	replacement.Signature = ed25519.Sign(private, message)
 	newPair, err := d.PrepareNativePeerPair(ctx, replacement, late)
-	if err != nil || newPair.ID == pair.ID || newPair.Key == pair.Key || newPair.DeliveryGeneration <= pair.DeliveryGeneration {
+	if err != nil || newPair.ID == pair.ID || newPair.Key == pair.Key || newPair.DeliveryID == pair.DeliveryID || newPair.DeliveryGeneration <= pair.DeliveryGeneration {
 		t.Fatal("fresh signed replacement did not recover after expiry", err)
 	}
 	if err := d.RevokeWorkloadSession(ctx, workload.ID, workload.Credential, late.Add(time.Second)); err != nil {

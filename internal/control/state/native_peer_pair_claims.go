@@ -20,6 +20,7 @@ import (
 // stream admission before using it.
 type NativePeerPairLegClaim struct {
 	PairID             string
+	DeliveryID         [16]byte
 	DeliveryGeneration int64
 	ConnectionSlot     int
 	Key                string
@@ -160,8 +161,15 @@ func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseI
 	if !bytes.Equal(digest[:], pair.KeyDigest) {
 		return result, ErrServiceAccess
 	}
+	if len(pair.DeliveryID) != len(result.DeliveryID) {
+		return result, ErrServiceAccess
+	}
+	copy(result.DeliveryID[:], pair.DeliveryID)
+	if result.DeliveryID == [16]byte{} {
+		return NativePeerPairLegClaim{}, ErrServiceAccess
+	}
 	result = NativePeerPairLegClaim{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration,
-		ConnectionSlot: proof.ConnectionSlot, Key: base64.RawURLEncoding.EncodeToString(secret), SourceIP: observedSource, ExpiresAt: deadline}
+		DeliveryID: result.DeliveryID, ConnectionSlot: proof.ConnectionSlot, Key: base64.RawURLEncoding.EncodeToString(secret), SourceIP: observedSource, ExpiresAt: deadline}
 	if err = tx.Commit(ctx); err != nil {
 		return NativePeerPairLegClaim{}, err
 	}

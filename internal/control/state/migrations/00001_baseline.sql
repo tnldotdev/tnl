@@ -1960,6 +1960,7 @@ CREATE TABLE control.native_peer_pairs (
     last_renewal_digest bytea CHECK (last_renewal_digest IS NULL OR octet_length(last_renewal_digest)=32),
     key_digest bytea NOT NULL CHECK (octet_length(key_digest)=32),
     key_ciphertext bytea NOT NULL,
+    delivery_id bytea NOT NULL CONSTRAINT native_peer_pairs_delivery_id_nonzero CHECK (octet_length(delivery_id)=16 AND delivery_id<>decode(repeat('00',16),'hex')),
     storage_key_id text NOT NULL CHECK (storage_key_id<>''),
     slots jsonb NOT NULL CHECK (jsonb_typeof(slots)='array' AND jsonb_array_length(slots)=2),
     delivery_generation bigint NOT NULL CHECK (delivery_generation>=1),
@@ -1970,6 +1971,7 @@ CREATE TABLE control.native_peer_pairs (
     expires_at timestamptz NOT NULL,
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
     UNIQUE (subject_kind,subject_id,service_run_id),
+    CONSTRAINT native_peer_pairs_delivery_id_key UNIQUE (delivery_id),
     CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
         AND expires_at<=last_authorized_at+interval '5 minutes'),
     CHECK (replay_fence_until=last_request_at+interval '5 minutes')

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -171,6 +172,23 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &pair); err != nil || pair.Key == "" {
 		t.Fatal("missing pair key", err)
 	}
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	checkDelivery := func(id, encoded string) {
+		t.Helper()
+		var saved []byte
+		if err := conn.QueryRow(ctx, `SELECT delivery_id FROM control.native_peer_pairs WHERE id=$1`, id).Scan(&saved); err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := tunnelv1.ParsePeerDeliveryIdentifier(encoded)
+		if err != nil || !bytes.Equal(decoded[:], saved) {
+			t.Fatal("claim/public delivery identifier differs from state", err)
+		}
+	}
+	checkDelivery(pair.PairId, pair.DeliveryId)
 	secret := strings.Repeat("s", 32)
 	secrets, err := serviceapi.NewBearerSecrets(secret, "")
 	if err != nil {
@@ -373,9 +391,10 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal("oversized claim reached state or exposed the key", tooLargeResponse.Code)
 	}
 	first, err := httpClient.ClaimNativePeerPairLegFromAcceptedSocket(ctx, lease0, source, proof0, signed0)
-	if err != nil || first.Key != pair.Key || first.SourceIp != source.String() || first.ExpiresAt.After(pair.ExpiresAt) {
+	if err != nil || first.Key != pair.Key || first.DeliveryId != pair.DeliveryId || first.SourceIp != source.String() || first.ExpiresAt.After(pair.ExpiresAt) {
 		t.Fatal("HTTP leg claim failed", err)
 	}
+	checkDelivery(first.PairId, first.DeliveryId)
 	if first.String() == pair.Key || strings.Contains(fmt.Sprintf("%#v", first), pair.Key) {
 		t.Fatal("claim formatting exposed key")
 	}
@@ -387,9 +406,10 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal("direct changed source recovered key")
 	}
 	second, err := direct.ClaimNativePeerPairLegFromAcceptedSocket(ctx, lease1, source, proof1, signed1)
-	if err != nil || second.Key != first.Key || second.ConnectionSlot != 1 {
+	if err != nil || second.Key != first.Key || second.DeliveryId != first.DeliveryId || second.ConnectionSlot != 1 {
 		t.Fatal("direct sibling relay claim failed", err)
 	}
+	checkDelivery(second.PairId, second.DeliveryId)
 	assertRejected("HTTP replay", 0, claimBody, secret, http.StatusConflict)
 	assertParity("replay parity", lease0, proof0, signed0)
 	staleProof = proof0
@@ -427,6 +447,10 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if created.Code != http.StatusOK || json.Unmarshal(created.Body.Bytes(), &pair) != nil || pair.Key == "" {
 		t.Fatalf("prepare accepted-socket pair: %d %s", created.Code, created.Body.String())
 	}
+	if pair.DeliveryId == first.DeliveryId {
+		t.Fatal("replacement reused the old header identifier")
+	}
+	checkDelivery(pair.PairId, pair.DeliveryId)
 	lease0, proof0, _ = proofFor(0)
 	lease1, proof1, _ = proofFor(1)
 	wiredLease := func(lease relayv1.RelayLease) relayv1.RelayLease {

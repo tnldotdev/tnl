@@ -66,7 +66,7 @@ func (s *service) ClaimNativePeerPairLeg(ctx context.Context, pairID string, slo
 		s.report(errors.New("native peer pair leg claim failed"))
 		return relayv1.NativePeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusInternalServerError, "internal", "native peer pair claim failed")
 	}
-	return relayv1.NativePeerPairLegClaim{PairId: claim.PairID, DeliveryGeneration: claim.DeliveryGeneration,
+	return relayv1.NativePeerPairLegClaim{PairId: claim.PairID, DeliveryId: base64.RawURLEncoding.EncodeToString(claim.DeliveryID[:]), DeliveryGeneration: claim.DeliveryGeneration,
 		ConnectionSlot: claim.ConnectionSlot, Key: claim.Key, SourceIp: claim.SourceIP.String(), ExpiresAt: claim.ExpiresAt}, nil
 }
 

@@ -22,9 +22,16 @@ schemas:
   NativePeerPairLegClaim:
     type: object
     additionalProperties: false
-    required: [pair_id, delivery_generation, connection_slot, key, source_ip, expires_at]
+    required:
+      [pair_id, delivery_id, delivery_generation, connection_slot, key, source_ip, expires_at]
     properties:
       pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      delivery_id:
+        {
+          type: string,
+          pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
+          description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
+        }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
       connection_slot: { type: integer, minimum: 0, maximum: 1 }
       key: { type: string, minLength: 1, description: secret pair key; never log. }

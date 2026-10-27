@@ -32,7 +32,7 @@ func nativePairRelays(relays [2]controlstate.NativePeerPairRelay) []controlv1.Na
 
 func nativePairResponse(pair controlstate.NativePeerPair) controlv1.NativePeerPair {
 	return controlv1.NativePeerPair{PairId: pair.ID, ServiceId: pair.ServiceID, ServiceRunId: pair.ServiceRunID, RunNumber: pair.RunNumber,
-		PublisherIdentityId: pair.PublisherIdentityID, Subject: visitorsubject.Wire(pair.Subject), DeliveryGeneration: pair.DeliveryGeneration,
+		PublisherIdentityId: pair.PublisherIdentityID, Subject: visitorsubject.Wire(pair.Subject), DeliveryId: base64.RawURLEncoding.EncodeToString(pair.DeliveryID[:]), DeliveryGeneration: pair.DeliveryGeneration,
 		Key: pair.Key, Relays: nativePairRelays(pair.Relays), ExpiresAt: pair.ExpiresAt}
 }
 

@@ -60,19 +60,22 @@ TCP still orders bytes within that carrier and therefore has head-of-line delay.
 canceling the endpoint interrupts all carriers and joins every worker.
 
 `SharedDatagrams` borrows one authenticated outer QUIC session (with DATAGRAMs
-opted in on both sides) and exclusively reads its datagrams. the role owner registers each
-exact introduction with a pair ID, increasing delivery generation, key,
-direction, and path. each v1 envelope includes a 25-byte header and an
-independent 32-byte tag over the header and complete inner frame, including
-its MAC. the tag separates datagrams from TLS/yamux streams even if two pairs
-are mistakenly assigned the same key. the largest envelope is 1106 bytes.
+opted in on both sides) and exclusively reads its datagrams. the role owner
+registers each exact introduction with a control-issued 16-byte delivery ID,
+an increasing delivery generation, key, direction, and path. each v1 envelope
+includes a 25-byte header and an independent 32-byte tag over the header and
+complete inner frame, including its MAC. the tag separates datagrams from
+TLS/yamux streams even if two pairs are mistakenly assigned the same key. the
+largest envelope is 1106 bytes.
 the owner verifies the tag, frame MAC, direction, path, and a 64-sequence
-fragment replay window before queuing it. a peer ID alone does not grant
+fragment replay window before queuing it. a delivery ID alone does not grant
 access. per-peer ingress and egress queues each hold 16 frames; egress
 holds at most 256 frames across 64 peers. the writer visits nonempty peers in
 round-robin order. the owner retains at most 4096 pair tombstones per
 outer session to reject a reused or stale generation; rotate the session when full.
 closing one registration discards its queue without closing the QUIC connection.
+the saved `npp_…` pair ID selects control's authorization record. it is not the
+binary delivery ID and must never be truncated into the packet header.
 
 `SharedStreams` can accept peer streams exclusively or take classified streams
 from `tunnel.ServiceStreamDispatcher` on one authenticated TLS/yamux session.

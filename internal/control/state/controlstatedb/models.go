@@ -625,6 +625,7 @@ type ControlNativePeerPair struct {
 	LastRenewalDigest   []byte
 	KeyDigest           []byte
 	KeyCiphertext       []byte
+	DeliveryID          []byte
 	StorageKeyID        string
 	Slots               []byte
 	DeliveryGeneration  int64

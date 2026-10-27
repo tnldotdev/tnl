@@ -49,6 +49,7 @@ type NativePeerPair struct {
 	Subject                                          VisitorSubject
 	RunNumber, DeliveryGeneration                    int64
 	Key                                              string
+	DeliveryID                                       [16]byte
 	Relays                                           [2]NativePeerPairRelay
 	ExpiresAt                                        time.Time
 }
@@ -81,7 +82,8 @@ func nativePairSubjectID(s VisitorSubject) string {
 func nativePeerPairKeyContext(id string) string { return "native-peer-pair/" + id }
 
 // PrepareNativePeerPair creates or retrieves an exact delivery. only a signed
-// replacement of the current pair changes its key and delivery generation.
+// replacement of the current pair changes its key, delivery identifier, and
+// delivery generation.
 func (d *Database) PrepareNativePeerPair(ctx context.Context, r NativePeerPairRequest, now time.Time) (result NativePeerPair, retErr error) {
 	if r.Action != "create" && r.Action != "replace" {
 		return result, ErrServiceAccess
@@ -304,13 +306,31 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 		if err != nil {
 			return NativePeerPair{}, err
 		}
-		row, err = q.InsertNativePeerPair(ctx, controlstatedb.InsertNativePeerPairParams{
-			ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
-			SubjectKind: string(subject.Kind), SubjectID: nativePairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
-			RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(),
-			Slots: encoded, Now: timestamptz(now), RequestAt: timestamptz(requestAt), ExpiresAt: timestamptz(deadline),
-		})
+		// a delivery identifier collision must never reuse another pair's
+		// header. retry only that named constraint; other conflicts are errors.
+		err = pgx.ErrNoRows
+		for attempt := 0; attempt < 5; attempt++ {
+			var deliveryID [16]byte
+			if _, err = rand.Read(deliveryID[:]); err != nil {
+				return NativePeerPair{}, err
+			}
+			if deliveryID == [16]byte{} {
+				continue
+			}
+			row, err = q.InsertNativePeerPair(ctx, controlstatedb.InsertNativePeerPairParams{
+				ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
+				SubjectKind: string(subject.Kind), SubjectID: nativePairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
+				RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
+				Slots: encoded, Now: timestamptz(now), RequestAt: timestamptz(requestAt), ExpiresAt: timestamptz(deadline),
+			})
+			if !errors.Is(err, pgx.ErrNoRows) {
+				break
+			}
+		}
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return NativePeerPair{}, ErrServiceConflict
+			}
 			return NativePeerPair{}, err
 		}
 		result.Key = base64.RawURLEncoding.EncodeToString(secret)
@@ -319,6 +339,13 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 	}
 	result.ID, result.ServiceID, result.ServiceRunID, result.PublisherIdentityID = row.ID, r.ServiceID, run.ID, run.PublisherIdentityID
 	result.Subject, result.RunNumber, result.DeliveryGeneration = subject, run.RunNumber, row.DeliveryGeneration
+	if len(row.DeliveryID) != len(result.DeliveryID) {
+		return NativePeerPair{}, ErrServiceAccess
+	}
+	copy(result.DeliveryID[:], row.DeliveryID)
+	if result.DeliveryID == [16]byte{} {
+		return NativePeerPair{}, ErrServiceAccess
+	}
 	result.ExpiresAt = row.ExpiresAt.Time
 	if err = tx.Commit(ctx); err != nil {
 		return NativePeerPair{}, err

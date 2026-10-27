@@ -2388,8 +2388,11 @@ type MembershipID = ResourceID
 
 // NativePeerPair defines model for NativePeerPair.
 type NativePeerPair struct {
-	DeliveryGeneration int64     `json:"delivery_generation"`
-	ExpiresAt          time.Time `json:"expires_at"`
+	DeliveryGeneration int64 `json:"delivery_generation"`
+
+	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
+	DeliveryId string    `json:"delivery_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
 
 	// Key Secret returned only to the authorized signed source.
 	Key                 string                `json:"key"`

@@ -2,11 +2,34 @@ package tunnelv1
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
 	"testing"
 )
+
+func TestPeerDeliveryIdentifier(t *testing.T) {
+	id := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	encoded := base64.RawURLEncoding.EncodeToString(id[:])
+	got, err := ParsePeerDeliveryIdentifier(encoded)
+	if err != nil || got != id {
+		t.Fatal("identifier lost header bytes", err)
+	}
+	if header, err := (PeerDelivery{Pair: got, Generation: 1}).Header(); err != nil || !bytes.Equal(header[1:17], id[:]) {
+		t.Fatal("delivery header lost identifier", err)
+	}
+	for _, invalid := range []string{
+		"", "npp_0123456789ABCDEFGHIJKL", encoded + "=", encoded[:21], encoded + "A",
+		base64.StdEncoding.EncodeToString(id[:]), base64.RawURLEncoding.EncodeToString(make([]byte, 16)),
+		encoded[:21] + "B", // nonzero unused pad bits in the final character
+		"!!!!!!!!!!!!!!!!!!!!!!",
+	} {
+		if _, err := ParsePeerDeliveryIdentifier(invalid); !errors.Is(err, ErrPeerPacket) {
+			t.Fatalf("accepted malformed delivery identifier %q: %v", invalid, err)
+		}
+	}
+}
 
 func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 	d := PeerDelivery{Pair: [16]byte{1}, Generation: 42}

@@ -84,6 +84,7 @@ schemas:
         run_number,
         publisher_identity_id,
         subject,
+        delivery_id,
         delivery_generation,
         key,
         relays,
@@ -96,6 +97,12 @@ schemas:
       run_number: { type: integer, format: int64, minimum: 1 }
       publisher_identity_id: { type: string, minLength: 1 }
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_id:
+        {
+          type: string,
+          pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
+          description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
+        }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
       key: { type: string, description: Secret returned only to the authorized signed source. }
       relays:

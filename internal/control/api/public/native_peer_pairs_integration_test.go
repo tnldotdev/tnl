@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -184,6 +185,19 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &pair); err != nil || pair.Key == "" || pair.PairId == "" {
 		t.Fatal("missing pair", err)
 	}
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	var saved []byte
+	if err := conn.QueryRow(ctx, `SELECT delivery_id FROM control.native_peer_pairs WHERE id=$1`, pair.PairId).Scan(&saved); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
+	if err != nil || !bytes.Equal(decoded[:], saved) {
+		t.Fatal("public response changed the durable delivery header bytes", err)
+	}
 	if retry := call(path, owner.AccessToken.String(), request); retry.Code != 200 || !bytes.Equal(retry.Body.Bytes(), response.Body.Bytes()) {
 		t.Fatal("idempotent create changed delivery", retry.Code)
 	}
@@ -193,7 +207,7 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if delivered, err := api.PrepareDeviceNativePeerPair(ctx, service.ID, device.ID, request); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key {
+	if delivered, err := api.PrepareDeviceNativePeerPair(ctx, service.ID, device.ID, request); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key || delivered.DeliveryId != pair.DeliveryId {
 		t.Fatal("device client lost signed delivery", err)
 	}
 	bad := request
@@ -222,10 +236,10 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	bad = request
 	bad.Action, bad.PreviousPairId, bad.PreviousGeneration, bad.RequestedAt = "renew", &pair.PairId, &pair.DeliveryGeneration, time.Now().UTC().Truncate(time.Microsecond).Add(time.Microsecond)
 	sign(&bad)
-	if w := call(path+"/"+pair.PairId+"/renew", owner.AccessToken.String(), bad); w.Code != 200 {
+	if w := call(path+"/"+pair.PairId+"/renew", owner.AccessToken.String(), bad); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(pair.DeliveryId)) {
 		t.Fatal("renew failed", w.Code, w.Body.String())
 	}
-	if delivered, err := api.RenewDeviceNativePeerPair(ctx, service.ID, pair.PairId, device.ID, bad); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key {
+	if delivered, err := api.RenewDeviceNativePeerPair(ctx, service.ID, pair.PairId, device.ID, bad); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key || delivered.DeliveryId != pair.DeliveryId {
 		t.Fatal("device client renewal lost delivery", err)
 	}
 	bad.Action, bad.IdempotencyKey = "replace", "native-two"
@@ -233,6 +247,18 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	sign(&bad)
 	if w := call(path, owner.AccessToken.String(), bad); w.Code != 200 {
 		t.Fatal("replace failed", w.Code, w.Body.String())
+	} else {
+		var replacement controlv1.NativePeerPair
+		if err := json.Unmarshal(w.Body.Bytes(), &replacement); err != nil || replacement.DeliveryId == pair.DeliveryId {
+			t.Fatal("replacement did not rotate delivery identifier", err)
+		}
+		if err := conn.QueryRow(ctx, `SELECT delivery_id FROM control.native_peer_pairs WHERE id=$1`, replacement.PairId).Scan(&saved); err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := tunnelv1.ParsePeerDeliveryIdentifier(replacement.DeliveryId)
+		if err != nil || !bytes.Equal(decoded[:], saved) {
+			t.Fatal("replacement response changed durable header bytes", err)
+		}
 	}
 	if w := call(path, owner.AccessToken.String(), request); w.Code != 409 {
 		t.Fatal("old delivery replay succeeded", w.Code)
