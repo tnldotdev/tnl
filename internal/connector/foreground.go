@@ -291,10 +291,14 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 			return nil
 		})
 		_ = listener.Close()
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return nil
+		}
 		if errors.Is(err, connectorstream.ErrSelectionExpired) {
 			recovering = true
-		} else if recovering && errors.Is(err, clientcontrol.ErrUnavailable) {
+		} else if recovering && (errors.Is(err, clientcontrol.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)) {
 			// a previously verified publisher may still be replacing its run.
+			// a bounded preparation timeout does not invalidate the service.
 		} else if !connectorstream.IsMetadataReload(err) {
 			return err
 		}

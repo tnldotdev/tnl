@@ -97,11 +97,12 @@ func (d *Database) RegisterIngress(
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		var sameRun bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.ingress_leases WHERE ingress_id=$1 AND ingress_run_id=$2)`, registration.IngressID, registration.IngressRunID).Scan(&sameRun); err != nil {
+		var runID string
+		var expiresAt time.Time
+		if err := tx.QueryRow(ctx, `SELECT ingress_run_id, lease_expires_at FROM control.ingress_leases WHERE ingress_id=$1`, registration.IngressID).Scan(&runID, &expiresAt); err != nil {
 			return IngressLease{}, fmt.Errorf("read rejected ingress registration: %w", err)
 		}
-		if sameRun {
+		if runID == registration.IngressRunID && !expiresAt.After(now) {
 			return IngressLease{}, ErrIngressLeaseStale
 		}
 		return IngressLease{}, ErrIngressAlreadyRunning

@@ -176,7 +176,7 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 					t.Fatal("recovery tried to serve on a closed listener", err)
 				}
 			}
-			if calls != 2 {
+			if calls == 1 || calls == 4 {
 				if err := reportReady(); err != nil {
 					return err
 				}
@@ -185,6 +185,8 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 			case 1:
 				return connectorstream.ErrSelectionExpired
 			case 2:
+				return context.DeadlineExceeded
+			case 3:
 				return clientcontrol.ErrUnavailable
 			default:
 				return end
@@ -192,7 +194,49 @@ func TestConnectorRevalidatesExpiredSelectionThroughPublisherReplacement(t *test
 		},
 		ready: func(supervisor.Job) error { ready++; return nil },
 	})
-	if !errors.Is(err, end) || calls != 3 || reads != 3 || ready != 2 {
+	if !errors.Is(err, end) || calls != 4 || reads != 4 || ready != 2 {
 		t.Fatalf("publisher replacement: err=%v calls=%d inventory=%d ready=%d", err, calls, reads, ready)
+	}
+}
+
+func TestConnectorCancellationDuringRecoveryPreparation(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	job := supervisor.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "api", Protocol: "http", TrustRevision: 1, Target: listener.Addr().String()}
+	service := controlv1.Service{Id: job.ServiceID, Name: job.Name, Protocol: "http", TrustRevision: 1}
+	calls := 0
+	current := listener
+	err = runConnectorLifecycle(ctx, listener, job, "", connectorLifecycle{
+		services: connectServiceReaderFunc(func(context.Context) ([]controlv1.Service, error) {
+			return []controlv1.Service{service}, nil
+		}),
+		listen: func(_ context.Context, next supervisor.Job) (net.Listener, error) {
+			var err error
+			current, err = net.Listen("tcp", next.Target)
+			return current, err
+		},
+		serve: func(_ context.Context, listener net.Listener, _ supervisor.Job, _ func() error) error {
+			defer listener.Close()
+			calls++
+			if calls == 1 {
+				return connectorstream.ErrSelectionExpired
+			}
+			cancel()
+			return context.DeadlineExceeded
+		},
+	})
+	if err != nil || calls != 2 {
+		t.Fatalf("canceled recovery leaked its preparation deadline: calls=%d err=%v", calls, err)
+	}
+	if connected, err := current.Accept(); !errors.Is(err, net.ErrClosed) {
+		if connected != nil {
+			_ = connected.Close()
+		}
+		t.Fatalf("canceled recovery retained its local listener: %v", err)
 	}
 }

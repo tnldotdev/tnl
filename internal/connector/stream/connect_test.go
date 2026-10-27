@@ -36,6 +36,7 @@ type connectorFixture struct {
 	run              Run
 	endpoints        [2]muxsession.Endpoint
 	localAddress     string
+	localListener    net.Listener
 	target           string
 	expires          time.Time
 	certificate      tls.Certificate
@@ -226,6 +227,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.localListener = listener
 	t.Cleanup(func() { _ = listener.Close() })
 	ready := make(chan struct{})
 	f.finished = make(chan struct{})
@@ -510,10 +512,13 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 						if reason, _ := failure.ReasonOf(f.serveErr); reason != failure.ServerDenied || !errors.Is(f.serveErr, io.ErrClosedPipe) {
 							t.Fatal("background denial lost its failure boundary", f.serveErr)
 						}
-						denied, err := net.DialTimeout("tcp", f.localAddress, time.Second)
-						if err == nil {
-							_ = denied.Close()
-							t.Fatal("revoked access retained a local listener")
+						// test the exact listener: another package in the race suite may
+						// reuse its former ephemeral port immediately after it closes.
+						if connection, err := f.localListener.Accept(); !errors.Is(err, net.ErrClosed) {
+							if connection != nil {
+								_ = connection.Close()
+							}
+							t.Fatalf("revoked access retained its local listener: %v", err)
 						}
 						if _, err := local.Read(make([]byte, 1)); err == nil || f.opened.Load() != 1 {
 							t.Fatal("revoked access opened a stream")
