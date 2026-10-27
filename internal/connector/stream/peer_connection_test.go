@@ -92,7 +92,7 @@ func (s *peerTestSession) Close() error {
 func (s *peerTestSession) Done() <-chan struct{}   { return s.done }
 func (s *peerTestSession) Err() error              { return net.ErrClosed }
 func (s *peerTestSession) SupportsDatagrams() bool { return s.datagrams }
-func (s *peerTestSession) SendDatagram([]byte) error {
+func (s *peerTestSession) SendDatagram(context.Context, []byte) error {
 	s.packets.Add(1)
 	return nil
 }

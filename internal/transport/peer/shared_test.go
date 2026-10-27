@@ -23,15 +23,20 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func sharedQUICPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls.Config) (*quic.Conn, *quic.Conn) {
+type sharedDatagramSession struct {
+	muxsession.Session
+	muxsession.DatagramSession
+}
+
+func sharedQUICPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls.Config) (sharedDatagramSession, sharedDatagramSession) {
 	t.Helper()
-	config := &quic.Config{EnableDatagrams: true, InitialPacketSize: 1200, DisablePathMTUDiscovery: true}
-	listener, err := quic.ListenAddr("127.0.0.1:0", serverTLS, config)
+	config := muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true, InitialPacketSize: 1200, DisablePathMTUDiscovery: true}}
+	listener, err := muxsession.ListenConnectorQUIC("127.0.0.1:0", serverTLS, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	left, err := quic.DialAddr(ctx, listener.Addr().String(), clientTLS, config)
+	left, err := (muxsession.ConnectorQUIC{TLSConfig: clientTLS, Config: config}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,15 +44,8 @@ func sharedQUICPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = left.CloseWithError(0, ""); _ = right.CloseWithError(0, "") })
-	return left, right
-}
-
-type rawDatagramSession struct{ *quic.Conn }
-
-func (s rawDatagramSession) SupportsDatagrams() bool {
-	supported := s.Conn.ConnectionState().SupportsDatagrams
-	return supported.Local && supported.Remote
+	t.Cleanup(func() { _ = left.Close(); _ = right.Close() })
+	return sharedDatagramSession{left, left.(muxsession.DatagramSession)}, sharedDatagramSession{right, right.(muxsession.DatagramSession)}
 }
 
 func TestPeerSharedDatagramsUseOptedInMuxsession(t *testing.T) {
@@ -190,11 +188,11 @@ func TestPeerSharedDatagramsAcceptOutOfOrderFragmentsOnce(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
+	client, err := NewSharedDatagrams(ctx, left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
+	server, err := NewSharedDatagrams(ctx, right)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,11 +236,11 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
+	client, err := NewSharedDatagrams(ctx, left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
+	server, err := NewSharedDatagrams(ctx, right)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +274,7 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := left.SendDatagram(wire); err != nil {
+		if err := left.SendDatagram(ctx, wire); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -300,11 +298,23 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 		}
 	}
 	otherFrame := signedFrame(t, otherA)
-	if err := secondSender.Send(ctx, otherFrame); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := secondReceiver.Receive(ctx); err != nil || !bytes.Equal(got, otherFrame) {
-		t.Fatal("busy peer starved sibling", err)
+	// an outer DATAGRAM may be dropped, including in quic-go's receive
+	// queue during this flood. packet retries are not application retries.
+	// exact scheduler fairness is checked without network loss below.
+	for {
+		if err := secondSender.Send(ctx, otherFrame); err != nil {
+			t.Fatal(err)
+		}
+		attempt, stop := context.WithTimeout(ctx, 25*time.Millisecond)
+		got, err := secondReceiver.Receive(attempt)
+		stop()
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			continue
+		}
+		if err != nil || !bytes.Equal(got, otherFrame) {
+			t.Fatal("busy peer starved sibling", err)
+		}
+		break
 	}
 	queued, peak, _ := client.QueueStats()
 	if queued > sharedGlobalQueue || peak > sharedGlobalQueue {
@@ -345,7 +355,7 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := left.SendDatagram(stale); err != nil {
+	if err := left.SendDatagram(ctx, stale); err != nil {
 		t.Fatal(err)
 	}
 	staleRead, cancelStale := context.WithTimeout(ctx, 50*time.Millisecond)
@@ -377,7 +387,7 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if left.Context().Err() != nil || right.Context().Err() != nil {
+	if left.Err() != nil || right.Err() != nil {
 		t.Fatal("peer owner closed shared QUIC")
 	}
 }
@@ -387,11 +397,11 @@ func TestPeerSharedDatagramsSameKeyCannotRelabelOrReplay(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
+	client, err := NewSharedDatagrams(ctx, left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
+	server, err := NewSharedDatagrams(ctx, right)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +437,7 @@ func TestPeerSharedDatagramsSameKeyCannotRelabelOrReplay(t *testing.T) {
 		"relabeled pair": relabel, "relabeled generation": wrongGeneration,
 		"stale generation": staleWire, "wrong direction": wrongDirection, "cross mode": wrongMode,
 	} {
-		if err := left.SendDatagram(wire); err != nil {
+		if err := left.SendDatagram(ctx, wire); err != nil {
 			t.Fatal(name, err)
 		}
 		quiet, stop := context.WithTimeout(ctx, 30*time.Millisecond)
@@ -438,13 +448,13 @@ func TestPeerSharedDatagramsSameKeyCannotRelabelOrReplay(t *testing.T) {
 		}
 	}
 	valid, _ := b.Delivery.Seal(tunnelv1.PeerDeliveryDatagram, b.Key, frame)
-	if err := left.SendDatagram(valid); err != nil {
+	if err := left.SendDatagram(ctx, valid); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := receiver.Receive(ctx); err != nil || !bytes.Equal(got, frame) {
 		t.Fatal("valid same-key pair lost", err)
 	}
-	if err := left.SendDatagram(valid); err != nil {
+	if err := left.SendDatagram(ctx, valid); err != nil {
 		t.Fatal(err)
 	}
 	quiet, stop := context.WithTimeout(ctx, 50*time.Millisecond)
@@ -624,7 +634,7 @@ func TestPeerSharedDatagramsBoundRegistrations(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, _ := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	owner, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
+	owner, err := NewSharedDatagrams(ctx, left)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -817,11 +827,11 @@ func TestPeerSharedMixedCarrierKeepsInnerStreamAndSibling(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
+	client, err := NewSharedDatagrams(ctx, left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
+	server, err := NewSharedDatagrams(ctx, right)
 	if err != nil {
 		t.Fatal(err)
 	}

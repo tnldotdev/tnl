@@ -54,6 +54,8 @@ func (b PairBinding) authentic(frame []byte, sender uint8) bool {
 
 type sharedPeer struct {
 	binding PairBinding
+	ctx     context.Context
+	cancel  context.CancelFunc
 	in      chan []byte
 	out     [][]byte
 	done    chan struct{}
@@ -151,7 +153,8 @@ func (s *SharedDatagrams) Register(b PairBinding) (Carrier, error) {
 	if old := s.peers[id]; old != nil {
 		s.removeLocked(old)
 	}
-	p := &sharedPeer{binding: b, in: make(chan []byte, sharedQueuePerPeer), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(s.ctx)
+	p := &sharedPeer{binding: b, ctx: ctx, cancel: cancel, in: make(chan []byte, sharedQueuePerPeer), done: make(chan struct{})}
 	s.peers[id] = p
 	s.lastGeneration[id] = b.Delivery.Generation
 	s.order = append(s.order, p)
@@ -163,6 +166,7 @@ func (s *SharedDatagrams) removeLocked(p *sharedPeer) {
 		return
 	}
 	delete(s.peers, p.binding.Delivery.Pair)
+	p.cancel()
 	close(p.done)
 	s.queued -= len(p.out)
 	p.out = nil
@@ -241,11 +245,16 @@ func (s *SharedDatagrams) writeLoop() {
 			p.out[0] = nil
 			p.out = p.out[1:]
 			s.queued--
-			// SendDatagram is a nonblocking quic-go enqueue. fence a removed
-			// registration against emission of its already selected packet.
-			err := s.conn.SendDatagram(frame)
 			s.mu.Unlock()
+			// never hold registration state across outer backpressure. retiring
+			// this peer cancels its submission without retiring sibling peers or
+			// the borrowed session. one submitted packet may already be in flight;
+			// the receiver still checks its delivery generation and replay fence.
+			err := s.conn.SendDatagram(p.ctx, frame)
 			if err != nil {
+				if p.ctx.Err() != nil {
+					continue
+				}
 				// an oversized datagram is dropped for inner QUIC to recover;
 				// connection errors terminate this owner.
 				var tooLarge *quic.DatagramTooLargeError

@@ -266,6 +266,8 @@ func quicConfig(config *quic.Config) *quic.Config {
 
 type quicSession struct {
 	connection *quic.Conn
+	packetOnce sync.Once
+	packets    *quicDatagramSender
 }
 
 // AdoptQUIC owns an established v1 QUIC connection without taking ownership of
@@ -285,12 +287,22 @@ func AdoptQUIC(connection *quic.Conn) (Session, error) {
 // boundary. the caller must own datagram reception exclusively; stream
 // acceptance and the session lifetime remain with the role owner.
 type DatagramSession interface {
-	SendDatagram([]byte) error
+	// SendDatagram may wait for outer capacity. cancellation releases the
+	// caller, not the borrowed session; a submitted packet may already be in flight.
+	SendDatagram(context.Context, []byte) error
 	ReceiveDatagram(context.Context) ([]byte, error)
 	SupportsDatagrams() bool
 }
 
-func (s *quicSession) SendDatagram(b []byte) error { return s.connection.SendDatagram(b) }
+func (s *quicSession) SendDatagram(ctx context.Context, b []byte) error {
+	s.packetOnce.Do(func() {
+		s.packets = newQUICDatagramSender(s.connection.Context(), s.connection.SendDatagram)
+	})
+	if s.packets == nil {
+		return ErrClosed
+	}
+	return s.packets.send(ctx, b)
+}
 func (s *quicSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return s.connection.ReceiveDatagram(ctx)
 }
@@ -330,7 +342,14 @@ func (s *quicSession) AcceptStream(ctx context.Context) (Stream, error) {
 }
 
 func (s *quicSession) Close() error {
-	return normalizeQUICError(s.connection.CloseWithError(0, ""))
+	err := normalizeQUICError(s.connection.CloseWithError(0, ""))
+	// stop the transport before joining its possibly blocked datagram enqueue.
+	// seal lazy startup too, including concurrent sends after session closure.
+	s.packetOnce.Do(func() {})
+	if s.packets != nil {
+		<-s.packets.done
+	}
+	return err
 }
 
 func (s *quicSession) Done() <-chan struct{} { return s.connection.Context().Done() }

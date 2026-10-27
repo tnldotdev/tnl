@@ -203,6 +203,7 @@ tasks:
     desc: Prove peer carriers, native preparation, and checked relay renewal
     cmds:
       - go test {{.CLI_ARGS}} -v ./internal/transport/peer ./pkg/protocol/tunnelv1 -run='^Test(Peer|PublicIngressChanges|GoldenJSONAndFramedWireFixtures|InvalidFixtures|FramedWireFixturesRejectEveryTruncation)' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -v ./internal/transport/muxsession -run='^TestQUICDatagramSender' -count=1 -timeout=1m
       - go test {{.CLI_ARGS}} -v ./internal/daemon -run='^TestPeer' -count=1 -timeout=1m
       - go test {{.CLI_ARGS}} -v ./internal/relay -run='^Test(STUN|NativeConnector|NativePeerDelivery)' -count=1 -timeout=1m
       - go test {{.CLI_ARGS}} -v ./internal/transport/tunnel -run='^Test(NativeHello|NativeLegRenewal|PublisherAndIngressRejectNative)' -count=1 -timeout=1m

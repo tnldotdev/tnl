@@ -82,6 +82,15 @@ holds at most 256 frames across 64 peers. the writer visits nonempty peers in
 round-robin order. the owner retains at most 4096 pair tombstones per
 outer session to reject a reused or stale generation; rotate the session when full.
 closing one registration discards its queue without closing the QUIC connection.
+quic-go may block while enqueueing into its own 32-frame send queue. `muxsession`
+owns one sender worker per sending outer session, with no waiting packet queue
+and at most one submitted packet outside quic-go. canceling a registration or
+shared packet owner interrupts its wait without closing that borrowed session.
+registration state is never locked across outer backpressure. the outer session
+closes QUIC before joining its sender. a submitted packet may already be in
+flight after cancellation; the receiver still checks its generation and replay
+fence. scheduler tests prove exact round-robin turns and queue bounds without
+network loss; real-QUIC flood tests retry packets, not application admissions.
 the saved `npp_…` pair ID selects control's authorization record. it is not the
 binary delivery ID and must never be truncated into the packet header.
 
