@@ -148,5 +148,5 @@ visitor access, ready publisher run and two distinct relay assignments. its
 stored deadline advances only after a fresh authorized renewal; an uncertain
 response repeats the same key and delivery generation. the transport binding
 is not a publisher grant or permission to open an application stream. the role
-migration still needs an authenticated relay claim using the relay-observed
-source, fixed-deadline enforcement at the connected owners, and forwarding.
+migration still needs to bind the signed relay claim to an accepted connector
+socket, enforce fixed deadlines at connected owners, and forward peer frames.

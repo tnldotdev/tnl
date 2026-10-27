@@ -125,6 +125,33 @@ type ClaimedPublisherConnectionState string
 // Identifier defines model for Identifier.
 type Identifier = string
 
+// NativePeerPairLegClaim defines model for NativePeerPairLegClaim.
+type NativePeerPairLegClaim struct {
+	ConnectionSlot     int       `json:"connection_slot"`
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	ExpiresAt          time.Time `json:"expires_at"`
+
+	// Key secret pair key; never log.
+	Key    string `json:"key"`
+	PairId string `json:"pair_id"`
+
+	// SourceIp canonical socket-observed source IP bound to the relay signature.
+	SourceIp string `json:"source_ip"`
+}
+
+// NativePeerPairLegClaimRequest defines model for NativePeerPairLegClaimRequest.
+type NativePeerPairLegClaimRequest struct {
+	// ObservedSourceIp IP of the accepted connector socket as observed and signed by the relay process; never an HTTP header or connector-supplied value.
+	ObservedSourceIp string `json:"observed_source_ip"`
+
+	// ProofFrame unpadded base64url of exactly one frame from tunnelv1.WriteNativePairLegProof, including its four-byte length prefix. the framed payload is limited to 4096 bytes.
+	ProofFrame string             `json:"proof_frame"`
+	RelayLease RelayLeaseIdentity `json:"relay_lease"`
+
+	// RelaySignature unpadded base64url Ed25519 signature of proof.RelayClaimMessage(observed_source_ip) from the exact current relay process.
+	RelaySignature string `json:"relay_signature"`
+}
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -343,6 +370,9 @@ type GetRelayTransportCertificateParams struct {
 	RelayLeaseRevision int64      `form:"relay_lease_revision" json:"relay_lease_revision"`
 }
 
+// ClaimNativePeerPairLegJSONRequestBody defines body for ClaimNativePeerPairLeg for application/json ContentType.
+type ClaimNativePeerPairLegJSONRequestBody = NativePeerPairLegClaimRequest
+
 // ClaimServicePublisherConnectionJSONRequestBody defines body for ClaimServicePublisherConnection for application/json ContentType.
 type ClaimServicePublisherConnectionJSONRequestBody = ServicePublisherConnectionClaim
 
@@ -443,6 +473,18 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// ClaimNativePeerPairLegWithBody performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	ClaimNativePeerPairLegWithBody(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimNativePeerPairLeg performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	ClaimNativePeerPairLeg(ctx context.Context, pairId string, connectionSlot int, body ClaimNativePeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClaimServicePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
 	// with any type of body and a specified content type.
@@ -568,6 +610,38 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelay(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ClaimNativePeerPairLegWithBody performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request,
+// with any type of body and a specified content type.
+//
+// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+func (c *Client) ClaimNativePeerPairLegWithBody(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimNativePeerPairLegRequestWithBody(c.Server, pairId, connectionSlot, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimNativePeerPairLeg performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+func (c *Client) ClaimNativePeerPairLeg(ctx context.Context, pairId string, connectionSlot int, body ClaimNativePeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimNativePeerPairLegRequest(c.Server, pairId, connectionSlot, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ClaimServicePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
@@ -883,6 +957,60 @@ func (c *Client) RenewRelay(ctx context.Context, relayId RelayID, body RenewRela
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewClaimNativePeerPairLegRequest calls the generic ClaimNativePeerPairLeg builder with application/json body
+func NewClaimNativePeerPairLegRequest(server string, pairId string, connectionSlot int, body ClaimNativePeerPairLegJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimNativePeerPairLegRequestWithBody(server, pairId, connectionSlot, "application/json", bodyReader)
+}
+
+// NewClaimNativePeerPairLegRequestWithBody constructs an http.Request for the ClaimNativePeerPairLeg method, with any body, and a specified content type
+func NewClaimNativePeerPairLegRequestWithBody(server string, pairId string, connectionSlot int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_slot", connectionSlot, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/native-peer-pairs/%s/legs/%s/claim", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewClaimServicePublisherConnectionRequest calls the generic ClaimServicePublisherConnection builder with application/json body
@@ -1418,6 +1546,20 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ClaimNativePeerPairLegWithBodyWithResponse performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClaimNativePeerPairLegWithBodyWithResponse(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimNativePeerPairLegResponse, error)
+
+	// ClaimNativePeerPairLegWithResponse performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	ClaimNativePeerPairLegWithResponse(ctx context.Context, pairId string, connectionSlot int, body ClaimNativePeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimNativePeerPairLegResponse, error)
+
 	// ClaimServicePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -1550,6 +1692,61 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithResponse(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error)
+}
+
+// ClaimNativePeerPairLegResponse200Headers the declared response headers of an HTTP 200 response for ClaimNativePeerPairLeg
+type ClaimNativePeerPairLegResponse200Headers struct {
+	CacheControl *string
+}
+
+type ClaimNativePeerPairLegResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NativePeerPairLegClaim
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ClaimNativePeerPairLegResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimNativePeerPairLegResponse) GetJSON200() *NativePeerPairLegClaim {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimNativePeerPairLegResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimNativePeerPairLegResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimNativePeerPairLegResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimNativePeerPairLegResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimNativePeerPairLegResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ClaimServicePublisherConnectionResponse struct {
@@ -2032,6 +2229,32 @@ func (r RenewRelayResponse) ContentType() string {
 	return ""
 }
 
+// ClaimNativePeerPairLegWithBodyWithResponse performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request,
+// with any type of body and a specified content type.
+//
+// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClaimNativePeerPairLegWithBodyWithResponse(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimNativePeerPairLegResponse, error) {
+	rsp, err := c.ClaimNativePeerPairLegWithBody(ctx, pairId, connectionSlot, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimNativePeerPairLegResponse(rsp)
+}
+
+// ClaimNativePeerPairLegWithResponse performs a POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimNativePeerPairLeg` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+func (c *ClientWithResponses) ClaimNativePeerPairLegWithResponse(ctx context.Context, pairId string, connectionSlot int, body ClaimNativePeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimNativePeerPairLegResponse, error) {
+	rsp, err := c.ClaimNativePeerPairLeg(ctx, pairId, connectionSlot, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimNativePeerPairLegResponse(rsp)
+}
+
 // ClaimServicePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2277,6 +2500,52 @@ func (c *ClientWithResponses) RenewRelayWithResponse(ctx context.Context, relayI
 		return nil, err
 	}
 	return ParseRenewRelayResponse(rsp)
+}
+
+// ParseClaimNativePeerPairLegResponse parses an HTTP response from a ClaimNativePeerPairLegWithResponse call
+func ParseClaimNativePeerPairLegResponse(rsp *http.Response) (*ClaimNativePeerPairLegResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimNativePeerPairLegResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NativePeerPairLegClaim
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ClaimNativePeerPairLegResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
 }
 
 // ParseClaimServicePublisherConnectionResponse parses an HTTP response from a ClaimServicePublisherConnectionWithResponse call
@@ -2621,6 +2890,9 @@ func ParseRenewRelayResponse(rsp *http.Response) (*RenewRelayResponse, error) {
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
+	// (POST /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim)
+	ClaimNativePeerPairLeg(w http.ResponseWriter, r *http.Request, pairId string, connectionSlot int)
+
 	// (POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim)
 	ClaimServicePublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId Identifier)
 
@@ -2660,6 +2932,41 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ClaimNativePeerPairLeg operation middleware
+func (siw *ServerInterfaceWrapper) ClaimNativePeerPairLeg(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "connection_slot" -------------
+	var connectionSlot int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_slot", r.PathValue("connection_slot"), &connectionSlot, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "connection_slot", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClaimNativePeerPairLeg(w, r, pairId, connectionSlot)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ClaimServicePublisherConnection operation middleware
 func (siw *ServerInterfaceWrapper) ClaimServicePublisherConnection(w http.ResponseWriter, r *http.Request) {
@@ -3071,6 +3378,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim", wrapper.ClaimNativePeerPairLeg)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/claim", wrapper.ClaimServicePublisherConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/ready", wrapper.ReadyServicePublisherConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect", wrapper.DisconnectServicePublisherConnection)

@@ -74,18 +74,19 @@ or that verifier. An IP match is only a filter, never visitor credentials. Ingre
 the storage key. Relay transport private keys are retrievable only under the
 current relay lease and remain in memory there.
 
-Each relay process (including each standalone logical relay) also generates an
-Ed25519 key when it starts. Registration stores only its public key on the exact
+each relay process (including each standalone logical relay) also generates an
+Ed25519 key when it starts. registration stores only its public key on the exact
 relay ID, run ID, and lease revision; a same-run retry cannot change the key.
-Control retains a public binding for the current run regardless of its age, and
-keeps superseded bindings for at least ten minutes after replacement. A
+control retains a public binding for the current run regardless of its age, and
+keeps superseded bindings for at least ten minutes after replacement. a
 returning run with a different key rolls back its registration while its
-binding is retained. The bounded cleanup worker removes old superseded keys.
-The private key stays in that relay runtime. The state-layer native peer leg
+binding is retained. the bounded cleanup worker removes old superseded keys.
+the private key stays in that relay runtime. the state-layer native peer leg
 claim requires a signature from this key over the connector proof and the
-relay-observed source address, as well as the current lease. A lease without a
-key cannot claim a leg. There is no private claim endpoint yet; the existing
-cluster secret still authenticates the other private relay requests.
+relay-observed source address, as well as the current lease. a lease without a
+key cannot claim a leg. the private relay API also requires cluster
+authentication; the relay listener still needs to supply the accepted socket's
+source when it makes the signed claim.
 
 The public control backend accepts only configured proxy peers, an overwritten
 client-IP header, `X-Forwarded-Proto: https`, and the configured external host.

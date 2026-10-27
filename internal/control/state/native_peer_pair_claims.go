@@ -31,9 +31,10 @@ func (NativePeerPairLegClaim) String() string   { return "native peer pair leg c
 func (NativePeerPairLegClaim) GoString() string { return "native peer pair leg claim" }
 
 // ClaimNativePeerPairLeg verifies a signature from the exact current relay
-// process. a future adapter must also authenticate the cluster secret before
-// calling it. observedSource comes from the relay socket, never from a connector
-// frame, STUN, or ICE. no HTTP adapter is provided here.
+// process. the split private relay HTTP API also authenticates the cluster
+// secret; standalone calls in-process.
+// observedSource comes from the relay socket, never from a connector frame,
+// STUN, ICE, or an HTTP forwarding header.
 func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseIdentity, observedSource netip.Addr, proof tunnelv1.NativePairLegProof, relaySignature []byte, now time.Time) (result NativePeerPairLegClaim, retErr error) {
 	message, err := proof.Message()
 	relayMessage, relayErr := proof.RelayClaimMessage(observedSource)

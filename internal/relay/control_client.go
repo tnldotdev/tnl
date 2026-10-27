@@ -3,9 +3,11 @@ package relay
 import (
 	"context"
 	"errors"
+	"net/netip"
 
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // HTTPControlClient adapts the generated private API client to relay control operations.
@@ -18,6 +20,33 @@ func NewHTTPControlClient(client relayv1.ClientWithResponsesInterface) (*HTTPCon
 		return nil, errors.New("relay: generated control client is required")
 	}
 	return &HTTPControlClient{client: client}, nil
+}
+
+// NativePeerLegClaimClient is used only after a relay has accepted a connector
+// socket and signed the observed source with its current process key.
+type NativePeerLegClaimClient interface {
+	ClaimNativePeerPairLegFromAcceptedSocket(context.Context, relayv1.RelayLease, netip.Addr, tunnelv1.NativePairLegProof, []byte) (relayv1.NativePeerPairLegClaim, error)
+}
+
+var _ NativePeerLegClaimClient = (*HTTPControlClient)(nil)
+
+func (c *HTTPControlClient) ClaimNativePeerPairLegFromAcceptedSocket(ctx context.Context, lease relayv1.RelayLease, observedSocketIP netip.Addr, proof tunnelv1.NativePairLegProof, relaySignature []byte) (relayv1.NativePeerPairLegClaim, error) {
+	body, err := relayv1.NewNativePeerPairLegClaimRequest(lease, observedSocketIP, proof, relaySignature)
+	if err != nil {
+		return relayv1.NativePeerPairLegClaim{}, err
+	}
+	response, err := c.client.ClaimNativePeerPairLegWithResponse(ctx, proof.PairID, proof.ConnectionSlot, body)
+	if err != nil {
+		return relayv1.NativePeerPairLegClaim{}, err
+	}
+	if response == nil {
+		return relayv1.NativePeerPairLegClaim{}, relayHTTPProblem(0, nil)
+	}
+	defer clear(response.Body)
+	if response.JSON200 == nil {
+		return relayv1.NativePeerPairLegClaim{}, relayHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	return *response.JSON200, nil
 }
 
 func (c *HTTPControlClient) RegisterRelay(
