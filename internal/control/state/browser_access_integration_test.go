@@ -14,7 +14,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
@@ -22,6 +25,7 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	request := oidcRouteRequest(t, database, now)
 	publicURL := createTestPublicURL(t, database, request, now)
 	auth := browserTestAuthentication(t, database, publicURL.ID, now)
+	prepareVisitorTokenKeys(t, database, now)
 	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, request.ActingIdentityID, "browser-access", now)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +52,13 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	if _, err := database.ConsumeBrowserLogin(t.Context(), state, binding, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("replayed login = %v", err)
 	}
+	expired, err := database.BeginBrowserLogin(t.Context(), preview.ID, publicURL.ID, "/expired", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ConsumeBrowserLogin(t.Context(), expired, binding, now.Add(5*time.Minute)); !errors.Is(err, ErrPreviewAccess) {
+		t.Fatalf("expired login state was consumed: %v", err)
+	}
 	issued := browserTestControlSession(t, database, request.ActingIdentityID, now)
 	access := issued.AccessToken.String()
 	refresh := issued.RefreshToken.String()
@@ -67,16 +78,17 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	}
 	wrong := auth
 	wrong.PublicURLID = "url_different"
-	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), wrong, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err := database.RedeemBrowserHandoffWithPermission(t.Context(), wrong, testVisitorIssuer, handoff.Token, "", "", now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("different URL redeemed browser handoff: %v", err)
 	}
-	cookie, path, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
-	if err != nil || cookie == "" || path != login.ReturnPath {
-		t.Fatalf("browser handoff = %q, %q, %v", cookie, path, err)
+	redemption, err := database.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
+	if err != nil || redemption.CookieSecret == "" || redemption.ReturnPath != login.ReturnPath {
+		t.Fatalf("browser handoff = %q, %q, %v", redemption.CookieSecret, redemption.ReturnPath, err)
 	}
-	if _, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err := database.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("replayed browser handoff = %v", err)
 	}
+	cookie := redemption.CookieSecret
 	session, err := database.BrowserSession(t.Context(), publicURL.ID, cookie, now)
 	if err != nil || session.IdentityID != request.ActingIdentityID || session.AccessToken != access || session.RefreshToken != refresh {
 		t.Fatalf("browser session identity = %q, %v", session.IdentityID, err)
@@ -130,33 +142,116 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	}
 }
 
+func TestIntegrationBrowserHandoffPermissionCommitsWithTicket(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "browser-handoff-permission")
+	request := oidcRouteRequest(t, d, now)
+	u := createTestPublicURL(t, d, request, now)
+	auth := browserTestAuthentication(t, d, u.ID, now)
+	issued := browserTestControlSession(t, d, request.ActingIdentityID, now)
+	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: u.ID, ReturnPath: "/settings"}, BrowserAccessSession{
+		IdentityID: request.ActingIdentityID, DisplayName: "Owner", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
+		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+		t.Fatal(err)
+	}
+	wrongRun := auth
+	wrongRun.PublishRunID = "pr_replacement"
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), wrongRun, testVisitorIssuer, handoff.Token, "", "", now); err == nil {
+		t.Fatal("wrong run redeemed ticket")
+	}
+	wrongToken := auth
+	wrongToken.PublishRunToken = "wrong-secret"
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), wrongToken, testVisitorIssuer, handoff.Token, "", "", now); err == nil {
+		t.Fatal("wrong run credential redeemed ticket")
+	}
+	otherSecret, _, err := randomBrowserSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, otherSecret, "", "", now); !errors.Is(err, ErrPreviewAccess) {
+		t.Fatalf("wrong secret redeemed ticket: %v", err)
+	}
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, "https://other.example.test", handoff.Token, "", "", now); !errors.Is(err, ErrVisitorSigningKey) {
+		t.Fatalf("post-redemption signing failure: %v", err)
+	}
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, "", handoff.Token, "", "", now); !errors.Is(err, ErrVisitorSigningKey) {
+		t.Fatalf("empty issuer consumed the ticket without signing: %v", err)
+	}
+	digest, err := browserDigest(handoff.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var consumed bool
+	if err := d.pool.QueryRow(t.Context(), `SELECT consumed_at IS NOT NULL FROM control.browser_access_handoffs WHERE token_digest=$1`, digest).Scan(&consumed); err != nil || consumed {
+		t.Fatalf("failed token issuance consumed ticket: %t, %v", consumed, err)
+	}
+	result, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
+	if err != nil || result.CookieSecret == "" || result.ReturnPath != "/settings" || result.ExpiresAt.Sub(now) != 2*time.Hour {
+		t.Fatalf("prepared browser handoff = %+v, %v", result, err)
+	}
+	permission := result.Issued.Permission
+	if permission.Scope != (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}) || !permission.ExpiresAt.Before(result.ExpiresAt) {
+		t.Fatalf("signed permission widened scope or lifetime: %+v", permission)
+	}
+	if _, err := visitortoken.VerifyBearer(result.Issued.Token, stateTestVisitorView(permission, stateTestVisitorKeys(t, d, now), now), now); err != nil {
+		t.Fatalf("prepared permission did not verify locally: %v", err)
+	}
+	var retainUntil time.Time
+	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL`).Scan(&retainUntil); err != nil || retainUntil.Before(permission.ExpiresAt) {
+		t.Fatalf("signing key not retained through visitor permission: %s, %v", retainUntil, err)
+	}
+	if _, err := d.BrowserSession(t.Context(), u.ID, result.CookieSecret, now); err != nil {
+		t.Fatalf("redeemed cookie was not installed: %v", err)
+	}
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now); !errors.Is(err, ErrPreviewAccess) {
+		t.Fatalf("ticket replay: %v", err)
+	}
+	later, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: u.ID, ReturnPath: "/later"}, BrowserAccessSession{
+		IdentityID: request.ActingIdentityID, DisplayName: "Owner", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
+		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(2 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, later.Token, "", "", now.Add(time.Minute)); !errors.Is(err, ErrPreviewAccess) {
+		t.Fatalf("ticket remained redeemable at expiry: %v", err)
+	}
+}
+
 func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
+	database, now := newControlStateIntegrationDatabase(t, "browser-feedback")
+	request := oidcRouteRequest(t, database, now)
+	publicURL := createTestPublicURL(t, database, request, now)
+	auth := browserTestAuthentication(t, database, publicURL.ID, now)
+	prepareVisitorTokenKeys(t, database, now)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, publicURL.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
-	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "browser-feedback", now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, request.ActingIdentityID, "browser-feedback", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID,
-		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: request.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	identityID := "00000000-0000-4000-8000-000000000002"
+	identityID, err := opaqueid.New(opaqueid.IdentityPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
 	insertAuthorityIdentity(t, database, identityID, "", false, now)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.identities SET display_name='Sam' WHERE id=$1`, identityID); err != nil {
 		t.Fatal(err)
 	}
 	issued := browserTestControlSession(t, database, identityID, now)
 	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/",
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, ReturnPath: "/",
 	}, BrowserAccessSession{
 		IdentityID: identityID, DisplayName: "Sam", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
 		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour),
@@ -164,17 +259,16 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := database.RedeemBrowserHandoff(t.Context(), f.authentication(), handoff.Token, now)
+	redemption, err := database.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(cookie)
+	raw, err := base64.RawURLEncoding.DecodeString(redemption.CookieSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := f.authentication()
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, VisitAllowed: true, IdentityID: identityID, DisplayName: "Sam", BrowserCookieSecret: raw}
-	thread, err := database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
+	thread, err := database.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
 		AuthorDisplayName: "not sam", Anchor: json.RawMessage(`null`),
 		Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
@@ -189,15 +283,15 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	if err != nil || reply.AuthorIdentityID != identityID || reply.AuthorDisplayName != "Sam" || !reply.AuthorVerified {
 		t.Fatalf("verified reply identity = %q, %q, %t, %v", reply.AuthorIdentityID, reply.AuthorDisplayName, reply.AuthorVerified, err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='restricted' WHERE id=$1`, f.setup.PublicURLID); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='restricted' WHERE id=$1`, publicURL.ID); err != nil {
 		t.Fatal(err)
 	}
 	actor.VisitAllowed = false
 	shareSecret := []byte("0123456789abcdefghijklmnopqrstuv")
 	share, err := database.CreateShare(t.Context(), CreateShareRequest{
-		PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
+		PreviewID: preview.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID,
 		IdempotencyKey: "nonmember-share", SecretFingerprint: sha256.Sum256(shareSecret), ExpiresAt: now.Add(time.Hour),
-		PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: f.setup.PublicURLID, ExpectedMutationRevision: 2}},
+		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision}},
 	}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -205,12 +299,12 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	shareCookie := []byte("abcdefghijklmnopqrstuvwxyz012345")
 	digest := sha256.Sum256(shareCookie)
 	if _, err := controlstatedb.New(database.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
-		TokenDigest: digest[:], PublicURLID: f.setup.PublicURLID, CreatedAt: timestamptz(now), ShareID: share.ID,
+		TokenDigest: digest[:], PublicURLID: publicURL.ID, CreatedAt: timestamptz(now), ShareID: share.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	actor.ShareID, actor.CookieSecret = share.ID, shareCookie
-	sharedReport, err := database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
+	sharedReport, err := database.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "Suggestion through a share",
 		Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 		SourceAtReport: feedbackTestSource(t), IdempotencyKey: "signed-link-report", Actor: actor,
@@ -220,27 +314,32 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	}
 	actor.ShareID, actor.CookieSecret = "", nil
 	actor.TeamMember = true
-	if _, _, err := database.ReviewerFeedbackScope(t.Context(), f.authentication(), preview.ID, actor, now); !errors.Is(err, ErrFeedbackAccess) {
+	if _, _, err := database.ReviewerFeedbackScope(t.Context(), auth, preview.ID, actor, now); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("nonmember used team access without a team grant: %v", err)
 	}
 }
 
 func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	auth := browserTestAuthentication(t, database, f.setup.PublicURLID, now)
-	issued := browserTestControlSession(t, database, f.request.ActingIdentityID, now)
-	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "browser-multi-host", now)
+	database, now := newControlStateIntegrationDatabase(t, "browser-multi-host")
+	request := oidcRouteRequest(t, database, now)
+	publicURL := createTestPublicURL(t, database, request, now)
+	auth := browserTestAuthentication(t, database, publicURL.ID, now)
+	issued := browserTestControlSession(t, database, request.ActingIdentityID, now)
+	prepareVisitorTokenKeys(t, database, now)
+	preview, err := database.CreatePreview(t.Context(), publicURL.TeamID, request.ActingIdentityID, "browser-multi-host", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID,
-		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2,
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID,
+		IdentityID: request.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision,
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	const otherID = "public_url_browser_api"
+	otherID, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sealed, err := database.sealSecret(publicURLRequestDigestContext(otherID), make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -248,21 +347,21 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_urls (
 		id, team_id, domain_id, created_by_identity_id, idempotency_key,
 		request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
-		target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
+		target, public_url_scope, membership_id, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, created_at, updated_at)
 		SELECT $1, team_id, domain_id, created_by_identity_id, 'browser-api', $2, $3,
-		'api-session.example.test', target, public_url_scope, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
-		FROM control.public_urls WHERE id = $5`, otherID, sealed, database.storageKey.CurrentID(), now, f.setup.PublicURLID); err != nil {
+		'api-session.example.test', target, public_url_scope, membership_id, purpose, policy_revision, ip_policy, lifecycle_state, dns_state, $4, $4
+		FROM control.public_urls WHERE id = $5`, otherID, sealed, database.storageKey.CurrentID(), now, publicURL.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: otherID, TeamID: f.request.TeamID,
-		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 1,
+		PreviewID: preview.ID, PublicURLID: otherID, TeamID: publicURL.TeamID,
+		IdentityID: request.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: 1,
 	}, now); err != nil {
 		t.Fatal(err)
 	}
 	insertTestPublishRun(t, database, testPublishRun{
-		ID: "pr_browser_api", PublicURLID: otherID, TeamID: f.request.TeamID,
-		MembershipID: f.request.MembershipID, ActingIdentityID: f.request.ActingIdentityID,
+		ID: "pr_browser_api", PublicURLID: otherID, TeamID: publicURL.TeamID,
+		MembershipID: publicURL.MembershipID, ActingIdentityID: request.ActingIdentityID,
 		CertificateCacheKey: "certificate_session", CertificateScope: "public-url",
 		CertificateIdentifiers: []string{"api-session.example.test"}, ChallengeMethod: "dns-01",
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
@@ -272,30 +371,36 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 		t.Fatal(err)
 	}
 	handoff, err := database.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/settings",
+		PreviewID: preview.ID, PublicURLID: publicURL.ID, ReturnPath: "/settings",
 	}, BrowserAccessSession{
-		IdentityID: f.request.ActingIdentityID, DisplayName: "Sam", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
+		IdentityID: request.ActingIdentityID, DisplayName: "Sam", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
 		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour),
 	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, path, next, _, _, err := database.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
-	if err != nil || path != "/settings" || !strings.HasPrefix(next, "https://api-session.example.test/__tnl/team/handoff/") {
-		t.Fatalf("first host returned %q, %q, %v", path, next, err)
+	first, err := database.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
+	if err != nil || first.ReturnPath != "/settings" || first.NextUrl == nil || !strings.HasPrefix(*first.NextUrl, "https://api-session.example.test/__tnl/team/handoff/") {
+		t.Fatalf("first host returned %q, %v, %v", first.ReturnPath, first.NextUrl, err)
 	}
-	otherTicket := strings.TrimPrefix(next, "https://api-session.example.test/__tnl/team/handoff/")
-	otherCookie, _, finish, _, _, err := database.RedeemBrowserHandoff(t.Context(), browserTestAuthentication(t, database, otherID, now), otherTicket, now)
-	if err != nil || otherCookie != cookie || finish != "https://route-session.example.test/settings" {
-		t.Fatalf("other host handoff = %t, %q, %v", otherCookie == cookie, finish, err)
+	if first.Issued.Permission.Scope != (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}) {
+		t.Fatal("first host prepared permission for another URL")
 	}
-	if _, err := database.BrowserSession(t.Context(), otherID, cookie, now); err != nil {
+	otherTicket := strings.TrimPrefix(*first.NextUrl, "https://api-session.example.test/__tnl/team/handoff/")
+	other, err := database.RedeemBrowserHandoffWithPermission(t.Context(), browserTestAuthentication(t, database, otherID, now), testVisitorIssuer, otherTicket, "", "", now)
+	if err != nil || other.CookieSecret != first.CookieSecret || other.NextUrl == nil || *other.NextUrl != "https://"+publicURL.CanonicalHostname+"/settings" {
+		t.Fatalf("other host handoff = %t, %v, %v", other.CookieSecret == first.CookieSecret, other.NextUrl, err)
+	}
+	if other.Issued.Permission.Scope != (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: otherID}) {
+		t.Fatal("second host reused first host's visitor permission")
+	}
+	if _, err := database.BrowserSession(t.Context(), otherID, first.CookieSecret, now); err != nil {
 		t.Fatalf("other host browser session: %v", err)
 	}
-	if err := database.RevokeBrowserSession(t.Context(), otherID, cookie, now); err != nil {
+	if err := database.RevokeBrowserSession(t.Context(), otherID, first.CookieSecret, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.BrowserSession(t.Context(), f.setup.PublicURLID, cookie, now); !errors.Is(err, ErrPreviewAccess) {
+	if _, err := database.BrowserSession(t.Context(), publicURL.ID, first.CookieSecret, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("other hostname's logout left session usable: %v", err)
 	}
 }
@@ -356,6 +461,7 @@ func TestIntegrationAliasOwnerBrowserHandoffs(t *testing.T) {
 				t.Fatal(err)
 			}
 			auth := browserTestAuthentication(t, d, url.ID, now)
+			prepareVisitorTokenKeys(t, d, now)
 			session := browserTestControlSession(t, d, request.ActingIdentityID, now)
 			var handoff BrowserHandoff
 			var err error
@@ -378,17 +484,17 @@ func TestIntegrationAliasOwnerBrowserHandoffs(t *testing.T) {
 			}
 			wrong := auth
 			wrong.PublishRunID = "pr_replacement"
-			if _, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), wrong, handoff.Token, now); err == nil {
+			if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), wrong, testVisitorIssuer, handoff.Token, "", "", now); err == nil {
 				t.Fatal("replacement run redeemed the alias handoff")
 			}
-			cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
+			redemption, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
 			if err != nil {
 				t.Fatalf("alias owner handoff redemption: %v", err)
 			}
-			if got, err := d.BrowserSession(t.Context(), auth.PublicURLID, cookie, now); err != nil || got.IdentityID != request.ActingIdentityID {
+			if got, err := d.BrowserSession(t.Context(), auth.PublicURLID, redemption.CookieSecret, now); err != nil || got.IdentityID != request.ActingIdentityID {
 				t.Fatalf("alias owner session: %+v, %v", got, err)
 			}
-			if _, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now); !errors.Is(err, ErrPreviewAccess) {
+			if _, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now); !errors.Is(err, ErrPreviewAccess) {
 				t.Fatalf("alias handoff replay: %v", err)
 			}
 		})

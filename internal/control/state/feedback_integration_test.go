@@ -10,19 +10,20 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T) {
-	f := newPublishRunFixture(t)
-	d, now := f.database, f.now
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
-		t.Fatal(err)
-	}
-	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "combined-feedback", now)
+	d, now := newControlStateIntegrationDatabase(t, "combined-feedback")
+	request := oidcRouteRequest(t, d, now)
+	publicURL := createTestPublicURL(t, d, request, now)
+	auth := browserTestAuthentication(t, d, publicURL.ID, now)
+	prepareVisitorTokenKeys(t, d, now)
+	preview, err := d.CreatePreview(t.Context(), publicURL.TeamID, request.ActingIdentityID, "combined-feedback", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID, IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}, now); err != nil {
+	if _, err := d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, IdentityID: request.ActingIdentityID, PolicyRevision: uint64(publicURL.PolicyRevision), ExpectedMutationRevision: publicURL.MutationRevision}, now); err != nil {
 		t.Fatal(err)
 	}
 	identity := "00000000-0000-4000-8000-000000000002"
@@ -31,24 +32,32 @@ func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T)
 		t.Fatal(err)
 	}
 	session := browserTestControlSession(t, d, identity, now)
-	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/"}, BrowserAccessSession{IdentityID: identity, DisplayName: "Verified reviewer", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(), AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour)}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), f.authentication(), handoff.Token, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	browser, err := base64.RawURLEncoding.DecodeString(cookie)
+	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PreviewID: preview.ID, PublicURLID: publicURL.ID, ReturnPath: "/"}, BrowserAccessSession{IdentityID: identity, DisplayName: "Verified reviewer", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(), AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secret := []byte(strings.Repeat("s", 32))
-	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID, IdempotencyKey: "combined-share", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: now.Add(time.Hour), PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: f.setup.PublicURLID, ExpectedMutationRevision: 2}}}, now)
+	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: publicURL.TeamID, ActingIdentityID: request.ActingIdentityID, IdempotencyKey: "combined-share", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: now.Add(time.Hour), PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: publicURL.ID, ExpectedMutationRevision: publicURL.MutationRevision}}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := f.authentication()
+	shareCookie := []byte(strings.Repeat("c", 32))
+	digest := sha256.Sum256(shareCookie)
+	if _, err := controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{TokenDigest: digest[:], PublicURLID: publicURL.ID, CreatedAt: timestamptz(now), ShareID: share.ID}); err != nil {
+		t.Fatal(err)
+	}
+	redemption, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, share.ID, base64.RawURLEncoding.EncodeToString(shareCookie), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redemption.Issued.Permission.Subject != (visitortoken.Share{ShareID: share.ID}) {
+		t.Fatal("nonmember feedback sign-in received a browser visitor grant")
+	}
+	cookie := redemption.CookieSecret
+	browser, err := base64.RawURLEncoding.DecodeString(cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, BrowserCookieSecret: browser, ShareID: share.ID, ShareSecret: secret, IdentityID: "forged identity", DisplayName: "forged name", TeamMember: true, VisitAllowed: true}
 	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", AuthorDisplayName: "unverified supplied name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
 	if err != nil || thread.AuthorIdentityID != identity || thread.AuthorDisplayName != "Verified reviewer" || !thread.AuthorVerified {
@@ -61,7 +70,7 @@ func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T)
 	if _, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: cookie, ShareID: share.ID, ShareSecret: secret}, now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("feedback's combined credentials crossed HTTP exclusive selection", err)
 	}
-	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now); err != nil {
+	if _, err := d.RevokeShare(t.Context(), share.ID, request.ActingIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "revoked", IdempotencyKey: "revoked-combined-reply", Actor: actor}, now); !errors.Is(err, ErrFeedbackAccess) {

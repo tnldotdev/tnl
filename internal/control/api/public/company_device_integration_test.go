@@ -178,11 +178,11 @@ func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T
 		t.Fatal("company public visitor handoff", err)
 	}
 	auth := controlstate.PublishRunAuthentication{PublicURLID: u.ID, PublishRunID: run.PublishRunID, PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(ctx, auth, handoff.Token, time.Now())
+	redemption, err := d.RedeemBrowserHandoffWithPermission(ctx, auth, f.server.URL, handoff.Token, "", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	permission, err := d.BrowserAuthorizationForRun(ctx, auth, cookie, time.Now())
+	permission, err := d.BrowserAuthorizationForRun(ctx, auth, redemption.CookieSecret, time.Now())
 	if err != nil || !permission.VisitAllowed {
 		t.Fatal("company public visitor permission", permission, err)
 	}

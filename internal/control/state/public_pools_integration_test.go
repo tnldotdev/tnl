@@ -13,8 +13,23 @@ import (
 )
 
 func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing.T) {
-	d, now, base, leases := newPublishRunPrerequisites(t)
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET publisher_pool=true WHERE id=$1`, base.PublicURLID); err != nil {
+	d, now := newControlStateIntegrationDatabase(t, "pool-browser")
+	creation := oidcRouteRequest(t, d, now)
+	u := createTestPublicURL(t, d, creation, now)
+	prepareVisitorTokenKeys(t, d, now)
+	leases := make(map[string]RelayLease)
+	for slot := range publishRunConnectionCount {
+		registration := relayLifecycleRegistration(fmt.Sprintf("pool-browser-%d", slot))
+		registration.ConnectionCapacity = 10
+		lease, err := d.RegisterRelay(t.Context(), registration, now, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leases[lease.RelayServiceID] = lease
+	}
+	base := PublishRunRequest{PublicURLID: u.ID, TeamID: u.TeamID, ActingIdentityID: creation.ActingIdentityID,
+		MembershipID: u.MembershipID, PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision}
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET publisher_pool=true WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
 	var runs []publishRunFixture
@@ -69,10 +84,11 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), runs[1].authentication(), handoff.Token, now)
+	redemption, err := d.RedeemBrowserHandoffWithPermission(t.Context(), runs[1].authentication(), testVisitorIssuer, handoff.Token, "", "", now)
 	if err != nil {
 		t.Fatalf("pool sibling could not redeem host-bound browser handoff: %v", err)
 	}
+	cookie := redemption.CookieSecret
 	var issuances []string
 	for _, run := range runs {
 		var issuance string

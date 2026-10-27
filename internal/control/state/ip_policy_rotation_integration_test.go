@@ -122,6 +122,7 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	issued := browserTestControlSession(t, d, r.ActingIdentityID, now)
+	prepareVisitorTokenKeys(t, d, now)
 	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: u.ID, PublishRunID: auth.PublishRunID, ReturnPath: "/settings"}, BrowserAccessSession{
 		IdentityID: r.ActingIdentityID, DisplayName: "Example user", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
 		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour),
@@ -157,11 +158,11 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 	if err != nil || login.Verifier != verifier {
 		t.Fatal("browser verifier failed after key retirement", err)
 	}
-	cookie, _, _, _, _, err := reopened.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
+	redemption, err := reopened.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", now)
 	if err != nil {
 		t.Fatal("browser handoff failed after key retirement", err)
 	}
-	session, err := reopened.BrowserSession(t.Context(), u.ID, cookie, now)
+	session, err := reopened.BrowserSession(t.Context(), u.ID, redemption.CookieSecret, now)
 	if err != nil || session.AccessToken != issued.AccessToken.String() || session.RefreshToken != issued.RefreshToken.String() {
 		t.Fatal("browser access/refresh pair failed after key retirement", err)
 	}

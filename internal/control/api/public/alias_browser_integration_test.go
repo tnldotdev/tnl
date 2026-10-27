@@ -212,6 +212,16 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// a bad share session cannot consume the browser ticket. the reviewer can
+	// correct the share credential without signing in again.
+	if _, err := client.RedeemBrowserHandoff(ctx, run.PublishRunID, run.PublishRunNumber, handoff.Token, share.ID, strings.Repeat("A", 43), run.PublishRunToken); err == nil {
+		t.Fatal("bad share prepared visitor permission")
+	} else {
+		var problem *clientcontrol.ProblemError
+		if !errors.As(err, &problem) || problem.Status != 403 {
+			t.Fatalf("bad share should be denied before ticket consumption: %v", err)
+		}
+	}
 	installed, err := client.RedeemBrowserHandoff(ctx, run.PublishRunID, run.PublishRunNumber, handoff.Token, share.ID, shareSession.CookieSecret, run.PublishRunToken)
 	if err != nil || installed.CookieSecret == "" || installed.Permission.VisitorToken == "" {
 		t.Fatal("share reviewer sign-in failed before visitor handoff", err)

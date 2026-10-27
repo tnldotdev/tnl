@@ -111,7 +111,7 @@ type BrowserAccessStore interface {
 	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
-	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
+	RedeemBrowserHandoffWithPermission(context.Context, controlstate.PublishRunAuthentication, string, string, string, string, time.Time) (controlstate.BrowserHandoffRedemption, error)
 	BrowserAuthorizationForRun(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (controlstate.VisitorPermission, error)
 	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error

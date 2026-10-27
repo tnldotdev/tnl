@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 func finalVisitorRun(t *testing.T, protocol string) (*publishRunFixture, PublishRunAuthentication) {
@@ -214,7 +215,7 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 }
 
-func finalBrowserSession(t *testing.T, f *publishRunFixture, auth PublishRunAuthentication, previewID, identityID string) (string, ControlSession) {
+func finalBrowserSession(t *testing.T, f *publishRunFixture, auth PublishRunAuthentication, previewID, identityID, shareID, shareSecret string) (string, ControlSession) {
 	t.Helper()
 	d := f.database
 	tx, err := d.pool.Begin(t.Context())
@@ -233,14 +234,17 @@ func finalBrowserSession(t *testing.T, f *publishRunFixture, auth PublishRunAuth
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now)
+	redemption, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, shareID, shareSecret, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, err = d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now); !errors.Is(err, ErrPreviewAccess) {
+	if shareID != "" && redemption.Issued.Permission.Subject != (visitortoken.Share{ShareID: shareID}) {
+		t.Fatal("outsider received a browser visitor grant")
+	}
+	if _, err = d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, shareID, shareSecret, f.now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("handoff replay: %v", err)
 	}
-	return cookie, issued
+	return redemption.CookieSecret, issued
 }
 
 func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRevocation(t *testing.T) {
@@ -255,7 +259,22 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 		t.Fatal(err)
 	}
 	visitor := finalVisitorIdentity(t, d, f.now, "reviewer@example.test")
-	cookie, issued := finalBrowserSession(t, f, auth, preview.ID, visitor)
+	prepareVisitorTokenKeys(t, d, f.now)
+	shareCookie := bytes.Repeat([]byte{3}, 32)
+	shareSecret := bytes.Repeat([]byte{4}, 32)
+	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: owner,
+		IdempotencyKey: "final-browser-share", SecretFingerprint: sha256.Sum256(shareSecret), ExpiresAt: f.now.Add(time.Hour),
+		PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: auth.PublicURLID, ExpectedMutationRevision: 2}}}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(shareCookie)
+	if _, err := controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
+		TokenDigest: digest[:], PublicURLID: auth.PublicURLID, CreatedAt: timestamptz(f.now), ShareID: share.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cookie, issued := finalBrowserSession(t, f, auth, preview.ID, visitor, share.ID, base64.RawURLEncoding.EncodeToString(shareCookie))
 	p, err := d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now)
 	if err != nil || p.IdentityID != visitor || p.VisitAllowed {
 		t.Fatalf("identity alone admitted: %+v %v", p, err)
@@ -359,15 +378,17 @@ func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t 
 func TestIntegrationFinalVisitorAdminBrowserHandoffHasIndependentSessionAndFollowsCLIRevocation(t *testing.T) {
 	f, auth := finalVisitorRun(t, "http")
 	d := f.database
+	prepareVisitorTokenKeys(t, d, f.now)
 	parent := newOIDCSession(t, d, f.now)
 	handoff, host, err := d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, f.now)
 	if err != nil || host == "" {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, f.now)
+	redemption, err := d.RedeemBrowserHandoffWithPermission(t.Context(), auth, testVisitorIssuer, handoff.Token, "", "", f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	cookie := redemption.CookieSecret
 	session, err := d.BrowserSession(t.Context(), auth.PublicURLID, cookie, f.now)
 	if err != nil || session.AccessToken == parent.AccessToken.String() || session.RefreshToken == parent.RefreshToken.String() {
 		t.Fatal("CLI tokens reused for browser", err)

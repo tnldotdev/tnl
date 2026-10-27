@@ -258,39 +258,27 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	if !ok {
 		return
 	}
-	cookie, path, next, bridge, _, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
+	shareID, shareSecret := "", ""
+	if body.ShareId != nil {
+		shareID, shareSecret = *body.ShareId, *body.ShareSecret
+	}
+	result, err := h.browserAccess.RedeemBrowserHandoffWithPermission(request.Context(), auth, h.config.ControlURL, body.Token, shareID, shareSecret, time.Now())
 	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
-		writeControlStateProblem(response, "redeem browser handoff", err)
+		if errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrVisitorSigningKey) || errors.Is(err, controlstate.ErrVisitorPolicy) {
+			writeVisitorTokenProblem(response, err)
+		} else {
+			writeControlStateProblem(response, "redeem browser handoff", err)
+		}
 		return
 	}
-	if err != nil || !validBrowserReturnPath(path) {
+	if err != nil || !validBrowserReturnPath(result.ReturnPath) {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "browser handoff expired")
-		return
-	}
-	permission, err := h.redeemedBrowserHandoffPermission(request.Context(), auth.PublicURLID, cookie, body)
-	if err != nil {
-		writeVisitorTokenProblem(response, err)
-		return
-	}
-	session, err := h.browserAccess.BrowserSession(request.Context(), auth.PublicURLID, cookie, time.Now())
-	if err != nil {
-		writeControlStateProblem(response, "read redeemed browser session", err)
 		return
 	}
 	// the handoff deadline limits ticket redemption, not the browser sign-in.
 	// the signed visitor permission retains its separate, shorter deadline.
-	writeJSON(response, http.StatusOK, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: path, NextUrl: &next, Bridge: &bridge, ExpiresAt: session.ExpiresAt, Permission: permission})
-}
-
-func (h *handler) redeemedBrowserHandoffPermission(ctx context.Context, urlID, cookie string, body controlv1.BrowserHandoffRequest) (controlv1.VisitorTokenResponse, error) {
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: urlID}
-	permission, err := h.redeemedVisitorPermission(ctx, scope, controlstate.BrowserSessionTokenSource{Secret: cookie})
-	if errors.Is(err, controlstate.ErrVisitorPermission) && body.ShareId != nil && body.ShareSecret != nil {
-		// sign-in establishes identity for feedback; the share remains the
-		// independent authority to visit when this person has no team grant.
-		return h.redeemedVisitorPermission(ctx, scope, controlstate.ShareSessionTokenSource{ShareID: *body.ShareId, Secret: *body.ShareSecret})
-	}
-	return permission, err
+	result.BrowserHandoffResponse.Permission = visitorTokenResponse(result.Issued)
+	writeJSON(response, http.StatusOK, result.BrowserHandoffResponse)
 }
 
 func (h *handler) refreshBrowserSignIn(ctx context.Context, publicURLID, token string) (controlstate.BrowserAccessSession, error) {

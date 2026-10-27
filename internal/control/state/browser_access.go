@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const browserSessionLifetime = 24 * time.Hour
@@ -268,50 +269,73 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath, Origin: "https://" + publicURL.CanonicalHostname}, nil
 }
 
-func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (string, string, string, bool, time.Time, error) {
+type BrowserHandoffRedemption struct {
+	controlv1.BrowserHandoffResponse
+	Issued IssuedVisitorToken
+}
+
+func (BrowserHandoffRedemption) String() string   { return "public URL browser handoff" }
+func (BrowserHandoffRedemption) GoString() string { return "public URL browser handoff" }
+
+// redeem the one-use ticket, bind the browser session, and retain the signing
+// key in one transaction. a failed preparation leaves the ticket available.
+func (d *Database) RedeemBrowserHandoffWithPermission(ctx context.Context, auth PublishRunAuthentication, issuer, token, shareID, shareSecret string, now time.Time) (BrowserHandoffRedemption, error) {
 	digest, err := browserDigest(token)
 	if err != nil {
-		return "", "", "", false, time.Time{}, err
+		return BrowserHandoffRedemption{}, err
 	}
-	tx, err := d.pool.Begin(ctx)
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (BrowserHandoffRedemption, error) {
+		return d.redeemBrowserHandoffTransaction(ctx, auth, issuer, digest, shareID, shareSecret, at)
+	})
+}
+
+func (d *Database) redeemBrowserHandoffTransaction(ctx context.Context, auth PublishRunAuthentication, issuer string, digest []byte, shareID, shareSecret string, now time.Time) (result BrowserHandoffRedemption, retErr error) {
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollback(ctx, tx, "redeem browser handoff", &retErr)()
 	queries := controlstatedb.New(tx)
 	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
 	if err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
 	if publicURL.Purpose != "app" && publicURL.Purpose != "alias" || publicURL.ServiceProtocol != "http" {
-		return "", "", "", false, time.Time{}, ErrPreviewAccess
+		return result, ErrPreviewAccess
 	}
 	if _, err := d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
 	row, err := queries.ConsumeBrowserAccessHandoff(ctx, controlstatedb.ConsumeBrowserAccessHandoffParams{
 		Now: timestamptz(now), TokenDigest: digest, PublicURLID: auth.PublicURLID, PublishRunID: auth.PublishRunID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", false, time.Time{}, ErrPreviewAccess
+		return result, ErrPreviewAccess
 	}
 	if err != nil {
-		return "", "", "", false, time.Time{}, fmt.Errorf("controlstate: redeem browser access: %w", err)
+		return result, fmt.Errorf("controlstate: redeem browser access: %w", err)
 	}
 	cookie, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.CookieCiphertext)
 	if err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
 	if err := queries.BindBrowserSessionHost(ctx, controlstatedb.BindBrowserSessionHostParams{SessionDigest: row.SessionDigest, PublicURLID: auth.PublicURLID, HandoffDigest: digest}); err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
 	if _, err := d.browserPermission(ctx, queries, auth.PublicURLID, string(cookie), now); err != nil {
-		return "", "", "", false, time.Time{}, err
+		return result, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", "", "", false, time.Time{}, err
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID}
+	result.Issued, err = d.issueVisitorToken(ctx, tx, issuer, scope, BrowserSessionTokenSource{Secret: string(cookie)}, now)
+	if errors.Is(err, ErrVisitorPermission) && shareID != "" && shareSecret != "" {
+		// sign-in supplies feedback identity; the share grants visitor access.
+		result.Issued, err = d.issueVisitorToken(ctx, tx, issuer, scope, ShareSessionTokenSource{ShareID: shareID, Secret: shareSecret}, now)
 	}
-	return string(cookie), row.ReturnPath, row.RedirectUrl, row.Bridge, row.ExpiresAt.Time, nil
+	if err != nil {
+		return BrowserHandoffRedemption{}, err
+	}
+	result.BrowserHandoffResponse = controlv1.BrowserHandoffResponse{CookieSecret: string(cookie), ReturnPath: row.ReturnPath, NextUrl: &row.RedirectUrl, Bridge: &row.Bridge, ExpiresAt: row.ExpiresAt.Time}
+	return result, tx.Commit(ctx)
 }
 
 func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAccessSession, error) {

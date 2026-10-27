@@ -17,9 +17,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -32,40 +30,53 @@ type browserFlowStore struct {
 	binding  []byte
 }
 
-type shareReviewerTokenIssuer struct {
+type handoffPreparationStore struct {
 	PublicURLStore
-	requested []controlstate.VisitorTokenSource
+	BrowserAccessStore
+	issued               controlstate.BrowserHandoffRedemption
+	err                  error
+	shareID, shareSecret string
 }
 
-func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
-	s.requested = append(s.requested, source)
-	if _, ok := source.(controlstate.BrowserSessionTokenSource); ok {
-		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
-	}
-	if share, ok := source.(controlstate.ShareSessionTokenSource); ok && share.ShareID == "shr_0123456789abcdefghijkl" && share.Secret == "share-secret" {
-		return controlstate.IssuedVisitorToken{Token: visitortoken.Token("share-permission"), Permission: visitortoken.Permission{
-			Scope: scope, Hostname: "preview.example.test", Port: 443, VisitorPolicyRevision: 1,
-			Subject: visitortoken.Share{ShareID: share.ShareID}, ExpiresAt: now.Add(time.Minute)}}, nil
-	}
-	return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
+func (s *handoffPreparationStore) PublishRunAuthentication(_ context.Context, run string, number uint64, _ credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error) {
+	return controlstate.PublishRunAuthentication{PublicURLID: "url_0123456789abcdefghijkl", PublishRunID: run, PublishRunNumber: number}, nil
 }
 
-func TestShareReviewerBrowserHandoffKeepsIdentityAndShareAccessSeparate(t *testing.T) {
-	store := &shareReviewerTokenIssuer{}
-	h := &handler{store: store, config: Config{ControlURL: "https://control.example.test"}}
-	id, secret := "shr_0123456789abcdefghijkl", "share-secret"
-	result, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{ShareId: &id, ShareSecret: &secret})
-	if err != nil || result.VisitorToken != "share-permission" || len(store.requested) != 2 {
-		t.Fatal("sign-in without a visitor grant displaced share access", err)
+func (s *handoffPreparationStore) RedeemBrowserHandoffWithPermission(_ context.Context, _ controlstate.PublishRunAuthentication, issuer, ticket, shareID, shareSecret string, _ time.Time) (controlstate.BrowserHandoffRedemption, error) {
+	if issuer != "https://control.example.test" || ticket != "ticket" {
+		return controlstate.BrowserHandoffRedemption{}, errors.New("wrong handoff inputs")
 	}
-	if _, ok := store.requested[0].(controlstate.BrowserSessionTokenSource); !ok {
-		t.Fatal("share replaced the browser sign-in identity")
-	}
-	if _, ok := store.requested[1].(controlstate.ShareSessionTokenSource); !ok {
-		t.Fatal("browser sign-in was mistaken for share-backed access")
-	}
-	if _, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{}); !errors.Is(err, controlstate.ErrVisitorPermission) {
-		t.Fatal("sign-in alone granted visitor access", err)
+	s.shareID, s.shareSecret = shareID, shareSecret
+	return s.issued, s.err
+}
+
+func TestBrowserHandoffPreparationHTTPClassification(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"expired", controlstate.ErrPreviewAccess, 404, "not_found"},
+		{"denied", controlstate.ErrVisitorPermission, 403, "forbidden"},
+		{"signing unavailable", controlstate.ErrVisitorSigningKey, 503, "unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &handoffPreparationStore{err: test.err}
+			h := &handler{store: store, browserAccess: store, config: Config{ControlURL: "https://control.example.test"}}
+			id, secret := "shr_0123456789abcdefghijkl", "share-secret"
+			body, _ := json.Marshal(controlv1.BrowserHandoffRequest{Token: "ticket", PublishRunNumber: 1, ShareId: &id, ShareSecret: &secret})
+			request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			request.Header.Set("Authorization", "Bearer publish-token")
+			response := httptest.NewRecorder()
+			h.RedeemPreviewBrowserHandoff(response, request, "pr_browser")
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != test.status || problem.Code != test.code || store.shareID != id || store.shareSecret != secret {
+				t.Fatalf("handoff response = %d %s, share passed = %t: %v", response.Code, response.Body.String(), store.shareID == id, err)
+			}
+		})
 	}
 }
 
