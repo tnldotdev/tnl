@@ -210,6 +210,11 @@ the publisher's run-token-only delivery request requires two current relay claim
 with the same source before it returns the existing pair key. publisher
 preparation converts control's observation and expiry to a local request-start
 deadline; it cannot add serving time for a slow response or clock skew.
+the run-token-only candidate inventory returns at most 64 pair ID/generation
+references per page, without keys, subjects, or source addresses. it includes
+unclaimed pairs so background preparation can reconcile them later; neither a
+listed candidate nor a missed page changes serving authority. each pass restarts
+at the first page, and every binding still needs the checked delivery request.
 [connector preparation](../../../internal/connector/stream/peer_preparation.go)
 can sign, recover, and renew a pair in background work using the enrolled device
 or workload key. its test-only opt-in denies the existing ingress application

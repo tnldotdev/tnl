@@ -231,6 +231,9 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("pair escaped its exact ready run and two distinct leases")
 	}
 	assertNativeDeliveryID(t, d, first)
+	t.Run("bounded publisher discovery", func(t *testing.T) {
+		assertNativePairCandidatePages(t, d, first, run, now)
+	})
 	otherSession := newOIDCSession(t, d, now)
 	if otherSession.Identity.Identity.ID != principal.IdentityID || otherSession.SessionID == principal.SessionID {
 		t.Fatal("second session did not preserve the enrolled identity")

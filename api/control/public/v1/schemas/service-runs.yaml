@@ -5,6 +5,27 @@ schemas:
   ServiceRunID:
     type: string
     pattern: "^srun_[A-Za-z0-9]{22}$"
+  NativePeerPairCandidate:
+    type: object
+    additionalProperties: false
+    description: A pair to reconcile, not delivery authority or permission to open an application stream.
+    required: [pair_id, delivery_generation]
+    properties:
+      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+  NativePeerPairCandidates:
+    type: object
+    additionalProperties: false
+    required: [items]
+    properties:
+      items:
+        type: array
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairCandidate" }
+      next_after:
+        type: string
+        pattern: "^npp_[A-Za-z0-9]{22}$"
+        description: Continue after this pair ID; restart from the first page on the next reconciliation pass.
   NativePeerPairDelivery:
     type: object
     additionalProperties: false

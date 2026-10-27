@@ -1,4 +1,25 @@
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs:
+    get:
+      operationId: listNativePeerPairs
+      description: Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+        - name: after
+          in: query
+          schema: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      responses:
+        "200":
+          description: At most 64 candidate references, ordered by pair ID
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairCandidates" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery:
     post:
       operationId: deliverNativePeerPair

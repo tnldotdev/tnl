@@ -43,6 +43,8 @@ paths:
     $ref: "./paths/services.yaml#/paths/~1v1~1projects~1{project_key}~1services~1{service}"
   /v1/services/{service_id}/runs/{service_run_id}/start:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs~1{pair_id}~1delivery"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
@@ -478,6 +480,10 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRequest"
     NativePeerPair:
       $ref: "./schemas/connectors.yaml#/schemas/NativePeerPair"
+    NativePeerPairCandidate:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidate"
+    NativePeerPairCandidates:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidates"
     NativePeerPairDelivery:
       $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairDelivery"
     ServiceID:

@@ -215,6 +215,48 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	if delivered, err := api.PrepareDeviceNativePeerPair(ctx, service.ID, device.ID, request); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key || delivered.DeliveryId != pair.DeliveryId {
 		t.Fatal("device client lost signed delivery", err)
 	}
+	// candidates are discoverable before either relay claim, but contain no
+	// key, subject or source. the delivery endpoint still denies preparation.
+	discover := func(bearer, after string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/v1/services/"+service.ID+"/runs/"+run.RunID+"/native-peer-pairs"+after, nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("discovery may be cached")
+		}
+		return w
+	}
+	for _, bearer := range []string{"", "not-a-run-token", owner.AccessToken.String()} {
+		if w := discover(bearer, ""); w.Code == 200 || bytes.Contains(w.Body.Bytes(), []byte(pair.PairId)) {
+			t.Fatal("unauthorized discovery exposed a candidate", w.Code)
+		}
+	}
+	if w := discover(run.Token, "?after=invalid"); w.Code != 400 {
+		t.Fatal("invalid discovery cursor accepted", w.Code)
+	}
+	if w := discover(run.Token, ""); w.Code != 200 {
+		t.Fatal("publisher discovery failed", w.Code, w.Body.String())
+	} else {
+		var page controlv1.NativePeerPairCandidates
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].PairId != pair.PairId || page.Items[0].DeliveryGeneration != pair.DeliveryGeneration || page.NextAfter != nil {
+			t.Fatal("discovery lost the exact candidate", err)
+		}
+		for _, field := range []string{pair.Key, `"key"`, `"subject"`, `"source_ip"`, `"delivery_id"`} {
+			if bytes.Contains(w.Body.Bytes(), []byte(field)) {
+				t.Fatal("discovery disclosed delivery material")
+			}
+		}
+	}
+	if page, err := api.ListNativePeerPairs(ctx, service.ID, run.RunID, "", credentials.ServiceRunToken(run.Token)); err != nil || len(page.Items) != 1 || page.Items[0].PairId != pair.PairId {
+		t.Fatal("run-token client lost discovery", err)
+	}
+	if page, err := api.ListNativePeerPairs(ctx, service.ID, run.RunID, pair.PairId, credentials.ServiceRunToken(run.Token)); err != nil || len(page.Items) != 0 {
+		t.Fatal("run-token client lost the cursor", err)
+	}
 	deliveryPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/native-peer-pairs/" + pair.PairId + "/delivery"
 	deliver := func(bearer string, generation int64) *httptest.ResponseRecorder {
 		t.Helper()
@@ -256,6 +298,9 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDenied(otherRun.Token, pair.DeliveryGeneration)
+	if w := discover(otherRun.Token, ""); w.Code == 200 {
+		t.Fatal("another run token discovered the publisher's pairs")
+	}
 	var before int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM control.native_peer_pairs`).Scan(&before); err != nil {
 		t.Fatal(err)

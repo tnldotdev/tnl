@@ -198,6 +198,57 @@ func (q *Queries) LimitNativePeerPair(ctx context.Context, arg LimitNativePeerPa
 	return i, err
 }
 
+const listNativePeerPairCandidates = `-- name: ListNativePeerPairCandidates :many
+SELECT id,delivery_generation FROM control.native_peer_pairs
+WHERE service_id=$1 AND service_run_id=$2
+    AND run_number=$3 AND publisher_identity_id=$4
+    AND expires_at>$5 AND id>$6
+ORDER BY id LIMIT 65
+`
+
+type ListNativePeerPairCandidatesParams struct {
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	Now                 pgtype.Timestamptz
+	AfterID             string
+}
+
+type ListNativePeerPairCandidatesRow struct {
+	ID                 string
+	DeliveryGeneration int64
+}
+
+// candidates convey no delivery authority. the publisher checks each delivery
+// separately after the exact relay claims have been accepted.
+func (q *Queries) ListNativePeerPairCandidates(ctx context.Context, arg ListNativePeerPairCandidatesParams) ([]ListNativePeerPairCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listNativePeerPairCandidates,
+		arg.ServiceID,
+		arg.ServiceRunID,
+		arg.RunNumber,
+		arg.PublisherIdentityID,
+		arg.Now,
+		arg.AfterID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNativePeerPairCandidatesRow
+	for rows.Next() {
+		var i ListNativePeerPairCandidatesRow
+		if err := rows.Scan(&i.ID, &i.DeliveryGeneration); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockNativePeerPairForLegClaim = `-- name: LockNativePeerPairForLegClaim :one
 SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE id=$1 FOR UPDATE
 `

@@ -156,6 +156,21 @@ func (n *Native) DeliverNativePeerPair(ctx context.Context, serviceID, runID, pa
 	return control.DeliverNativePeerPair(ctx, serviceID, runID, pairID, generation, token)
 }
 
+// ListNativePeerPairs confines reconciliation to the selected service grant.
+// each candidate still needs its independently authorized delivery request.
+func (n *Native) ListNativePeerPairs(ctx context.Context, serviceID, runID, after string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
+	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
+		return controlv1.NativePeerPairCandidates{}, ErrScope
+	}
+	control, ok := n.NativeControl.(interface {
+		ListNativePeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error)
+	})
+	if !ok {
+		return controlv1.NativePeerPairCandidates{}, ErrScope
+	}
+	return control.ListNativePeerPairs(ctx, serviceID, runID, after, token)
+}
+
 // SavedService reads only the exact service selected by this signing
 // identity. a public URL or namespace grant cannot discover services.
 func (n *Native) SavedService(ctx context.Context) (controlv1.Service, error) {

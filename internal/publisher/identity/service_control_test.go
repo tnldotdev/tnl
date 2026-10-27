@@ -36,6 +36,11 @@ func (c *serviceBoundaryControl) DeliverNativePeerPair(_ context.Context, _, _, 
 	return controlv1.NativePeerPairDelivery{}, nil
 }
 
+func (c *serviceBoundaryControl) ListNativePeerPairs(_ context.Context, _, _, _ string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
+	c.token, c.calls = token, c.calls+1
+	return controlv1.NativePeerPairCandidates{}, nil
+}
+
 func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	n, _ := privateScopeFixture(t)
 	c := &serviceBoundaryControl{}
@@ -59,5 +64,11 @@ func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	}
 	if _, err := n.DeliverNativePeerPair(t.Context(), "another-service", "run", "pair", 1, token); !errors.Is(err, ErrScope) || c.calls != 3 {
 		t.Fatal("native peer delivery escaped its service grant", err)
+	}
+	if _, err := n.ListNativePeerPairs(t.Context(), service, "run", "", token); err != nil || c.token != token || c.calls != 4 {
+		t.Fatal("native peer discovery changed its run token", err)
+	}
+	if _, err := n.ListNativePeerPairs(t.Context(), "another-service", "run", "", token); !errors.Is(err, ErrScope) || c.calls != 4 {
+		t.Fatal("native peer discovery escaped its service grant", err)
 	}
 }

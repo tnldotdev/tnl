@@ -350,6 +350,9 @@ type Querier interface {
 	ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error)
 	ListIngressTransportIssuerCertificates(ctx context.Context, now pgtype.Timestamptz) ([]string, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
+	// candidates convey no delivery authority. the publisher checks each delivery
+	// separately after the exact relay claims have been accepted.
+	ListNativePeerPairCandidates(ctx context.Context, arg ListNativePeerPairCandidatesParams) ([]ListNativePeerPairCandidatesRow, error)
 	ListOpenPublishRuns(ctx context.Context, publicUrlID string) ([]ControlPublishRun, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)

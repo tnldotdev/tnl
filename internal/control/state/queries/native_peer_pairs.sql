@@ -2,6 +2,15 @@
 SELECT * FROM control.native_peer_pairs WHERE subject_kind=sqlc.arg(subject_kind)
     AND subject_id=sqlc.arg(subject_id) AND service_run_id=sqlc.arg(service_run_id) FOR UPDATE;
 
+-- name: ListNativePeerPairCandidates :many
+-- candidates convey no delivery authority. the publisher checks each delivery
+-- separately after the exact relay claims have been accepted.
+SELECT id,delivery_generation FROM control.native_peer_pairs
+WHERE service_id=sqlc.arg(service_id) AND service_run_id=sqlc.arg(service_run_id)
+    AND run_number=sqlc.arg(run_number) AND publisher_identity_id=sqlc.arg(publisher_identity_id)
+    AND expires_at>sqlc.arg(now) AND id>sqlc.arg(after_id)
+ORDER BY id LIMIT 65;
+
 -- name: ReplaceNativePeerPair :execrows
 DELETE FROM control.native_peer_pairs WHERE id=sqlc.arg(id);
 

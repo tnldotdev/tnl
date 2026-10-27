@@ -9,6 +9,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -140,6 +141,43 @@ func (h *handler) PrepareNativePeerPair(w http.ResponseWriter, r *http.Request, 
 
 func (h *handler) RenewNativePeerPair(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, pairID string) {
 	h.nativePair(w, r, serviceID, pairID)
+}
+
+func (h *handler) ListNativePeerPairs(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, params controlv1.ListNativePeerPairsParams) {
+	w.Header().Set("Cache-Control", "no-store")
+	after := ""
+	if params.After != nil {
+		after = *params.After
+		if !opaqueid.Valid(after, "npp_") {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid native peer pair cursor")
+			return
+		}
+	}
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return
+	}
+	store, ok := h.store.(interface {
+		ListNativePeerPairs(context.Context, string, string, string, string, time.Time) (controlstate.NativePeerPairCandidates, error)
+	})
+	if !ok {
+		writeProblem(w, 503, controlv1.Unavailable, "native peer pair discovery is unavailable")
+		return
+	}
+	page, err := store.ListNativePeerPairs(r.Context(), serviceID, runID, after, token, time.Now())
+	if err != nil {
+		serviceRunProblem(w, "list native peer pairs", err)
+		return
+	}
+	result := controlv1.NativePeerPairCandidates{Items: make([]controlv1.NativePeerPairCandidate, 0, len(page.Items))}
+	for _, item := range page.Items {
+		result.Items = append(result.Items, controlv1.NativePeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration})
+	}
+	if page.NextAfter != "" {
+		result.NextAfter = &page.NextAfter
+	}
+	writeJSON(w, 200, result)
 }
 
 func (h *handler) DeliverNativePeerPair(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {

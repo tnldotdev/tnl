@@ -179,3 +179,15 @@ func (c *Client) DeliverNativePeerPair(ctx context.Context, serviceID, runID, pa
 		return c.api.DeliverNativePeerPair(ctx, serviceID, runID, pairID, controlv1.DeliverNativePeerPairJSONRequestBody{DeliveryGeneration: generation}, editors...)
 	})
 }
+
+// ListNativePeerPairs reads bounded preparation hints using the run token,
+// independently of any person or connector credential retained by this client.
+func (c *Client) ListNativePeerPairs(ctx context.Context, serviceID, runID, after string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
+	params := &controlv1.ListNativePeerPairsParams{}
+	if after != "" {
+		params.After = &after
+	}
+	return request[controlv1.NativePeerPairCandidates](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListNativePeerPairs(ctx, serviceID, runID, params, editors...)
+	})
+}
