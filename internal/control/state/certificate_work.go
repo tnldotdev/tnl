@@ -248,6 +248,29 @@ func (d *Database) SaveACMEOrderWork(
 	return result, nil
 }
 
+// ReleaseStaleACMEOrderWork gives a replacement worker immediate ownership
+// after a concurrent install or authorization revision fences this worker's
+// save. only the exact still-current claim may release its own lease.
+func (d *Database) ReleaseStaleACMEOrderWork(ctx context.Context, work ACMEOrderWork, now time.Time) (bool, error) {
+	if !opaqueid.Valid(work.ID, opaqueid.IssuancePrefix) || work.WorkerID == "" {
+		return false, ErrACMEWorkStale
+	}
+	binding, err := checkedACMEWorkBinding(work.OrderRevision, work.WorkEpoch)
+	if err != nil {
+		return false, err
+	}
+	if err := d.requireOpen(); err != nil {
+		return false, err
+	}
+	count, err := controlstatedb.New(d.pool).ReleaseStaleACMEOrderWork(ctx, controlstatedb.ReleaseStaleACMEOrderWorkParams{
+		IssuanceID: work.ID, WorkOwner: text(work.WorkerID), WorkEpoch: binding.workerEpoch, Now: timestamptz(now),
+	})
+	if err != nil {
+		return false, fmt.Errorf("controlstate: release stale ACME order work: %w", err)
+	}
+	return count == 1, nil
+}
+
 func (d *Database) getACMEAccountByID(ctx context.Context, db controlstatedb.DBTX, accountID string) (ACMEAccount, error) {
 	var account controlstatedb.ControlAcmeAccount
 	err := db.QueryRow(ctx, `

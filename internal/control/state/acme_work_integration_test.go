@@ -143,7 +143,7 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if err != nil || issued.State != "waiting_for_install" || issued.CertificatePEM == "" {
 		t.Fatalf("certificate blocked on DNS cleanup: state=%q certificate=%t error=%v", issued.State, issued.CertificatePEM != "", err)
 	}
-	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "before-install", now.Add(time.Second), time.Second)
+	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "before-install", now.Add(time.Second), time.Minute)
 	if err != nil || !found || claimed.ID != prepared.ID || claimed.Authorizations[0].State != "valid" {
 		t.Fatalf("uninstalled cleanup claim: found=%t error=%v", found, err)
 	}
@@ -153,6 +153,22 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	claimed.Authorizations[0].State = "cleaning"
 	if _, err := database.SaveACMEOrderWork(t.Context(), claimed, now.Add(1500*time.Millisecond)); !errors.Is(err, ErrACMEWorkStale) {
 		t.Fatalf("cleanup overwrote concurrent certificate installation: %v", err)
+	}
+	wrong := claimed
+	wrong.WorkerID = "other-worker"
+	if released, err := database.ReleaseStaleACMEOrderWork(t.Context(), wrong, now.Add(1500*time.Millisecond)); err != nil || released {
+		t.Fatalf("another worker released the current cleanup claim: released=%t error=%v", released, err)
+	}
+	wrong = claimed
+	wrong.WorkEpoch++
+	if released, err := database.ReleaseStaleACMEOrderWork(t.Context(), wrong, now.Add(1500*time.Millisecond)); err != nil || released {
+		t.Fatalf("another work epoch released the current cleanup claim: released=%t error=%v", released, err)
+	}
+	if released, err := database.ReleaseStaleACMEOrderWork(t.Context(), claimed, now.Add(1500*time.Millisecond)); err != nil || !released {
+		t.Fatalf("stale cleanup could not release its own claim: released=%t error=%v", released, err)
+	}
+	if released, err := database.ReleaseStaleACMEOrderWork(t.Context(), claimed, now.Add(1500*time.Millisecond)); err != nil || released {
+		t.Fatalf("stale cleanup released a claim twice: released=%t error=%v", released, err)
 	}
 	current, found, err := database.ClaimACMEOrderWork(t.Context(), "after-install", now.Add(2*time.Second), time.Second)
 	if err != nil || !found || current.State != "installed" || current.Authorizations[0].State != "valid" {

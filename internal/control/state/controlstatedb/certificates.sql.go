@@ -865,6 +865,36 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 	return i, err
 }
 
+const releaseStaleACMEOrderWork = `-- name: ReleaseStaleACMEOrderWork :execrows
+UPDATE control.acme_orders
+SET work_owner = NULL,
+    work_expires_at = NULL
+WHERE id = $1
+  AND work_owner = $2
+  AND work_epoch = $3
+  AND work_expires_at > $4
+`
+
+type ReleaseStaleACMEOrderWorkParams struct {
+	IssuanceID string
+	WorkOwner  pgtype.Text
+	WorkEpoch  int64
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) ReleaseStaleACMEOrderWork(ctx context.Context, arg ReleaseStaleACMEOrderWorkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseStaleACMEOrderWork,
+		arg.IssuanceID,
+		arg.WorkOwner,
+		arg.WorkEpoch,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rotateACMEAccountKey = `-- name: RotateACMEAccountKey :exec
 UPDATE control.acme_accounts
 SET account_key_ciphertext = $1,

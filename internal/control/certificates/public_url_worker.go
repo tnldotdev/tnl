@@ -48,6 +48,7 @@ type PublicURLDNSChallenges interface {
 type PublicURLStore interface {
 	ClaimACMEOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.ACMEOrderWork, bool, error)
 	SaveACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (controlstate.ACMEOrderWork, error)
+	ReleaseStaleACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (bool, error)
 }
 
 type PublicURLWorker struct {
@@ -137,6 +138,15 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 	}
 	saved, saveErr := w.store.SaveACMEOrderWork(ctx, work, completedAt)
 	if saveErr != nil {
+		if errors.Is(saveErr, controlstate.ErrACMEWorkStale) && ctx.Err() == nil {
+			// certificate installation may advance the order revision while DNS
+			// cleanup is saving. release only this worker's exact claim so the
+			// installed order can resume cleanup without waiting out its lease.
+			release, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_, releaseErr := w.store.ReleaseStaleACMEOrderWork(release, work, completedAt)
+			cancel()
+			saveErr = errors.Join(saveErr, releaseErr)
+		}
 		if ctx.Err() == nil {
 			w.observeWork(ctx, certificateKind(work), string(stage), "save_failed", started)
 			w.logWork(ctx, work, string(stage), "save_failed", completedAt)

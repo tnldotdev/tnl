@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -244,6 +245,30 @@ func TestPublicURLWorkerDNSCleanupFailurePreservesRetryAndRenewal(t *testing.T) 
 	}
 }
 
+func TestPublicURLWorkerReleasesOnlyItsStaleCleanupClaim(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(fmt.Sprint(stale), func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Second)
+			api, work := dnsSafetyOrder(t, "waiting_for_install", now)
+			failure := errors.New("storage write failed")
+			if stale {
+				failure = controlstate.ErrACMEWorkStale
+			}
+			store := &certificateStoreStub{work: work, saveErr: failure}
+			worker := &PublicURLWorker{store: store, config: PublicURLConfig{DNSChallenges: &dnsChallengesStub{}},
+				now: func() time.Time { return now }, client: func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }}
+			found, err := worker.processOne(t.Context())
+			wantReleases := 0
+			if stale {
+				wantReleases = 1
+			}
+			if !found || !errors.Is(err, failure) || store.releases != wantReleases {
+				t.Fatalf("cleanup save: found=%t error=%v releases=%d", found, err, store.releases)
+			}
+		})
+	}
+}
+
 func TestPublicURLWorkerTerminalDNSCleanupErrorDoesNotRevokeIssuedCertificate(t *testing.T) {
 	for _, phase := range []string{"waiting_for_install", "installed"} {
 		t.Run(phase, func(t *testing.T) {
@@ -304,11 +329,13 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 }
 
 type certificateStoreStub struct {
-	work  controlstate.ACMEOrderWork
-	saved controlstate.ACMEOrderWork
-	saves int
-	claim func(context.Context) (controlstate.ACMEOrderWork, bool, error)
-	save  func(controlstate.ACMEOrderWork)
+	work     controlstate.ACMEOrderWork
+	saved    controlstate.ACMEOrderWork
+	saves    int
+	saveErr  error
+	releases int
+	claim    func(context.Context) (controlstate.ACMEOrderWork, bool, error)
+	save     func(controlstate.ACMEOrderWork)
 }
 
 func (s *certificateStoreStub) ClaimACMEOrderWork(ctx context.Context, _ string, _ time.Time, _ time.Duration) (controlstate.ACMEOrderWork, bool, error) {
@@ -325,5 +352,13 @@ func (s *certificateStoreStub) SaveACMEOrderWork(_ context.Context, work control
 	if s.save != nil {
 		s.save(work)
 	}
-	return work, nil
+	return work, s.saveErr
+}
+
+func (s *certificateStoreStub) ReleaseStaleACMEOrderWork(_ context.Context, work controlstate.ACMEOrderWork, _ time.Time) (bool, error) {
+	if work.ID != s.work.ID || work.WorkerID != s.work.WorkerID || work.WorkEpoch != s.work.WorkEpoch {
+		return false, errors.New("stale release changed the worker claim")
+	}
+	s.releases++
+	return true, nil
 }

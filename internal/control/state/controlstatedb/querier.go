@@ -510,6 +510,7 @@ type Querier interface {
 	// they must not wait for this guard while holding a row.
 	RegisterRelay(ctx context.Context, arg RegisterRelayParams) (RegisterRelayRow, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
+	ReleaseStaleACMEOrderWork(ctx context.Context, arg ReleaseStaleACMEOrderWorkParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
 	RemoveVisitorIPGrant(ctx context.Context, arg RemoveVisitorIPGrantParams) (int64, error)
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)

@@ -244,6 +244,15 @@ WHERE id = sqlc.arg(issuance_id)
   AND order_revision = sqlc.arg(expected_order_revision)
 RETURNING *;
 
+-- name: ReleaseStaleACMEOrderWork :execrows
+UPDATE control.acme_orders
+SET work_owner = NULL,
+    work_expires_at = NULL
+WHERE id = sqlc.arg(issuance_id)
+  AND work_owner = sqlc.arg(work_owner)
+  AND work_epoch = sqlc.arg(work_epoch)
+  AND work_expires_at > sqlc.arg(now);
+
 -- name: SaveACMEAuthorizationWork :one
 INSERT INTO control.acme_authorizations (
     id,
