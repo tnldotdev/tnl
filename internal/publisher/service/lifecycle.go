@@ -63,6 +63,9 @@ type RunConfig struct {
 	StreamCapacity    int32
 	Healthy           func(context.Context) bool
 	ObserveReadiness  func(RunStatus)
+	// NativePeers opts this run into background pair discovery and guarded
+	// packet serving. server-side admission must be prepared independently.
+	NativePeers bool
 }
 
 // RunStatus separates current readiness from the one-time Ready notification.
@@ -86,6 +89,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if config.Control == nil || config.Access == nil || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
+	}
+	var peerControl NativePeerControl
+	if config.NativePeers {
+		var ok bool
+		peerControl, ok = config.Control.(NativePeerControl)
+		if !ok {
+			return ErrPrivateStream
+		}
 	}
 	var discoveredTLS *tls.Config
 	if config.TargetResolver != nil {
@@ -250,6 +261,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	defer bound.Invalidate()
 	bound.streamCapacity = int(config.StreamCapacity)
+	bound.nativePeers = config.NativePeers
 	policy, err := visitorpolicy.Prepare(ctx, managedControl, visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId}, setup.ServiceRunId, setup.RunNumber, setup.RunToken, nil)
 	if err != nil {
 		return err
@@ -340,6 +352,19 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return err
 		}
 	}
+	var peerDone <-chan error
+	if config.NativePeers {
+		life, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		peerDone = done
+		go func() { done <- bound.ServeNativePeers(life, peerControl, runToken) }()
+		defer func() {
+			cancel()
+			if peerDone != nil {
+				<-peerDone
+			}
+		}()
+	}
 	ticker := time.NewTicker(config.HeartbeatInterval)
 	defer ticker.Stop()
 	ready := false
@@ -368,6 +393,13 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
+		case err := <-peerDone:
+			expires.Stop()
+			peerDone = nil
+			if ctx.Err() != nil {
+				return nil
+			}
+			return errors.Join(ErrPrivateStream, err)
 		case err := <-certificateDone:
 			expires.Stop()
 			certificateDone = nil

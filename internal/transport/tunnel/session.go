@@ -57,6 +57,17 @@ type Session struct {
 	closeErr  error
 }
 
+// BorrowServicePublisherTransport gives the service run owner the authenticated
+// outer transport for shared packet registration. it does not transfer ownership
+// or authorize any pair. the owner must use a single stream acceptor (the service
+// dispatcher for mixed streams) and join packet readers before closing Session.
+func (s *Session) BorrowServicePublisherTransport() (muxsession.Session, error) {
+	if s == nil || s.transport == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil {
+		return nil, &ProtocolError{Code: tunnelv1.Unauthenticated}
+	}
+	return s.transport, nil
+}
+
 // Dial performs the client side of the shared tunnelv1 handshake.
 func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (result *Session, err error) {
 	if hello.Role == tunnelv1.NativeConnector {

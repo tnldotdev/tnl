@@ -18,6 +18,17 @@ import (
 // another target socket or discard replay and capacity state. the relay role
 // must register each shared carrier against the binding's exact delivery ID.
 func (p *PeerSession) ServePackets(ctx context.Context, paths [3]peer.Carrier) error {
+	defer closePeerCarriers(paths)
+	return p.servePackets(ctx, func(PeerBinding) ([3]peer.Carrier, error) { return paths, nil })
+}
+
+// ServeRelayPackets registers the exact control-prepared binding on both current
+// claimed publisher connections before accepting the one inner QUIC session.
+func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
+	return p.servePackets(ctx, p.bound.peerCarriers)
+}
+
+func (p *PeerSession) servePackets(ctx context.Context, prepare func(PeerBinding) ([3]peer.Carrier, error)) error {
 	p.bound.mu.Lock()
 	if p.closed || p.deliveryStarted || ctx.Err() != nil || !p.bound.peerBindingCurrentLocked(p.binding, time.Now()) {
 		p.bound.mu.Unlock()
@@ -25,20 +36,20 @@ func (p *PeerSession) ServePackets(ctx context.Context, paths [3]peer.Carrier) e
 	}
 	p.deliveryStarted = true
 	p.delivery.Add(1)
-	key := p.binding.key
+	binding := p.binding
 	p.bound.mu.Unlock()
 	defer p.delivery.Done()
 	defer p.stop()
 	life, cancel := context.WithCancel(p.ctx)
 	stopCaller := context.AfterFunc(ctx, cancel)
 	defer func() { stopCaller(); cancel() }()
-	packets, err := peer.New(life, peer.Config{Kind: peer.NativePeer, Key: key, Role: 1, Paths: paths})
+	paths, err := prepare(binding)
 	if err != nil {
-		for _, path := range paths {
-			if path != nil {
-				_ = path.Close()
-			}
-		}
+		return err
+	}
+	defer closePeerCarriers(paths)
+	packets, err := peer.New(life, peer.Config{Kind: peer.NativePeer, Key: binding.key, Role: 1, Paths: paths})
+	if err != nil {
 		return err
 	}
 	defer packets.Close()
@@ -56,6 +67,7 @@ func (p *PeerSession) ServePackets(ctx context.Context, paths [3]peer.Carrier) e
 		return err
 	}
 	defer listener.Close()
+	close(p.packetReady)
 	connection, err := listener.Accept(life)
 	if err != nil {
 		if life.Err() != nil {

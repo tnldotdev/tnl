@@ -37,6 +37,7 @@ type PeerSession struct {
 	workers         sync.WaitGroup
 	delivery        sync.WaitGroup
 	deliveryStarted bool
+	packetReady     chan struct{}
 }
 
 func (*PeerSession) String() string   { return "publisher native peer session" }
@@ -70,11 +71,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	if !b.peerBindingCurrentLocked(binding, now) {
 		return nil, ErrPrivateStream
 	}
-	for id, old := range b.peers {
-		if old.closed && !old.replayUntil.After(now) {
-			delete(b.peers, id)
-		}
-	}
+	b.prunePeersLocked(now)
 	if b.peers[binding.pairID] != nil || len(b.peers) >= maxPublisherPeerSessions {
 		return nil, ErrPrivateStream
 	}
@@ -83,10 +80,18 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	}
 	life, cancel := context.WithCancel(ctx)
 	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel,
-		seen: make(map[string]struct{}), streams: make(map[net.Conn]struct{}), changed: make(chan struct{}), done: make(chan struct{})}
+		seen: make(map[string]struct{}), streams: make(map[net.Conn]struct{}), changed: make(chan struct{}), done: make(chan struct{}), packetReady: make(chan struct{})}
 	b.peers[binding.pairID] = p
 	go p.watch()
 	return p, nil
+}
+
+func (b *Bound) prunePeersLocked(now time.Time) {
+	for id, old := range b.peers {
+		if old.closed && !old.replayUntil.After(now) {
+			delete(b.peers, id)
+		}
+	}
 }
 
 // Renew accepts only a freshly control-prepared binding of the same delivery.

@@ -56,7 +56,7 @@ func (p *nativePacketSession) register(ctx context.Context, binding peer.PairBin
 	if err != nil {
 		return nil, err
 	}
-	return &nativeStreamCarrier{pair: pair, open: open}, nil
+	return pair.Carrier(open), nil
 }
 
 func (p *nativePacketSession) Close() {
@@ -80,52 +80,6 @@ func (p *nativePacketSession) Close() {
 		}
 	})
 }
-
-// nativeStreamCarrier reserves the exact registration before acknowledgement.
-// the relay opens the publisher stream only when it has a tagged connector
-// frame to send, so preparation cannot consume the first-frame read deadline.
-type nativeStreamCarrier struct {
-	pair *peer.StreamPair
-	open bool
-	once sync.Once
-	live peer.Carrier
-	err  error
-}
-
-func (c *nativeStreamCarrier) carrier(ctx context.Context) (peer.Carrier, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	c.once.Do(func() {
-		var live *peer.SharedStreamCarrier
-		if c.open {
-			live, c.err = c.pair.Open(ctx)
-		} else {
-			live, c.err = c.pair.Accept(ctx)
-		}
-		if c.err == nil {
-			c.live = live
-		}
-	})
-	return c.live, c.err
-}
-func (c *nativeStreamCarrier) Send(ctx context.Context, frame []byte) error {
-	live, err := c.carrier(ctx)
-	if err != nil {
-		return err
-	}
-	return live.Send(ctx, frame)
-}
-func (c *nativeStreamCarrier) Receive(ctx context.Context) ([]byte, error) {
-	live, err := c.carrier(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return live.Receive(ctx)
-}
-
-// retire the live registration, retaining only the shared generation tombstone.
-func (c *nativeStreamCarrier) Close() error { return c.pair.Close() }
 
 type nativePairDelivery struct {
 	ctx             context.Context

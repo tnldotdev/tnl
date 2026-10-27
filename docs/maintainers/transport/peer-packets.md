@@ -232,6 +232,30 @@ pair deadline interrupt and join its streams.
 [packet serving](../../../internal/publisher/service/peer_packets.go) attaches
 one inner QUIC connection to that owner using already-authorized carriers. it
 uses the prepared service certificate, bounds stream readers, and preserves
-admission and the target socket through a carrier failure. the role migration
-still needs publisher-side pair discovery/preparation and connector packet
-dialing before enabling the authenticated relay handoff in production.
+admission and the target socket through a carrier failure.
+
+the publisher run's opt-in `NativePeers` setting starts
+[background reconciliation](../../../internal/publisher/service/peer_preparation.go).
+one candidate page is read per second, with at most 64 queued/in-progress pair
+preparations and four control-request workers. an unclaimed candidate is retried
+on a later pass. current owners renew only from independently fetched bindings;
+failed renewal never extends their last confirmed deadline. cancellation joins
+preparation and all delivery sessions. the same replay retention bounds prevent
+stopped pairs from being revived or forgotten early.
+
+peer-capable claimed publisher slots register exact pairs on shared QUIC
+DATAGRAMs or TLS/yamux streams. QUIC must negotiate DATAGRAMs before its hello
+can consume a single-use publisher assignment; otherwise TCP remains eligible.
+TLS/yamux has one service dispatcher for peer and existing forwarding streams.
+closing one claimed slot leaves an admitted inner session using its other slot.
+the publisher proof exercises all four slot transport combinations with one
+admission and one target socket, but uses checked relay-session fixtures rather
+than the control-backed relay bridge.
+
+production publication does not enable `NativePeers` yet. native startup still
+needs an explicit publisher-prepared barrier before the connector sends its
+first packet introduction, connector packet dialing, and integrated real-relay
+qualification. a relay hello receipt proves its own checked claim, not that the
+publisher has installed its independently authorized registration. renewal of
+the pair also must not silently extend an existing relay leg's fixed claim
+deadline. these handoffs must be wired before enabling native admission.

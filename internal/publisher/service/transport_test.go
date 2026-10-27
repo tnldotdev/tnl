@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -43,8 +45,12 @@ func privateTransportTLS(t *testing.T) (*tls.Config, *tls.Config) {
 }
 
 func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testing.T) {
-	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
-		t.Run(string(transport), func(t *testing.T) {
+	for _, scenario := range []struct {
+		transport tunnel.Transport
+		peers     bool
+	}{{tunnel.TransportQUIC, false}, {tunnel.TransportTLSTCP, false}, {tunnel.TransportQUIC, true}, {tunnel.TransportTLSTCP, true}} {
+		transport := scenario.transport
+		t.Run(fmt.Sprintf("%s/peers=%t", transport, scenario.peers), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			target, err := net.Listen("tcp", "127.0.0.1:0")
@@ -65,6 +71,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 				}
 			}()
 			_, bound, ref, verification := privateFixture(t, target.Addr().String())
+			bound.nativePeers = scenario.peers
 			serverTLS, roots := privateTransportTLS(t)
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -85,7 +92,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 				}
 			}
 			if transport == tunnel.TransportQUIC {
-				udp, err := muxsession.ListenQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{})
+				udp, err := muxsession.ListenQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: scenario.peers}})
 				if err != nil {
 					t.Fatal(err)
 				}

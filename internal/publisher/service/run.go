@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -82,16 +83,19 @@ type Bound struct {
 	prepared *Prepared
 	*boundState
 	streamCapacity int
+	nativePeers    bool
 }
 
 type boundState struct {
-	assignments     map[string]tunnelv1.ServicePublisherConnectionRef
-	connections     [2]controlv1.ConnectionAssignment
-	mu              sync.Mutex
-	active          map[net.Conn]struct{}
-	closed          bool
-	reservedStreams int
-	peers           map[string]*PeerSession
+	assignments            map[string]tunnelv1.ServicePublisherConnectionRef
+	connections            [2]controlv1.ConnectionAssignment
+	mu                     sync.Mutex
+	active                 map[net.Conn]struct{}
+	closed                 bool
+	reservedStreams        int
+	peers                  map[string]*PeerSession
+	packetSlots            [2]*Claimed
+	peerPreparationStarted bool
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -266,7 +270,11 @@ func (b *Bound) ConnectSlotWithPreference(ctx context.Context, slot uint8, prefe
 	if roots.InsecureSkipVerify {
 		return nil, ErrPrivateStream
 	}
-	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots}, muxsession.TLSYamuxConnector{TLSConfig: roots})
+	config := muxsession.QUICConfig{}
+	if b.nativePeers {
+		config.Config = &quic.Config{EnableDatagrams: true}
+	}
+	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: config}, muxsession.TLSYamuxConnector{TLSConfig: roots})
 }
 
 // ConnectSlotWithTransports retains the production claim and stale-assignment
@@ -275,6 +283,9 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 	endpoint, hello, err := b.Hello(slot)
 	if err != nil {
 		return nil, err
+	}
+	if b.nativePeers {
+		quic = requirePublisherPeerDatagrams(quic)
 	}
 	primary := tunnel.Candidate{Connector: quic, Endpoint: endpoint, Transport: tunnel.TransportQUIC}
 	fallback := tunnel.Candidate{Connector: tcp, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
@@ -292,8 +303,28 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 		_ = session.Close()
 		return nil, ErrPrivateStream
 	}
-	return &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
-		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}, nil
+	claimed := &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
+		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}
+	if b.nativePeers {
+		claimed.packets, err = newPublisherPeerPackets(ctx, session)
+		if err != nil {
+			_ = claimed.Close()
+			return nil, err
+		}
+		b.mu.Lock()
+		previous := b.packetSlots[slot]
+		if b.closed || b.assignments[claimed.ref.PublisherConnectionID] != claimed.ref || previous != nil && previous.ref == claimed.ref {
+			b.mu.Unlock()
+			_ = claimed.Close()
+			return nil, ErrPrivateStream
+		}
+		b.packetSlots[slot] = claimed
+		b.mu.Unlock()
+		if previous != nil {
+			_ = previous.closeTransport()
+		}
+	}
+	return claimed, nil
 }
 
 // Claimed can only be constructed after a relay accepted the private tunnel
@@ -304,6 +335,7 @@ type Claimed struct {
 	session        *tunnel.Session
 	transport      tunnel.Transport
 	endObservation func(error, bool)
+	packets        *publisherPeerPackets
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
@@ -323,6 +355,23 @@ func (c *Claimed) Close() error {
 	if c.endObservation != nil {
 		c.endObservation(nil, true)
 	}
+	return c.closeTransport()
+}
+
+// serving teardown must leave the lifetime observation to Serve's result,
+// rather than recording an unexpected transport failure as a normal close.
+func (c *Claimed) closeTransport() error {
+	if c == nil || c.session == nil {
+		return nil
+	}
+	if c.packets != nil {
+		c.bound.mu.Lock()
+		if c.bound.packetSlots[c.ref.ConnectionSlot] == c {
+			c.bound.packetSlots[c.ref.ConnectionSlot] = nil
+		}
+		c.bound.mu.Unlock()
+		c.packets.Close()
+	}
 	return c.session.Close()
 }
 
@@ -341,17 +390,23 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = c.closeTransport() })
 	var workers sync.WaitGroup
-	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
+	defer func() { cancel(); _ = c.closeTransport(); workers.Wait(); stop() }()
 	for {
-		incoming, err := c.session.AcceptServiceForwardingStream(ctx)
+		var incoming *tunnel.IncomingServiceForwardingStream
+		var err error
+		if c.packets != nil && c.packets.dispatcher != nil {
+			incoming, err = c.session.AcceptDispatchedServiceForwardingStream(ctx, c.packets.dispatcher)
+		} else {
+			incoming, err = c.session.AcceptServiceForwardingStream(ctx)
+		}
 		if err != nil {
 			var invalid *tunnel.StreamHeaderError
 			if errors.As(err, &invalid) {
 				continue
 			}
-			if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
+			if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return err
