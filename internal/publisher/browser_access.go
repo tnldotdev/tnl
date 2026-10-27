@@ -156,6 +156,20 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			http.Error(response, "invalid share session", http.StatusForbidden)
 			return true
 		}
+		if a.subject.Kind == visitorscope.Service && a.policy != nil {
+			// a reachability change can open the service listener before its
+			// publisher has installed current browser policy. prepare it before
+			// redeeming the one-use handoff, so a transient 503 leaves the ticket
+			// available for the browser to retry.
+			if err := a.policy.Refresh(request.Context()); err != nil {
+				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				return true
+			}
+			if _, enabled, _ := a.policy.Lease.Current(); !enabled {
+				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				return true
+			}
+		}
 		result, err := a.client.RedeemBrowserHandoff(request.Context(), a.runID, a.version, ticket, shareID, shareSecret, a.token)
 		if err != nil || !validBrowserPath(result.ReturnPath) {
 			http.Error(response, "browser sign-in expired", http.StatusForbidden)

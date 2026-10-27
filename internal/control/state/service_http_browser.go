@@ -210,12 +210,28 @@ func serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service, run strin
 	return VisitorPermission{Authenticated: true, TeamMember: err == nil, IdentityID: row.IdentityID, DisplayName: row.DisplayName, VisitAllowed: true, Reason: "service_browser", ExpiresAt: &until}, nil
 }
 
-func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth ServiceHTTPRun, ticket string, now time.Time) (result controlv1.BrowserHandoffResponse, retErr error) {
+type ServiceBrowserHandoffRedemption struct {
+	controlv1.BrowserHandoffResponse
+	Issued IssuedVisitorToken
+}
+
+func (ServiceBrowserHandoffRedemption) String() string   { return "managed browser handoff" }
+func (ServiceBrowserHandoffRedemption) GoString() string { return "managed browser handoff" }
+
+// the one-use ticket and its signed visitor permission commit together. a
+// serialization failure cannot consume a ticket without preparing its cookie.
+func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth ServiceHTTPRun, issuer, ticket string, now time.Time) (ServiceBrowserHandoffRedemption, error) {
 	digest, err := browserDigest(ticket)
 	if err != nil {
-		return result, ErrVisitorSignIn
+		return ServiceBrowserHandoffRedemption{}, ErrVisitorSignIn
 	}
-	tx, err := d.pool.Begin(ctx)
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (ServiceBrowserHandoffRedemption, error) {
+		return d.redeemServiceBrowserHandoffTransaction(ctx, auth, issuer, digest, at)
+	})
+}
+
+func (d *Database) redeemServiceBrowserHandoffTransaction(ctx context.Context, auth ServiceHTTPRun, issuer string, digest []byte, now time.Time) (result ServiceBrowserHandoffRedemption, retErr error) {
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}
@@ -235,7 +251,11 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 	if _, err = serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.RunID, cookieDigest, now); err != nil {
 		return result, err
 	}
-	result = controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: row.ReturnPath, ExpiresAt: row.ExpiresAt.Time}
+	result.Issued, err = d.issueVisitorToken(ctx, tx, issuer, auth.Subject, BrowserSessionTokenSource{Secret: cookie}, now)
+	if err != nil {
+		return ServiceBrowserHandoffRedemption{}, err
+	}
+	result.BrowserHandoffResponse = controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: row.ReturnPath, ExpiresAt: row.ExpiresAt.Time}
 	return result, tx.Commit(ctx)
 }
 

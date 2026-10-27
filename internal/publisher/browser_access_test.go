@@ -13,19 +13,22 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/visitorpolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type browserAccessStub struct {
-	member  bool
-	invited bool
-	next    string
-	bridge  bool
+	member      bool
+	invited     bool
+	next        string
+	bridge      bool
+	redemptions atomic.Int32
 }
 
 func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	s.redemptions.Add(1)
 	response := controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: "/settings", ExpiresAt: time.Now().Add(time.Hour),
 		Permission: controlv1.VisitorTokenResponse{VisitorToken: "signed-browser-permission", ExpiresAt: time.Now().Add(5 * time.Minute)}}
 	if s.next != "" {
@@ -33,6 +36,45 @@ func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64
 		response.Bridge = &s.bridge
 	}
 	return response, nil
+}
+
+type handoffPolicyClient struct {
+	control     *liveHTTPControl
+	unavailable atomic.Bool
+}
+
+func (p *handoffPolicyClient) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if p.unavailable.Load() {
+		return controlv1.VisitorPolicyUpdate{}, clientcontrol.ErrUnavailable
+	}
+	update, err := p.control.ReadPublisherVisitorPolicy(ctx, request, token)
+	update.Policy.MetadataRevision = 1
+	return update, err
+}
+
+func TestServiceHandoffKeepsTicketWhenLocalPolicyIsUnavailable(t *testing.T) {
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_0123456789abcdefghijkl"}
+	control := &liveHTTPControl{revision: 1}
+	provider := &handoffPolicyClient{control: control}
+	policy, err := visitorpolicy.Prepare(t.Context(), provider, scope, "sr_0123456789abcdefghijkl", 1, "fixture-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer policy.Close()
+	client := new(browserAccessStub)
+	access := &browserAccess{subject: scope, client: client, policy: policy, runID: "sr_0123456789abcdefghijkl", version: 1}
+	request := httptest.NewRequest(http.MethodGet, "/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", nil)
+	provider.unavailable.Store(true)
+	response := httptest.NewRecorder()
+	if !access.handle(response, request) || response.Code != http.StatusServiceUnavailable || client.redemptions.Load() != 0 {
+		t.Fatalf("unprepared service consumed one-use handoff: status=%d redemptions=%d", response.Code, client.redemptions.Load())
+	}
+	provider.unavailable.Store(false)
+	response = httptest.NewRecorder()
+	_ = access.handle(response, request)
+	if client.redemptions.Load() != 1 {
+		t.Fatal("available policy did not reach the original handoff ticket")
+	}
 }
 
 func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ uint64, secret string, _ credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {

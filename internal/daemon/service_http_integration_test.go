@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -374,14 +375,26 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	closeResponse(badHostResponse)
 	closeResponse(request(&browser, "/__tnl/feedback/threads", "", "", 404))
 	closeResponse(request(&browser, "/", "Tnl-Access-Token", "invalid", 403))
-	response, err = browser.Get(handoff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != 403 {
-		t.Fatal("handoff replay succeeded")
-	}
-	closeResponse(response)
+	privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		replay, err := http.NewRequestWithContext(ctx, http.MethodGet, handoff, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := browser.Do(replay)
+		if err != nil {
+			return false, err
+		}
+		defer closeResponse(response)
+		if response.StatusCode == http.StatusServiceUnavailable {
+			// policy preparation precedes redemption; a transient 503 cannot
+			// spend the ticket or count as evidence of a replay bypass.
+			return false, nil
+		}
+		if response.StatusCode != http.StatusForbidden {
+			return false, fmt.Errorf("handoff replay succeeded: status=%d", response.StatusCode)
+		}
+		return true, nil
+	})
 	checkServiceHTTPUpgrade(t, &browser, base)
 	// revocation terminates already admitted streaming responses, and the next
 	// request on a keepalive connection cannot reuse the earlier decision.

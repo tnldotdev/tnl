@@ -16,7 +16,7 @@ import (
 type serviceHTTPStore interface {
 	ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error)
 	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
-	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, time.Time) (controlv1.BrowserHandoffResponse, error)
+	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, string, time.Time) (controlstate.ServiceBrowserHandoffRedemption, error)
 	ServiceBrowserSession(context.Context, controlstate.ServiceHTTPRun, string, bool, time.Time) (controlstate.VisitorPermission, error)
 	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
@@ -49,17 +49,17 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid managed browser handoff")
 		return
 	}
-	result, err := store.RedeemServiceBrowserHandoff(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, time.Now())
+	result, err := store.RedeemServiceBrowserHandoff(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), h.config.ControlURL, body.Secret, time.Now())
 	if err != nil {
-		writeServiceHTTPBrowserProblem(w, err)
+		if errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrVisitorSigningKey) || errors.Is(err, controlstate.ErrVisitorPolicy) {
+			writeVisitorTokenProblem(w, err)
+		} else {
+			writeServiceHTTPBrowserProblem(w, err)
+		}
 		return
 	}
-	result.Permission, err = h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, controlstate.BrowserSessionTokenSource{Secret: result.CookieSecret})
-	if err != nil {
-		writeVisitorTokenProblem(w, err)
-		return
-	}
-	writeJSON(w, 200, result)
+	result.BrowserHandoffResponse.Permission = visitorTokenResponse(result.Issued)
+	writeJSON(w, 200, result.BrowserHandoffResponse)
 }
 
 func writeServiceHTTPBrowserProblem(w http.ResponseWriter, err error) {

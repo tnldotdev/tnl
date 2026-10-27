@@ -181,8 +181,20 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 		if err != nil {
 			t.Fatal(err)
 		}
+		deadline := time.Now().Add(10 * time.Second)
+		for response.StatusCode == http.StatusServiceUnavailable && time.Now().Before(deadline) {
+			// handoff preparation fails before one-use redemption when its local
+			// policy is unavailable. retry the same ticket, not the OAuth code.
+			closeBody(response)
+			time.Sleep(50 * time.Millisecond)
+			response, err = browser.Get(handoff)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if response.StatusCode != 303 {
-			t.Fatal("company handoff failed", response.StatusCode)
+			body, _ := io.ReadAll(response.Body)
+			t.Fatalf("company handoff failed: status=%d body=%q", response.StatusCode, body)
 		}
 		closeBody(response)
 		response, err = browser.Get(base + "/")

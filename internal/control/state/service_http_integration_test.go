@@ -141,19 +141,22 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if !strings.HasSuffix(handoff.Origin, ":"+strconv.Itoa(portFor(a))) {
 		t.Fatal("handoff dropped allocated port", handoff.Origin)
 	}
-	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, handoff.Token, now); err == nil {
+	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), b, testVisitorIssuer, handoff.Token, now); err == nil {
 		t.Fatal("other service redeemed handoff")
 	}
 	replica = enrollAppliedGroup(t, d, r, enrollment, now)
 	later := start(0, "later")
-	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), later, handoff.Token, now); err == nil {
+	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), later, testVisitorIssuer, handoff.Token, now); err == nil {
 		t.Fatal("later run redeemed handoff")
 	}
-	redemption, err := d.RedeemServiceBrowserHandoff(t.Context(), a, handoff.Token, now)
+	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), a, "", handoff.Token, now); err == nil {
+		t.Fatal("invalid visitor signing issuer prepared a browser handoff")
+	}
+	redemption, err := d.RedeemServiceBrowserHandoff(t.Context(), a, testVisitorIssuer, handoff.Token, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), a, handoff.Token, now); err == nil {
+	if _, err = d.RedeemServiceBrowserHandoff(t.Context(), a, testVisitorIssuer, handoff.Token, now); err == nil {
 		t.Fatal("handoff replay")
 	}
 	browserPermission, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, a.Subject, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now)
@@ -162,6 +165,9 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	if _, err := visitortoken.VerifyBearer(browserPermission.Token, read(a.Subject), now); err != nil {
 		t.Fatal("signed-in visitor was denied locally", err)
+	}
+	if _, err := visitortoken.VerifyBearer(redemption.Issued.Token, read(a.Subject), now); err != nil {
+		t.Fatal("atomic handoff returned an unverified visitor permission", err)
 	}
 	if _, err = d.BrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now); err == nil {
 		t.Fatal("managed browser widened public URL scope")
