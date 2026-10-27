@@ -47,6 +47,10 @@ type StreamCarrier struct {
 }
 
 func (c *StreamCarrier) Send(ctx context.Context, b []byte) error {
+	return c.sendFramed(ctx, func() error { return tunnelv1.WritePeerFrame(c.Conn, b) })
+}
+
+func (c *StreamCarrier) sendFramed(ctx context.Context, write func() error) error {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(time.Second)
@@ -64,7 +68,7 @@ func (c *StreamCarrier) Send(ctx context.Context, b []byte) error {
 			<-done
 		}
 	}()
-	return tunnelv1.WritePeerFrame(c.Conn, b)
+	return write()
 }
 
 func (c *StreamCarrier) Receive(ctx context.Context) ([]byte, error) {

@@ -1,6 +1,8 @@
 package tunnelv1
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -13,9 +15,142 @@ const (
 	PeerFragmentBytes  = 1000
 	PeerPacketOverhead = 17 + 32
 	MaxPeerFrameBytes  = PeerFragmentBytes + PeerPacketOverhead
+	// the shared outer delivery header binds a frame or stream to one exact
+	// introduction and its current delivery generation. it does not authorize a target.
+	PeerDeliveryHeaderBytes = 1 + 16 + 8
+	PeerDeliveryTagBytes    = sha256.Size
+	MaxPeerDeliveryBytes    = PeerDeliveryHeaderBytes + MaxPeerFrameBytes + PeerDeliveryTagBytes
 )
 
 var ErrPeerPacket = errors.New("peer packet is invalid")
+
+// PeerDeliveryMode separates datagram authentication from framed stream
+// authentication even when two carrier bindings accidentally share a key.
+type PeerDeliveryMode byte
+
+const (
+	PeerDeliveryDatagram PeerDeliveryMode = 1
+	PeerDeliveryStream   PeerDeliveryMode = 2
+)
+
+const peerDeliveryMACDomain = "tnl-peer-delivery-v1\x00"
+
+func (mode PeerDeliveryMode) valid() bool {
+	return mode == PeerDeliveryDatagram || mode == PeerDeliveryStream
+}
+
+type PeerDelivery struct {
+	Pair       [16]byte
+	Generation uint64
+}
+
+func (d PeerDelivery) Valid() bool { return d.Pair != [16]byte{} && d.Generation != 0 }
+
+func (d PeerDelivery) Header() ([PeerDeliveryHeaderBytes]byte, error) {
+	var b [PeerDeliveryHeaderBytes]byte
+	if !d.Valid() {
+		return b, ErrPeerPacket
+	}
+	b[0] = Version
+	copy(b[1:17], d.Pair[:])
+	binary.BigEndian.PutUint64(b[17:], d.Generation)
+	return b, nil
+}
+
+func ParsePeerDeliveryHeader(b []byte) (PeerDelivery, error) {
+	if len(b) != PeerDeliveryHeaderBytes || b[0] != Version {
+		return PeerDelivery{}, ErrPeerPacket
+	}
+	var d PeerDelivery
+	copy(d.Pair[:], b[1:17])
+	d.Generation = binary.BigEndian.Uint64(b[17:])
+	if !d.Valid() {
+		return PeerDelivery{}, ErrPeerPacket
+	}
+	return d, nil
+}
+
+// Seal authenticates the version, exact pair, generation, mode,
+// and entire inner frame, including the inner MAC. the pair ID is not a grant.
+func (d PeerDelivery) Seal(mode PeerDeliveryMode, key [32]byte, frame []byte) ([]byte, error) {
+	header, err := d.Header()
+	if err != nil || !mode.valid() || key == [32]byte{} {
+		return nil, ErrPeerPacket
+	}
+	if _, err := ParsePeerPacket(frame); err != nil {
+		return nil, err
+	}
+	b := make([]byte, 0, len(header)+len(frame)+PeerDeliveryTagBytes)
+	b = append(b, header[:]...)
+	b = append(b, frame...)
+	tag := peerDeliveryTag(mode, key, b)
+	return append(b, tag[:]...), nil
+}
+
+func peerDeliveryTag(mode PeerDeliveryMode, key [32]byte, authenticated []byte) [PeerDeliveryTagBytes]byte {
+	mac := hmac.New(sha256.New, key[:])
+	_, _ = mac.Write([]byte(peerDeliveryMACDomain))
+	_, _ = mac.Write([]byte{byte(mode)})
+	_, _ = mac.Write(authenticated)
+	var tag [PeerDeliveryTagBytes]byte
+	copy(tag[:], mac.Sum(nil))
+	return tag
+}
+
+// OpenPeerDelivery rejects unauthenticated headers before returning the frame.
+func OpenPeerDelivery(b []byte, mode PeerDeliveryMode, key [32]byte) (PeerDelivery, []byte, error) {
+	if len(b) <= PeerDeliveryHeaderBytes+PeerDeliveryTagBytes+PeerPacketOverhead || len(b) > MaxPeerDeliveryBytes ||
+		!mode.valid() || key == [32]byte{} {
+		return PeerDelivery{}, nil, ErrPeerPacket
+	}
+	d, err := ParsePeerDeliveryHeader(b[:PeerDeliveryHeaderBytes])
+	if err != nil {
+		return PeerDelivery{}, nil, err
+	}
+	frameEnd := len(b) - PeerDeliveryTagBytes
+	if _, err := ParsePeerPacket(b[PeerDeliveryHeaderBytes:frameEnd]); err != nil {
+		return PeerDelivery{}, nil, err
+	}
+	tag := peerDeliveryTag(mode, key, b[:frameEnd])
+	if !hmac.Equal(tag[:], b[frameEnd:]) {
+		return PeerDelivery{}, nil, ErrPeerPacket
+	}
+	return d, b[PeerDeliveryHeaderBytes:frameEnd], nil
+}
+
+// WritePeerDeliveryFrame and ReadPeerDeliveryFrame bound reliable carrier
+// allocations before inspecting the authenticated v1 envelope.
+func WritePeerDeliveryFrame(w io.Writer, b []byte, mode PeerDeliveryMode, key [32]byte) error {
+	if _, _, err := OpenPeerDelivery(b, mode, key); err != nil {
+		return err
+	}
+	var header [2]byte
+	binary.BigEndian.PutUint16(header[:], uint16(len(b)))
+	for _, part := range [][]byte{header[:], b} {
+		if n, err := w.Write(part); err != nil {
+			return err
+		} else if n != len(part) {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+func ReadPeerDeliveryFrame(r io.Reader, mode PeerDeliveryMode, key [32]byte) (PeerDelivery, []byte, error) {
+	var header [2]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
+		return PeerDelivery{}, nil, err
+	}
+	n := int(binary.BigEndian.Uint16(header[:]))
+	if n <= PeerDeliveryHeaderBytes+PeerDeliveryTagBytes+PeerPacketOverhead || n > MaxPeerDeliveryBytes {
+		return PeerDelivery{}, nil, ErrPeerPacket
+	}
+	b := make([]byte, n)
+	if _, err := io.ReadFull(r, b); err != nil {
+		return PeerDelivery{}, nil, err
+	}
+	return OpenPeerDelivery(b, mode, key)
+}
 
 type PeerPacketKind uint8
 

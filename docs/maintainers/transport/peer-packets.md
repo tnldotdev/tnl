@@ -59,6 +59,38 @@ deadline prevent one backpressured TCP carrier from blocking its sibling.
 TCP still orders bytes within that carrier and therefore has head-of-line delay.
 canceling the endpoint interrupts all carriers and joins every worker.
 
+`SharedDatagrams` borrows one authenticated outer QUIC connection (with DATAGRAMs
+enabled) and exclusively reads its datagrams. the role owner registers each
+exact introduction with a pair ID, increasing delivery generation, key,
+direction, and path. each v1 envelope includes a 25-byte header and an
+independent 32-byte tag over the header and complete inner frame, including
+its MAC. the tag separates datagrams from TLS/yamux streams even if two pairs
+are mistakenly assigned the same key. the largest envelope is 1106 bytes.
+the owner verifies the tag, frame MAC, direction, path, and a 64-sequence
+fragment replay window before queuing it. a peer ID alone does not grant
+access. per-peer ingress and egress queues each hold 16 frames; egress
+holds at most 256 frames across 64 peers. the writer visits nonempty peers in
+round-robin order. the owner retains at most 4096 pair tombstones per
+outer session to reject a reused or stale generation; rotate the session when full.
+closing one registration discards its queue without closing the QUIC connection.
+
+`SharedStreams` borrows exclusive peer-stream acceptance on one TLS/yamux
+session. the opener writes the same delivery header; the acceptor requires a
+stream-mode-tagged first framed envelope matching that header before handing
+the stream to its pair. every later framed envelope is checked against the
+same pair, generation, and replay window. at most eight readers handle
+introductions concurrently, each with a one-second deadline, so one incomplete
+stream does not hold up another pair. shutdown interrupts and joins the readers.
+unknown generations, duplicate streams, and incomplete introductions are closed.
+`StreamPair.Open` and `StreamPair.Accept` hand out one `Carrier` per peer;
+`CarrierSlot` may install a later stream without replacing the inner QUIC
+session. each owner must join `Close` before retiring its outer session. if
+other protocols share the yamux session, their stream acceptor must dispatch
+above this owner instead of calling `AcceptStream` concurrently.
+normal pair closure leaves the outer session and sibling streams alive.
+`muxsession` aborts an outer session only if yamux stream cleanup remains stuck
+past its existing bounded timeout; role owners then reconnect.
+
 ## switching proof
 
 run `mise exec -- task go:test:peer-transport -- -race`. the proof uses real
@@ -68,6 +100,12 @@ all-TCP operation, half-close, wrong packet evidence, fragment bounds, and an
 unread TCP carrier. a public peer proof switches its existing inner QUIC stream
 from UDP to TCP and back with no relay or ICE path. both report recovery time,
 queue peaks, drops, and path RTT.
+the shared-carrier proof multiplexes two exact pairs on one outer QUIC session,
+keeps their inner QUIC streams alive across a pair-specific UDP-to-TLS/yamux
+switch, and keeps one real TCP target connection through the switch. it also
+checks same-key header relabeling, cross-mode injection, stale generations,
+replays, bounded queues, sibling delivery past an incomplete introduction,
+and peer shutdown without normally closing either outer session.
 
 ## socket and replacement lifetime
 
@@ -89,5 +127,6 @@ packets and invalidates the previous path's probe evidence. the new carrier must
 complete a fresh peer round trip before direct application delivery. failed
 preparation, network changes, and late setup racing shutdown have joined cleanup.
 
-the role migration supplies shared relay demultiplexing and control-authorized
-introduction/serving lifetimes around these owners.
+the role migration still needs to supply control-authorized introductions,
+fixed serving lifetimes, relay-side forwarding, and session/stream dispatch
+around these transport owners. the transport binding is not a publisher grant.
