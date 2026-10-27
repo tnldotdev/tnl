@@ -94,6 +94,9 @@ type OpenOptions struct {
 	// protection defaults to Keychain on macOS and a private file elsewhere.
 	// reopening must use the same mode; the database verifies the wrapping key.
 	Protection ProtectionMode
+	// no-wait opens are for optional workers that must not delay their owner
+	// when another process holds the sqlite writer lock.
+	NoWait bool
 }
 
 // Open initializes fresh v1 state without reading any earlier database.
@@ -153,9 +156,9 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 	protector := &encryptedProtector{key: key, account: account}
 	var db *sql.DB
 	if exists {
-		db, err = openClientSQLite(ctx, path, false)
+		db, err = openClientSQLite(ctx, path, false, options.NoWait)
 	} else {
-		db, err = initializeClientSQLite(ctx, path, mode, protector)
+		db, err = initializeClientSQLiteWithBusyTimeout(ctx, path, mode, protector, options.NoWait)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: %w", err)

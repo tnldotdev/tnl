@@ -15,7 +15,15 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 			t.Fatalf("telemetry enabled = %t, error = %v; want %t", enabled, err, want)
 		}
 	}
+	readPreference := func(want TelemetryPreference) {
+		t.Helper()
+		preference, err := TelemetryPreferenceAt(t.Context(), root)
+		if err != nil || preference != want {
+			t.Fatalf("read-only preference = %+v, error = %v; want %+v", preference, err, want)
+		}
+	}
 	read(true)
+	readPreference(TelemetryPreference{Enabled: true})
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("read of absent client state created files: %v", err)
 	}
@@ -38,6 +46,7 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(false)
+	readPreference(TelemetryPreference{Epoch: 1})
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -54,4 +63,9 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(true)
+	readPreference(TelemetryPreference{Enabled: true, Epoch: 2})
+	if err := state.SetTelemetryEnabled(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	readPreference(TelemetryPreference{Enabled: true, Epoch: 2})
 }

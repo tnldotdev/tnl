@@ -16,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -151,11 +150,14 @@ func main() {
 		<-ctx.Done()
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
-	var telemetry *clienttelemetry.Collector
+	var telemetry *clienttelemetry.Deferred
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
 	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
 		telemetry = newTelemetryReporter(launchCtx, root)
+		if telemetry == nil {
+			return nil
+		}
 		return telemetry
 	})
 	if telemetry != nil {
@@ -503,18 +505,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
-			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
-				if reporter := reporterFactories[0](root); reporter != nil {
-					{
-						telemetry = newTelemetryInvocation(reporter)
-						if telemetryCommand == telemetryPublish {
-							mode := telemetryPublishApp
-							if flags.Publish.Demo {
-								mode = telemetryPublishDemo
-							}
-							telemetry.SetPublishMode(mode)
-						}
+			if reporter := reporterFactories[0](root); reporter != nil {
+				telemetry = newTelemetryInvocation(reporter)
+				if telemetryCommand == telemetryPublish {
+					mode := telemetryPublishApp
+					if flags.Publish.Demo {
+						mode = telemetryPublishDemo
 					}
+					telemetry.SetPublishMode(mode)
 				}
 			}
 		}

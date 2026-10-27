@@ -89,7 +89,7 @@ func New(parent context.Context, config Config) (*Collector, error) {
 	}
 	setup, stop := context.WithTimeout(parent, SetupTimeout)
 	defer stop()
-	database, err := clientstate.OpenWithOptions(setup, config.Root, clientstate.OpenOptions{Protection: config.Protection})
+	database, err := clientstate.OpenWithOptions(setup, config.Root, clientstate.OpenOptions{Protection: config.Protection, NoWait: true})
 	if err != nil {
 		return nil, err
 	}

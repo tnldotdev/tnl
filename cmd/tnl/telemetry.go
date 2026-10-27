@@ -238,10 +238,10 @@ func telemetryFramework(framework string) telemetryFrameworkName {
 	}
 }
 
-// a foreground invocation checks the saved preference before constructing the
-// collector; the collector then observes later changes for its entire lifetime.
-func newTelemetryReporter(ctx context.Context, root string) *clienttelemetry.Collector {
-	collector, err := clienttelemetry.New(ctx, clienttelemetry.Config{Root: root})
+// a foreground invocation checks the saved preference with a short budget and
+// opens the collector in the background. the collector observes later changes.
+func newTelemetryReporter(ctx context.Context, root string) *clienttelemetry.Deferred {
+	collector, err := clienttelemetry.NewDeferred(ctx, clienttelemetry.Config{Root: root})
 	if err != nil {
 		return nil
 	}
