@@ -16,11 +16,9 @@ const (
 	streamIntroductionWorkers = 8
 )
 
-// SharedStreams borrows exclusive acceptance of peer streams on one outer
-// TLS/yamux session. it does not close the session during normal pair teardown;
-// muxsession can still abort a session if stream cleanup itself stalls. the
-// role owner must not also call AcceptStream on that session; other stream
-// protocols need their own dispatcher above this owner.
+// SharedStreams borrows an outer TLS/yamux session. the own-accept constructor
+// takes exclusive acceptance; the dispatched constructor accepts introductions
+// from a single external acceptor. neither owns the outer session.
 type SharedStreams struct {
 	session        muxsession.Session
 	ctx            context.Context
@@ -50,6 +48,18 @@ type StreamPair struct {
 
 // NewSharedStreams takes ownership of stream acceptance, not of the session.
 func NewSharedStreams(parent context.Context, session muxsession.Session) (*SharedStreams, error) {
+	s, err := NewDispatchedSharedStreams(parent, session)
+	if err != nil {
+		return nil, err
+	}
+	s.wait.Go(s.acceptLoop)
+	return s, nil
+}
+
+// NewDispatchedSharedStreams opens outgoing streams but never calls AcceptStream.
+// its caller must deliver only peer streams through AcceptIntroduction and join
+// Close before retiring the outer session.
+func NewDispatchedSharedStreams(parent context.Context, session muxsession.Session) (*SharedStreams, error) {
 	if session == nil {
 		return nil, ErrConfiguration
 	}
@@ -57,7 +67,6 @@ func NewSharedStreams(parent context.Context, session muxsession.Session) (*Shar
 	s := &SharedStreams{session: session, ctx: ctx, cancel: cancel,
 		pairs: make(map[[16]byte]*StreamPair), lastGeneration: make(map[[16]byte]uint64),
 		introSlots: make(chan struct{}, streamIntroductionWorkers)}
-	s.wait.Go(s.acceptLoop)
 	s.wait.Go(func() {
 		<-ctx.Done()
 		s.mu.Lock()
@@ -74,6 +83,17 @@ func NewSharedStreams(parent context.Context, session muxsession.Session) (*Shar
 		}
 	})
 	return s, nil
+}
+
+// AcceptIntroduction consumes one already classified peer stream. it closes
+// rejected, truncated, or canceled introductions; a valid stream is handed to
+// its registered pair only after the first tagged frame has been checked.
+// callers bound concurrent calls and join them before closing this owner.
+func (s *SharedStreams) AcceptIntroduction(ctx context.Context, stream muxsession.Stream) {
+	if stream == nil {
+		return
+	}
+	s.acceptIntroduction(ctx, stream)
 }
 
 func (s *SharedStreams) Register(b PairBinding) (*StreamPair, error) {
@@ -134,17 +154,20 @@ func (s *SharedStreams) acceptLoop() {
 		}
 		s.introductions.Go(func() {
 			defer func() { <-s.introSlots }()
-			s.acceptIntroduction(stream)
+			s.acceptIntroduction(s.ctx, stream)
 		})
 	}
 }
 
-func (s *SharedStreams) acceptIntroduction(stream muxsession.Stream) {
+func (s *SharedStreams) acceptIntroduction(ctx context.Context, stream muxsession.Stream) {
 	// a blocked introduction holds only one of a fixed number of reader slots.
+	introCtx, cancel := context.WithCancel(s.ctx)
+	stopParent := context.AfterFunc(ctx, cancel)
+	defer func() { stopParent(); cancel() }()
 	var closeOnce sync.Once
 	closeStream := func() { closeOnce.Do(func() { _ = stream.Close() }) }
 	callbackDone := make(chan struct{})
-	stop := context.AfterFunc(s.ctx, func() { closeStream(); close(callbackDone) })
+	stop := context.AfterFunc(introCtx, func() { closeStream(); close(callbackDone) })
 	keep := false
 	defer func() {
 		if !stop() {
@@ -168,7 +191,7 @@ func (s *SharedStreams) acceptIntroduction(stream muxsession.Stream) {
 	}
 	s.mu.Lock()
 	known := s.pairs[d.Pair]
-	allowed := s.ctx.Err() == nil && known != nil && known.binding.Delivery == d && known.active == nil
+	allowed := introCtx.Err() == nil && known != nil && known.binding.Delivery == d && known.active == nil
 	s.mu.Unlock()
 	if !allowed {
 		return
@@ -179,7 +202,7 @@ func (s *SharedStreams) acceptIntroduction(stream muxsession.Stream) {
 	}
 	s.mu.Lock()
 	p := s.pairs[d.Pair]
-	if s.ctx.Err() != nil || p == nil || p.binding.Delivery != d || p.active != nil || len(p.pending) != 0 || !p.binding.authentic(frame, 1-p.binding.Role) {
+	if introCtx.Err() != nil || p == nil || p.binding.Delivery != d || p.active != nil || len(p.pending) != 0 || !p.binding.authentic(frame, 1-p.binding.Role) {
 		s.mu.Unlock()
 		return
 	}

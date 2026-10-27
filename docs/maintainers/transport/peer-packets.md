@@ -74,8 +74,9 @@ round-robin order. the owner retains at most 4096 pair tombstones per
 outer session to reject a reused or stale generation; rotate the session when full.
 closing one registration discards its queue without closing the QUIC connection.
 
-`SharedStreams` borrows exclusive peer-stream acceptance on one TLS/yamux
-session. the opener writes the same delivery header; the acceptor requires a
+`SharedStreams` can accept peer streams exclusively or take classified streams
+from `tunnel.ServiceStreamDispatcher` on one authenticated TLS/yamux session.
+the opener writes the same delivery header; the acceptor requires a
 stream-mode-tagged first framed envelope matching that header before handing
 the stream to its pair. every later framed envelope is checked against the
 same pair, generation, and replay window. at most eight readers handle
@@ -84,9 +85,20 @@ stream does not hold up another pair. shutdown interrupts and joins the readers.
 unknown generations, duplicate streams, and incomplete introductions are closed.
 `StreamPair.Open` and `StreamPair.Accept` hand out one `Carrier` per peer;
 `CarrierSlot` may install a later stream without replacing the inner QUIC
-session. each owner must join `Close` before retiring its outer session. if
-other protocols share the yamux session, their stream acceptor must dispatch
-above this owner instead of calling `AcceptStream` concurrently.
+session. each owner must join `Close` before retiring its outer session. the
+dispatcher is the only `AcceptStream` reader when peer and service-forwarding
+streams share the session: the first byte is `1` for the peer delivery header,
+while the four-byte big-endian forwarding JSON length starts with `0` (the v1
+limit is 8192 bytes). it bounds the frame, validates the service header, and
+replays the original bytes to the authenticated tunnel's existing assignment
+check. eight short-lived classifiers, eight peer introductions, and eight
+forwarding header readers run independently with one-second read deadlines;
+the forwarding queue holds at most 32 streams and expires unclaimed streams
+after ten seconds. if all classifiers are stalled before their first byte, a
+new stream interrupts the oldest incomplete classifier. over-capacity or
+malformed streams close. the caller joins the dispatcher before closing the
+peer owner and then the outer session. the role owner still authorizes peer
+bindings and forwarding assignments.
 normal pair closure leaves the outer session and sibling streams alive.
 `muxsession` aborts an outer session only if yamux stream cleanup remains stuck
 past its existing bounded timeout; role owners then reconnect.
@@ -106,6 +118,9 @@ switch, and keeps one real TCP target connection through the switch. it also
 checks same-key header relabeling, cross-mode injection, stale generations,
 replays, bounded queues, sibling delivery past an incomplete introduction,
 and peer shutdown without normally closing either outer session.
+the mixed-session proof also uses real TLS/yamux with the v1 tunnel handshake:
+stalled peer introductions do not delay an existing service-forwarding opening,
+and two sibling peer pairs receive tagged first frames on that session.
 
 ## socket and replacement lifetime
 

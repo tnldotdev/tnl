@@ -375,6 +375,28 @@ func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingS
 	if err != nil {
 		return nil, err
 	}
+	return s.readServiceForwardingStream(ctx, stream)
+}
+
+// AcceptDispatchedServiceForwardingStream reads a stream from the sole outer
+// acceptor while retaining the authenticated session's assignment checks. do
+// not also call AcceptServiceForwardingStream on this transport.
+func (s *Session) AcceptDispatchedServiceForwardingStream(ctx context.Context, d *ServiceStreamDispatcher) (*IncomingServiceForwardingStream, error) {
+	if s == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil || d == nil || d.owner != s {
+		return nil, errors.New("tunnel: claimed service publisher connection and matching dispatcher are required")
+	}
+	stream, err := d.AcceptForwardingStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := setHandshakeDeadline(ctx, stream); err != nil {
+		_ = stream.Close()
+		return nil, err
+	}
+	return s.readServiceForwardingStream(ctx, stream)
+}
+
+func (s *Session) readServiceForwardingStream(ctx context.Context, stream muxsession.Stream) (*IncomingServiceForwardingStream, error) {
 	header, err := tunnelv1.ReadServiceForwardingHeader(stream)
 	if err != nil {
 		_ = tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: tunnelv1.InvalidMessage})
