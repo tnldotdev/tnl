@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -429,11 +430,18 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	if !separatedRead(t, ctx, "publishers.ready", &publishers) {
 		return
 	}
+	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
+	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
+	if !separatedRead(t, ctx, "visitors.prepare", nil) {
+		return
+	}
+	if err := waitForPreparedIngressVisitorTLS(ctx, visitor, publishers.URLs, index-1); err != nil {
+		t.Fatal("ingress visitor TLS was not prepared before workload traffic", err)
+	}
+	separatedWrite(t, component+".prepared", true)
 	if !separatedRead(t, ctx, "visitors.start", nil) {
 		return
 	}
-	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
-	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
 	directVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, 4, index-1)
 	cohortByURL := make(map[string]string)
@@ -592,6 +600,58 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	separatedWrite(t, component+".done", !t.Failed())
 	<-lifecycle.Done()
+}
+
+// each visitor probes its assigned URLs from its real allowed source IP. probe
+// both serving ingress processes; a control-side allocation acknowledgment alone
+// cannot prove that either local ingress is ready for its first visitor.
+func waitForPreparedIngressVisitorTLS(parent context.Context, visitor benchworkload.Visitor, urls []string, index int) error {
+	if len(urls) == 0 {
+		return errors.New("no public URLs were prepared")
+	}
+	type probe struct{ ingress, url string }
+	jobs := make(chan probe, max(4, len(urls))*len(separatedIngresses()))
+	for offset := index; offset < max(4, len(urls)); offset += 4 {
+		for _, ingress := range separatedIngresses() {
+			jobs <- probe{ingress: ingress, url: urls[offset%len(urls)]}
+		}
+	}
+	close(jobs)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	failures := make(chan error, cap(jobs))
+	var running sync.WaitGroup
+	for range min(8, len(jobs)) {
+		running.Go(func() {
+			for item := range jobs {
+				v := visitor
+				v.Address = item.ingress + ":443"
+				var err error
+				for ctx.Err() == nil {
+					attempt, stop := context.WithTimeout(ctx, 2*time.Second)
+					err = v.ProbeTLS(attempt, item.url)
+					stop()
+					if err == nil {
+						break
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(50 * time.Millisecond):
+					}
+				}
+				if err != nil {
+					failures <- fmt.Errorf("visitor TLS through %s to %s: %w", item.ingress, item.url, err)
+				}
+			}
+		})
+	}
+	running.Wait()
+	close(failures)
+	var failed error
+	for err := range failures {
+		failed = errors.Join(failed, err)
+	}
+	return failed
 }
 
 func runSeparatedVisitorFresh(ctx context.Context, visitor benchworkload.Visitor, phase benchworkload.Phase, component string, rate, localRate, index int, cohortByURL map[string]string, result *separatedVisitorResult) error {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,42 @@ type Visitor struct {
 
 func (v Visitor) client() (*http.Client, *http.Transport) {
 	return v.httpClient(true)
+}
+
+// ProbeTLS confirms the real ingress-to-publisher path and certificate before
+// offering application requests. it never sends HTTP bytes or follows redirects.
+func (v Visitor) ProbeTLS(parent context.Context, publicURL string) error {
+	origin, err := url.Parse(publicURL)
+	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil {
+		return errors.New("public URL requires an HTTPS hostname")
+	}
+	address := v.Address
+	if address == "" {
+		port := origin.Port()
+		if port == "" {
+			port = "443"
+		}
+		address = net.JoinHostPort(origin.Hostname(), port)
+	}
+	network := v.Network
+	if network == "" {
+		network = "tcp"
+	}
+	ctx, cancel := context.WithTimeout(parent, RequestTimeout)
+	defer cancel()
+	connection, err := (&net.Dialer{Resolver: v.Resolver, LocalAddr: v.SourceAddress}).DialContext(ctx, network, address)
+	if err != nil {
+		return err
+	}
+	secured := tls.Client(connection, &tls.Config{RootCAs: v.Roots, ServerName: origin.Hostname(), MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}})
+	defer secured.Close()
+	if err := secured.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	if len(secured.ConnectionState().VerifiedChains) == 0 {
+		return errors.New("visitor TLS did not verify a certificate")
+	}
+	return nil
 }
 
 func (v Visitor) bandwidthClient() (*http.Client, *http.Transport) {

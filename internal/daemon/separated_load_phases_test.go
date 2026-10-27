@@ -67,6 +67,15 @@ func activateSeparatedPublishers(t *testing.T, database *sql.DB, routes int) sep
 	for _, ready := range publishers.Ready {
 		waitForPublisherObservedIngressAllocations(t, database, ready.PublicURLID, ready.PublishRunNumber, len(separatedIngresses()))
 	}
+	if *runtimeLoadWorkload == "public-url" {
+		// visitor source IPs are the ones authorized by the workload's IP
+		// policy. ask those containers to prove verified TLS per ingress before
+		// sending the first measured request.
+		separatedWrite(t, "visitors.prepare", true)
+		for index := 1; index <= 4; index++ {
+			separatedWait(t, fmt.Sprintf("visitor-%d.prepared", index), 40*time.Second, nil)
+		}
+	}
 	var orders, installed, distinctPublicURLs int
 	var workerAttempts int64
 	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(*) FILTER (WHERE state = 'installed'), count(DISTINCT public_url_id), coalesce(sum(attempts), 0) FROM control.acme_orders`).Scan(&orders, &installed, &distinctPublicURLs, &workerAttempts); err != nil {

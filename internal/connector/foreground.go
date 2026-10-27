@@ -291,7 +291,10 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job super
 			return nil
 		})
 		_ = listener.Close()
-		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return context.Cause(ctx)
+		}
+		if errors.Is(ctx.Err(), context.Canceled) && (err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return nil
 		}
 		if errors.Is(err, connectorstream.ErrSelectionExpired) {

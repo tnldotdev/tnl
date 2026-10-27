@@ -6,9 +6,28 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestVisitorTLSPreparationVerifiesWithoutOpeningAnApplicationRequest(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	visitor := Visitor{Roots: roots, Address: server.Listener.Addr().String()}
+	if err := visitor.ProbeTLS(t.Context(), server.URL); err != nil {
+		t.Fatal("verified visitor TLS did not become ready", err)
+	}
+	if err := visitor.ProbeTLS(t.Context(), "https://wrong-host.example.test"); err == nil {
+		t.Fatal("visitor TLS accepted the wrong hostname")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("TLS preparation sent an application request")
+	}
+}
 
 func TestHTTPVisitorMeasuresFreshAndReusedVerifiedConnections(t *testing.T) {
 	for _, http2 := range []bool{false, true} {

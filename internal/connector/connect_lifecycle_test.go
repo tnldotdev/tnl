@@ -240,3 +240,29 @@ func TestConnectorCancellationDuringRecoveryPreparation(t *testing.T) {
 		t.Fatalf("canceled recovery retained its local listener: %v", err)
 	}
 }
+
+func TestConnectorDeadlineWhileOfflineReturnsFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	job := supervisor.Job{ServiceID: "offline-service", Target: listener.Addr().String()}
+	err = runConnectorLifecycle(ctx, listener, job, "", connectorLifecycle{
+		serve: func(ctx context.Context, _ net.Listener, _ supervisor.Job, _ func() error) error {
+			<-ctx.Done()
+			return nil
+		},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("offline service returned success at caller deadline: %v", err)
+	}
+	if connected, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
+		if connected != nil {
+			_ = connected.Close()
+		}
+		t.Fatalf("timed-out connector retained its listener: %v", err)
+	}
+}
