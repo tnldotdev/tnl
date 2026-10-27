@@ -104,9 +104,41 @@ tasks:
 
   default:
     dir: "{{.ROOT_DIR}}"
-    desc: Run PostgreSQL-backed Go integration tests
-    vars:
-      RUN: '{{default "^TestIntegration" .RUN}}'
+    desc: Run PostgreSQL-backed Go integration tests through bounded CI groups
+    cmds:
+      - task: "{{if .RUN}}selected{{else}}complete{{end}}"
+        vars:
+          RUN: '{{default "^TestIntegration" .RUN}}'
+
+  complete:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - task: api
+      - task: state:shard
+        vars: { SHARD: "1/4" }
+      - task: state:shard
+        vars: { SHARD: "2/4" }
+      - task: state:shard
+        vars: { SHARD: "3/4" }
+      - task: state:shard
+        vars: { SHARD: "4/4" }
+      - task: runtime:shard
+        vars: { SHARD: "1/4" }
+      - task: runtime:shard
+        vars: { SHARD: "2/4" }
+      - task: runtime:shard
+        vars: { SHARD: "3/4" }
+      - task: runtime:shard
+        vars: { SHARD: "4/4" }
+      - task: runtime:leases
+      - task: runtime:workload
+
+  selected:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    requires:
+      vars: [RUN]
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 

@@ -71,10 +71,12 @@ and remove digest-pinned disposable databases; it is not a product binary
 dependency. Each PostgreSQL-backed invocation shares one PostgreSQL container
 while each test creates its own database. The same harness drives the runtime
 load topology and fault sweeps without a TypeScript container runner.
-The complete runtime tier has a 20-minute budget, including real lease-cycle
-tests; a shell running the full multi-package integration tier needs a longer
-deadline than an individual package. CI runs four state shards, four runtime
-shards, and three ordinary CLI shards in parallel. Reproduce one with:
+`go:test:integration` runs the API group, four state shards, four runtime shards,
+and the two real-clock proofs in sequence, using the same bounded targets as CI.
+allow more than 20 minutes for the complete command; each runtime/state shard has
+its own eight-minute budget. supplying `RUN` keeps the focused multi-package
+invocation. CI runs its shards in parallel and adds three ordinary CLI shards.
+reproduce one with:
 
 ```console
 mise exec -- task go:test:integration:state:shard SHARD=1/4
