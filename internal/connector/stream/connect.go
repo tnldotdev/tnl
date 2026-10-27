@@ -54,6 +54,8 @@ func (Assignment) GoString() string { return "private connector assignment" }
 // selection never grants a stream: ingress checks the live grant separately.
 type Run struct {
 	Permission              controlv1.VisitorTokenResponse `json:"-"`
+	PairReady               *controlv1.NativePeerPairReady `json:"-"`
+	Subject                 tunnelv1.VisitorSubject        `json:"-"`
 	ServiceID, ServiceRunID string
 	RunNumber               uint64
 	ValidUntil              time.Time

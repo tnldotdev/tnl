@@ -13,29 +13,41 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // preparedSelection belongs to one service connector. socket setup reads its
 // immutable snapshot; only the joined background owner can replace it.
 type preparedSelection struct {
-	mu     sync.Mutex
-	config Config
-	run    Run
-	until  time.Time
-	timer  *time.Timer
-	stop   context.CancelCauseFunc
-	cancel context.CancelFunc
-	done   chan struct{}
-	closed bool
-	once   sync.Once
+	mu          sync.Mutex
+	config      Config
+	run         Run
+	peerOwner   *peerPreparation
+	peer        *preparedPeer
+	pendingPeer *controlv1.NativePeerPairRequest
+	createKey   string
+	peerFenced  bool
+	until       time.Time
+	timer       *time.Timer
+	stop        context.CancelCauseFunc
+	cancel      context.CancelFunc
+	done        chan struct{}
+	closed      bool
+	once        sync.Once
 }
+
+func (*preparedSelection) String() string   { return "prepared service selection" }
+func (*preparedSelection) GoString() string { return "prepared service selection" }
 
 // ErrSelectionExpired closes the old runner when its last confirmed permission
 // expires. the owner may revalidate the service before starting a new runner.
 var ErrSelectionExpired = fmt.Errorf("%w: prepared selection expired", ErrServiceConnection)
 
-func prepareSelection(ctx context.Context, config Config, stop context.CancelCauseFunc) (*preparedSelection, error) {
+func prepareSelection(ctx context.Context, config Config, stop context.CancelCauseFunc, peer ...*peerPreparation) (*preparedSelection, error) {
 	p := &preparedSelection{config: config, stop: stop, done: make(chan struct{})}
+	if len(peer) > 0 {
+		p.peerOwner = peer[0]
+	}
 	startup, finishStartup := context.WithTimeout(ctx, 10*time.Second)
 	defer finishStartup()
 	for {
@@ -74,6 +86,7 @@ func prepareSelection(ctx context.Context, config Config, stop context.CancelCau
 					p.mu.Lock()
 					closed := p.closed
 					p.until = time.Time{}
+					p.peerFenced = true
 					p.timer.Stop()
 					p.mu.Unlock()
 					if closed {
@@ -89,6 +102,13 @@ func prepareSelection(ctx context.Context, config Config, stop context.CancelCau
 }
 
 func (p *preparedSelection) refresh(ctx context.Context) (result error) {
+	defer func() {
+		if result != nil && p.peerOwner != nil {
+			p.mu.Lock()
+			p.peerFenced = true
+			p.mu.Unlock()
+		}
+	}()
 	started := time.Now()
 	call, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -113,6 +133,11 @@ func (p *preparedSelection) refresh(ctx context.Context) (result error) {
 		permission.VisitorPolicyRevision < 1 || len(permission.VisitorToken) == 0 || len(permission.VisitorToken) > visitortoken.MaxTokenBytes || !permission.ExpiresAt.After(time.Now()) {
 		return ErrServiceConnection
 	}
+	if p.peerOwner != nil {
+		if err := p.refreshPeer(call, run); err != nil {
+			return err
+		}
+	}
 	run.ServiceTLS = p.config.ServiceTLS
 	endpoint := *run.Endpoint
 	run.Endpoint = &endpoint
@@ -123,6 +148,10 @@ func (p *preparedSelection) refresh(ctx context.Context) (result error) {
 		return ErrServiceConnection
 	}
 	p.run, p.until = run, until
+	p.peerFenced = false
+	if p.peerOwner != nil {
+		until = minSelectionTime(until, p.peer.until)
+	}
 	if p.timer == nil {
 		p.timer = time.AfterFunc(time.Until(until), p.expire)
 	} else {
@@ -133,9 +162,14 @@ func (p *preparedSelection) refresh(ctx context.Context) (result error) {
 
 func (p *preparedSelection) current() (Run, error) {
 	p.mu.Lock()
-	if p.closed || !p.until.After(time.Now()) {
+	expired := p.closed || !p.until.After(time.Now())
+	// this read feeds openPrivate's ingress path. a prepared peer does not
+	// authorize that path, even while its own background snapshot is healthy.
+	if expired || p.peerOwner != nil {
 		p.mu.Unlock()
-		p.stop(ErrSelectionExpired)
+		if expired {
+			p.stop(ErrSelectionExpired)
+		}
 		return Run{}, ErrServiceConnection
 	}
 	run := p.run
@@ -147,7 +181,7 @@ func (p *preparedSelection) current() (Run, error) {
 
 func (p *preparedSelection) expire() {
 	p.mu.Lock()
-	expired := !p.closed && !p.until.After(time.Now())
+	expired := !p.closed && (!p.until.After(time.Now()) || p.peerOwner != nil && p.peer != nil && !p.peer.until.After(time.Now()))
 	p.mu.Unlock()
 	if expired {
 		p.stop(ErrSelectionExpired)

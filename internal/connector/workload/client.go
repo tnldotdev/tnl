@@ -326,6 +326,28 @@ func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv
 	}
 	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
 }
+
+// PrepareNativePeerPair keeps the workload credential inside the adapter.
+// stream preparation supplies only the signed, source-free proof fields.
+func (c *Client) PrepareNativePeerPair(ctx context.Context, service string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.NativePeerPair{}, err
+	}
+	if !r.LeaseExpiresAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+		return controlv1.NativePeerPair{}, ErrSessionExpired
+	}
+	if !slices.Contains(r.ServiceIds, service) {
+		return controlv1.NativePeerPair{}, invalidSession()
+	}
+	if body.Action == "renew" && body.PreviousPairId != nil {
+		return c.control.RenewWorkloadNativePeerPair(ctx, service, *body.PreviousPairId, r.Credential, body)
+	}
+	if body.Action == "create" {
+		return c.control.PrepareWorkloadNativePeerPair(ctx, service, r.Credential, body)
+	}
+	return controlv1.NativePeerPair{}, invalidSession()
+}
 func (c *Client) IngressTransportTrust(ctx context.Context, session string) (controlv1.IngressTransportTrust, error) {
 	r, err := c.Session()
 	if err != nil {

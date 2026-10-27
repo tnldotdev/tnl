@@ -249,5 +249,15 @@ func (c *workloadControl) resolve(ctx context.Context, service string) (Run, err
 	if err != nil {
 		return Run{}, err
 	}
-	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint, Permission: permission}, nil
+	if r.PairReady != nil && !validPairHint(r.PairReady) {
+		return Run{}, ErrServiceConnection
+	}
+	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint, Permission: permission, PairReady: clonePairHint(r.PairReady), Subject: c.subject}, nil
+}
+
+func (c *workloadControl) preparePeer(ctx context.Context, service string, subject tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	if subject != c.subject {
+		return controlv1.NativePeerPair{}, ErrServiceConnection
+	}
+	return c.client.PrepareNativePeerPair(ctx, service, body)
 }

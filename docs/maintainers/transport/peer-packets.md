@@ -171,6 +171,10 @@ exact native pair only after checking the signed enrolled subject, current
 visitor access, ready publisher run and two distinct relay assignments. its
 stored deadline advances only after a fresh authorized renewal; an uncertain
 response repeats the same key and delivery generation. the transport binding
-is not a publisher grant or permission to open an application stream. the role
-migration still needs an authenticated owner for registered pair keys, fixed
-deadlines at connected owners, and peer frame forwarding.
+is not a publisher grant or permission to open an application stream.
+[connector preparation](../../../internal/connector/stream/peer_preparation.go)
+can sign, recover, and renew a pair in background work using the enrolled device
+or workload key. its test-only opt-in denies the existing ingress application
+path while no peer-stream owner exists. the role migration still needs an
+authenticated owner for registered pair keys, fixed deadlines at connected
+owners, and peer frame forwarding.

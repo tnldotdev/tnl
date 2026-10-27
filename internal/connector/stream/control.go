@@ -304,10 +304,27 @@ func (c *controlAdapter) ResolveService(ctx context.Context, service string) (Ru
 		!selected.ExpiresAt.After(time.Now()) || !validProtocol(string(selected.Protocol)) {
 		return Run{}, ErrServiceConnection
 	}
+	if selected.PairReady != nil && !validPairHint(selected.PairReady) {
+		return Run{}, ErrServiceConnection
+	}
 	permission, err := c.client.IssueDeviceVisitorToken(ctx, service, signer.Subject.DeviceID)
 	if err != nil {
 		return Run{}, err
 	}
 	return Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber),
-		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, Permission: permission}, nil
+		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, Permission: permission, PairReady: clonePairHint(selected.PairReady), Subject: signer.Subject}, nil
+}
+
+// preparePeer uses the enrolled device signer without exporting its key.
+func (c *controlAdapter) preparePeer(ctx context.Context, service string, subject tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	if subject.Kind != tunnelv1.VisitorHumanDevice || subject.IdentityID != c.identityID || subject.DeviceID == "" {
+		return controlv1.NativePeerPair{}, ErrServiceConnection
+	}
+	if body.Action == "renew" && body.PreviousPairId != nil {
+		return c.client.RenewDeviceNativePeerPair(ctx, service, *body.PreviousPairId, subject.DeviceID, body)
+	}
+	if body.Action == "create" {
+		return c.client.PrepareDeviceNativePeerPair(ctx, service, subject.DeviceID, body)
+	}
+	return controlv1.NativePeerPair{}, ErrServiceConnection
 }
