@@ -39,9 +39,8 @@ func (d *Database) ListNativePeerPairs(ctx context.Context, serviceID, runID, af
 	if err != nil {
 		return result, err
 	}
-	if run.State != "ready" || !run.Healthy || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
-		return result, ErrServiceAccess
-	}
+	// a starting or temporarily unhealthy run can reconcile hints. only the
+	// independent delivery operation requires ready claims and a certificate.
 	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{
 		ID: run.ID, ServiceID: serviceID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
 		PublisherGrantID: run.PublisherGrantID, PublisherKeyID: run.PublisherKeyID, Now: timestamptz(now),

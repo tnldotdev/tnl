@@ -1979,7 +1979,7 @@ CREATE TABLE control.native_peer_pairs (
     CHECK (replay_fence_until=last_request_at+interval '5 minutes')
 );
 CREATE INDEX native_peer_pairs_expiry ON control.native_peer_pairs(expires_at);
-CREATE INDEX native_peer_pairs_run_inventory ON control.native_peer_pairs(service_run_id,id);
+CREATE INDEX native_peer_pairs_run_inventory ON control.native_peer_pairs(service_run_id,id COLLATE "C");
 
 -- at most one relay claim per pair leg. a fresh signed proof can recover an
 -- uncertain response, but an old proof can never recover the key again.

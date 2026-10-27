@@ -172,6 +172,9 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if candidates, err := d.ListNativePeerPairs(ctx, service.ID, run.RunID, "", run.Token, now); err != nil || candidates.Items == nil || len(candidates.Items) != 0 {
+		t.Fatal("starting run could not reconcile an empty inventory before certificate installation", err)
+	}
 	const directory = "https://acme.example.test/directory"
 	if _, err := d.EnsureACMEAccount(ctx, directory, "operator@example.test", now); err != nil {
 		t.Fatal(err)

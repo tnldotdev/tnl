@@ -202,8 +202,8 @@ const listNativePeerPairCandidates = `-- name: ListNativePeerPairCandidates :man
 SELECT id,delivery_generation FROM control.native_peer_pairs
 WHERE service_id=$1 AND service_run_id=$2
     AND run_number=$3 AND publisher_identity_id=$4
-    AND expires_at>$5 AND id>$6
-ORDER BY id LIMIT 65
+    AND expires_at>$5 AND id COLLATE "C">$6 COLLATE "C"
+ORDER BY id COLLATE "C" LIMIT 65
 `
 
 type ListNativePeerPairCandidatesParams struct {

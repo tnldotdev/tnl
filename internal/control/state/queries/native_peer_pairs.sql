@@ -8,8 +8,8 @@ SELECT * FROM control.native_peer_pairs WHERE subject_kind=sqlc.arg(subject_kind
 SELECT id,delivery_generation FROM control.native_peer_pairs
 WHERE service_id=sqlc.arg(service_id) AND service_run_id=sqlc.arg(service_run_id)
     AND run_number=sqlc.arg(run_number) AND publisher_identity_id=sqlc.arg(publisher_identity_id)
-    AND expires_at>sqlc.arg(now) AND id>sqlc.arg(after_id)
-ORDER BY id LIMIT 65;
+    AND expires_at>sqlc.arg(now) AND id COLLATE "C">sqlc.arg(after_id) COLLATE "C"
+ORDER BY id COLLATE "C" LIMIT 65;
 
 -- name: ReplaceNativePeerPair :execrows
 DELETE FROM control.native_peer_pairs WHERE id=sqlc.arg(id);
