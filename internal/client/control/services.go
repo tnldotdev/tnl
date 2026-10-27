@@ -191,3 +191,10 @@ func (c *Client) ListNativePeerPairs(ctx context.Context, serviceID, runID, afte
 		return c.api.ListNativePeerPairs(ctx, serviceID, runID, params, editors...)
 	})
 }
+
+func (c *Client) ConfirmNativePeerPairPrepared(ctx context.Context, serviceID, runID, pairID string, prepared controlv1.NativePeerPairPrepared, token credentials.ServiceRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ConfirmNativePeerPairPrepared(ctx, serviceID, runID, pairID, prepared, editors...)
+	})
+	return err
+}

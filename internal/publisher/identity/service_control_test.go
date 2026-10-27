@@ -11,6 +11,7 @@ import (
 )
 
 var _ publisherservice.RunControl = (*Native)(nil)
+var _ publisherservice.NativePeerControl = (*Native)(nil)
 
 type serviceBoundaryControl struct {
 	NativeControl
@@ -39,6 +40,11 @@ func (c *serviceBoundaryControl) DeliverNativePeerPair(_ context.Context, _, _, 
 func (c *serviceBoundaryControl) ListNativePeerPairs(_ context.Context, _, _, _ string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
 	c.token, c.calls = token, c.calls+1
 	return controlv1.NativePeerPairCandidates{}, nil
+}
+
+func (c *serviceBoundaryControl) ConfirmNativePeerPairPrepared(_ context.Context, _, _, _ string, _ controlv1.NativePeerPairPrepared, token credentials.ServiceRunToken) error {
+	c.token, c.calls = token, c.calls+1
+	return nil
 }
 
 func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
@@ -70,5 +76,11 @@ func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	}
 	if _, err := n.ListNativePeerPairs(t.Context(), "another-service", "run", "", token); !errors.Is(err, ErrScope) || c.calls != 4 {
 		t.Fatal("native peer discovery escaped its service grant", err)
+	}
+	if err := n.ConfirmNativePeerPairPrepared(t.Context(), service, "run", "pair", controlv1.NativePeerPairPrepared{}, token); err != nil || c.token != token || c.calls != 5 {
+		t.Fatal("native peer preparation report changed its run token", err)
+	}
+	if err := n.ConfirmNativePeerPairPrepared(t.Context(), "another-service", "run", "pair", controlv1.NativePeerPairPrepared{}, token); !errors.Is(err, ErrScope) || c.calls != 5 {
+		t.Fatal("native peer preparation report escaped its service grant", err)
 	}
 }

@@ -31,6 +31,8 @@ type preparedPeer struct {
 	number uint64
 	hint   *controlv1.NativePeerPairReady
 	until  time.Time
+	// local request-start deadlines; control-clock timestamps stay on pair.
+	expiresAt, publisherPreparedUntil time.Time
 }
 
 // control accepts a signed proof for at most five minutes. leave room for
@@ -86,7 +88,7 @@ func (p *preparedSelection) refreshPeer(ctx context.Context, run Run) error {
 		return ErrServiceConnection
 	}
 	p.mu.Lock()
-	previous, pending := p.peer, p.pendingPeer
+	previous, pending, lastProof := p.peer, p.pendingPeer, p.peerProof
 	p.mu.Unlock()
 	if previous != nil && (previous.runID != run.ServiceRunID || previous.number != run.RunNumber || !samePairHint(previous.hint, run.PairReady)) {
 		return ErrServiceConnection
@@ -101,12 +103,21 @@ func (p *preparedSelection) refreshPeer(ctx context.Context, run Run) error {
 	if pending != nil && !pending.RequestedAt.Add(peerProofRetryWindow).After(time.Now()) {
 		return errPeerProofExpired
 	}
-	// a healthy pair is never replaced. renew shortly before its fixed expiry.
-	if previous != nil && previous.pair.ExpiresAt.After(time.Now().Add(15*time.Second)) {
-		p.mu.Lock()
-		p.peer.until = minSelectionTime(run.ValidUntil, minSelectionTime(run.Permission.ExpiresAt, previous.pair.ExpiresAt))
-		p.mu.Unlock()
-		return nil
+	// readiness polling repeats the last exact proof without renewing authority
+	// or signing on application arrival. only a due renewal gets a fresh proof.
+	if pending == nil && previous != nil && previous.expiresAt.After(time.Now().Add(15*time.Second)) {
+		if !previous.publisherPreparedUntil.After(time.Now().Add(15 * time.Second)) {
+			if lastProof == nil {
+				return ErrServiceConnection
+			}
+			body := *lastProof
+			pending = &body
+		} else {
+			p.mu.Lock()
+			p.peer.until = minSelectionTime(run.ValidUntil, minSelectionTime(run.Permission.ExpiresAt, previous.expiresAt))
+			p.mu.Unlock()
+			return nil
+		}
 	}
 	if pending == nil {
 		key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
@@ -134,44 +145,60 @@ func (p *preparedSelection) refreshPeer(ctx context.Context, run Run) error {
 			return ErrServiceConnection
 		}
 		body.Signature = base64.RawURLEncoding.EncodeToString(signature)
-		p.mu.Lock()
-		p.pendingPeer = body
-		p.mu.Unlock()
 		pending = body
 	}
+	p.mu.Lock()
+	p.pendingPeer = pending
+	p.mu.Unlock()
+	started := time.Now()
 	pair, err := owner.call(ctx, run.ServiceID, owner.signer.Subject, *pending)
 	if err != nil {
 		return err
 	}
-	if err := validatePeer(pair, run, pending, previous); err != nil {
+	if err := validatePeer(pair, run, pending, previous, started); err != nil {
 		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || ctx.Err() != nil {
+	if p.closed || ctx.Err() != nil || previous != nil && !previous.until.After(time.Now()) {
 		return ErrServiceConnection
 	}
 	if previous == nil {
 		p.createKey = pending.IdempotencyKey
 	}
+	pair.Relays = slices.Clone(pair.Relays)
+	subject, _ := visitorsubject.Parse(pair.Subject)
+	pair.Subject = visitorsubject.Wire(subject)
+	expiresAt := started.Add(pair.ExpiresAt.Sub(pair.ObservedAt))
+	preparedUntil := time.Time{}
+	if pair.PublisherPreparedUntil != nil {
+		preparedUntil = started.Add(pair.PublisherPreparedUntil.Sub(pair.ObservedAt))
+		at := *pair.PublisherPreparedUntil
+		pair.PublisherPreparedUntil = &at
+	}
 	p.peer = &preparedPeer{pair: pair, runID: run.ServiceRunID, number: run.RunNumber, hint: clonePairHint(run.PairReady),
-		until: minSelectionTime(run.ValidUntil, minSelectionTime(run.Permission.ExpiresAt, pair.ExpiresAt))}
+		expiresAt: expiresAt, publisherPreparedUntil: preparedUntil,
+		until: minSelectionTime(run.ValidUntil, minSelectionTime(run.Permission.ExpiresAt, expiresAt))}
 	p.pendingPeer = nil
+	p.peerProof = pending
 	return nil
 }
 
-func validatePeer(pair controlv1.NativePeerPair, run Run, request *controlv1.NativePeerPairRequest, previous *preparedPeer) error {
+func validatePeer(pair controlv1.NativePeerPair, run Run, request *controlv1.NativePeerPairRequest, previous *preparedPeer, started time.Time) error {
+	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
 	if !opaqueid.Valid(pair.PairId, "npp_") || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID ||
 		pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId ||
 		!visitorsubject.Same(pair.Subject, request.Subject) || pair.DeliveryGeneration < 1 ||
-		!slices.Equal(pair.Relays, request.ExpectedRelays) || !pair.ExpiresAt.After(time.Now()) ||
-		pair.ExpiresAt.After(time.Now().Add(5*time.Minute+time.Second)) || pair.ExpiresAt.After(run.ValidUntil) || pair.ExpiresAt.After(run.Permission.ExpiresAt) {
+		!slices.Equal(pair.Relays, request.ExpectedRelays) || pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute ||
+		!started.Add(duration).After(time.Now()) || started.Add(duration).After(run.ValidUntil) || started.Add(duration).After(run.Permission.ExpiresAt) ||
+		pair.PublisherPreparedUntil != nil && pair.PublisherPreparedUntil.After(pair.ExpiresAt) {
 		return ErrServiceConnection
 	}
 	if _, err := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId); err != nil {
 		return ErrServiceConnection
 	}
 	key, err := base64.RawURLEncoding.Strict().DecodeString(pair.Key)
+	defer clear(key)
 	if err != nil || len(key) != 32 || slices.Equal(key, make([]byte, 32)) || base64.RawURLEncoding.EncodeToString(key) != pair.Key {
 		return ErrServiceConnection
 	}
@@ -182,17 +209,38 @@ func validatePeer(pair controlv1.NativePeerPair, run Run, request *controlv1.Nat
 	return nil
 }
 
-// peerCurrent is only used by preparation tests until peer stream admission
-// and relay delivery exist. socket arrival must not sign or contact control.
+// peerCurrent supplies a pair for background relay setup, before publisher
+// confirmation. packet/application startup must use peerPrepared instead.
 func (p *preparedSelection) peerCurrent() (preparedPeer, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.peerCurrentLocked()
+}
+
+func (p *preparedSelection) peerCurrentLocked() (preparedPeer, error) {
 	if p.closed || p.peerFenced || p.peer == nil || !p.until.After(time.Now()) || !p.peer.until.After(time.Now()) ||
 		p.peer.runID != p.run.ServiceRunID || p.peer.number != p.run.RunNumber || !samePairHint(p.peer.hint, p.run.PairReady) {
 		return preparedPeer{}, ErrServiceConnection
 	}
 	peer := *p.peer
+	peer.pair.Subject = visitorsubject.Wire(p.run.Subject)
 	peer.pair.Relays = slices.Clone(peer.pair.Relays)
+	if peer.pair.PublisherPreparedUntil != nil {
+		at := *peer.pair.PublisherPreparedUntil
+		peer.pair.PublisherPreparedUntil = &at
+	}
 	peer.hint = clonePairHint(peer.hint)
+	return peer, nil
+}
+
+// peerPrepared is a local startup barrier, not application permission or relay
+// liveness. it never contacts control, signs a proof, or waits for ICE.
+func (p *preparedSelection) peerPrepared() (preparedPeer, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	peer, err := p.peerCurrentLocked()
+	if err != nil || !peer.publisherPreparedUntil.After(time.Now()) {
+		return preparedPeer{}, ErrServiceConnection
+	}
 	return peer, nil
 }

@@ -88,6 +88,7 @@ schemas:
         delivery_generation,
         key,
         relays,
+        observed_at,
         expires_at,
       ]
     properties:
@@ -105,6 +106,14 @@ schemas:
         }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
       key: { type: string, description: Secret returned only to the authorized signed source. }
+      observed_at:
+        type: string
+        format: date-time
+        description: Control's authority observation time; subtract request transit when installing local deadlines.
+      publisher_prepared_until:
+        type: string
+        format: date-time
+        description: The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
       relays:
         type: array
         minItems: 2

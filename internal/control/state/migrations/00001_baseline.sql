@@ -1959,6 +1959,7 @@ CREATE TABLE control.native_peer_pairs (
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     last_renewal_digest bytea CHECK (last_renewal_digest IS NULL OR octet_length(last_renewal_digest)=32),
+    publisher_prepared_until timestamptz,
     key_digest bytea NOT NULL CHECK (octet_length(key_digest)=32),
     key_ciphertext bytea NOT NULL,
     delivery_id bytea NOT NULL CONSTRAINT native_peer_pairs_delivery_id_nonzero CHECK (octet_length(delivery_id)=16 AND delivery_id<>decode(repeat('00',16),'hex')),

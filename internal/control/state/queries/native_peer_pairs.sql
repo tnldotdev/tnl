@@ -26,7 +26,9 @@ ON CONFLICT ON CONSTRAINT native_peer_pairs_delivery_id_key DO NOTHING RETURNING
 
 -- name: LimitNativePeerPair :one
 -- an uncertain delivery retry may only shorten the existing deadline.
-UPDATE control.native_peer_pairs SET expires_at=LEAST(expires_at,sqlc.arg(authority_expires_at))
+UPDATE control.native_peer_pairs SET expires_at=LEAST(expires_at,sqlc.arg(authority_expires_at)),
+    publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
+        THEN LEAST(publisher_prepared_until,expires_at,sqlc.arg(authority_expires_at)) END
 WHERE id=sqlc.arg(id) AND expires_at>sqlc.arg(now) AND last_authorized_at<=sqlc.arg(now)
     AND sqlc.arg(authority_expires_at)::timestamptz>sqlc.arg(now) RETURNING *;
 
@@ -34,6 +36,8 @@ WHERE id=sqlc.arg(id) AND expires_at>sqlc.arg(now) AND last_authorized_at<=sqlc.
 -- only a fresh signed renewal after the last successful authorization can
 -- extend the same pair; an expired row never regains serving authority.
 UPDATE control.native_peer_pairs SET expires_at=sqlc.arg(authority_expires_at),last_authorized_at=sqlc.arg(now),
+    publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
+        THEN LEAST(publisher_prepared_until,expires_at,sqlc.arg(authority_expires_at)) END,
     last_request_at=sqlc.arg(request_at),replay_fence_until=sqlc.arg(request_at)::timestamptz+interval '5 minutes',
     last_renewal_digest=sqlc.arg(renewal_digest)
 WHERE id=sqlc.arg(id) AND expires_at>sqlc.arg(now) AND last_authorized_at<sqlc.arg(now)
@@ -48,6 +52,14 @@ DELETE FROM control.native_peer_pairs victim WHERE victim.id IN (
 
 -- name: LockNativePeerPairForLegClaim :one
 SELECT * FROM control.native_peer_pairs WHERE id=sqlc.arg(id) FOR UPDATE;
+
+-- name: ConfirmNativePeerPairPrepared :execrows
+-- only a checked publisher report can advance this startup barrier. a retry
+-- retains a newer report, capped by the currently checked delivery authority.
+UPDATE control.native_peer_pairs
+SET publisher_prepared_until=LEAST(sqlc.arg(authority_expires_at),GREATEST(publisher_prepared_until,sqlc.arg(binding_expires_at)))
+WHERE id=sqlc.arg(id) AND delivery_generation=sqlc.arg(delivery_generation)
+    AND expires_at>sqlc.arg(now);
 
 -- name: SaveNativePeerPairLegClaim :one
 -- two rows maximum per pair. an uncertain response requires a fresh proof from

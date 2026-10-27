@@ -82,7 +82,7 @@ func TestPeerBindingDeadlineIsConservativeAcrossClockSkewAndDelay(t *testing.T) 
 			},
 		}}
 		binding, err := PreparePeerBinding(t.Context(), f, f.response.ServiceId, f.response.ServiceRunId, f.response.PairId, 5, "run-token")
-		if err != nil || !binding.ExpiresAt().Equal(now.Add(10*time.Second)) || time.Until(binding.ExpiresAt()) != 7*time.Second {
+		if err != nil || !binding.ExpiresAt().Equal(now.Add(10*time.Second)) || time.Until(binding.ExpiresAt()) != 7*time.Second || !binding.authorityExpiresAt.Equal(f.response.ExpiresAt) {
 			t.Fatal("control clock or transit delay extended pair authority", err)
 		}
 		for _, change := range []func(*controlv1.NativePeerPairDelivery){

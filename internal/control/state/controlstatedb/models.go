@@ -624,6 +624,7 @@ type ControlNativePeerPair struct {
 	IdempotencyKey         string
 	RequestDigest          []byte
 	LastRenewalDigest      []byte
+	PublisherPreparedUntil pgtype.Timestamptz
 	KeyDigest              []byte
 	KeyCiphertext          []byte
 	DeliveryID             []byte

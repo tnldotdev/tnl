@@ -37,7 +37,7 @@ func pairResponse(run Run, body controlv1.NativePeerPairRequest) controlv1.Nativ
 	return controlv1.NativePeerPair{PairId: "npp_" + strings.Repeat("Q", 22), DeliveryId: base64.RawURLEncoding.EncodeToString([]byte("binary-header-16")),
 		DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(slices.Repeat([]byte{42}, 32)),
 		ServiceId: run.ServiceID, ServiceRunId: run.ServiceRunID, RunNumber: int64(run.RunNumber), PublisherIdentityId: run.PairReady.PublisherIdentityId,
-		Subject: body.Subject, Relays: slices.Clone(body.ExpectedRelays), ExpiresAt: time.Now().Add(35 * time.Second)}
+		Subject: body.Subject, Relays: slices.Clone(body.ExpectedRelays), ObservedAt: time.Now(), ExpiresAt: time.Now().Add(35 * time.Second)}
 }
 
 func TestDevicePeerPreparationRetriesLostHTTPResponseWithSameProof(t *testing.T) {
@@ -203,6 +203,8 @@ func TestPeerPreparationRejectsMalformedDeliveryAndFencesStaleSelection(t *testi
 		{"relays", func(p *controlv1.NativePeerPair) { p.Relays[0].AssignmentRevision++ }},
 		{"subject", func(p *controlv1.NativePeerPair) { p.Subject.DeviceId = new("vdev_" + strings.Repeat("X", 22)) }},
 		{"expiry", func(p *controlv1.NativePeerPair) { p.ExpiresAt = time.Now().Add(-time.Second) }},
+		{"missing observation", func(p *controlv1.NativePeerPair) { p.ObservedAt = time.Time{} }},
+		{"prepared beyond binding", func(p *controlv1.NativePeerPair) { p.PublisherPreparedUntil = new(p.ExpiresAt.Add(time.Second)) }},
 		{"exceeds run lease", func(p *controlv1.NativePeerPair) { p.ExpiresAt = time.Now().Add(2 * time.Minute) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -244,6 +246,128 @@ func TestPeerPreparationRejectsMalformedDeliveryAndFencesStaleSelection(t *testi
 	if _, err := p.current(); err == nil {
 		t.Fatal("required peer preparation fell back to ingress")
 	}
+}
+
+func TestPeerPreparationPollsPublisherBarrierWithoutNewProofOrAuthority(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, run, owner := peerUnitFixture(t)
+		started := time.Now()
+		var calls, signatures atomic.Int32
+		sign := owner.signer.Sign
+		owner.signer.Sign = func(message []byte) []byte { signatures.Add(1); return sign(message) }
+		var first controlv1.NativePeerPairRequest
+		owner.call = func(_ context.Context, _ string, _ tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+			n := calls.Add(1)
+			if n == 1 {
+				first = body
+			} else if body.Signature != first.Signature || body.IdempotencyKey != first.IdempotencyKey || !body.RequestedAt.Equal(first.RequestedAt) || body.Action != "create" {
+				t.Error("publisher polling changed the exact authorized proof")
+			}
+			if n == 2 {
+				return controlv1.NativePeerPair{}, clientcontrol.ErrUnavailable
+			}
+			pair := pairResponse(run, body)
+			pair.ExpiresAt = started.Add(35 * time.Second)
+			if n >= 3 {
+				pair.PublisherPreparedUntil = new(started.Add(25 * time.Second))
+			}
+			return pair, nil
+		}
+		ctx, stop := context.WithCancelCause(t.Context())
+		defer stop(nil)
+		p, err := prepareSelection(ctx, config, stop, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p.Close()
+		if _, err := p.peerCurrent(); err != nil {
+			t.Fatal("unconfirmed pair was unavailable for relay setup", err)
+		}
+		for range 100 {
+			if _, err := p.peerPrepared(); err == nil {
+				t.Fatal("unconfirmed publisher admitted packet startup")
+			}
+		}
+		if calls.Load() != 1 || signatures.Load() != 1 {
+			t.Fatal("startup read signed or contacted control")
+		}
+		time.Sleep(2*time.Second + time.Millisecond)
+		synctest.Wait()
+		if _, err := p.peerPrepared(); err == nil || calls.Load() != 2 {
+			t.Fatal("failed confirmation poll admitted packet startup")
+		}
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		ready, err := p.peerPrepared()
+		if err != nil || calls.Load() != 3 || signatures.Load() != 1 || !ready.expiresAt.Equal(started.Add(35*time.Second)) || !ready.publisherPreparedUntil.Equal(started.Add(25*time.Second)) {
+			t.Fatal("retry lost the barrier or renewed authority", err)
+		}
+		*ready.pair.PublisherPreparedUntil = time.Time{}
+		for range 100 {
+			if next, err := p.peerPrepared(); err != nil || next.pair.PublisherPreparedUntil.IsZero() {
+				t.Fatal("local read mutated the installed barrier", err)
+			}
+			if _, err := p.current(); err == nil {
+				t.Fatal("confirmed peer enabled ingress fallback")
+			}
+		}
+		if calls.Load() != 3 || signatures.Load() != 1 {
+			t.Fatal("confirmed local reads signed or contacted control")
+		}
+	})
+}
+
+func TestPeerPreparationBarrierUsesRequestStartDespiteClockSkewAndTransit(t *testing.T) {
+	for _, skew := range []time.Duration{-time.Hour, time.Hour} {
+		t.Run(skew.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				config, run, owner := peerUnitFixture(t)
+				started := time.Now()
+				owner.call = func(_ context.Context, _ string, _ tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+					pair := pairResponse(run, body)
+					pair.ObservedAt = started.Add(skew)
+					pair.ExpiresAt = pair.ObservedAt.Add(8 * time.Second)
+					pair.PublisherPreparedUntil = new(pair.ObservedAt.Add(3 * time.Second))
+					time.Sleep(time.Second)
+					return pair, nil
+				}
+				ctx, stop := context.WithCancelCause(t.Context())
+				defer stop(nil)
+				p, err := prepareSelection(ctx, config, stop, owner)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer p.Close()
+				ready, err := p.peerPrepared()
+				if err != nil || !ready.expiresAt.Equal(started.Add(8*time.Second)) || !ready.publisherPreparedUntil.Equal(started.Add(3*time.Second)) {
+					t.Fatal("transit or server clock skew added serving time", err)
+				}
+				time.Sleep(2 * time.Second)
+				if _, err := p.peerPrepared(); err == nil {
+					t.Fatal("expired publisher report admitted packet startup")
+				}
+			})
+		})
+	}
+}
+
+func TestPeerPreparationRejectsBindingExpiredInTransit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, run, owner := peerUnitFixture(t)
+		owner.call = func(_ context.Context, _ string, _ tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+			pair := pairResponse(run, body)
+			pair.ExpiresAt = pair.ObservedAt.Add(time.Second)
+			pair.PublisherPreparedUntil = new(pair.ExpiresAt)
+			time.Sleep(time.Second)
+			return pair, nil
+		}
+		ctx, stop := context.WithCancelCause(t.Context())
+		defer stop(nil)
+		if p, err := prepareSelection(ctx, config, stop, owner); err == nil {
+			p.Close()
+			t.Fatal("expired response installed a publisher barrier")
+		}
+	})
 }
 
 func TestPeerPreparationRevokedDeviceDoesNotRetryOrFallBack(t *testing.T) {
@@ -329,6 +453,7 @@ func TestPeerPreparationBackgroundRenewalAndJoinedCancellation(t *testing.T) {
 			n := calls.Add(1)
 			pair := pairResponse(run, body)
 			pair.ExpiresAt = time.Now().Add(18 * time.Second)
+			pair.PublisherPreparedUntil = new(pair.ExpiresAt)
 			if n == 2 {
 				if body.Action != "renew" || body.PreviousPairId == nil || *body.PreviousPairId != pair.PairId {
 					t.Error("background work did not sign a renewal")
@@ -386,6 +511,7 @@ func TestPeerPreparationUncertainRenewalRetriesExactProof(t *testing.T) {
 		owner.call = func(_ context.Context, _ string, _ tunnelv1.VisitorSubject, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
 			pair := pairResponse(run, body)
 			pair.ExpiresAt = time.Now().Add(18 * time.Second)
+			pair.PublisherPreparedUntil = new(pair.ExpiresAt)
 			switch calls.Add(1) {
 			case 1:
 				if body.Action != "create" {
@@ -438,6 +564,7 @@ func TestPeerPreparationAcceptsNarrowerRenewalAndJoinsAtItsDeadline(t *testing.T
 			switch calls.Add(1) {
 			case 1:
 				pair.ExpiresAt = time.Now().Add(18 * time.Second)
+				pair.PublisherPreparedUntil = new(pair.ExpiresAt)
 				cached = pair
 			case 2:
 				if body.Action != "renew" || body.PreviousPairId == nil || *body.PreviousPairId != cached.PairId {

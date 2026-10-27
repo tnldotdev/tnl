@@ -32,9 +32,13 @@ func nativePairRelays(relays [2]controlstate.NativePeerPairRelay) []controlv1.Na
 }
 
 func nativePairResponse(pair controlstate.NativePeerPair) controlv1.NativePeerPair {
-	return controlv1.NativePeerPair{PairId: pair.ID, ServiceId: pair.ServiceID, ServiceRunId: pair.ServiceRunID, RunNumber: pair.RunNumber,
+	result := controlv1.NativePeerPair{PairId: pair.ID, ServiceId: pair.ServiceID, ServiceRunId: pair.ServiceRunID, RunNumber: pair.RunNumber,
 		PublisherIdentityId: pair.PublisherIdentityID, Subject: visitorsubject.Wire(pair.Subject), DeliveryId: base64.RawURLEncoding.EncodeToString(pair.DeliveryID[:]), DeliveryGeneration: pair.DeliveryGeneration,
-		Key: pair.Key, Relays: nativePairRelays(pair.Relays), ExpiresAt: pair.ExpiresAt}
+		Key: pair.Key, Relays: nativePairRelays(pair.Relays), ObservedAt: pair.ObservedAt, ExpiresAt: pair.ExpiresAt}
+	if !pair.PublisherPreparedUntil.IsZero() {
+		result.PublisherPreparedUntil = &pair.PublisherPreparedUntil
+	}
+	return result
 }
 
 func nativePairInput(serviceID string, body controlv1.NativePeerPairRequest) (controlstate.NativePeerPairRequest, error) {
@@ -178,6 +182,39 @@ func (h *handler) ListNativePeerPairs(w http.ResponseWriter, r *http.Request, se
 		result.NextAfter = &page.NextAfter
 	}
 	writeJSON(w, 200, result)
+}
+
+func (h *handler) ConfirmNativePeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body controlv1.NativePeerPairPrepared
+	if decodeJSONLimited(w, r, &body, 1024) != nil || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid native peer preparation report")
+		return
+	}
+	id, err := tunnelv1.ParsePeerDeliveryIdentifier(body.DeliveryId)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid native peer preparation report")
+		return
+	}
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return
+	}
+	store, ok := h.store.(interface {
+		ConfirmNativePeerPairPrepared(context.Context, string, string, string, string, controlstate.NativePeerPairPrepared, time.Time) error
+	})
+	if !ok {
+		writeProblem(w, 503, controlv1.Unavailable, "native peer preparation reports are unavailable")
+		return
+	}
+	err = store.ConfirmNativePeerPairPrepared(r.Context(), serviceID, runID, pairID, token, controlstate.NativePeerPairPrepared{
+		DeliveryID: id, DeliveryGeneration: body.DeliveryGeneration, BindingExpiresAt: body.BindingExpiresAt}, time.Now())
+	if err != nil {
+		serviceRunProblem(w, "confirm native peer preparation", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *handler) DeliverNativePeerPair(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {

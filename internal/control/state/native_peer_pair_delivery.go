@@ -33,6 +33,27 @@ func (NativePeerPairDelivery) GoString() string { return "native peer pair deliv
 // DeliverNativePeerPair reads only the already claimed delivery. the run lock
 // serializes assignment changes and pair replacement; no key is created here.
 func (d *Database) DeliverNativePeerPair(ctx context.Context, serviceID, runID, pairID string, generation int64, token string, now time.Time) (result NativePeerPairDelivery, retErr error) {
+	return d.nativePeerPairDelivery(ctx, serviceID, runID, pairID, generation, token, now, nil)
+}
+
+type NativePeerPairPrepared struct {
+	DeliveryID         [16]byte
+	DeliveryGeneration int64
+	BindingExpiresAt   time.Time
+}
+
+// ConfirmNativePeerPairPrepared records only publisher-reported installation.
+// it shares the delivery operation's exact current authority and source checks,
+// and cannot extend either the pair or the installed binding's deadline.
+func (d *Database) ConfirmNativePeerPairPrepared(ctx context.Context, serviceID, runID, pairID, token string, prepared NativePeerPairPrepared, now time.Time) error {
+	if prepared.DeliveryID == [16]byte{} || !prepared.BindingExpiresAt.After(now) {
+		return ErrServiceAccess
+	}
+	_, err := d.nativePeerPairDelivery(ctx, serviceID, runID, pairID, prepared.DeliveryGeneration, token, now, &prepared)
+	return err
+}
+
+func (d *Database) nativePeerPairDelivery(ctx context.Context, serviceID, runID, pairID string, generation int64, token string, now time.Time, prepared *NativePeerPairPrepared) (result NativePeerPairDelivery, retErr error) {
 	if generation < 1 || pairID == "" || now.IsZero() || d.storageKey == nil {
 		return result, ErrServiceAccess
 	}
@@ -156,19 +177,31 @@ func (d *Database) DeliverNativePeerPair(ctx context.Context, serviceID, runID, 
 	if result.DeliveryID == [16]byte{} {
 		return NativePeerPairDelivery{}, ErrServiceAccess
 	}
-	secret, _, err := d.storageKey.Open(pair.StorageKeyID, nativePeerPairKeyContext(pair.ID), pair.KeyCiphertext)
-	if err != nil {
-		return NativePeerPairDelivery{}, err
-	}
-	defer clear(secret)
-	digest := sha256.Sum256(secret)
-	if !bytes.Equal(digest[:], pair.KeyDigest) {
-		return NativePeerPairDelivery{}, ErrServiceAccess
+	if prepared != nil {
+		if prepared.DeliveryID != result.DeliveryID || prepared.BindingExpiresAt.After(result.ExpiresAt) {
+			return NativePeerPairDelivery{}, ErrServiceAccess
+		}
+		count, err := q.ConfirmNativePeerPairPrepared(ctx, controlstatedb.ConfirmNativePeerPairPreparedParams{ID: pairID,
+			DeliveryGeneration: generation, BindingExpiresAt: timestamptz(prepared.BindingExpiresAt),
+			AuthorityExpiresAt: timestamptz(result.ExpiresAt), Now: timestamptz(now)})
+		if err != nil || count != 1 {
+			return NativePeerPairDelivery{}, publisherLookupError(err, ErrServiceAccess)
+		}
+	} else {
+		secret, _, err := d.storageKey.Open(pair.StorageKeyID, nativePeerPairKeyContext(pair.ID), pair.KeyCiphertext)
+		if err != nil {
+			return NativePeerPairDelivery{}, err
+		}
+		defer clear(secret)
+		digest := sha256.Sum256(secret)
+		if !bytes.Equal(digest[:], pair.KeyDigest) {
+			return NativePeerPairDelivery{}, ErrServiceAccess
+		}
+		result.Key = base64.RawURLEncoding.EncodeToString(secret)
 	}
 	result.PairID, result.ServiceID, result.ServiceRunID, result.PublisherIdentityID = pair.ID, serviceID, runID, run.PublisherIdentityID
 	result.RunNumber, result.DeliveryGeneration, result.Relays = run.RunNumber, generation, bound
 	result.ObservedAt = now
-	result.Key = base64.RawURLEncoding.EncodeToString(secret)
 	if err = tx.Commit(ctx); err != nil {
 		return NativePeerPairDelivery{}, err
 	}

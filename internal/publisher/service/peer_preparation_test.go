@@ -25,9 +25,24 @@ import (
 )
 
 type publisherPeerControlFixture struct {
-	binding PeerBinding
-	claims  atomic.Bool
-	calls   atomic.Int64
+	binding   PeerBinding
+	claims    atomic.Bool
+	calls     atomic.Int64
+	confirmed atomic.Int64
+	confirm   func(context.Context, controlv1.NativePeerPairPrepared) error
+}
+
+func (f *publisherPeerControlFixture) ConfirmNativePeerPairPrepared(ctx context.Context, service, run, pair string, prepared controlv1.NativePeerPairPrepared, token credentials.ServiceRunToken) error {
+	b := f.binding
+	if service != b.serviceID || run != b.serviceRunID || pair != b.pairID || token != "run-token" ||
+		prepared.DeliveryId != base64.RawURLEncoding.EncodeToString(b.deliveryID[:]) || prepared.DeliveryGeneration != b.generation || !prepared.BindingExpiresAt.Equal(b.expiresAt) {
+		return ErrPrivateStream
+	}
+	f.confirmed.Add(1)
+	if f.confirm != nil {
+		return f.confirm(ctx, prepared)
+	}
+	return nil
 }
 
 func (f *publisherPeerControlFixture) ListNativePeerPairs(_ context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
@@ -155,6 +170,27 @@ func TestPeerPreparationDiscoversAndServesOnClaimedPublisherConnections(t *testi
 				}
 				binding := peerAdmissionFixture(t, b)
 				control := &publisherPeerControlFixture{binding: binding}
+				reports := make(chan *PeerSession, 2)
+				control.confirm = func(_ context.Context, _ controlv1.NativePeerPairPrepared) error {
+					b.mu.Lock()
+					p := b.peers[binding.pairID]
+					installed := p != nil && p.deliveryStarted && b.peerPacketSlotsCurrentLocked(p.binding)
+					b.mu.Unlock()
+					if !installed {
+						t.Error("publisher reported before installing both exact carrier registrations")
+						return ErrPrivateStream
+					}
+					select {
+					case <-p.packetReady:
+					default:
+						t.Error("publisher reported before installing the inner listener")
+					}
+					reports <- p
+					if control.confirmed.Load() == 1 {
+						return ErrPrivateStream // retry the report, not the inner session.
+					}
+					return nil
+				}
 				control.claims.Store(true)
 				prepared := make(chan error, 1)
 				go func() { prepared <- b.ServeNativePeers(ctx, control, "run-token") }()
@@ -189,6 +225,16 @@ func TestPeerPreparationDiscoversAndServesOnClaimedPublisherConnections(t *testi
 				case <-owner.packetReady:
 				case <-ctx.Done():
 					t.Fatal("pair did not install both packet registrations", ctx.Err())
+				}
+				for range 2 {
+					select {
+					case reported := <-reports:
+						if reported != owner {
+							t.Fatal("retry replaced the installed inner listener")
+						}
+					case <-ctx.Done():
+						t.Fatal("publisher did not retry its preparation report", ctx.Err())
+					}
 				}
 				var outgoing [3]peer.Carrier
 				for slot, relay := range relays {
@@ -353,6 +399,57 @@ func TestPeerPreparationCancellationJoinsBlockedDiscovery(t *testing.T) {
 	}
 }
 
+func TestPeerPreparationCancellationJoinsConfirmationAndRejectsLateSuccess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, b, _, _ := privateFixture(t, "127.0.0.1:1")
+		b.nativePeers = true
+		binding := peerAdmissionFixture(t, b)
+		owner, err := b.BindPeer(t.Context(), binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer owner.Close()
+		// this proof isolates confirmation ownership. the transport matrix above
+		// proves the real registrations/listener precede this signal.
+		close(owner.packetReady)
+		for slot, assignment := range b.connections {
+			b.packetSlots[slot] = &Claimed{ref: b.assignments[assignment.PublisherConnectionId], packets: &publisherPeerPackets{ctx: t.Context()}}
+		}
+		started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		control := &publisherPeerControlFixture{binding: binding, confirm: func(ctx context.Context, _ controlv1.NativePeerPairPrepared) error {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			<-release
+			return nil // a late successful response cannot confirm a stopped owner.
+		}}
+		control.claims.Store(true)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- b.ServeNativePeers(ctx, control, "run-token") }()
+		<-started
+		cancel()
+		<-canceled
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("shutdown returned before joining the confirmation worker")
+		default:
+		}
+		owner.Close()
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if owner.publisherPrepared || !owner.closed || b.peers[binding.pairID] != owner {
+			t.Fatal("late confirmation revived or replaced the stopped owner")
+		}
+	})
+}
+
 type blockedPeerBindings struct {
 	NativePeerControl
 	started chan struct{}
@@ -484,6 +581,10 @@ func (f *nativePeerLifecycleControl) ListNativePeerPairs(ctx context.Context, se
 
 func (f *nativePeerLifecycleControl) DeliverNativePeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
 	return controlv1.NativePeerPairDelivery{}, ErrPrivateStream
+}
+
+func (f *nativePeerLifecycleControl) ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error {
+	return ErrPrivateStream
 }
 
 func TestPeerPreparationPublishOwnsAndJoinsDiscovery(t *testing.T) {

@@ -171,6 +171,19 @@ func (n *Native) ListNativePeerPairs(ctx context.Context, serviceID, runID, afte
 	return control.ListNativePeerPairs(ctx, serviceID, runID, after, token)
 }
 
+func (n *Native) ConfirmNativePeerPairPrepared(ctx context.Context, serviceID, runID, pairID string, prepared controlv1.NativePeerPairPrepared, token credentials.ServiceRunToken) error {
+	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
+		return ErrScope
+	}
+	control, ok := n.NativeControl.(interface {
+		ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error
+	})
+	if !ok {
+		return ErrScope
+	}
+	return control.ConfirmNativePeerPairPrepared(ctx, serviceID, runID, pairID, prepared, token)
+}
+
 // SavedService reads only the exact service selected by this signing
 // identity. a public URL or namespace grant cannot discover services.
 func (n *Native) SavedService(ctx context.Context) (controlv1.Service, error) {

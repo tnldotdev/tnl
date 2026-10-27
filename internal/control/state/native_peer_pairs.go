@@ -52,6 +52,7 @@ type NativePeerPair struct {
 	DeliveryID                                       [16]byte
 	Relays                                           [2]NativePeerPairRelay
 	ExpiresAt                                        time.Time
+	ObservedAt, PublisherPreparedUntil               time.Time
 }
 
 func (NativePeerPair) String() string   { return "native peer pair" }
@@ -356,6 +357,10 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 		return NativePeerPair{}, ErrServiceAccess
 	}
 	result.ExpiresAt = row.ExpiresAt.Time
+	result.ObservedAt = now
+	if row.PublisherPreparedUntil.Valid && row.PublisherPreparedUntil.Time.After(now) {
+		result.PublisherPreparedUntil = minTime(row.PublisherPreparedUntil.Time, result.ExpiresAt)
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return NativePeerPair{}, err
 	}

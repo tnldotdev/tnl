@@ -33,8 +33,39 @@ func (q *Queries) CleanupExpiredNativePeerPairs(ctx context.Context, arg Cleanup
 	return result.RowsAffected(), nil
 }
 
+const confirmNativePeerPairPrepared = `-- name: ConfirmNativePeerPairPrepared :execrows
+UPDATE control.native_peer_pairs
+SET publisher_prepared_until=LEAST($1,GREATEST(publisher_prepared_until,$2))
+WHERE id=$3 AND delivery_generation=$4
+    AND expires_at>$5
+`
+
+type ConfirmNativePeerPairPreparedParams struct {
+	AuthorityExpiresAt pgtype.Timestamptz
+	BindingExpiresAt   pgtype.Timestamptz
+	ID                 string
+	DeliveryGeneration int64
+	Now                pgtype.Timestamptz
+}
+
+// only a checked publisher report can advance this startup barrier. a retry
+// retains a newer report, capped by the currently checked delivery authority.
+func (q *Queries) ConfirmNativePeerPairPrepared(ctx context.Context, arg ConfirmNativePeerPairPreparedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmNativePeerPairPrepared,
+		arg.AuthorityExpiresAt,
+		arg.BindingExpiresAt,
+		arg.ID,
+		arg.DeliveryGeneration,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getNativePeerPair = `-- name: GetNativePeerPair :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE subject_kind=$1
+SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE subject_kind=$1
     AND subject_id=$2 AND service_run_id=$3 FOR UPDATE
 `
 
@@ -59,6 +90,7 @@ func (q *Queries) GetNativePeerPair(ctx context.Context, arg GetNativePeerPairPa
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
 		&i.KeyDigest,
 		&i.KeyCiphertext,
 		&i.DeliveryID,
@@ -82,7 +114,7 @@ VALUES ($1,$2,$3,$4,$5,
     $6,$7,$8,$9,$10,$11,$12,$13,
     $14,convert_from($15::bytea,'UTF8')::jsonb,nextval('control.native_peer_delivery_generation'),
     $16,$16,$17,$17::timestamptz+interval '5 minutes',$18)
-ON CONFLICT ON CONSTRAINT native_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
+ON CONFLICT ON CONSTRAINT native_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
 `
 
 type InsertNativePeerPairParams struct {
@@ -140,6 +172,7 @@ func (q *Queries) InsertNativePeerPair(ctx context.Context, arg InsertNativePeer
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
 		&i.KeyDigest,
 		&i.KeyCiphertext,
 		&i.DeliveryID,
@@ -156,9 +189,11 @@ func (q *Queries) InsertNativePeerPair(ctx context.Context, arg InsertNativePeer
 }
 
 const limitNativePeerPair = `-- name: LimitNativePeerPair :one
-UPDATE control.native_peer_pairs SET expires_at=LEAST(expires_at,$1)
+UPDATE control.native_peer_pairs SET expires_at=LEAST(expires_at,$1),
+    publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
+        THEN LEAST(publisher_prepared_until,expires_at,$1) END
 WHERE id=$2 AND expires_at>$3 AND last_authorized_at<=$3
-    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
+    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
 `
 
 type LimitNativePeerPairParams struct {
@@ -183,6 +218,7 @@ func (q *Queries) LimitNativePeerPair(ctx context.Context, arg LimitNativePeerPa
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
 		&i.KeyDigest,
 		&i.KeyCiphertext,
 		&i.DeliveryID,
@@ -250,7 +286,7 @@ func (q *Queries) ListNativePeerPairCandidates(ctx context.Context, arg ListNati
 }
 
 const lockNativePeerPairForLegClaim = `-- name: LockNativePeerPairForLegClaim :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE id=$1 FOR UPDATE
+SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockNativePeerPairForLegClaim(ctx context.Context, id string) (ControlNativePeerPair, error) {
@@ -268,6 +304,7 @@ func (q *Queries) LockNativePeerPairForLegClaim(ctx context.Context, id string) 
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
 		&i.KeyDigest,
 		&i.KeyCiphertext,
 		&i.DeliveryID,
@@ -285,10 +322,12 @@ func (q *Queries) LockNativePeerPairForLegClaim(ctx context.Context, id string) 
 
 const renewNativePeerPair = `-- name: RenewNativePeerPair :one
 UPDATE control.native_peer_pairs SET expires_at=$1,last_authorized_at=$2,
+    publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
+        THEN LEAST(publisher_prepared_until,expires_at,$1) END,
     last_request_at=$3,replay_fence_until=$3::timestamptz+interval '5 minutes',
     last_renewal_digest=$4
 WHERE id=$5 AND expires_at>$2 AND last_authorized_at<$2
-    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
+    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
 `
 
 type RenewNativePeerPairParams struct {
@@ -322,6 +361,7 @@ func (q *Queries) RenewNativePeerPair(ctx context.Context, arg RenewNativePeerPa
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
 		&i.KeyDigest,
 		&i.KeyCiphertext,
 		&i.DeliveryID,

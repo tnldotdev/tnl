@@ -356,6 +356,9 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, "wrong", now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("wrong run token recovered pair key", err)
 	}
+	t.Run("publisher preparation barrier", func(t *testing.T) {
+		assertNativePairPreparationBarrier(t, d, first, run, now)
+	})
 	again, err := d.PrepareNativePeerPair(visitor, request, now)
 	if err != nil || again.ID != first.ID || again.Key != first.Key || again.DeliveryID != first.DeliveryID || again.DeliveryGeneration != first.DeliveryGeneration || !again.ExpiresAt.Equal(first.ExpiresAt) {
 		t.Fatal("uncertain response retry changed the exact delivery", err)
@@ -415,6 +418,10 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher recovered claimed key", err)
 	}
+	if err := d.ConfirmNativePeerPairPrepared(ctx, service.ID, run.RunID, first.ID, run.Token,
+		NativePeerPairPrepared{DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: clipped.ExpiresAt}, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("revoked publisher advanced the installation report", err)
+	}
 	if _, err := d.PrepareNativePeerPair(visitor, request, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher grant recovered pair", err)
 	}
@@ -462,6 +469,13 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	}
 	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replaced pair recovered key", err)
+	}
+	if err := d.ConfirmNativePeerPairPrepared(ctx, service.ID, run.RunID, first.ID, run.Token,
+		NativePeerPairPrepared{DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: first.ExpiresAt}, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("replaced pair retained the publisher barrier", err)
+	}
+	if !second.PublisherPreparedUntil.IsZero() {
+		t.Fatal("replacement inherited the publisher barrier")
 	}
 	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, second.ID, second.DeliveryGeneration, run.Token, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("one relay claim delivered replacement key", err)
@@ -634,6 +648,25 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	if binding, err := d.DeliverNativePeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now); err != nil || binding.Key != pair.Key || binding.SourceIP != allowedSource || binding.ExpiresAt.After(workload.LeaseExpiresAt) {
 		t.Fatal("publisher did not get IP-allowed workload binding", err)
 	}
+	report := NativePeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
+	if err := d.ConfirmNativePeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, now); err != nil {
+		t.Fatal("workload publisher barrier rejected two checked claims", err)
+	}
+	// narrowing authority must durably narrow readiness, so a later pair renewal
+	// cannot uncover an older, longer installation report without a new report.
+	limitedUntil := pair.ExpiresAt.Add(-time.Second)
+	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_grants SET expires_at=$2 WHERE id=$1`, access.PublisherIdentity.GrantID, limitedUntil); err != nil {
+		t.Fatal(err)
+	}
+	limited, err := d.PrepareNativePeerPair(ctx, request, now)
+	if err != nil || !limited.PublisherPreparedUntil.Equal(limitedUntil) {
+		t.Fatal("narrower authority did not narrow the installation report", err)
+	}
+	pair = limited
+	report.BindingExpiresAt = limitedUntil
+	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_grants SET expires_at=NULL WHERE id=$1`, access.PublisherIdentity.GrantID); err != nil {
+		t.Fatal(err)
+	}
 	for _, lease := range leases {
 		if _, err := d.RenewRelay(ctx, RelayRenewal{RelayLeaseIdentity: lease.RelayLeaseIdentity}, now.Add(9*time.Second), time.Hour); err != nil {
 			t.Fatal("relay lease did not renew independently of the pair", err)
@@ -665,6 +698,9 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	firstRenewal, err := d.RenewNativePeerPair(ctx, renew, renew.RequestedAt)
 	if err != nil || firstRenewal.ID != pair.ID || firstRenewal.Key != pair.Key || firstRenewal.DeliveryID != pair.DeliveryID || firstRenewal.DeliveryGeneration != pair.DeliveryGeneration || !firstRenewal.ExpiresAt.After(pair.ExpiresAt) {
 		t.Fatal("fresh recheck did not extend the pair after the first run heartbeat", err)
+	}
+	if !firstRenewal.PublisherPreparedUntil.Equal(report.BindingExpiresAt) {
+		t.Fatal("pair renewal advanced the publisher's old installation report")
 	}
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second)); err != nil {
 		t.Fatal(err)
@@ -709,6 +745,9 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	if _, err := d.RenewNativePeerPair(ctx, renew, late); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired pair was renewed after its serving deadline", err)
 	}
+	if err := d.ConfirmNativePeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, late); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("expired publisher report revived the workload pair", err)
+	}
 	if _, err := d.PrepareNativePeerPair(ctx, request, late); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("expired creation proof revived the old delivery", err)
 	}
@@ -729,5 +768,51 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	if _, err := d.PrepareNativePeerPair(ctx, replacement, late.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("revoked workload credential recovered pair", err)
+	}
+}
+
+func assertNativePairPreparationBarrier(t *testing.T, d *Database, pair NativePeerPair, run ServiceRunState, now time.Time) {
+	t.Helper()
+	ctx := t.Context()
+	report := NativePeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt.Add(-time.Second)}
+	var authorizedAt, expiresAt time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT last_authorized_at,expires_at FROM control.native_peer_pairs WHERE id=$1`, pair.ID).Scan(&authorizedAt, &expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	confirm := func(body NativePeerPairPrepared) {
+		t.Helper()
+		if err := d.ConfirmNativePeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, run.Token, body, now); err != nil {
+			t.Fatal("checked installation report was rejected", err)
+		}
+	}
+	for range 2 {
+		confirm(report)
+	}
+	// an older response cannot roll back a newer report.
+	older := report
+	older.BindingExpiresAt = older.BindingExpiresAt.Add(-time.Second)
+	confirm(older)
+	var observed, savedAuthorized, savedExpiry time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT publisher_prepared_until,last_authorized_at,expires_at FROM control.native_peer_pairs WHERE id=$1`, pair.ID).
+		Scan(&observed, &savedAuthorized, &savedExpiry); err != nil || !observed.Equal(report.BindingExpiresAt) || !savedAuthorized.Equal(authorizedAt) || !savedExpiry.Equal(expiresAt) {
+		t.Fatal("installation report renewed authority or lost its idempotency", err)
+	}
+	// reports recheck the same authority as delivery, including current grants.
+	for _, token := range []string{"wrong", pair.Key} {
+		if err := d.ConfirmNativePeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, token, report, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("packet key or wrong run token authorized the barrier", err)
+		}
+	}
+	for _, mutate := range []func(*NativePeerPairPrepared){
+		func(r *NativePeerPairPrepared) { r.DeliveryID[0] ^= 1 },
+		func(r *NativePeerPairPrepared) { r.DeliveryGeneration++ },
+		func(r *NativePeerPairPrepared) { r.BindingExpiresAt = pair.ExpiresAt.Add(time.Microsecond) },
+		func(r *NativePeerPairPrepared) { r.BindingExpiresAt = now },
+	} {
+		bad := report
+		mutate(&bad)
+		if err := d.ConfirmNativePeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, run.Token, bad, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("invalid report authorized the publisher barrier", err)
+		}
 	}
 }

@@ -24,20 +24,21 @@ const (
 // capacity and replay history across both relay carriers of its inner QUIC
 // session. callers install only a control-prepared binding, then join Close.
 type PeerSession struct {
-	bound           *Bound
-	binding         PeerBinding
-	ctx             context.Context
-	cancel          context.CancelFunc
-	closed          bool
-	replayUntil     time.Time
-	seen            map[string]struct{}
-	streams         map[net.Conn]struct{}
-	changed         chan struct{}
-	done            chan struct{}
-	workers         sync.WaitGroup
-	delivery        sync.WaitGroup
-	deliveryStarted bool
-	packetReady     chan struct{}
+	bound             *Bound
+	binding           PeerBinding
+	ctx               context.Context
+	cancel            context.CancelFunc
+	closed            bool
+	replayUntil       time.Time
+	seen              map[string]struct{}
+	streams           map[net.Conn]struct{}
+	changed           chan struct{}
+	done              chan struct{}
+	workers           sync.WaitGroup
+	delivery          sync.WaitGroup
+	deliveryStarted   bool
+	packetReady       chan struct{}
+	publisherPrepared bool
 }
 
 func (*PeerSession) String() string   { return "publisher native peer session" }
@@ -107,6 +108,7 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 		return ErrPrivateStream
 	}
 	p.binding = binding
+	p.publisherPrepared = false
 	close(p.changed)
 	p.changed = make(chan struct{})
 	return nil

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"sync"
 	"time"
 
@@ -11,11 +12,12 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// NativePeerControl separates candidate discovery from the independently
-// authorized binding. both operations use only the current service run token.
+// NativePeerControl separates discovery, authorized binding, and installation
+// reporting. each operation uses only the current service run token.
 type NativePeerControl interface {
 	peerDeliveryControl
 	ListNativePeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error)
+	ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error
 }
 
 const peerPreparationWorkers = 4
@@ -127,7 +129,8 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.NativePeerPairCandidate
 	}
 	b.prunePeersLocked(time.Now())
 	if p := b.peers[candidate.PairId]; p != nil {
-		return !p.closed && p.binding.generation == candidate.DeliveryGeneration && p.binding.expiresAt.Before(time.Now().Add(15*time.Second))
+		return !p.closed && p.binding.generation == candidate.DeliveryGeneration &&
+			(!p.publisherPrepared || p.binding.expiresAt.Before(time.Now().Add(15*time.Second)))
 	}
 	if len(b.peers) >= maxPublisherPeerSessions {
 		return false
@@ -135,6 +138,16 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.NativePeerPairCandidate
 	for slot, claimed := range b.packetSlots {
 		if claimed == nil || claimed.packets == nil || claimed.packets.ctx.Err() != nil ||
 			claimed.ref != b.assignments[b.connections[slot].PublisherConnectionId] {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *Bound) peerPacketSlotsCurrentLocked(binding PeerBinding) bool {
+	for slot, claimed := range b.packetSlots {
+		if claimed == nil || claimed.packets == nil || claimed.packets.ctx.Err() != nil ||
+			claimed.ref != b.assignments[binding.relays[slot].PublisherConnectionId] {
 			return false
 		}
 	}
@@ -152,18 +165,50 @@ func (b *Bound) prepareNativePeer(ctx context.Context, control NativePeerControl
 		return
 	}
 	b.mu.Lock()
-	previous := b.peers[candidate.PairId]
+	p := b.peers[candidate.PairId]
 	b.mu.Unlock()
-	if previous != nil {
-		_ = previous.Renew(binding)
+	if p != nil {
+		if p.Renew(binding) != nil {
+			return
+		}
+	} else {
+		p, err = b.BindPeer(ctx, binding)
+		if err != nil {
+			return
+		}
+		delivery.Go(func() {
+			defer p.Close()
+			_ = p.ServeRelayPackets(ctx)
+		})
+	}
+	// the relay receipt alone cannot establish publisher readiness. wait for
+	// both exact registrations and the inner listener before reporting it.
+	confirm, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	select {
+	case <-p.packetReady:
+	case <-p.ctx.Done():
+		return
+	case <-confirm.Done():
 		return
 	}
-	p, err := b.BindPeer(ctx, binding)
-	if err != nil {
+	b.mu.Lock()
+	current := !p.closed && p.ctx.Err() == nil && p.binding.expiresAt.Equal(binding.expiresAt) &&
+		b.peerBindingCurrentLocked(binding, time.Now()) && b.peerPacketSlotsCurrentLocked(binding)
+	b.mu.Unlock()
+	if !current {
 		return
 	}
-	delivery.Go(func() {
-		defer p.Close()
-		_ = p.ServeRelayPackets(ctx)
-	})
+	err = control.ConfirmNativePeerPairPrepared(confirm, binding.serviceID, binding.serviceRunID, binding.pairID,
+		controlv1.NativePeerPairPrepared{DeliveryId: base64.RawURLEncoding.EncodeToString(binding.deliveryID[:]),
+			DeliveryGeneration: binding.generation, BindingExpiresAt: binding.authorityExpiresAt}, token)
+	if err != nil || confirm.Err() != nil {
+		return
+	}
+	b.mu.Lock()
+	if !p.closed && p.ctx.Err() == nil && p.binding.expiresAt.Equal(binding.expiresAt) &&
+		b.peerBindingCurrentLocked(binding, time.Now()) && b.peerPacketSlotsCurrentLocked(binding) {
+		p.publisherPrepared = true
+	}
+	b.mu.Unlock()
 }

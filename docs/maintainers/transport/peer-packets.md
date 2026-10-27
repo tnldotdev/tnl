@@ -220,6 +220,23 @@ can sign, recover, and renew a pair in background work using the enrolled device
 or workload key. its test-only opt-in denies the existing ingress application
 path while no peer delivery owner exists.
 
+the publisher reports installation only after both exact carrier registrations
+and the inner QUIC listener exist. control rechecks the exact run token, delivery
+ID/generation, parent authority, assignments, and two matching source claims
+before recording `publisher_prepared_until`. the report returns no key and does
+not renew authority. pair renewal alone cannot advance this barrier; replacement
+starts without a report. narrower authority durably clips the report so a later
+renewal cannot restore its older, longer deadline.
+
+connector background work can read an unconfirmed pair for relay setup. packet
+startup has a separate local read requiring an unexpired publisher report; it
+never signs, contacts control, or waits for ICE. while confirmation is absent or
+near expiry, preparation polls with the last exact signed proof, not a fresh
+authorization. only a due pair renewal signs a new proof. control includes
+`observed_at`; connector pair and report deadlines use request start plus the
+observed remaining duration, rejecting authority expired in transit. the report
+is an installation snapshot, not application permission or process liveness.
+
 the publisher's [peer session](../../../internal/publisher/service/peer_admission.go)
 accepts streams only against a control-prepared binding for the exact run and
 its current assignments. both relay paths share this owner, its retained visitor
@@ -253,9 +270,8 @@ admission and one target socket, but uses checked relay-session fixtures rather
 than the control-backed relay bridge.
 
 production publication does not enable `NativePeers` yet. native startup still
-needs an explicit publisher-prepared barrier before the connector sends its
-first packet introduction, connector packet dialing, and integrated real-relay
-qualification. a relay hello receipt proves its own checked claim, not that the
-publisher has installed its independently authorized registration. renewal of
+needs connector packet dialing through the prepared barrier and integrated
+real-relay qualification. a relay hello receipt proves its own checked claim,
+not publisher installation or application permission. renewal of
 the pair also must not silently extend an existing relay leg's fixed claim
 deadline. these handoffs must be wired before enabling native admission.

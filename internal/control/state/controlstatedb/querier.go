@@ -92,6 +92,9 @@ type Querier interface {
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
+	// only a checked publisher report can advance this startup barrier. a retry
+	// retains a newer report, capped by the currently checked delivery authority.
+	ConfirmNativePeerPairPrepared(ctx context.Context, arg ConfirmNativePeerPairPreparedParams) (int64, error)
 	ConsumeAuthenticationSeed(ctx context.Context, arg ConsumeAuthenticationSeedParams) (int64, error)
 	ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBrowserAccessHandoffParams) (ConsumeBrowserAccessHandoffRow, error)
 	ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBrowserLoginAttemptParams) (ConsumeBrowserLoginAttemptRow, error)

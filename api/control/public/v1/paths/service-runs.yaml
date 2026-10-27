@@ -1,4 +1,27 @@
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared:
+    post:
+      operationId: confirmNativePeerPairPrepared
+      description: Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairPrepared" }
+      responses:
+        "204": { description: Exact installed binding recorded without renewing authority }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs:
     get:
       operationId: listNativePeerPairs

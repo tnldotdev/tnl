@@ -25,6 +25,7 @@ type preparedSelection struct {
 	peerOwner   *peerPreparation
 	peer        *preparedPeer
 	pendingPeer *controlv1.NativePeerPairRequest
+	peerProof   *controlv1.NativePeerPairRequest
 	createKey   string
 	peerFenced  bool
 	until       time.Time

@@ -25,6 +25,7 @@ type PeerBinding struct {
 	sourceIP                                             netip.Addr
 	relays                                               [2]controlv1.NativePeerPairRelay
 	expiresAt                                            time.Time
+	authorityExpiresAt                                   time.Time
 }
 
 func (PeerBinding) String() string   { return "native peer binding" }
@@ -89,6 +90,7 @@ func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, servic
 	result.runNumber, result.generation, result.subject = delivery.RunNumber, generation, delivery.Subject
 	result.subject = result.Subject()
 	result.deliveryID, result.sourceIP, result.expiresAt = id, source, started.Add(duration)
+	result.authorityExpiresAt = delivery.ExpiresAt
 	copy(result.key[:], key)
 	copy(result.relays[:], delivery.Relays)
 	if !result.valid(time.Now()) {

@@ -203,8 +203,17 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	if err != nil || !bytes.Equal(decoded[:], saved) {
 		t.Fatal("public response changed the durable delivery header bytes", err)
 	}
-	if retry := call(path, owner.AccessToken.String(), request); retry.Code != 200 || !bytes.Equal(retry.Body.Bytes(), response.Body.Bytes()) {
-		t.Fatal("idempotent create changed delivery", retry.Code)
+	if retry := call(path, owner.AccessToken.String(), request); retry.Code != 200 {
+		t.Fatal("idempotent create failed", retry.Code)
+	} else {
+		var repeated controlv1.NativePeerPair
+		if err := json.Unmarshal(retry.Body.Bytes(), &repeated); err != nil || repeated.ObservedAt.Before(pair.ObservedAt) || repeated.ObservedAt.IsZero() {
+			t.Fatal("idempotent retry lost its current observation", err)
+		}
+		repeated.ObservedAt = pair.ObservedAt
+		if !reflect.DeepEqual(repeated, pair) {
+			t.Fatal("idempotent create changed the exact delivery")
+		}
 	}
 	server := httptest.NewTLSServer(h)
 	t.Cleanup(server.Close)
@@ -262,11 +271,19 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 		t.Helper()
 		return call(deliveryPath, bearer, map[string]int64{"delivery_generation": generation})
 	}
+	preparedPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/native-peer-pairs/" + pair.PairId + "/prepared"
+	report := controlv1.NativePeerPairPrepared{DeliveryId: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
 	assertDenied := func(bearer string, generation int64) {
 		t.Helper()
 		w := deliver(bearer, generation)
 		if w.Code == 200 || bytes.Contains(w.Body.Bytes(), []byte(pair.Key)) {
 			t.Fatal("unclaimed or unauthorized delivery exposed pair key", w.Code, w.Body.String())
+		}
+		body := report
+		body.DeliveryGeneration = generation
+		w = call(preparedPath, bearer, body)
+		if w.Code < 400 || bytes.Contains(w.Body.Bytes(), []byte(pair.Key)) {
+			t.Fatal("unclaimed or unauthorized preparation report succeeded", w.Code, w.Body.String())
 		}
 	}
 	assertDenied(run.Token, pair.DeliveryGeneration) // no relay leg has claimed the pair
@@ -349,6 +366,35 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	}
 	if delivered, err := api.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.PairId, pair.DeliveryGeneration, credentials.ServiceRunToken(run.Token)); err != nil || delivered.Key != pair.Key {
 		t.Fatal("run-token client lost delivery", err)
+	}
+	for _, mutate := range []func(*controlv1.NativePeerPairPrepared){
+		func(r *controlv1.NativePeerPairPrepared) { r.DeliveryId = "invalid" },
+		func(r *controlv1.NativePeerPairPrepared) {
+			r.DeliveryId = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 16))
+		},
+		func(r *controlv1.NativePeerPairPrepared) { r.DeliveryGeneration++ },
+		func(r *controlv1.NativePeerPairPrepared) { r.BindingExpiresAt = pair.ExpiresAt.Add(time.Second) },
+		func(r *controlv1.NativePeerPairPrepared) { r.BindingExpiresAt = now },
+	} {
+		body := report
+		mutate(&body)
+		if w := call(preparedPath, run.Token, body); w.Code < 400 {
+			t.Fatal("invalid preparation report accepted", w.Code)
+		}
+	}
+	if pair.PublisherPreparedUntil != nil {
+		t.Fatal("pair was prepared before the publisher reported installation")
+	}
+	for range 2 {
+		if err := api.ConfirmNativePeerPairPrepared(ctx, service.ID, run.RunID, pair.PairId, report, credentials.ServiceRunToken(run.Token)); err != nil {
+			t.Fatal("run-token client could not confirm installed binding", err)
+		}
+	}
+	if w := call(preparedPath, run.Token, report); w.Code != 204 || w.Body.Len() != 0 {
+		t.Fatal("preparation report returned delivery material", w.Code)
+	}
+	if prepared, err := api.PrepareDeviceNativePeerPair(ctx, service.ID, device.ID, request); err != nil || prepared.PublisherPreparedUntil == nil || !prepared.PublisherPreparedUntil.Equal(report.BindingExpiresAt) || !prepared.ExpiresAt.Equal(pair.ExpiresAt) {
+		t.Fatal("connector did not receive the bounded publisher barrier", err)
 	}
 	assertDenied(otherRun.Token, pair.DeliveryGeneration)
 	assertDenied(owner.AccessToken.String(), pair.DeliveryGeneration)
@@ -435,6 +481,9 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 		var replacement controlv1.NativePeerPair
 		if err := json.Unmarshal(w.Body.Bytes(), &replacement); err != nil || replacement.DeliveryId == pair.DeliveryId {
 			t.Fatal("replacement did not rotate delivery identifier", err)
+		}
+		if replacement.PublisherPreparedUntil != nil {
+			t.Fatal("replacement inherited the old publisher barrier")
 		}
 		if err := conn.QueryRow(ctx, `SELECT delivery_id FROM control.native_peer_pairs WHERE id=$1`, replacement.PairId).Scan(&saved); err != nil {
 			t.Fatal(err)
