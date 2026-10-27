@@ -228,6 +228,19 @@ type quicSession struct {
 	connection *quic.Conn
 }
 
+// AdoptQUIC owns an established v1 QUIC connection without taking ownership of
+// its shared UDP socket. the dialing/listening owner supplies transport trust.
+func AdoptQUIC(connection *quic.Conn) (Session, error) {
+	if connection == nil {
+		return nil, errors.New("muxsession: established QUIC connection is required")
+	}
+	if err := requireTransportALPN(connection.ConnectionState().TLS, ALPN); err != nil {
+		_ = connection.CloseWithError(1, "unexpected peer transport protocol")
+		return nil, err
+	}
+	return &quicSession{connection: connection}, nil
+}
+
 // DatagramSession is an opted-in QUIC session's bounded packet delivery
 // boundary. the caller must own datagram reception exclusively; stream
 // acceptance and the session lifetime remain with the role owner.

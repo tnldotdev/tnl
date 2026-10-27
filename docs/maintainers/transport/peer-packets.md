@@ -157,8 +157,8 @@ one of 64 native sessions by default, with at most two reservations per exact
 pair, generation, and leg. the reservation covers claims in progress and the
 acknowledged session; denial, close, cancellation, relay drain (checked every
 100 ms), and the ten-second idle limit release it. it does not use
-publisher connection capacity. the relay then closes the session: there is no
-peer key registration or owner for application visitor streams yet. production
+publisher connection capacity. the relay then closes the session: its native
+acceptor does not register peer keys or forward application traffic. production
 relay listeners do not configure this admission, so native connector hellos
 fail closed.
 
@@ -205,5 +205,9 @@ and IP policy are verified before managed visitor TLS or target work. a carrier
 change does not create a second admission. the owner keeps at most 4096 visitor
 IDs per pair and 64 pair owners per run, including stopped pairs retained for
 the five-minute token replay window. close, assignment replacement, and the fixed
-pair deadline interrupt and join its streams. the role migration still needs to
-attach the inner QUIC session to this owner and register and forward peer frames.
+pair deadline interrupt and join its streams.
+[packet serving](../../../internal/publisher/service/peer_packets.go) attaches
+one inner QUIC connection to that owner using already-authorized carriers. it
+uses the prepared service certificate, bounds stream readers, and preserves
+admission and the target socket through a carrier failure. the role migration
+still needs to register and forward frames through the production relay sessions.
