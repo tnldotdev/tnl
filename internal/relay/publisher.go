@@ -85,6 +85,13 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	control, registry := a.control, a.registry
 	var private *privateClaim
 	var nativeRelease func()
+	var nativeClaim nativeConnectorClaim
+	var nativeDelivery *nativePairDelivery
+	defer func() {
+		if nativeDelivery != nil {
+			nativeDelivery.Close()
+		}
+	}()
 	nativeAttempt, publisherAttempt := false, false
 	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
 		if message.Role == tunnelv1.NativeConnector {
@@ -97,10 +104,15 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 				return nil, err
 			}
 			nativeRelease = release
+			nativeClaim = claim
+			if a.native.Publishers != nil {
+				nativeDelivery, err = a.native.prepareDelivery(authCtx, ctx, transport, *message.NativePairLegProof, claim)
+				if err != nil {
+					return nil, err
+				}
+			}
 			// project only checked claim metadata; never send the pair key.
-			return &tunnelv1.NativePairLegAccepted{PairID: claim.PairId, DeliveryID: claim.DeliveryId,
-				DeliveryGeneration: claim.DeliveryGeneration, ConnectionSlot: claim.ConnectionSlot,
-				SourceIP: claim.SourceIp, ExpiresAt: claim.ExpiresAt}, nil
+			return &claim.receipt, nil
 		}
 		publisherAttempt = message.Role == tunnelv1.Publisher
 		if message.ServiceConnection != nil {
@@ -138,7 +150,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		return nil, nil
 	})
 	if private != nil {
-		return errors.Join(err, private.serve(ctx, session, a, finishAdmission))
+		return errors.Join(err, private.serve(ctx, session, transport, a, finishAdmission))
 	}
 	if nativeAttempt {
 		if nativeRelease != nil {
@@ -147,11 +159,13 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		if err != nil {
 			return err
 		}
-		// no delivery owner is installed yet. keep the acknowledged control
-		// stream alive briefly so the client can read hello_accepted before the
-		// transport closes; never accept another stream on this session.
 		defer session.Close()
-		deadline := time.NewTimer(10 * time.Second)
+		if nativeDelivery != nil {
+			return nativeDelivery.serve(a.native, session, *hello.NativePairLegProof, nativeClaim)
+		}
+		// the claim-only proof keeps its receipt readable briefly. it never
+		// registers packets or accepts another stream without a delivery owner.
+		deadline := time.NewTimer(min(10*time.Second, nativeClaim.receipt.ExpiresAt.Sub(a.native.now())))
 		defer deadline.Stop()
 		leaseCheck := time.NewTicker(100 * time.Millisecond)
 		defer leaseCheck.Stop()

@@ -156,11 +156,29 @@ claim before acknowledging. before the control claim, its local owner reserves
 one of 64 native sessions by default, with at most two reservations per exact
 pair, generation, and leg. the reservation covers claims in progress and the
 acknowledged session; denial, close, cancellation, relay drain (checked every
-100 ms), and the ten-second idle limit release it. it does not use
-publisher connection capacity. the relay then closes the session: its native
-acceptor does not register peer keys or forward application traffic. production
-relay listeners do not configure this admission, so native connector hellos
-fail closed.
+100 ms), and the fixed claim deadline release it. it does not use publisher
+connection capacity. without a configured publisher registry, this remains a
+claim-only proof that closes after at most ten seconds. production relay
+listeners do not configure native admission yet, so native connector hellos fail
+closed.
+
+the opt-in [relay packet handoff](../../../internal/relay/native_peer_delivery.go)
+requires the exact local service, run, publisher connection, slot, assignment
+revision, and relay process lease before acknowledging the connector. it borrows
+the authenticated publisher session and registers only the checked control-issued
+delivery ID, generation, key, direction, and path. QUIC must negotiate DATAGRAMs;
+TLS/yamux uses bounded framed streams. the relay copies authenticated encrypted
+frames in both directions, not application openings. publisher application
+admission remains independent. the publisher endpoint must already have its own
+control-prepared registration; the relay does not supply that authority.
+
+control includes its observation time in the claim. the relay computes the local
+deadline from request start plus the observed remaining duration, at most five
+minutes, rejecting a response already expired in transit. it cannot restart this
+deadline when delivery begins. publisher replacement, drain, close, cancellation,
+or claim expiry interrupt and join the packet workers and partial introductions.
+closing one pair removes its live registration while retaining the generation
+tombstone; it leaves sibling pairs and the borrowed publisher session alive.
 
 a relay behind a load balancer sees the balancer's address on its socket. that
 socket cannot prove the connector source. a future PROXY source mode needs an
@@ -186,8 +204,8 @@ confirms that claim does the relay send a bounded `hello_accepted` receipt with
 the source, exact delivery ID, pair, generation, slot, and expiry. the pair key
 stays in the private control claim. [native dialing](../../../internal/transport/tunnel/session.go)
 requires the delivery ID from the prepared pair and rejects a missing, expired,
-or mismatched receipt before returning the session. acknowledged native sessions
-do not accept further streams until a peer owner can enforce the pair lifetime.
+or mismatched receipt before returning the session. only an explicitly configured
+packet owner accepts further native streams under the fixed pair lifetime.
 the publisher's run-token-only delivery request requires two current relay claims
 with the same source before it returns the existing pair key. publisher
 preparation converts control's observation and expiry to a local request-start
@@ -210,4 +228,5 @@ pair deadline interrupt and join its streams.
 one inner QUIC connection to that owner using already-authorized carriers. it
 uses the prepared service certificate, bounds stream readers, and preserves
 admission and the target socket through a carrier failure. the role migration
-still needs to register and forward frames through the production relay sessions.
+still needs publisher-side pair discovery/preparation and connector packet
+dialing before enabling the authenticated relay handoff in production.

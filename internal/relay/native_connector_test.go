@@ -27,6 +27,13 @@ type nativeClaimFunc func(context.Context, relayv1.RelayLease, netip.Addr, tunne
 
 const nativeTestDeliveryID = "AQEBAQEBAQEBAQEBAQEBAQ"
 
+func nativeTestClaim(source netip.Addr, proof tunnelv1.NativePairLegProof) relayv1.NativePeerPairLegClaim {
+	key := [32]byte{1}
+	now := time.Now()
+	return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID, DeliveryGeneration: proof.DeliveryGeneration,
+		ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: base64.RawURLEncoding.EncodeToString(key[:]), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+}
+
 type nativeAdmissionObserver struct{ publisher atomic.Int32 }
 
 func (o *nativeAdmissionObserver) ObserveOperation(name string, _ error, _ time.Duration) {
@@ -143,8 +150,7 @@ func TestNativeConnectorSessionReservations(t *testing.T) {
 	var claims atomic.Int32
 	claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
 		claims.Add(1)
-		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID, DeliveryGeneration: proof.DeliveryGeneration,
-			ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: "test-key", ExpiresAt: time.Now().Add(time.Minute)}, nil
+		return nativeTestClaim(source, proof), nil
 	})
 	acceptor, owner, hello := nativeAdmissionFixture(t, 3, claim)
 	observer := new(nativeAdmissionObserver)
@@ -225,8 +231,7 @@ func TestNativeConnectorSessionReservations(t *testing.T) {
 func TestNativeConnectorDrainJoinsHeldSession(t *testing.T) {
 	var draining atomic.Bool
 	claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
-		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID, DeliveryGeneration: proof.DeliveryGeneration,
-			ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: "test-key", ExpiresAt: time.Now().Add(time.Minute)}, nil
+		return nativeTestClaim(source, proof), nil
 	})
 	acceptor, owner, hello := nativeAdmissionFixture(t, 1, claim)
 	current := owner.CurrentLease
@@ -255,12 +260,18 @@ func TestNativeConnectorRejectsMismatchedClaimBeforeReceipt(t *testing.T) {
 		{"slot", func(c *relayv1.NativePeerPairLegClaim) { c.ConnectionSlot = 1 }},
 		{"source", func(c *relayv1.NativePeerPairLegClaim) { c.SourceIp = "192.0.2.10" }},
 		{"expiry", func(c *relayv1.NativePeerPairLegClaim) { c.ExpiresAt = time.Now().Add(-time.Second) }},
+		{"missing observation", func(c *relayv1.NativePeerPairLegClaim) { c.ObservedAt = time.Time{} }},
+		{"too much authority", func(c *relayv1.NativePeerPairLegClaim) {
+			c.ExpiresAt = c.ObservedAt.Add(5*time.Minute + time.Nanosecond)
+		}},
+		{"malformed key", func(c *relayv1.NativePeerPairLegClaim) { c.Key = "not-a-key" }},
+		{"zero key", func(c *relayv1.NativePeerPairLegClaim) {
+			c.Key = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
-				result := relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID,
-					DeliveryGeneration: proof.DeliveryGeneration, ConnectionSlot: proof.ConnectionSlot,
-					SourceIp: source.String(), Key: "private-key", ExpiresAt: time.Now().Add(time.Minute)}
+				result := nativeTestClaim(source, proof)
 				test.change(&result)
 				return result, nil
 			})

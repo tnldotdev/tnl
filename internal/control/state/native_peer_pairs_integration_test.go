@@ -451,7 +451,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("signed replacement did not rotate the exact delivery", err)
 	}
 	assertNativeDeliveryID(t, d, second)
-	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key || !claim.ObservedAt.Equal(replacement.RequestedAt) {
 		t.Fatal("new delivery could not claim its own leg", err)
 	}
 	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {

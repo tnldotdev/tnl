@@ -23,7 +23,16 @@ schemas:
     type: object
     additionalProperties: false
     required:
-      [pair_id, delivery_id, delivery_generation, connection_slot, key, source_ip, expires_at]
+      [
+        pair_id,
+        delivery_id,
+        delivery_generation,
+        connection_slot,
+        key,
+        source_ip,
+        observed_at,
+        expires_at,
+      ]
     properties:
       pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
       delivery_id:
@@ -38,4 +47,8 @@ schemas:
       source_ip:
         type: string
         description: canonical socket-observed source IP bound to the relay signature.
+      observed_at:
+        type: string
+        format: date-time
+        description: control observation time; convert the remaining duration using the local request start, never response arrival.
       expires_at: { type: string, format: date-time }

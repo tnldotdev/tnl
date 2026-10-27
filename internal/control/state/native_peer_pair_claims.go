@@ -25,6 +25,7 @@ type NativePeerPairLegClaim struct {
 	ConnectionSlot     int
 	Key                string
 	SourceIP           netip.Addr
+	ObservedAt         time.Time
 	ExpiresAt          time.Time
 }
 
@@ -169,7 +170,7 @@ func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseI
 		return NativePeerPairLegClaim{}, ErrServiceAccess
 	}
 	result = NativePeerPairLegClaim{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration,
-		DeliveryID: result.DeliveryID, ConnectionSlot: proof.ConnectionSlot, Key: base64.RawURLEncoding.EncodeToString(secret), SourceIP: observedSource, ExpiresAt: deadline}
+		DeliveryID: result.DeliveryID, ConnectionSlot: proof.ConnectionSlot, Key: base64.RawURLEncoding.EncodeToString(secret), SourceIP: observedSource, ObservedAt: now, ExpiresAt: deadline}
 	if err = tx.Commit(ctx); err != nil {
 		return NativePeerPairLegClaim{}, err
 	}

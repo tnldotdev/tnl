@@ -135,8 +135,11 @@ type NativePeerPairLegClaim struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 
 	// Key secret pair key; never log.
-	Key    string `json:"key"`
-	PairId string `json:"pair_id"`
+	Key string `json:"key"`
+
+	// ObservedAt control observation time; convert the remaining duration using the local request start, never response arrival.
+	ObservedAt time.Time `json:"observed_at"`
+	PairId     string    `json:"pair_id"`
 
 	// SourceIp canonical socket-observed source IP bound to the relay signature.
 	SourceIp string `json:"source_ip"`

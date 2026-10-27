@@ -28,8 +28,8 @@ const (
 	NativeConnectorDirectSocket
 )
 
-// NativeConnectorAcceptor is an opt-in owner for checked, direct-socket claims.
-// it currently releases no pair key to a delivery or application-stream owner.
+// NativeConnectorAcceptor is an opt-in owner for checked, direct-socket claims
+// and optional packet delivery to exact locally claimed publisher assignments.
 type NativeConnectorAcceptor struct {
 	SourceMode   NativeConnectorSourceMode
 	CurrentLease func() relayv1.RelayLease
@@ -39,6 +39,9 @@ type NativeConnectorAcceptor struct {
 	// MaxSessions limits reservations including claims in progress. zero uses
 	// the finite default; the limit is separate from publisher capacity.
 	MaxSessions int
+	// Publishers opts into packet forwarding on exact local private assignments.
+	// nil retains the bounded claim-only proof, without any packet registration.
+	Publishers *ServiceRegistry
 
 	mu       sync.Mutex
 	sessions int
@@ -95,28 +98,39 @@ func (a *NativeConnectorAcceptor) reserve(proof tunnelv1.NativePairLegProof) (fu
 	}, nil
 }
 
-func (a *NativeConnectorAcceptor) admit(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (relayv1.NativePeerPairLegClaim, func(), error) {
+func (a *NativeConnectorAcceptor) admit(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (nativeConnectorClaim, func(), error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	if a.validate() != nil {
-		return relayv1.NativePeerPairLegClaim{}, nil, denied
+		return nativeConnectorClaim{}, nil, denied
 	}
 	release, err := a.reserve(proof)
 	if err != nil {
-		return relayv1.NativePeerPairLegClaim{}, nil, err
+		return nativeConnectorClaim{}, nil, err
 	}
 	claim, err := a.claim(ctx, transport, proof)
 	if err != nil {
 		release()
-		return relayv1.NativePeerPairLegClaim{}, nil, err
+		return nativeConnectorClaim{}, nil, err
 	}
 	return claim, release, nil
 }
 
-func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (relayv1.NativePeerPairLegClaim, error) {
+// nativeConnectorClaim is constructed only after checking the accepted socket,
+// current process lease and control response. its deadline is local and fixed.
+type nativeConnectorClaim struct {
+	receipt tunnelv1.NativePairLegAccepted
+	ref     tunnelv1.ServicePublisherConnectionRef
+	key     [32]byte
+}
+
+func (nativeConnectorClaim) String() string   { return "native connector claim" }
+func (nativeConnectorClaim) GoString() string { return "native connector claim" }
+
+func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (nativeConnectorClaim, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	peer, ok := transport.(muxsession.AcceptedPeer)
 	if !ok {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
 	// only the concrete, directly accepted socket can supply the source. SNI,
 	// connector frames, STUN/ICE and unconfigured PROXY metadata have no say.
@@ -124,42 +138,61 @@ func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsessio
 	switch socket := address.(type) {
 	case *net.TCPAddr:
 		if socket == nil {
-			return relayv1.NativePeerPairLegClaim{}, denied
+			return nativeConnectorClaim{}, denied
 		}
 	case *net.UDPAddr:
 		if socket == nil {
-			return relayv1.NativePeerPairLegClaim{}, denied
+			return nativeConnectorClaim{}, denied
 		}
 	default:
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
 	socket, err := netip.ParseAddrPort(address.String())
 	if err != nil || !socket.Addr().IsValid() || socket.Addr().IsUnspecified() || socket.Addr().Zone() != "" {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
 	source := socket.Addr().Unmap()
 	now := a.now()
 	lease, ok := a.currentLease(proof, now)
 	if !ok {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
 	message, err := proof.RelayClaimMessage(source)
 	if err != nil {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
+	started := a.now()
 	claim, err := a.Claim.ClaimNativePeerPairLegFromAcceptedSocket(ctx, lease, source, proof, ed25519.Sign(a.SigningKey, message))
 	if err != nil {
-		return relayv1.NativePeerPairLegClaim{}, errors.Join(err, denied)
+		return nativeConnectorClaim{}, errors.Join(err, denied)
 	}
+	key, keyErr := base64.RawURLEncoding.Strict().DecodeString(claim.Key)
+	defer clear(key)
+	duration := claim.ExpiresAt.Sub(claim.ObservedAt)
+	deadline := started.Add(duration)
 	if claim.PairId != proof.PairID || claim.DeliveryGeneration != proof.DeliveryGeneration ||
 		claim.ConnectionSlot != proof.ConnectionSlot || claim.SourceIp != source.String() ||
-		claim.Key == "" || !claim.ExpiresAt.After(now) {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		keyErr != nil || len(key) != 32 || base64.RawURLEncoding.EncodeToString(key) != claim.Key ||
+		claim.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !deadline.After(a.now()) || ctx.Err() != nil {
+		return nativeConnectorClaim{}, denied
 	}
 	if _, err := tunnelv1.ParsePeerDeliveryIdentifier(claim.DeliveryId); err != nil {
-		return relayv1.NativePeerPairLegClaim{}, denied
+		return nativeConnectorClaim{}, denied
 	}
-	return claim, nil
+	if _, current := a.currentLease(proof, a.now()); !current {
+		return nativeConnectorClaim{}, denied
+	}
+	result := nativeConnectorClaim{receipt: tunnelv1.NativePairLegAccepted{PairID: claim.PairId, DeliveryID: claim.DeliveryId,
+		DeliveryGeneration: claim.DeliveryGeneration, ConnectionSlot: claim.ConnectionSlot,
+		SourceIP: claim.SourceIp, ExpiresAt: deadline},
+		ref: tunnelv1.ServicePublisherConnectionRef{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: uint64(proof.RunNumber),
+			PublisherConnectionID: proof.PublisherConnectionID, ConnectionSlot: uint8(proof.ConnectionSlot),
+			ConnectionAssignmentRevision: uint64(proof.AssignmentRevision), RelayServiceID: proof.RelayServiceID}}
+	copy(result.key[:], key)
+	if result.key == [32]byte{} {
+		return nativeConnectorClaim{}, denied
+	}
+	return result, nil
 }
 
 func (a *NativeConnectorAcceptor) now() time.Time {
