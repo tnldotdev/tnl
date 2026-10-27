@@ -312,6 +312,16 @@ func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitor
 		}
 		seen[id] = struct{}{}
 	}
+	// an explicit credential preparation can refresh policy while background
+	// renewal records the same installed allocations. retry a rolled-back
+	// observation with a new snapshot, fresh time, and current run authority;
+	// this never replays a credential redemption or an application admission.
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (controlv1.VisitorPolicyUpdate, error) {
+		return d.readPublisherVisitorPolicyTransaction(ctx, scope, run, number, token, after, observed, at)
+	})
+}
+
+func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []string, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err

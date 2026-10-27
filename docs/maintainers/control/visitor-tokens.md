@@ -58,6 +58,11 @@ reply contains a consistent snapshot and the policy revisions it covers. Control
 keeps 256 events per resource; a reader that falls behind needs a full snapshot.
 Failed requests leave the last confirmed deadline unchanged.
 
+publisher policy reads also record installed stream allocations. concurrent
+refreshes can conflict, so control retries the rolled-back transaction for up to
+two seconds, rechecking current run authority with a new snapshot and fresh time.
+this does not repeat share redemption, a one-use handoff, or application admission.
+
 service policy also carries direct endpoint reachability and the public client
 certificate issuer once prepared. reachability does not grant visitor permission.
 client trust is scoped to service policy and expires with the same fetch-start
