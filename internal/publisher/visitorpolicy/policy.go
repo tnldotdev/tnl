@@ -25,6 +25,7 @@ type Policy struct {
 	token   string
 	cancel  context.CancelFunc
 	done    chan struct{}
+	refresh chan struct{}
 }
 
 func Prepare(ctx context.Context, client Client, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*Policy, error) {
@@ -35,7 +36,7 @@ func Prepare(ctx context.Context, client Client, scope visitorscope.Scope, run s
 	if err != nil {
 		return nil, err
 	}
-	p := &Policy{Lease: lease, client: client, token: token, done: make(chan struct{}), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
+	p := &Policy{Lease: lease, client: client, token: token, done: make(chan struct{}), refresh: make(chan struct{}, 1), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
 	if err := p.prepare(ctx); err != nil {
 		lease.Close()
 		return nil, err
@@ -91,6 +92,21 @@ func (p *Policy) prepare(ctx context.Context) error {
 }
 
 func (p *Policy) Refresh(ctx context.Context) error {
+	// explicit credential preparation and background renewal share this owner.
+	// begin only after the preceding update has applied, so a concurrent delta
+	// cannot invalidate this request's revision cursor. waiting spends the same
+	// fixed request budget; cancellation never queues another control call.
+	call, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	select {
+	case p.refresh <- struct{}{}:
+		defer func() { <-p.refresh }()
+	case <-call.Done():
+		return context.Cause(call)
+	}
+	if err := context.Cause(call); err != nil {
+		return err
+	}
 	request := p.Lease.Begin()
 	body := p.request
 	body.ObservedAllocations = p.Lease.ObservedAllocations(body.RunId)
@@ -98,8 +114,6 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	if request.Snapshot {
 		body.AfterRevision = 0
 	}
-	call, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	response, err := p.client.ReadPublisherVisitorPolicy(call, body, p.token)
 	if err != nil {
 		return err

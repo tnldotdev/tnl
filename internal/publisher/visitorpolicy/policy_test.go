@@ -125,6 +125,127 @@ func TestPublisherVisitorPolicyStartupCancellationInterruptsRetry(t *testing.T) 
 	})
 }
 
+func TestPublisherVisitorPolicyConcurrentRefreshUsesCurrentRevision(t *testing.T) {
+	for _, kind := range []visitorscope.Kind{visitorscope.PublicURL, visitorscope.Service} {
+		t.Run(string(kind), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				prefix := "url_"
+				if kind == visitorscope.Service {
+					prefix = "svc_"
+				}
+				scope := visitorscope.Scope{Kind: kind, ID: prefix + strings.Repeat("A", 22)}
+				base := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
+				blocked, release := context.WithCancel(t.Context())
+				defer release()
+				started := make(chan struct{})
+				var calls atomic.Int64
+				client := startupPolicyClient(func(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+					n := calls.Add(1)
+					if body.AfterRevision != n-1 {
+						t.Errorf("refresh %d used revision %d, want %d", n, body.AfterRevision, n-1)
+					}
+					if n == 2 {
+						close(started)
+						select {
+						case <-blocked.Done():
+						case <-ctx.Done():
+							return controlv1.VisitorPolicyUpdate{}, context.Cause(ctx)
+						}
+					}
+					base.revision.Store(n)
+					return base.ReadPublisherVisitorPolicy(ctx, body, token)
+				})
+				policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer policy.Close()
+				first, second := make(chan error, 1), make(chan error, 1)
+				go func() { first <- policy.Refresh(t.Context()) }()
+				<-started
+				go func() { second <- policy.Refresh(t.Context()) }()
+				synctest.Wait()
+				if got := calls.Load(); got != 2 {
+					t.Error("overlapping refresh issued a stale-revision request", got)
+				}
+				release()
+				if err := <-first; err != nil {
+					t.Error("first policy refresh failed", err)
+				}
+				if err := <-second; err != nil {
+					t.Error("next policy refresh failed", err)
+				}
+				view, enabled, _ := policy.Lease.Current()
+				if !enabled || view.VisitorPolicyRevision != 3 || calls.Load() != 3 {
+					t.Fatal("refresh did not install the current policy", view.VisitorPolicyRevision, calls.Load())
+				}
+			})
+		})
+	}
+}
+
+func TestPublisherVisitorPolicyWaitingRefreshIsCancelableAndBounded(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(map[bool]string{false: "canceled", true: "request budget"}[timeout], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				base := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
+				blocked, release := context.WithCancel(t.Context())
+				defer release()
+				started := make(chan struct{})
+				var calls, waitingCalls atomic.Int64
+				type waitingKey struct{}
+				client := startupPolicyClient(func(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+					if ctx.Value(waitingKey{}) != nil {
+						waitingCalls.Add(1)
+					}
+					if calls.Add(1) == 2 {
+						close(started)
+						// model a response that arrives after cancellation. it must
+						// neither strand a waiting caller nor extend its authority.
+						<-blocked.Done()
+					}
+					return base.ReadPublisherVisitorPolicy(ctx, body, token)
+				})
+				policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer policy.Close()
+				before, _, _ := policy.Lease.Current()
+				first, waiting := make(chan error, 1), make(chan error, 1)
+				go func() { first <- policy.Refresh(t.Context()) }()
+				<-started
+				ctx, cancel := context.WithCancelCause(context.WithValue(t.Context(), waitingKey{}, true))
+				defer cancel(context.Canceled)
+				begin := time.Now()
+				go func() { waiting <- policy.Refresh(ctx) }()
+				synctest.Wait()
+				want := error(context.DeadlineExceeded)
+				if !timeout {
+					want = errors.New("credential preparation stopped")
+					cancel(want)
+				}
+				if err := <-waiting; !errors.Is(err, want) {
+					t.Error("waiting refresh lost its cancellation or deadline", err)
+				}
+				if waitingCalls.Load() != 0 || timeout && time.Since(begin) != 2*time.Second {
+					t.Error("waiting refresh escaped its request budget or issued a control call", waitingCalls.Load(), time.Since(begin))
+				}
+				current, enabled, _ := policy.Lease.Current()
+				if !enabled || !current.ValidUntil.Equal(before.ValidUntil) {
+					t.Error("waiting preparation changed the last confirmed policy deadline")
+				}
+				release()
+				err = <-first
+				if timeout && !errors.Is(err, context.DeadlineExceeded) || !timeout && err != nil {
+					t.Error("blocked response ignored its original request deadline", err)
+				}
+			})
+		})
+	}
+}
+
 func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
 	f.calls.Add(1)
 	if credential != "run-secret" {

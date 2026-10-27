@@ -28,6 +28,92 @@ type browserTokenClientFixture struct {
 	issue func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error)
 }
 
+type browserPolicyReadFunc func(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
+
+func (f browserPolicyReadFunc) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	return f(ctx, body, token)
+}
+
+func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermission(t *testing.T) {
+	for _, share := range []bool{false, true} {
+		t.Run(map[bool]string{false: "browser", true: "share"}[share], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))
+				client := &browserPolicyClient{key: key}
+				blocked, release := context.WithCancel(t.Context())
+				defer release()
+				started := make(chan struct{})
+				var reads atomic.Int64
+				provider := browserPolicyReadFunc(func(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+					n := reads.Add(1)
+					client.revision.Store(n)
+					update, err := client.ReadPublisherVisitorPolicy(ctx, body, token)
+					if n == 2 {
+						close(started)
+						select {
+						case <-blocked.Done():
+						case <-ctx.Done():
+							return controlv1.VisitorPolicyUpdate{}, context.Cause(ctx)
+						}
+					}
+					return update, err
+				})
+				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				policy, err := visitorpolicy.Prepare(t.Context(), provider, scope, "run", 1, "run-secret", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer policy.Close()
+				issuer := &browserTokenClientFixture{issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+					return controlv1.VisitorTokenResponse{}, errors.New("preparation must not reissue permission")
+				}}
+				tokens, err := startBrowserTokens(t.Context(), issuer, policy.Lease, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tokens.Close()
+				source := browserSourceFixture(liveBrowserCookie)
+				var subject visitortoken.Subject = visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("C", 22), SessionID: "cs_" + strings.Repeat("D", 22)}
+				if share {
+					id := "shr_" + strings.Repeat("S", 22)
+					subject = visitortoken.Share{ShareID: id}
+					source, err = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: id, Secret: liveBrowserCookie})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				view, _, _ := policy.Lease.Current()
+				permission := visitortoken.Permission{Scope: scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: 3, Subject: subject, ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second)}
+				signed, err := visitortoken.Sign(view.Issuer, "test-key", key, permission, view.AuthorityTime(time.Now()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+					VisitorToken: signed.Reveal(), VisitorPolicyRevision: 3, ExpiresAt: permission.ExpiresAt}
+				refresh, prepared := make(chan error, 1), make(chan error, 1)
+				go func() { refresh <- policy.Refresh(t.Context()) }()
+				<-started
+				access := &browserAccess{policy: policy, tokens: tokens}
+				go func() { prepared <- access.prepareToken(t.Context(), source, response, permission.ExpiresAt) }()
+				synctest.Wait()
+				if reads.Load() != 2 {
+					t.Error("redemption raced another stale policy request", reads.Load())
+				}
+				release()
+				if err := <-refresh; err != nil {
+					t.Error("concurrent refresh failed", err)
+				}
+				if err := <-prepared; err != nil {
+					t.Error("redeemed permission could not be installed", err)
+				}
+				if len(tokens.sources) != 1 || len(tokens.tokens) != 1 || issuer.calls.Load() != 0 || reads.Load() != 3 {
+					t.Fatal("preparation repeated credential issuance or lost its local source", issuer.calls.Load(), reads.Load())
+				}
+			})
+		})
+	}
+}
+
 func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T) {
 	for _, test := range []struct {
 		name     string

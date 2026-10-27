@@ -58,6 +58,11 @@ reply contains a consistent snapshot and the policy revisions it covers. Control
 keeps 256 events per resource; a reader that falls behind needs a full snapshot.
 Failed requests leave the last confirmed deadline unchanged.
 
+the publisher fetch owner serializes background renewal and explicit credential
+preparation. each fetch starts from the revision installed by its predecessor;
+waiting and fetching share one two-second budget. a canceled waiter makes no
+control call and cannot change the last confirmed policy deadline.
+
 publisher policy reads also record installed stream allocations. concurrent
 refreshes can conflict, so control retries the rolled-back transaction for up to
 two seconds, rechecking current run authority with a new snapshot and fresh time.
