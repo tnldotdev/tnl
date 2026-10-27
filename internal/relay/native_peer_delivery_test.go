@@ -320,6 +320,110 @@ func TestNativePeerDeliveryCrossTransportAndPairIsolation(t *testing.T) {
 	}
 }
 
+func TestNativePeerDeliveryLateCrossTransportClaimKeepsCurrentRegistration(t *testing.T) {
+	for _, publisherKind := range []string{"quic", "tls_yamux"} {
+		for _, winnerKind := range []string{"quic", "tls_yamux"} {
+			t.Run(publisherKind+"/"+winnerKind, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				released, release := context.WithCancel(ctx)
+				defer release()
+				lateStarted := make(chan struct{})
+				claim := nativeClaimFunc(func(call context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
+					if proof.Nonce[0] == 2 {
+						close(lateStarted)
+						select {
+						case <-released.Done():
+						case <-call.Done():
+							return relayv1.NativePeerPairLegClaim{}, context.Cause(call)
+						}
+					}
+					return nativeTestClaim(source, proof), nil
+				})
+				acceptor, owner, hello := nativeAdmissionFixture(t, 2, claim)
+				if publisherKind == "tls_yamux" {
+					hello.NativePairLegProof.ConnectionSlot = 1
+				}
+				publisherTransport, publisher, _ := nativeDeliveryPublisher(t, publisherKind, acceptor, owner, hello)
+				id, err := tunnelv1.ParsePeerDeliveryIdentifier(nativeTestDeliveryID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding := peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: 1}, Key: [32]byte{1}, Kind: peer.NativePeer,
+					Role: 1, Path: uint8(hello.NativePairLegProof.ConnectionSlot)}
+				published := nativeTestPacketOwner(t, publisherTransport).register(t, binding, false)
+				winner, winnerDone := nativePacketTransport(t, winnerKind, acceptor)
+				session, _, err := tunnel.DialNative(ctx, winner, hello, nativeTestDeliveryID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = session.Close() })
+				binding.Role = 0
+				connected := nativeTestPacketOwner(t, winner).register(t, binding, true)
+				loserKind := map[string]string{"quic": "tls_yamux", "tls_yamux": "quic"}[winnerKind]
+				loser, loserDone := nativePacketTransport(t, loserKind, acceptor)
+				lateHello, lateProof := hello, *hello.NativePairLegProof
+				lateProof.Nonce = bytes.Repeat([]byte{2}, 32)
+				lateHello.NativePairLegProof = &lateProof
+				lateResult := relayWorker(t, func() { cancel(); release(); _ = loser.Close() }, func() error {
+					late, _, err := tunnel.DialNative(ctx, loser, lateHello, nativeTestDeliveryID)
+					if late != nil {
+						_ = late.Close()
+					}
+					return err
+				})
+				select {
+				case <-lateStarted:
+				case <-ctx.Done():
+					t.Fatal("second transport did not reach its control claim")
+				}
+				exchange := func(sequence uint64) {
+					t.Helper()
+					frame := nativeDeliveryFrame(t, binding, sequence, 11)
+					if err := connected.carrier(t, ctx).Send(ctx, frame); err != nil {
+						t.Fatal(err)
+					}
+					current := published.carrier(t, ctx)
+					if got, err := current.Receive(ctx); err != nil || !bytes.Equal(got, frame) {
+						t.Fatal("current connector registration was displaced", err)
+					}
+					reverse := binding
+					reverse.Role = 1
+					frame = nativeDeliveryFrame(t, reverse, sequence, 22)
+					if err := current.Send(ctx, frame); err != nil {
+						t.Fatal(err)
+					}
+					if got, err := connected.carrier(t, ctx).Receive(ctx); err != nil || !bytes.Equal(got, frame) {
+						t.Fatal("current publisher registration was displaced", err)
+					}
+				}
+				exchange(1)
+				// a late successful control claim is not permission to replace an
+				// already installed registration or forget its packet replay state.
+				release()
+				if err := relayAwait(t, lateResult); err == nil {
+					t.Fatal("late claim replaced the live delivery generation")
+				}
+				if err := relayAwait(t, loserDone); err == nil {
+					t.Fatal("relay accepted the duplicate registration")
+				}
+				exchange(2)
+				if publisher.Err() != nil || session.Err() != nil {
+					t.Fatal("loser cleanup closed the winner or borrowed publisher")
+				}
+				owner.mu.Lock()
+				remaining := owner.sessions
+				owner.mu.Unlock()
+				if remaining != 1 {
+					t.Fatal("loser cleanup changed the live reservation count", remaining)
+				}
+				_ = session.Close()
+				_ = relayAwait(t, winnerDone)
+			})
+		}
+	}
+}
+
 func TestNativePeerDeliveryRequiresExactLocalAssignment(t *testing.T) {
 	for _, test := range []struct {
 		name   string
