@@ -19,6 +19,7 @@ schemas:
       protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
       trust_revision: { type: integer, format: int64, minimum: 1 }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      pair_ready: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairReady" }
   ServiceID:
     type: string
     pattern: "^svc_[A-Za-z0-9]{22}$"

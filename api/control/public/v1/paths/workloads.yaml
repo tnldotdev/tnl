@@ -10,6 +10,7 @@ paths:
     post:
       operationId: selectWorkloadServiceRun
       security: [{ workloadAuth: [] }]
+      description: Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
       responses:
         "200":
           description: Current publisher selection for the workload subject

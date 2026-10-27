@@ -113,8 +113,10 @@ tasks:
   api:
     dir: "{{.ROOT_DIR}}"
     desc: Check API, generated database, certificate and DNS boundaries with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns -run='^TestIntegration' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
     dir: "{{.ROOT_DIR}}"

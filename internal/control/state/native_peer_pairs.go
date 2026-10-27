@@ -56,25 +56,19 @@ type NativePeerPair struct {
 func (NativePeerPair) String() string   { return "native peer pair" }
 func (NativePeerPair) GoString() string { return "native peer pair" }
 
-// NativePeerPairProofMessage is domain-separated from visitor opening proofs.
-// the action, retry key, exact assignments, and prior delivery are signed.
-func NativePeerPairProofMessage(r NativePeerPairRequest) ([]byte, error) {
-	if !opaqueid.Valid(r.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(r.ServiceRunID, opaqueid.ServiceRunPrefix) ||
-		!opaqueid.Valid(r.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || r.RunNumber < 1 ||
-		!validIdempotencyKey(r.IdempotencyKey) || r.Subject.Validate() != nil || r.RequestedAt.IsZero() ||
-		(r.Action != "create" && r.Action != "replace" && r.Action != "renew") ||
-		(r.Action == "create" && (r.PreviousPairID != "" || r.PreviousGeneration != 0)) ||
-		(r.Action != "create" && (!opaqueid.Valid(r.PreviousPairID, "npp_") || r.PreviousGeneration < 1)) ||
-		r.ExpectedRelays[0].PublisherConnectionID == "" || r.ExpectedRelays[1].PublisherConnectionID == "" ||
-		r.ExpectedRelays[0].RelayLease.RelayServiceID == r.ExpectedRelays[1].RelayLease.RelayServiceID {
-		return nil, ErrServiceAccess
+// proof adapts durable state fields to the handwritten signing value. state
+// does not define its own proof format or serialize the signature input.
+func (r NativePeerPairRequest) proof() tunnelv1.NativePeerPairProof {
+	p := tunnelv1.NativePeerPairProof{ServiceID: r.ServiceID, ServiceRunID: r.ServiceRunID, RunNumber: r.RunNumber,
+		PublisherIdentityID: r.PublisherIdentityID, Subject: r.Subject, Action: r.Action, IdempotencyKey: r.IdempotencyKey,
+		RequestedAt: r.RequestedAt, PreviousPairID: r.PreviousPairID, PreviousGeneration: r.PreviousGeneration}
+	for i, relay := range r.ExpectedRelays {
+		p.ExpectedRelays[i] = tunnelv1.NativePeerPairRelay{PublisherConnectionID: relay.PublisherConnectionID,
+			AssignmentRevision: relay.AssignmentRevision, RelayAddress: relay.RelayAddress, TLSServerName: relay.TLSServerName,
+			RelayLease: tunnelv1.NativePeerRelayLease{RelayServiceID: relay.RelayLease.RelayServiceID, RelayID: relay.RelayLease.RelayID,
+				RelayRunID: relay.RelayLease.RelayRunID, RelayLeaseRevision: relay.RelayLease.RelayLeaseRevision}}
 	}
-	body, err := json.Marshal([]any{r.Action, r.ServiceID, r.ServiceRunID, r.RunNumber, r.PublisherIdentityID,
-		r.Subject, r.IdempotencyKey, r.RequestedAt.UTC().Truncate(time.Microsecond), r.PreviousPairID, r.PreviousGeneration, r.ExpectedRelays})
-	if err != nil {
-		return nil, err
-	}
-	return append([]byte("tnl native peer pair v1\x00"), body...), nil
+	return p
 }
 
 func nativePairSubjectID(s VisitorSubject) string {
@@ -105,7 +99,7 @@ func (d *Database) RenewNativePeerPair(ctx context.Context, r NativePeerPairRequ
 }
 
 func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPairRequest, now time.Time) (result NativePeerPair, retErr error) {
-	message, err := NativePeerPairProofMessage(r)
+	message, err := r.proof().Message()
 	requestAt := r.RequestedAt.UTC().Truncate(time.Microsecond)
 	if err != nil || len(r.Signature) != ed25519.SignatureSize || d.storageKey == nil || now.IsZero() ||
 		requestAt.After(now.Add(5*time.Second)) || !requestAt.Add(5*time.Minute).After(now) {

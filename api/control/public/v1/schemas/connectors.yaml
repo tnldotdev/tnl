@@ -1,4 +1,109 @@
 schemas:
+  NativePeerRelayLease:
+    type: object
+    additionalProperties: false
+    required: [relay_service_id, relay_id, relay_run_id, relay_lease_revision]
+    properties:
+      relay_service_id: { type: string, minLength: 1 }
+      relay_id: { type: string, minLength: 1 }
+      relay_run_id: { type: string, minLength: 1 }
+      relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+  NativePeerPairRelay:
+    type: object
+    additionalProperties: false
+    required:
+      [publisher_connection_id, assignment_revision, relay_lease, relay_address, tls_server_name]
+    properties:
+      publisher_connection_id: { type: string, minLength: 1 }
+      assignment_revision: { type: integer, format: int64, minimum: 1 }
+      relay_lease: { $ref: "../openapi.yaml#/components/schemas/NativePeerRelayLease" }
+      relay_address: { type: string, minLength: 1 }
+      tls_server_name: { type: string, minLength: 1 }
+  NativePeerPairReady:
+    type: object
+    additionalProperties: false
+    description: A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
+    required: [publisher_identity_id, relays]
+    properties:
+      publisher_identity_id: { type: string, minLength: 1 }
+      relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+  NativePeerPairRequest:
+    type: object
+    additionalProperties: false
+    description: Sign the canonical NativePeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer.
+    required:
+      [
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        subject,
+        source,
+        action,
+        idempotency_key,
+        requested_at,
+        expected_relays,
+        signature,
+      ]
+    properties:
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, minLength: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      source:
+        x-go-type: json.RawMessage
+        oneOf:
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      action: { type: string, enum: [create, replace, renew] }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      requested_at: { type: string, format: date-time }
+      previous_pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      previous_generation: { type: integer, format: int64, minimum: 1 }
+      expected_relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+      signature:
+        {
+          type: string,
+          description: Unpadded base64url Ed25519 signature over NativePeerPairProofMessage.,
+        }
+  NativePeerPair:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        pair_id,
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        subject,
+        delivery_generation,
+        key,
+        relays,
+        expires_at,
+      ]
+    properties:
+      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, minLength: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      key: { type: string, description: Secret returned only to the authorized signed source. }
+      relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+      expires_at: { type: string, format: date-time }
   LocationPreferences:
     type: array
     maxItems: 8

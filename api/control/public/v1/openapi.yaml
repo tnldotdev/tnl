@@ -111,6 +111,10 @@ paths:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignments"
   /v1/services/{service_id}/select-run:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1select-run"
+  /v1/services/{service_id}/native-peer-pairs:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs"
+  /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs~1{pair_id}~1renew"
   /v1/services/{service_id}/runs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
   /v1/services/{service_id}/runs/{service_run_id}:
@@ -462,6 +466,16 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/VisitorDevice"
     ServiceSelection:
       $ref: "./schemas/services.yaml#/schemas/ServiceSelection"
+    NativePeerRelayLease:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerRelayLease"
+    NativePeerPairRelay:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRelay"
+    NativePeerPairReady:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairReady"
+    NativePeerPairRequest:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRequest"
+    NativePeerPair:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPair"
     ServiceID:
       $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:

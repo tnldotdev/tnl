@@ -141,7 +141,7 @@ paths:
   /v1/services/{service_id}/select-run:
     post:
       operationId: selectServiceRun
-      description: check the visitor's current service grant and select a ready publisher run for background connector preparation. denied or deleted services return 404; a permitted service with no ready run returns 503 so the connector can retry without retaining an expired permission. the caller never supplies an IP address.
+      description: check the visitor's current service grant and enrolled device, then select a ready publisher run. pair_ready is present only with two exact ready connections on distinct live relay services; it is a snapshot for signing, not a grant or a publisher credential. denied or deleted services return 404; a permitted service with no ready run returns 503. the caller never supplies an IP address.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -157,11 +157,54 @@ paths:
       responses:
         "201":
           {
-            description: One-use connector ticket,
+            description: Access-checked run snapshot without a stream ticket or pair key,
             content:
               {
                 application/json:
                   { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSelection" } },
               },
           }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/native-peer-pairs:
+    post:
+      operationId: prepareNativePeerPair
+      security: [{}, { bearerAuth: [] }]
+      description: Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRequest" }
+      responses:
+        "200":
+          description: Exact pair delivered only to its signed device or workload source; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPair" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew:
+    post:
+      operationId: renewNativePeerPair
+      security: [{}, { bearerAuth: [] }]
+      description: Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - {
+            name: pair_id,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRequest" }
+      responses:
+        "200":
+          description: Renewed exact pair delivered only to its signed source; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPair" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -188,7 +188,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		Action: "create", RequestedAt: now, ExpectedRelays: testNativePairRelays(run, f.leases)}
 	sign := func(r *NativePeerPairRequest) {
 		t.Helper()
-		message, err := NativePeerPairProofMessage(*r)
+		message, err := r.proof().Message()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -511,7 +511,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	request := NativePeerPairRequest{ServiceID: serviceID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: access.PublisherIdentity.ID, Subject: workload.Subject, Source: WorkloadTokenSource{Credential: workload.Credential}, IdempotencyKey: "workload",
 		Action: "create", RequestedAt: now, ExpectedRelays: testNativePairRelays(run, leases)}
-	message, err := NativePeerPairProofMessage(request)
+	message, err := request.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	renew := request
 	renew.Action, renew.PreviousPairID, renew.PreviousGeneration = "renew", pair.ID, pair.DeliveryGeneration
 	renew.RequestedAt = now.Add(32 * time.Second)
-	message, err = NativePeerPairProofMessage(renew)
+	message, err = renew.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 		t.Fatal("replayed renewal silently extended the serving deadline", err)
 	}
 	renew.RequestedAt = now.Add(64 * time.Second)
-	message, err = NativePeerPairProofMessage(renew)
+	message, err = renew.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	late := now.Add(106 * time.Second)
 	renew.RequestedAt = late
-	message, err = NativePeerPairProofMessage(renew)
+	message, err = renew.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +608,7 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	replacement := request
 	replacement.Action, replacement.IdempotencyKey, replacement.RequestedAt = "replace", "workload-replacement", late
 	replacement.PreviousPairID, replacement.PreviousGeneration = pair.ID, pair.DeliveryGeneration
-	message, err = NativePeerPairProofMessage(replacement)
+	message, err = replacement.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
