@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -23,6 +24,107 @@ type policyClientFixture struct {
 	revision atomic.Int64
 }
 
+type startupPolicyClient func(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
+
+func (f startupPolicyClient) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	return f(ctx, body, token)
+}
+
+func TestPublisherVisitorPolicyStartupRetriesOnlyTemporaryFailures(t *testing.T) {
+	for _, kind := range []visitorscope.Kind{visitorscope.PublicURL, visitorscope.Service} {
+		t.Run(string(kind), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				prefix := "url_"
+				if kind == visitorscope.Service {
+					prefix = "svc_"
+				}
+				scope := visitorscope.Scope{Kind: kind, ID: prefix + strings.Repeat("A", 22)}
+				base := &policyClientFixture{key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
+				calls := 0
+				client := startupPolicyClient(func(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+					calls++
+					if body.RunId != "run" || body.RunNumber != 1 || body.Resource.Id != scope.ID || token != "run-secret" || body.AfterRevision != 0 {
+						t.Error("startup retry changed the authority or reused a failed snapshot")
+					}
+					if calls == 1 {
+						return controlv1.VisitorPolicyUpdate{}, failure.Wrap("read policy", failure.ServerUnavailable, errors.New("serialization conflict"))
+					}
+					if calls == 2 {
+						return controlv1.VisitorPolicyUpdate{}, failure.Wrap("read policy", failure.ServerRateLimited, errors.New("retry later"))
+					}
+					return base.ReadPublisherVisitorPolicy(ctx, body, token)
+				})
+				started := time.Now()
+				policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer policy.Close()
+				if calls != 3 || time.Since(started) != 300*time.Millisecond {
+					t.Fatal("temporary startup failures were not backed off", calls, time.Since(started))
+				}
+				if _, enabled, _ := policy.Lease.Current(); !enabled {
+					t.Fatal("startup returned before installing the successful snapshot")
+				}
+			})
+		})
+	}
+}
+
+func TestPublisherVisitorPolicyStartupDenialAndInvalidResponseDoNotRetry(t *testing.T) {
+	for _, reason := range []failure.Reason{failure.Authentication, failure.ServerResponseInvalid, failure.ServerResourceNotFound} {
+		t.Run(string(reason), func(t *testing.T) {
+			cause := errors.New("private failure context")
+			denied := failure.Wrap("read policy", reason, cause)
+			calls := 0
+			client := startupPolicyClient(func(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error) {
+				calls++
+				return controlv1.VisitorPolicyUpdate{}, denied
+			})
+			scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+			policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+			if policy != nil || !errors.Is(err, cause) || calls != 1 {
+				t.Fatal("terminal startup failure retried or lost its cause", err, calls)
+			}
+		})
+	}
+}
+
+func TestPublisherVisitorPolicyStartupOutageHasFixedBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cause := errors.New("serialization conflict")
+		calls := 0
+		client := startupPolicyClient(func(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error) {
+			calls++
+			return controlv1.VisitorPolicyUpdate{}, failure.Wrap("read policy", failure.ServerUnavailable, cause)
+		})
+		scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+		started := time.Now()
+		policy, err := Prepare(t.Context(), client, scope, "run", 1, "run-secret", nil)
+		if policy != nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) || time.Since(started) != 10*time.Second || calls > 20 {
+			t.Fatal("startup retry escaped its budget or lost its cause", err, calls, time.Since(started))
+		}
+	})
+}
+
+func TestPublisherVisitorPolicyStartupCancellationInterruptsRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		calls := 0
+		client := startupPolicyClient(func(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error) {
+			calls++
+			cancel()
+			return controlv1.VisitorPolicyUpdate{}, failure.Wrap("read policy", failure.ServerUnavailable, errors.New("temporary"))
+		})
+		scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+		policy, err := Prepare(ctx, client, scope, "run", 1, "run-secret", nil)
+		if policy != nil || !errors.Is(err, context.Canceled) || calls != 1 {
+			t.Fatal("canceled startup retried", err, calls)
+		}
+	})
+}
+
 func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, credential string) (controlv1.VisitorPolicyUpdate, error) {
 	f.calls.Add(1)
 	if credential != "run-secret" {
@@ -33,6 +135,10 @@ func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body
 	}
 	now := time.Now()
 	revision := max(int64(1), f.revision.Load())
+	metadataRevision := int64(0)
+	if body.Resource.Kind == "service" {
+		metadataRevision = 1
+	}
 	events := []int64{}
 	if body.AfterRevision != 0 {
 		for next := body.AfterRevision + 1; next <= revision; next++ {
@@ -40,7 +146,7 @@ func (f *policyClientFixture) ReadPublisherVisitorPolicy(_ context.Context, body
 		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
-		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: revision, KeyRevision: 1,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: revision, KeyRevision: 1, MetadataRevision: metadataRevision,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: false, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "test-key", PublicKey: f.key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
 
