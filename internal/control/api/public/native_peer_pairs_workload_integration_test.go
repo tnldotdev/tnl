@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -153,8 +154,17 @@ func exerciseWorkloadNativePeerPair(t *testing.T, d *controlstate.Database, job 
 	if err := json.Unmarshal(data, &pair); err != nil || pair.Key == "" || pair.Subject.WorkloadSessionId == nil {
 		t.Fatal("invalid workload delivery", err)
 	}
-	if code, retry := call(request, "", ""); code != 200 || !bytes.Equal(retry, data) {
-		t.Fatal("workload retry changed delivery", code)
+	if code, retry := call(request, "", ""); code != 200 {
+		t.Fatal("workload retry failed", code)
+	} else {
+		var repeated controlv1.NativePeerPair
+		if err := json.Unmarshal(retry, &repeated); err != nil || repeated.ObservedAt.IsZero() || repeated.ObservedAt.Before(pair.ObservedAt) {
+			t.Fatal("workload retry lost its current observation", err)
+		}
+		repeated.ObservedAt = pair.ObservedAt
+		if !reflect.DeepEqual(repeated, pair) {
+			t.Fatal("workload retry changed the exact delivery")
+		}
 	}
 	api, err := clientcontrol.New(server.URL, server.Client(), "")
 	if err != nil {
