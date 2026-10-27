@@ -93,7 +93,7 @@ func TestPeerNativeReceiptBindingAndInvalidWire(t *testing.T) {
 	proof := *hello.NativePairLegProof
 	proof.ConnectionSlot = receipt.ConnectionSlot
 	before := receipt.ExpiresAt.Add(-time.Second)
-	if err := receipt.Match(proof, receipt.DeliveryID, before); err != nil {
+	if err := receipt.Match(proof, receipt.DeliveryID, receipt.ObservedAt, before); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -118,6 +118,12 @@ func TestPeerNativeReceiptBindingAndInvalidWire(t *testing.T) {
 		{"missing expiry", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
 			r.ExpiresAt = time.Time{}
 		}},
+		{"missing observation", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.ObservedAt = time.Time{}
+		}},
+		{"excess authority", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.ExpiresAt = r.ObservedAt.Add(5*time.Minute + time.Nanosecond)
+		}},
 		{"untrusted source", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
 			r.SourceIP = "not-an-ip"
 		}},
@@ -129,10 +135,20 @@ func TestPeerNativeReceiptBindingAndInvalidWire(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			r, leg, id, now := receipt, proof, receipt.DeliveryID, before
 			test.change(&r, &leg, &id, &now)
-			if err := r.Match(leg, id, now); err == nil {
+			if err := r.Match(leg, id, receipt.ObservedAt, now); err == nil {
 				t.Fatal("accepted an unbound native receipt")
 			}
 		})
+	}
+	for _, skew := range []time.Duration{-time.Hour, time.Hour} {
+		r := receipt
+		r.ObservedAt, r.ExpiresAt = r.ObservedAt.Add(skew), r.ExpiresAt.Add(skew)
+		if err := r.Match(proof, r.DeliveryID, receipt.ObservedAt, before); err != nil {
+			t.Fatal("relay clock skew changed the observed remaining authority", err)
+		}
+		if err := r.Match(proof, r.DeliveryID, receipt.ObservedAt, receipt.ExpiresAt); err == nil {
+			t.Fatal("transit revived expired relay authority")
+		}
 	}
 	for _, kind := range []MessageType{Hello, Ping, Drain, Error, GoAway} {
 		bad := accepted

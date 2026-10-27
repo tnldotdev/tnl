@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,10 +28,16 @@ type QUICConfig struct {
 type QUICConnector struct {
 	TLSConfig *tls.Config
 	Config    QUICConfig
+	// Dialer borrows a process-owned socket without transferring its lifetime.
+	Dialer QUICDialer
+}
+
+type QUICDialer interface {
+	DialQUIC(context.Context, net.Addr, *tls.Config, *quic.Config) (*quic.Conn, error)
 }
 
 func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN)
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN, c.Dialer)
 }
 
 type ConnectorQUIC struct {
@@ -38,10 +46,10 @@ type ConnectorQUIC struct {
 }
 
 func (c ConnectorQUIC) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN)
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN, nil)
 }
 
-func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string) (Session, error) {
+func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string, dialer QUICDialer) (Session, error) {
 	if endpoint.Address == "" || endpoint.ServerName == "" {
 		return nil, errors.New("muxsession: QUIC endpoint requires address and server name")
 	}
@@ -53,7 +61,12 @@ func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, tran
 	if config.KeepAlivePeriod == 0 {
 		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
 	}
-	connection, err := quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
+	var connection *quic.Conn
+	if dialer == nil {
+		connection, err = quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
+	} else {
+		connection, err = dialSharedQUIC(ctx, dialer, endpoint.Address, tlsConfig, config)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}
@@ -62,6 +75,33 @@ func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, tran
 		return nil, err
 	}
 	return &quicSession{connection: connection}, nil
+}
+
+func dialSharedQUIC(ctx context.Context, dialer QUICDialer, address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil || port == 0 {
+		return nil, errors.New("muxsession: QUIC endpoint requires a numeric nonzero port")
+	}
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	var failures []error
+	for _, ip := range addresses {
+		connection, err := dialer.DialQUIC(ctx, net.UDPAddrFromAddrPort(netip.AddrPortFrom(ip, uint16(port))), tlsConfig, config)
+		if err == nil {
+			return connection, nil
+		}
+		failures = append(failures, err)
+		if ctx.Err() != nil {
+			return nil, context.Cause(ctx)
+		}
+	}
+	return nil, fmt.Errorf("muxsession: no shared-socket QUIC address connected: %w", errors.Join(failures...))
 }
 
 // QUICListener accepts QUIC multiplexed sessions.

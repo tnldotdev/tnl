@@ -29,6 +29,8 @@ type Socket struct {
 	err       error
 }
 
+var _ muxsession.QUICDialer = (*Socket)(nil)
+
 func ListenSocket(parent context.Context, network, address string) (*Socket, error) {
 	addr, err := net.ResolveUDPAddr(network, address)
 	if err != nil {

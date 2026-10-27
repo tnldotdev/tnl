@@ -32,7 +32,8 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-native-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version,
 		NativePairLegAccepted: &NativePairLegAccepted{PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ",
 			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
-			ExpiresAt: time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}, WriteControl, ReadControl)
+			ObservedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			ExpiresAt:  time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "native-peer-visitor-entry", peerOpeningFixture(), WriteNativePeerVisitorEntry, ReadNativePeerVisitorEntry)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{

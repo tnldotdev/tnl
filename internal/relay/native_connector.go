@@ -184,7 +184,7 @@ func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsessio
 	}
 	result := nativeConnectorClaim{receipt: tunnelv1.NativePairLegAccepted{PairID: claim.PairId, DeliveryID: claim.DeliveryId,
 		DeliveryGeneration: claim.DeliveryGeneration, ConnectionSlot: claim.ConnectionSlot,
-		SourceIP: claim.SourceIp, ExpiresAt: deadline},
+		SourceIP: claim.SourceIp, ObservedAt: a.now(), ExpiresAt: deadline},
 		ref: tunnelv1.ServicePublisherConnectionRef{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: uint64(proof.RunNumber),
 			PublisherConnectionID: proof.PublisherConnectionID, ConnectionSlot: uint8(proof.ConnectionSlot),
 			ConnectionAssignmentRevision: uint64(proof.AssignmentRevision), RelayServiceID: proof.RelayServiceID}}

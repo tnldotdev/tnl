@@ -29,6 +29,12 @@ func nativePermission(signer Signer, session, visitor, runID string, runNumber, 
 // session, visitor ID and metadata; a renewal cannot move it to another run or
 // replace its subject. closing joins the writer before releasing its path slot.
 func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.NativeRequestWriter, prepared *preparedSelection, signer Signer, session, visitor string, run Run) func() error {
+	return renewPreparedPermission(ctx, raw, writer, prepared.current, run, func(token string) (tunnelv1.NativeVisitorPermission, error) {
+		return nativePermission(signer, session, visitor, run.ServiceRunID, run.RunNumber, uint64(run.TrustRevision), token, nil)
+	})
+}
+
+func renewPreparedPermission(ctx context.Context, raw net.Conn, writer *tunnel.NativeRequestWriter, current func() (Run, error), run Run, sign func(string) (tunnelv1.NativeVisitorPermission, error)) func() error {
 	life, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -43,15 +49,16 @@ func renewNativePermission(ctx context.Context, raw net.Conn, writer *tunnel.Nat
 				return
 			case <-ticker.C:
 			}
-			next, err := prepared.current()
-			if err != nil || next.TrustRevision != run.TrustRevision || next.ServiceID != run.ServiceID || !sameEndpoint(next.Endpoint, run.Endpoint) {
+			next, err := current()
+			if err != nil || next.TrustRevision != run.TrustRevision || next.ServiceID != run.ServiceID || next.ServiceRunID != run.ServiceRunID ||
+				next.RunNumber != run.RunNumber || next.Subject != run.Subject || !sameEndpoint(next.Endpoint, run.Endpoint) {
 				_ = raw.Close()
 				return
 			}
 			if next.Permission.VisitorToken == last {
 				continue
 			}
-			permission, err := nativePermission(signer, session, visitor, run.ServiceRunID, run.RunNumber, uint64(run.TrustRevision), next.Permission.VisitorToken, nil)
+			permission, err := sign(next.Permission.VisitorToken)
 			if err != nil {
 				_ = raw.Close()
 				return

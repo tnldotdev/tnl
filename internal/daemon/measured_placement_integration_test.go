@@ -136,7 +136,7 @@ func TestIntegrationSplitMeasuredTwoRegionPublisherServesVisitor(t *testing.T) {
 }
 
 func TestIntegrationPrivateMeasuredTwoRegionPublisherServesVisitor(t *testing.T) {
-	f := newServiceRuntimeFixtureTopology(t, false, nil, false, nil, true)
+	f := newServiceRuntimeFixtureTopology(t, false, nil, false, nil, serviceRuntimeTopologyOptions{twoRegions: true})
 	startSeparatedPrivateIngress(t, f, 0, "quic", nil)
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

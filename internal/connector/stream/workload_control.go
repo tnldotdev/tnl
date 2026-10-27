@@ -56,7 +56,7 @@ func NewWorkloadControl(client *workload.Client, preferred ...string) (Control, 
 		selected[index] = string(code)
 	}
 	c := &workloadControl{client: client, preferred: selected, subject: subject, pairs: make(map[string]*workloadAssignmentPair), owned: make(map[string]bool)}
-	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext})
+	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext, PreparePeer: c.preparePeer})
 }
 
 func (c *workloadControl) signer(_ context.Context, identity string) (Signer, error) {

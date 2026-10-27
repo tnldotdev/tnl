@@ -1,0 +1,491 @@
+package stream
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+type peerTestStream struct{ net.Conn }
+
+func (s peerTestStream) CloseWrite() error  { return s.Close() }
+func (s peerTestStream) Reset(uint32) error { return s.Close() }
+
+// pipe sessions expose the consumer's real hello and opening frames while
+// keeping clock, cancellation and late-connect races deterministic.
+type peerTestSession struct {
+	mu        sync.Mutex
+	streams   []net.Conn
+	done      chan struct{}
+	workers   sync.WaitGroup
+	open      func(muxsession.Stream)
+	datagrams bool
+	opens     atomic.Int32
+	packets   atomic.Int32
+}
+
+func newPeerTestSession(t *testing.T, datagrams bool, open func(muxsession.Stream)) *peerTestSession {
+	t.Helper()
+	s := &peerTestSession{done: make(chan struct{}), datagrams: datagrams, open: open}
+	t.Cleanup(func() { _ = s.Close(); s.workers.Wait() })
+	return s
+}
+
+func (s *peerTestSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return nil, net.ErrClosed
+	default:
+	}
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	local, remote := net.Pipe()
+	s.streams = append(s.streams, local, remote)
+	s.opens.Add(1)
+	s.workers.Go(func() { defer remote.Close(); s.open(peerTestStream{remote}) })
+	return peerTestStream{local}, nil
+}
+
+func (s *peerTestSession) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-s.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (s *peerTestSession) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return nil
+	default:
+		close(s.done)
+	}
+	for _, stream := range s.streams {
+		_ = stream.Close()
+	}
+	return nil
+}
+
+func (s *peerTestSession) Done() <-chan struct{}   { return s.done }
+func (s *peerTestSession) Err() error              { return net.ErrClosed }
+func (s *peerTestSession) SupportsDatagrams() bool { return s.datagrams }
+func (s *peerTestSession) SendDatagram([]byte) error {
+	s.packets.Add(1)
+	return nil
+}
+func (s *peerTestSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-s.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func preparedPeerFixture(t *testing.T) (Config, *preparedSelection, *peerPreparation) {
+	t.Helper()
+	config, run, owner := peerUnitFixture(t)
+	run.ServiceTLS = config.ServiceTLS
+	pair := pairResponse(run, controlv1.NativePeerPairRequest{ExpectedRelays: run.PairReady.Relays})
+	until := time.Now().Add(30 * time.Second)
+	binding := &preparedPeer{pair: pair, runID: run.ServiceRunID, number: run.RunNumber, hint: clonePairHint(run.PairReady), until: until, expiresAt: until, publisherPreparedUntil: until}
+	prepared := &preparedSelection{config: config, run: run, peer: binding, peerOwner: owner, until: until}
+	return config, prepared, owner
+}
+
+func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change func(*tunnelv1.NativePairLegAccepted), before func(), datagrams bool) *peerTestSession {
+	t.Helper()
+	return newPeerTestSession(t, datagrams, func(stream muxsession.Stream) {
+		hello, err := tunnelv1.ReadControl(stream)
+		if err != nil {
+			return // cancellation can interrupt a late connected attempt.
+		}
+		if hello.Role != tunnelv1.NativeConnector || hello.NativePairLegProof == nil {
+			t.Error("native leg used another hello role")
+			return
+		}
+		proof := *hello.NativePairLegProof
+		message, err := proof.Message()
+		if err != nil || !ed25519.Verify(signer.PublicKey, message, proof.Signature) {
+			t.Error("native leg did not sign its exact proof")
+			return
+		}
+		receipt := tunnelv1.NativePairLegAccepted{PairID: binding.pair.PairId, DeliveryID: binding.pair.DeliveryId,
+			DeliveryGeneration: binding.pair.DeliveryGeneration, ConnectionSlot: proof.ConnectionSlot, SourceIP: "127.0.0.1",
+			ObservedAt: time.Now(), ExpiresAt: time.Now().Add(20 * time.Second)}
+		if change != nil {
+			change(&receipt)
+		}
+		if before != nil {
+			before()
+		}
+		if err := tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version, NativePairLegAccepted: &receipt}); err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, stream)
+	})
+}
+
+func TestNativePeerRelayConsumerChecksReceiptCapabilityAndRequestDelay(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		change    func(*tunnelv1.NativePairLegAccepted)
+		delay     time.Duration
+		capable   bool
+		wantError bool
+	}{
+		{name: "accepted", capable: true},
+		{name: "clock skew", capable: true, change: func(r *tunnelv1.NativePairLegAccepted) {
+			r.ObservedAt = r.ObservedAt.Add(time.Hour)
+			r.ExpiresAt = r.ExpiresAt.Add(time.Hour)
+		}},
+		{name: "wrong delivery", capable: true, wantError: true, change: func(r *tunnelv1.NativePairLegAccepted) { r.DeliveryID = "AgICAgICAgICAgICAgICAg" }},
+		{name: "wrong slot", capable: true, wantError: true, change: func(r *tunnelv1.NativePairLegAccepted) { r.ConnectionSlot = 1 }},
+		{name: "no datagrams", wantError: true},
+		{name: "expired in transit", capable: true, wantError: true, delay: time.Second, change: func(r *tunnelv1.NativePairLegAccepted) { r.ExpiresAt = r.ObservedAt.Add(time.Second) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				_, prepared, owner := preparedPeerFixture(t)
+				binding := *prepared.peer
+				session := peerHelloSession(t, binding, owner.signer, tc.change, func() { time.Sleep(tc.delay) }, tc.capable)
+				connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return session, nil })
+				leg, err := dialPeerRelayLeg(t.Context(), t.Context(), connector, binding, owner.signer, 0, true)
+				if (err != nil) != tc.wantError {
+					t.Fatal("native receipt consumer", err)
+				}
+				if leg != nil {
+					if session.packets.Load() != 0 {
+						t.Error("leg setup sent packets before publisher confirmation")
+					}
+					leg.Close()
+				}
+				select {
+				case <-session.Done():
+				default:
+					t.Fatal("native leg did not join transport cleanup")
+				}
+				if !tc.capable && session.opens.Load() != 0 {
+					t.Fatal("ineligible QUIC consumed a leg proof")
+				}
+			})
+		})
+	}
+}
+
+func TestNativePeerRelayRaceJoinsCanceledLateConnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, prepared, owner := preparedPeerFixture(t)
+		binding := *prepared.peer
+		primary := peerHelloSession(t, binding, owner.signer, nil, nil, true)
+		late := newPeerTestSession(t, false, func(muxsession.Stream) { t.Error("canceled loser wrote a hello") })
+		started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		connectors := [2]muxsession.Connector{
+			muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { <-started; return primary, nil }),
+			muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+				close(started)
+				<-ctx.Done()
+				close(canceled)
+				<-release
+				return late, nil
+			}),
+		}
+		done := make(chan *peerRelayLeg, 1)
+		go func() {
+			leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, owner.signer, 0)
+			if err != nil {
+				t.Error(err)
+			}
+			done <- leg
+		}()
+		<-canceled
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("native race returned before its late loser joined")
+		default:
+		}
+		close(release)
+		leg := <-done
+		if leg == nil {
+			t.Fatal("late loser displaced authenticated winner")
+		}
+		leg.Close()
+		select {
+		case <-late.Done():
+		default:
+			t.Fatal("late canceled transport leaked")
+		}
+	})
+}
+
+func TestNativePeerRelayDeadlineDoesNotFollowPairRenewal(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, prepared, owner := preparedPeerFixture(t)
+		binding := *prepared.peer
+		session := peerHelloSession(t, binding, owner.signer, nil, nil, true)
+		connector := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return session, nil })
+		leg, err := dialPeerRelayLeg(t.Context(), t.Context(), connector, binding, owner.signer, 0, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer leg.Close()
+		// a later pair response is not a checked renewal of this relay claim.
+		prepared.peer.until, prepared.peer.expiresAt = time.Now().Add(time.Minute), time.Now().Add(time.Minute)
+		time.Sleep(19 * time.Second)
+		if leg.ctx.Err() != nil {
+			t.Fatal("relay leg lost its confirmed deadline early")
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if leg.ctx.Err() == nil {
+			t.Fatal("pair renewal silently extended an existing relay claim")
+		}
+		select {
+		case <-session.Done():
+		default:
+			t.Fatal("expired relay leg retained its transport")
+		}
+	})
+}
+
+func TestNativePeerPacketStartupRequiresMatchingSourcesAndPublisherConfirmation(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		name := "missing publisher confirmation"
+		if mismatch {
+			name = "different accepted sources"
+		}
+		t.Run(name, func(t *testing.T) {
+			config, prepared, owner := preparedPeerFixture(t)
+			prepared.peer.publisherPreparedUntil = time.Time{}
+			root, certificate := testCertificateForUses(t, []string{"relay.example.test"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(root) {
+				t.Fatal("test root")
+			}
+			config.TransportTLS = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
+			serverTLS := &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			accepted, exited := make(chan struct{}, 2), make(chan struct{}, 2)
+			var packetStreams atomic.Int32
+			for slot := range 2 {
+				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = listener.Close() })
+				relay := &prepared.peer.pair.Relays[slot]
+				relay.RelayAddress, relay.TlsServerName = listener.Addr().String(), "relay.example.test"
+				prepared.peer.hint.Relays[slot] = *relay
+				go func() {
+					defer func() { exited <- struct{}{} }()
+					connection, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					defer connection.Close()
+					outer, err := muxsession.AcceptTLSYamux(ctx, connection, serverTLS, muxsession.TLSYamuxConfig{})
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer outer.Close()
+					_, _, err = tunnel.AcceptWithResult(ctx, outer, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
+						source := "127.0.0.1"
+						if mismatch && slot == 1 {
+							source = "127.0.0.2"
+						}
+						return &tunnelv1.NativePairLegAccepted{PairID: prepared.peer.pair.PairId, DeliveryID: prepared.peer.pair.DeliveryId,
+							DeliveryGeneration: 1, ConnectionSlot: hello.NativePairLegProof.ConnectionSlot, SourceIP: source,
+							ObservedAt: time.Now(), ExpiresAt: time.Now().Add(20 * time.Second)}, nil
+					})
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					accepted <- struct{}{}
+					if stream, err := outer.AcceptStream(ctx); err == nil {
+						packetStreams.Add(1)
+						_ = stream.Close()
+					}
+				}()
+			}
+			prepared.run.PairReady = clonePairHint(prepared.peer.hint)
+			done := make(chan error, 1)
+			go func() {
+				connection, err := preparePeerConnection(ctx, config, prepared, owner.signer)
+				if connection != nil {
+					connection.Close()
+					t.Error("unprepared packet owner started")
+				}
+				done <- err
+			}()
+			for range 2 {
+				select {
+				case <-accepted:
+				case <-time.After(3 * time.Second):
+					t.Fatal("native claims did not finish")
+				}
+			}
+			if !mismatch {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("unprepared packet startup succeeded")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("native setup did not join")
+			}
+			for range 2 {
+				select {
+				case <-exited:
+				case <-time.After(time.Second):
+					t.Fatal("native setup left a relay session alive")
+				}
+			}
+			if packetStreams.Load() != 0 {
+				t.Fatal("unconfirmed publisher or differing sources admitted packet probes")
+			}
+		})
+	}
+}
+
+func TestNativePeerApplicationArrivalUsesOnlyPreparedPermission(t *testing.T) {
+	_, prepared, owner := preparedPeerFixture(t)
+	prepared.run.Protocol = "http"
+	var signatures atomic.Int32
+	sign := owner.signer.Sign
+	owner.signer.Sign = func(message []byte) []byte {
+		if !bytes.HasPrefix(message, []byte("tnl native peer visitor opening v1\x00")) {
+			t.Error("application arrival signed pair setup")
+		}
+		signatures.Add(1)
+		return sign(message)
+	}
+	seen := make(chan string, 3)
+	session := newPeerTestSession(t, false, func(stream muxsession.Stream) {
+		entry, initial, err := tunnelv1.ReadNativePeerVisitorOpening(stream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		message, err := tunnelv1.NativePeerProofMessage(entry, initial)
+		signature, _ := base64.RawURLEncoding.DecodeString(entry.Permission.Signature)
+		if err != nil || !ed25519.Verify(owner.signer.PublicKey, message, signature) || len(initial) != 0 ||
+			entry.SourceIP != "127.0.0.1" || entry.Permission.Token != prepared.run.Permission.VisitorToken || entry.Subject != owner.signer.Subject {
+			t.Error("native application opening lost its independent permission or source binding")
+		}
+		seen <- entry.VisitorConnectionID
+		_, _ = io.Copy(io.Discard, stream)
+	})
+	p := &peerConnection{prepared: prepared, initial: *prepared.peer, signer: owner.signer, source: "127.0.0.1", session: session, ctx: t.Context()}
+	ids := make(map[string]bool)
+	for range 3 {
+		connection, err := p.open(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := <-seen
+		if ids[id] {
+			t.Fatal("application reused a visitor ID")
+		}
+		ids[id] = true
+		_ = connection.Close()
+	}
+	if signatures.Load() != 3 || session.opens.Load() != 3 {
+		t.Fatal("application arrival repeated an opening or signed pair setup")
+	}
+	// no control hooks exist on this snapshot: an attempted request would fail.
+	for _, change := range []func(){
+		func() { prepared.peerFenced = true },
+		func() { prepared.peerFenced = false; prepared.peer.publisherPreparedUntil = time.Now() },
+		func() { prepared.peer.publisherPreparedUntil = time.Now().Add(time.Minute); prepared.closed = true },
+	} {
+		change()
+		if connection, err := p.open(t.Context()); err == nil || connection != nil {
+			t.Fatal("unprepared application reached an inner stream")
+		}
+	}
+	if signatures.Load() != 3 || session.opens.Load() != 3 {
+		t.Fatal("unprepared application signed or opened a stream")
+	}
+}
+
+func TestNativePeerExistingAuthoritySurvivesOnlyTemporaryPreparationFence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, prepared, _ := preparedPeerFixture(t)
+		initial := *prepared.peer
+		prepared.peerFenced = true
+		prepared.peer.publisherPreparedUntil = time.Now()
+		if _, err := prepared.peerRunForRenewal(initial); err != nil {
+			t.Fatal("temporary preparation outage canceled confirmed authority", err)
+		}
+		if _, _, err := prepared.peerPreparedRun(); err == nil {
+			t.Fatal("temporary outage admitted a new application")
+		}
+		time.Sleep(30 * time.Second)
+		if _, err := prepared.peerRunForRenewal(initial); !errors.Is(err, ErrSelectionExpired) {
+			t.Fatal("temporary fence renewed expired authority", err)
+		}
+		prepared.until, prepared.peer.until = time.Now().Add(time.Minute), time.Now().Add(time.Minute)
+		prepared.peer.hint = clonePairHint(prepared.peer.hint)
+		prepared.peer.hint.Relays[0].AssignmentRevision++
+		if _, err := prepared.peerRunForRenewal(initial); err == nil {
+			t.Fatal("changed assignment retained old inner authority")
+		}
+	})
+}
+
+func TestNativePeerModeDoesNotRequestIngressAssignments(t *testing.T) {
+	config, run, owner := peerUnitFixture(t)
+	var assignments atomic.Int32
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer:  func(context.Context, string) (Signer, error) { return owner.signer, nil },
+		Resolve: func(context.Context, string) (Run, error) { return run, nil },
+		Assignment: func(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error) {
+			assignments.Add(1)
+			return Assignment{}, errors.New("ingress must not be used")
+		},
+		Release: func(context.Context, string) error { return nil }, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Control, config.NativePeers, config.IdentityID = control, true, owner.signer.Subject.IdentityID
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := Serve(t.Context(), listener, config); !errors.Is(err, ErrServiceConnection) || assignments.Load() != 0 {
+		t.Fatal("missing pair capability fell back to ingress", err, assignments.Load())
+	}
+}
+
+var _ muxsession.DatagramSession = (*peerTestSession)(nil)

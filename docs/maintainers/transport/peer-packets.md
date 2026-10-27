@@ -201,7 +201,9 @@ is not a publisher grant or permission to open an application stream.
 [relay native admission](../../../internal/relay/native_connector.go) claims each
 signed leg using the directly accepted socket's source. only after control
 confirms that claim does the relay send a bounded `hello_accepted` receipt with
-the source, exact delivery ID, pair, generation, slot, and expiry. the pair key
+the source, exact delivery ID, pair, generation, slot, observation time, and
+expiry. the connector subtracts the entire setup delay from the observed
+remaining duration; it does not compare its clock with the relay's. the pair key
 stays in the private control claim. [native dialing](../../../internal/transport/tunnel/session.go)
 requires the delivery ID from the prepared pair and rejects a missing, expired,
 or mismatched receipt before returning the session. only an explicitly configured
@@ -217,8 +219,8 @@ listed candidate nor a missed page changes serving authority. each pass restarts
 at the first page, and every binding still needs the checked delivery request.
 [connector preparation](../../../internal/connector/stream/peer_preparation.go)
 can sign, recover, and renew a pair in background work using the enrolled device
-or workload key. its test-only opt-in denies the existing ingress application
-path while no peer delivery owner exists.
+or workload key. opting into native delivery denies the existing ingress
+application path; a preparation failure never selects ingress instead.
 
 the publisher reports installation only after both exact carrier registrations
 and the inner QUIC listener exist. control rechecks the exact run token, delivery
@@ -269,9 +271,27 @@ the publisher proof exercises all four slot transport combinations with one
 admission and one target socket, but uses checked relay-session fixtures rather
 than the control-backed relay bridge.
 
-production publication does not enable `NativePeers` yet. native startup still
-needs connector packet dialing through the prepared barrier and integrated
-real-relay qualification. a relay hello receipt proves its own checked claim,
-not publisher installation or application permission. renewal of
-the pair also must not silently extend an existing relay leg's fixed claim
-deadline. these handoffs must be wired before enabling native admission.
+the opt-in [connector owner](../../../internal/connector/stream/peer_connection.go)
+borrows one UDP socket for both relay QUIC attempts. each slot races QUIC against
+TLS/TCP-yamux with fresh signed leg proofs and joins canceled or late losers.
+both checked receipts must report the same source. the owner waits for the
+publisher installation snapshot before starting packet probes or one inner QUIC
+connection. application arrival reads only local prepared state and signs the
+application permission, not pair setup. openings are never retried. a temporary
+preparation outage fences new applications; existing streams retain only their
+last confirmed authority. expiration or changed assignments stop the owner.
+
+the control-backed continuity proof runs with
+`mise exec -- task go:test:integration RUN='^TestIntegrationPeerPackets'`.
+it uses disposable PostgreSQL, two real direct-socket relays, and no ingress.
+QUIC and TLS/TCP publishers each serve all connector carrier combinations.
+UDP packet loss and closing a native outer TCP session leave one target socket
+and its monotonic application counter intact. this fixture does not qualify
+load-balancer source handling or assignment replacement.
+
+production publishers and connectors do not enable `NativePeers` yet, and
+production relays leave native admission disabled. a relay hello receipt proves
+its own checked claim, not publisher installation or application permission.
+pair renewal does not extend an existing relay leg's fixed claim deadline.
+checked leg renewal, assignment/source rebinding, and ICE integration remain
+required before enabling the native path.

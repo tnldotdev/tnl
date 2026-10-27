@@ -103,6 +103,7 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 			return nil, receipt, errors.New("tunnel: valid native leg and expected delivery ID are required")
 		}
 	}
+	started := time.Now()
 	control, err := transport.OpenStream(ctx)
 	if err != nil {
 		return nil, receipt, fmt.Errorf("tunnel: open control stream: %w", err)
@@ -132,7 +133,7 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 		return nil, receipt, errors.New("tunnel: unexpected hello response")
 	}
 	if native {
-		if response.NativePairLegAccepted == nil || response.NativePairLegAccepted.Match(*hello.NativePairLegProof, expectedDeliveryID, time.Now()) != nil {
+		if response.NativePairLegAccepted == nil || response.NativePairLegAccepted.Match(*hello.NativePairLegProof, expectedDeliveryID, started, time.Now()) != nil {
 			return nil, receipt, errors.New("tunnel: native hello receipt does not match prepared pair")
 		}
 		receipt = *response.NativePairLegAccepted

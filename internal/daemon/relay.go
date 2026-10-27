@@ -62,6 +62,7 @@ type relayProcessSettings struct {
 	quicIdleTimeout        time.Duration
 	quicMaxIncomingStreams int64
 	runtime                relaySettings
+	nativeSourceMode       relay.NativeConnectorSourceMode
 }
 
 func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
@@ -121,6 +122,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	}
 	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
 		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+		EnableDatagrams: settings.nativeSourceMode != relay.NativeConnectorNoSource,
 	}})
 	if err != nil {
 		_ = tcpListener.Close()
@@ -132,6 +134,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		relayAddress: settings.relayAddress, tlsServerName: settings.tlsServerName,
 		transportTLS: transportTLS, certificateChanged: certificateChanged, clusterSecrets: d.clusterSecrets,
 		internalAddress: settings.internalAddress, internalListener: internalListener, metrics: metrics,
+		nativeSourceMode: settings.nativeSourceMode,
 	})
 	if err != nil {
 		_ = udpListener.Close()
@@ -168,6 +171,7 @@ type relayRuntimeConfig struct {
 	internalAddress    string
 	internalListener   net.Listener
 	metrics            *observability.Metrics
+	nativeSourceMode   relay.NativeConnectorSourceMode
 }
 
 type relaySettings struct {
@@ -290,8 +294,18 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	runtime.controller = controller
+	var native *relay.NativeConnectorAcceptor
+	if runtimeConfig.nativeSourceMode != relay.NativeConnectorNoSource {
+		claim, ok := runtimeConfig.client.(relay.NativePeerLegClaimClient)
+		if !ok || runtimeConfig.nativeSourceMode != relay.NativeConnectorDirectSocket {
+			return nil, errors.New("relay native admission requires an explicit direct-socket source and claim client")
+		}
+		native = &relay.NativeConnectorAcceptor{SourceMode: runtimeConfig.nativeSourceMode, CurrentLease: controller.Lease,
+			SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
+	}
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
+		Native:   native,
 		Control:  controller, Registry: registry,
 		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			return relay.ServicePublisherTarget{Control: controller, Registry: serviceRegistry}, id == runtimeConfig.relayServiceID

@@ -88,6 +88,9 @@ type Config struct {
 	ServiceTLS     *tls.Config `json:"-"`
 	// an owner may supply one shared shutdown budget for all path releases.
 	CleanupContext func() context.Context `json:"-"`
+	// NativePeers requires prepared relay packet delivery. it never falls back
+	// to ingress; production owners leave it off until rollout qualification.
+	NativePeers bool
 }
 
 func (Config) String() string   { return "private connector configuration" }
@@ -242,7 +245,15 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
 		return ErrServiceConnection
 	}
-	prepared, err := prepareSelection(serveCtx, config, cancel)
+	var peerOwner *peerPreparation
+	if config.NativePeers {
+		control, ok := config.Control.(peerControl)
+		if !ok {
+			return ErrServiceConnection
+		}
+		peerOwner = &peerPreparation{signer: signer, call: control.preparePeer}
+	}
+	prepared, err := prepareSelection(serveCtx, config, cancel, peerOwner)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			return nil
@@ -250,6 +261,9 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 		return err
 	}
 	defer prepared.Close()
+	if config.NativePeers {
+		return servePeerConnections(serveCtx, ctx, config, prepared, signer, consume, finishStartup)
+	}
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
 	attempted := make(map[string]bool)

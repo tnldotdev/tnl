@@ -18,13 +18,15 @@ type NativePairLegAccepted struct {
 	DeliveryGeneration int64     `json:"delivery_generation"`
 	ConnectionSlot     int       `json:"connection_slot"`
 	SourceIP           string    `json:"source_ip"`
+	ObservedAt         time.Time `json:"observed_at"`
 	ExpiresAt          time.Time `json:"expires_at"`
 }
 
 func (r NativePairLegAccepted) Validate() error {
 	address, err := netip.ParseAddr(r.SourceIP)
 	if err != nil || !address.IsValid() || address.IsUnspecified() || address.Zone() != "" || address.Unmap().String() != r.SourceIP ||
-		!opaqueid.Valid(r.PairID, "npp_") || r.DeliveryGeneration < 1 || (r.ConnectionSlot != 0 && r.ConnectionSlot != 1) || r.ExpiresAt.IsZero() {
+		!opaqueid.Valid(r.PairID, "npp_") || r.DeliveryGeneration < 1 || (r.ConnectionSlot != 0 && r.ConnectionSlot != 1) ||
+		r.ObservedAt.IsZero() || r.ExpiresAt.Sub(r.ObservedAt) <= 0 || r.ExpiresAt.Sub(r.ObservedAt) > 5*time.Minute {
 		return ErrNativePairLegAccepted
 	}
 	if _, err := ParsePeerDeliveryIdentifier(r.DeliveryID); err != nil {
@@ -35,9 +37,9 @@ func (r NativePairLegAccepted) Validate() error {
 
 // Match checks the receipt against a signed leg and the delivery ID obtained
 // from the separately prepared pair. the leg proof's signed bytes stay intact.
-func (r NativePairLegAccepted) Match(proof NativePairLegProof, expectedDeliveryID string, now time.Time) error {
+func (r NativePairLegAccepted) Match(proof NativePairLegProof, expectedDeliveryID string, started, now time.Time) error {
 	want, err := ParsePeerDeliveryIdentifier(expectedDeliveryID)
-	if err != nil || proof.Validate() != nil || r.Validate() != nil || !r.ExpiresAt.After(now) ||
+	if err != nil || proof.Validate() != nil || r.Validate() != nil || started.IsZero() || started.After(now) || !started.Add(r.ExpiresAt.Sub(r.ObservedAt)).After(now) ||
 		r.PairID != proof.PairID || r.DeliveryGeneration != proof.DeliveryGeneration || r.ConnectionSlot != proof.ConnectionSlot {
 		return ErrNativePairLegAccepted
 	}

@@ -197,9 +197,13 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 }
 
 func newWorkloadTransportFixture(t *testing.T, opened chan<- privateObservation) (*privateSeparatedFixture, *githubtest.Issuer) {
+	return newWorkloadTransportFixtureTopology(t, opened, serviceRuntimeTopologyOptions{})
+}
+
+func newWorkloadTransportFixtureTopology(t *testing.T, opened chan<- privateObservation, options serviceRuntimeTopologyOptions) (*privateSeparatedFixture, *githubtest.Issuer) {
 	t.Helper()
 	issuer := githubtest.New(t)
-	f := newServiceRuntimeFixtureTiming(t, false, opened, true, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
+	f := newServiceRuntimeFixtureTopology(t, false, opened, true, nil, options, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
 		base := tr.Clone()
 		t.Cleanup(base.CloseIdleConnections)
 		tr.RegisterProtocol("https", splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -334,7 +338,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		go func() {
 			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
 				return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
-			}})
+			}, NativePeers: f.nativePeers})
 		}()
 		t.Cleanup(func() {
 			cancel()

@@ -121,7 +121,7 @@ func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 	hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}
 	id := "AQEBAQEBAQEBAQEBAQEBAQ"
 	receipt := tunnelv1.NativePairLegAccepted{PairID: proof.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 0,
-		SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(time.Minute).UTC().Truncate(time.Microsecond)}
+		SourceIP: "127.0.0.1", ObservedAt: time.Now().UTC().Truncate(time.Microsecond), ExpiresAt: time.Now().Add(time.Minute).UTC().Truncate(time.Microsecond)}
 	for _, test := range []struct {
 		name     string
 		response *tunnelv1.NativePairLegAccepted
@@ -132,8 +132,8 @@ func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
 		{"accepted", &receipt, id, true, true},
 		{"missing receipt", nil, id, false, false},
 		{"wrong prepared delivery", &receipt, "AgICAgICAgICAgICAgICAg", false, true},
-		{"wrong signed slot", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 1, SourceIP: receipt.SourceIP, ExpiresAt: receipt.ExpiresAt}, id, false, false},
-		{"expired receipt", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 0, SourceIP: receipt.SourceIP, ExpiresAt: time.Now().Add(-time.Second)}, id, false, false},
+		{"wrong signed slot", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 1, SourceIP: receipt.SourceIP, ObservedAt: receipt.ObservedAt, ExpiresAt: receipt.ExpiresAt}, id, false, false},
+		{"expired receipt", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 0, SourceIP: receipt.SourceIP, ObservedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(-time.Second)}, id, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client, server := newMemoryPair(t)
@@ -186,7 +186,7 @@ func TestPublisherAndIngressRejectNativeHelloReceipt(t *testing.T) {
 				return tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version,
 					NativePairLegAccepted: &tunnelv1.NativePairLegAccepted{PairID: "npp_1234567890123456789012",
 						DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1, ConnectionSlot: 0,
-						SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(time.Minute)}})
+						SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}})
 			})
 			if s, err := Dial(ctx, client, hello); err == nil || s != nil {
 				t.Fatal("another role accepted a native receipt")

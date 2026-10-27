@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -15,6 +16,7 @@ type ControlConfig struct {
 	Release      func(context.Context, string) error
 	Close        func() error
 	CloseContext func(context.Context) error
+	PreparePeer  func(context.Context, string, tunnelv1.VisitorSubject, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
 }
 
 func (ControlConfig) String() string   { return "private connector control configuration" }
@@ -42,6 +44,13 @@ func (c *configuredControl) ReleaseConnectorAssignment(ctx context.Context, sess
 	return c.config.Release(ctx, session)
 }
 func (c *configuredControl) Close() error { return c.config.Close() }
+
+func (c *configuredControl) preparePeer(ctx context.Context, service string, subject tunnelv1.VisitorSubject, request controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	if c.config.PreparePeer == nil {
+		return controlv1.NativePeerPair{}, ErrServiceConnection
+	}
+	return c.config.PreparePeer(ctx, service, subject, request)
+}
 func (c *configuredControl) CloseContext(ctx context.Context) error {
 	if c.config.CloseContext != nil {
 		return c.config.CloseContext(ctx)

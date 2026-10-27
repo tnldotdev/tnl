@@ -19,6 +19,15 @@ import (
 // in memory. neither credential crosses the stream preparation boundary.
 type peerOperation func(context.Context, string, tunnelv1.VisitorSubject, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
 
+type peerControl interface {
+	preparePeer(context.Context, string, tunnelv1.VisitorSubject, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
+}
+
+var (
+	_ peerControl = (*configuredControl)(nil)
+	_ peerControl = (*controlAdapter)(nil)
+)
+
 type peerPreparation struct {
 	signer Signer
 	call   peerOperation
@@ -236,11 +245,34 @@ func (p *preparedSelection) peerCurrentLocked() (preparedPeer, error) {
 // peerPrepared is a local startup barrier, not application permission or relay
 // liveness. it never contacts control, signs a proof, or waits for ICE.
 func (p *preparedSelection) peerPrepared() (preparedPeer, error) {
+	_, peer, err := p.peerPreparedRun()
+	return peer, err
+}
+
+func (p *preparedSelection) peerPreparedRun() (Run, preparedPeer, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	peer, err := p.peerCurrentLocked()
 	if err != nil || !peer.publisherPreparedUntil.After(time.Now()) {
-		return preparedPeer{}, ErrServiceConnection
+		return Run{}, preparedPeer{}, ErrServiceConnection
 	}
-	return peer, nil
+	run := p.run
+	endpoint := *run.Endpoint
+	run.Endpoint = &endpoint
+	return run, peer, nil
+}
+
+// an existing inner connection can retain its last confirmed authority during
+// a temporary preparation outage. neither an old report nor this read renews it.
+func (p *preparedSelection) peerRunForRenewal(initial preparedPeer) (Run, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.peer == nil || !p.until.After(time.Now()) || !p.peer.until.After(time.Now()) ||
+		!samePeerDelivery(initial, *p.peer) || p.run.ServiceRunID != initial.runID || p.run.RunNumber != initial.number {
+		return Run{}, ErrSelectionExpired
+	}
+	run := p.run
+	endpoint := *run.Endpoint
+	run.Endpoint = &endpoint
+	return run, nil
 }

@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -24,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/region"
+	relayruntime "github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -58,6 +61,10 @@ type privateSeparatedFixture struct {
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
+	nativePeers                 bool
+	relays                      []*daemon
+	nativePacketDrops           map[string]*atomic.Bool
+	nativeTCPListeners          map[string]*nativeTrackedListener
 }
 
 // the topology has one real control database/API, two ingress runtimes and two
@@ -72,10 +79,14 @@ func newServiceRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 }
 
 func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
-	return newServiceRuntimeFixtureTopology(t, standalone, opened, defaults, processContext, false, configure...)
+	return newServiceRuntimeFixtureTopology(t, standalone, opened, defaults, processContext, serviceRuntimeTopologyOptions{}, configure...)
 }
 
-func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, twoRegions bool, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+type serviceRuntimeTopologyOptions struct {
+	twoRegions, nativePeers bool
+}
+
+func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, options serviceRuntimeTopologyOptions, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "service-runtime")
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
@@ -231,6 +242,9 @@ func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan
 		database: database, certificateAuthority: ca,
 		identity: serviceRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults
+	f.nativePeers = options.nativePeers
+	f.nativePacketDrops = make(map[string]*atomic.Bool)
+	f.nativeTCPListeners = make(map[string]*nativeTrackedListener)
 	f.processContext = processContext
 	f.visitorRoots = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pebble.roots}
 	f.visitorRootPEM = pebble.rootPEM
@@ -243,7 +257,7 @@ func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan
 		return f
 	}
 	relayCount := 2
-	if twoRegions {
+	if options.twoRegions {
 		relayCount = 4
 	}
 	for index := 0; index < relayCount; index++ {
@@ -259,15 +273,23 @@ func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan
 		internalListener := serviceRuntimeListener(t)
 		internal := internalListener.Addr().String()
 		runtime := relaySettingsFrom(config)
-		if twoRegions {
+		if options.twoRegions {
 			runtime.region = region.Code("sjc")
 			if index >= 2 {
 				runtime.region = region.Code("ord")
 			}
 		}
-		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
+		settings := relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
-			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: runtime}, relayMetrics); err != nil {
+			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: runtime}
+		if options.nativePeers {
+			tracked := &nativeTrackedListener{Listener: serviceRuntimeListener(t), live: make(map[*nativeTrackedConnection]uint64)}
+			settings.tcpListener = tracked
+			settings.relayAddress = settings.tcpListener.Addr().String()
+			settings.nativeSourceMode = relayruntime.NativeConnectorDirectSocket
+			f.nativeTCPListeners[settings.relayAddress] = tracked
+		}
+		if err := relay.startRelay(lifetime, settings, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
 		}
@@ -281,6 +303,11 @@ func newServiceRuntimeFixtureTopology(t *testing.T, standalone bool, opened chan
 		})
 		f.tcpAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].tcpListener.Addr().String()
 		f.quicAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].udpListener.Addr().String()
+		if options.nativePeers {
+			f.tcpAddresses[settings.relayAddress], f.quicAddresses[settings.relayAddress] = settings.relayAddress, relay.relays[0].udpListener.Addr().String()
+			f.nativePacketDrops[settings.relayAddress] = startNativePacketFaultSocket(t, settings.relayAddress, relay.relays[0].udpListener.Addr().String())
+		}
+		f.relays = append(f.relays, relay)
 	}
 	return f
 }
@@ -296,7 +323,7 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 			return connector.Connect(ctx, endpoint)
 		})
 	}
-	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: f.nativePeers}}}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func privateDisabledConnector() muxsession.Connector {
