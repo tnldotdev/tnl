@@ -195,6 +195,15 @@ deadline; it cannot add serving time for a slow response or clock skew.
 [connector preparation](../../../internal/connector/stream/peer_preparation.go)
 can sign, recover, and renew a pair in background work using the enrolled device
 or workload key. its test-only opt-in denies the existing ingress application
-path while no peer-stream owner exists. the role migration still needs an
-authenticated owner for registered pair keys, fixed deadlines at connected
-owners, and peer frame forwarding.
+path while no peer delivery owner exists.
+
+the publisher's [peer session](../../../internal/publisher/service/peer_admission.go)
+accepts streams only against a control-prepared binding for the exact run and
+its current assignments. both relay paths share this owner, its retained visitor
+IDs, and the run's stream budget. capacity is reserved before decoding; permission
+and IP policy are verified before managed visitor TLS or target work. a carrier
+change does not create a second admission. the owner keeps at most 4096 visitor
+IDs per pair and 64 pair owners per run, including stopped pairs retained for
+the five-minute token replay window. close, assignment replacement, and the fixed
+pair deadline interrupt and join its streams. the role migration still needs to
+attach the inner QUIC session to this owner and register and forward peer frames.

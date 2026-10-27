@@ -91,6 +91,7 @@ type boundState struct {
 	active          map[net.Conn]struct{}
 	closed          bool
 	reservedStreams int
+	peers           map[string]*PeerSession
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -202,6 +203,12 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		next[current.ConnectionSlot] = current
 	}
 	b.connections, b.assignments = next, refs
+	for _, peer := range b.peers {
+		if !peer.closed && !b.peerBindingCurrentLocked(peer.binding, time.Now()) {
+			close(peer.changed)
+			peer.changed = make(chan struct{})
+		}
+	}
 	return nil
 }
 
@@ -382,9 +389,16 @@ func (b *Bound) Invalidate() {
 	for stream := range b.active {
 		streams = append(streams, stream)
 	}
+	peers := make([]*PeerSession, 0, len(b.peers))
+	for _, peer := range b.peers {
+		peers = append(peers, peer)
+	}
 	b.mu.Unlock()
 	for _, stream := range streams {
 		_ = stream.Close()
+	}
+	for _, peer := range peers {
+		peer.Close()
 	}
 }
 
@@ -433,7 +447,12 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		}
 		defer finish()
 	}
+	return b.forwardManaged(ctx, body, visitor, header.Direct != nil)
+}
+
+func (b *Bound) forwardManaged(ctx context.Context, body net.Conn, visitor publisher.ServiceVisitorAuthentication, direct bool) error {
 	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
+	var err error
 	if b.prepared.targetResolver != nil {
 		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(ctx)
 		if err != nil {
@@ -446,13 +465,13 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.Direct != nil {
+	if b.prepared.managedPublic && direct {
 		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
 	}
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
 		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
-	if header.Direct != nil {
+	if direct {
 		managed.TLS.ClientCAs = b.prepared.policy.ClientAuthorities()
 	}
 	return managed.Forward(ctx, body)

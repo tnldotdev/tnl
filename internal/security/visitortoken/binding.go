@@ -102,6 +102,19 @@ func NativeSubject(subject Subject) (tunnelv1.VisitorSubject, error) {
 // caller still binds the permission to local IP policy and stream capacity.
 // verification is pure: it does not reserve a stream or dial a target.
 func VerifyNativePeerSession(entry tunnelv1.NativePeerVisitorEntry, initial []byte, expected tunnelv1.NativePeerSession, view View, now time.Time) (VerifiedPermission, error) {
+	verified, err := VerifyNativePeerRenewalProof(entry, initial, expected, view, now)
+	if err != nil {
+		return VerifiedPermission{}, err
+	}
+	if err := CheckCurrent(verified, view, now); err != nil {
+		return VerifiedPermission{}, err
+	}
+	return verified, nil
+}
+
+// VerifyNativePeerRenewalProof verifies a fresh possession proof without
+// admitting a new stream. the existing guard owns revision and lifetime checks.
+func VerifyNativePeerRenewalProof(entry tunnelv1.NativePeerVisitorEntry, initial []byte, expected tunnelv1.NativePeerSession, view View, now time.Time) (VerifiedPermission, error) {
 	wireFacts := expected
 	wireFacts.ExpiresAt = time.Time{}
 	if entry.Validate() != nil || len(initial) > tunnelv1.MaxInitialBytes || expected.Validate() != nil ||
@@ -125,9 +138,6 @@ func VerifyNativePeerSession(entry tunnelv1.NativePeerVisitorEntry, initial []by
 	}
 	verified, err := verifyNativeKeySignature(permission, public, signature, message)
 	if err != nil {
-		return VerifiedPermission{}, err
-	}
-	if err := CheckCurrent(verified, view, now); err != nil {
 		return VerifiedPermission{}, err
 	}
 	return verified, nil
