@@ -72,6 +72,38 @@ func nativeAdmissionFixture(t *testing.T, max int, claim NativePeerLegClaimClien
 	return acceptor, owner, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}
 }
 
+// a readable receipt can precede the server's handshake deadline cleanup.
+// wait for that cleanup before a test deliberately cancels the serving owner.
+type nativeClaimHandshakeSession struct {
+	muxsession.Session
+	muxsession.AcceptedPeer
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (s *nativeClaimHandshakeSession) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return nativeClaimHandshakeStream{Stream: stream, owner: s}, nil
+}
+
+type nativeClaimHandshakeStream struct {
+	muxsession.Stream
+	owner *nativeClaimHandshakeSession
+}
+
+func (s nativeClaimHandshakeStream) SetDeadline(at time.Time) error {
+	err := s.Stream.SetDeadline(at)
+	if at.IsZero() && err == nil {
+		s.owner.once.Do(func() { close(s.owner.ready) })
+	}
+	return err
+}
+
+var _ muxsession.AcceptedPeer = (*nativeClaimHandshakeSession)(nil)
+
 // peerNativeHold leaves the acknowledged outer session open so the caller can
 // check capacity while another real QUIC or TLS/yamux socket owns a slot.
 func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hello tunnelv1.Message, deliveryID ...string) (*tunnel.Session, tunnelv1.NativePairLegAccepted, <-chan error, context.CancelFunc) {
@@ -88,6 +120,10 @@ func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 	var client muxsession.Session
 	var done <-chan error
 	endpoint := muxsession.Endpoint{ServerName: "relay.test"}
+	handshakeDone := make(chan struct{})
+	observe := func(session muxsession.Session) muxsession.Session {
+		return &nativeClaimHandshakeSession{Session: session, AcceptedPeer: session.(muxsession.AcceptedPeer), ready: handshakeDone}
+	}
 	switch kind {
 	case "quic":
 		listener, err := muxsession.ListenQUIC("127.0.0.1:0", serverTLS, muxsession.QUICConfig{})
@@ -101,7 +137,7 @@ func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 			if err != nil {
 				return err
 			}
-			return acceptor.Accept(ctx, accepted)
+			return acceptor.Accept(ctx, observe(accepted))
 		})
 		client, err = (muxsession.QUICConnector{TLSConfig: clientTLS}).Connect(ctx, endpoint)
 		if err != nil {
@@ -124,7 +160,7 @@ func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 			if err != nil {
 				return err
 			}
-			return acceptor.Accept(ctx, accepted)
+			return acceptor.Accept(ctx, observe(accepted))
 		})
 		client, err = (muxsession.TLSYamuxConnector{TLSConfig: clientTLS}).Connect(ctx, endpoint)
 		if err != nil {
@@ -141,6 +177,11 @@ func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 	session, receipt, err := tunnel.DialNative(ctx, client, hello, expected)
 	if err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-handshakeDone:
+	case <-ctx.Done():
+		t.Fatal("native claim handshake cleanup did not finish", ctx.Err())
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	return session, receipt, done, cancel
