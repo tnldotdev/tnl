@@ -211,7 +211,7 @@ func TestSeparatedRuntimeSetup(t *testing.T) {
 	}})
 }
 
-func separatedConfig(t *testing.T, component string) daemonconfig.Config {
+func separatedConfig(t *testing.T, ctx context.Context, component string) daemonconfig.Config {
 	t.Helper()
 	role := daemonconfig.Role(component)
 	if component == "control-a" || component == "control-b" {
@@ -261,7 +261,7 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.OIDCIssuer, cfg.OIDCClientID, cfg.StorageKey = testOIDCIssuer, "server", testStorageKey
 		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
 		cfg.Route53ManagedZoneID, cfg.Route53Region, cfg.DNSServer = "local", "us-east-1", "dns:53"
-		addresses, err := net.LookupIP("ingress")
+		addresses, err := separatedLookupIPv4(ctx, "ingress", net.DefaultResolver.LookupIP)
 		if err != nil {
 			t.Fatal(err)
 		}

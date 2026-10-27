@@ -85,7 +85,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 			}
 			return base.RoundTrip(request)
 		})
-		cfg := separatedConfig(t, component)
+		cfg := separatedConfig(t, ctx, component)
 		if component != "control-a" {
 			separatedWrite(t, component+".admission-limits", separatedAdmissionFrom(cfg))
 		}
@@ -289,7 +289,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 	}
 	var prefixes []string
 	for index := 1; index <= 4; index++ {
-		ips, err := net.LookupIP("visitor-" + strconv.Itoa(index))
+		ips, err := separatedLookupIPv4(ctx, "visitor-"+strconv.Itoa(index), net.DefaultResolver.LookupIP)
 		if err != nil {
 			t.Fatal(err)
 		}

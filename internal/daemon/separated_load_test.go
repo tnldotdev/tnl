@@ -198,7 +198,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	}
 	// validate admission inputs with the production configuration rules before
 	// any component starts work, including the coordinator and visitors.
-	separatedConfig(t, "ingress-a")
+	separatedConfig(t, t.Context(), "ingress-a")
 	routes, rate, duration := *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration
 	if routes < 4 || routes > 10000 {
 		t.Fatal("separated runtime load routes must be between 4 and 10000")
