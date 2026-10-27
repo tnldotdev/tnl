@@ -27,6 +27,34 @@ func TestRelayControlErrorHandlesEmptyProblem(t *testing.T) {
 	}
 }
 
+func TestControllerRejectsLeaseWithoutItsProcessKey(t *testing.T) {
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	registration := relayv1.RelayRegistration{
+		RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "run-1", Region: "local",
+		PeerSigningPublicKey: key, ProtocolVersion: 1, RelayAddress: "relay-a.test:443",
+		TlsServerName: "relay-a.test", InternalRelayAddress: "relay-a.internal:443",
+		InternalNetworks: []string{}, ConnectionCapacity: 1, StreamCapacity: 2,
+	}
+	lease := relayv1.RelayLease{
+		RelayServiceId: registration.RelayServiceId, RelayId: registration.RelayId, RelayRunId: registration.RelayRunId,
+		Region: registration.Region, ProtocolVersion: registration.ProtocolVersion, RelayAddress: registration.RelayAddress,
+		TlsServerName: registration.TlsServerName, InternalRelayAddress: registration.InternalRelayAddress,
+		InternalNetworks: []string{}, ConnectionCapacity: 1, StreamCapacity: 2,
+		RelayLeaseRevision: 1, RegisteredAt: time.Now(), RenewedAt: time.Now(), LeaseExpiresAt: time.Now().Add(time.Minute),
+	}
+	otherKey := "other-public-key"
+	for _, peerKey := range []*string{nil, &otherKey} {
+		lease.PeerSigningPublicKey = peerKey
+		if err := validateLease(registration, lease, time.Now()); err == nil {
+			t.Fatal("accepted lease without matching process key")
+		}
+	}
+	lease.PeerSigningPublicKey = &key
+	if err := validateLease(registration, lease, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDirectClaimProblemsPreserveProtocolCodesAndClearStaleLease(t *testing.T) {
 	credential, _, err := credentials.NewPublisherConnectionCredential()
 	if err != nil {
@@ -90,8 +118,10 @@ func TestControllerInstallsCertificateBeforeReady(t *testing.T) {
 
 func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	lease := relayv1.RelayLease{
-		RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1", RelayLeaseRevision: 3,
+		PeerSigningPublicKey: &key,
+		RelayServiceId:       "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1", RelayLeaseRevision: 3,
 		ProtocolVersion: 1, RelayAddress: "relay-a.example.test:443", TlsServerName: "relay-a.example.test",
 		InternalRelayAddress: "relay-a.internal:9445", InternalNetworks: []string{},
 		ConnectionCapacity: 10, StreamCapacity: 100, ReportedConnections: 0, ReportedStreams: 0,
@@ -108,7 +138,8 @@ func testControllerInstallsCertificateBeforeReady(t *testing.T, fail bool) {
 	controller, err := NewController(ControllerConfig{
 		Client: client,
 		Registration: relayv1.RelayRegistration{
-			RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId,
+			PeerSigningPublicKey: key,
+			RelayServiceId:       lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId,
 			ProtocolVersion: 1, RelayAddress: lease.RelayAddress, TlsServerName: lease.TlsServerName,
 			InternalRelayAddress: lease.InternalRelayAddress, InternalNetworks: []string{},
 			ConnectionCapacity: 10, StreamCapacity: 100,
@@ -168,9 +199,11 @@ func TestControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 
 func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	now := time.Now().UTC()
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	deadline := now.Add(time.Minute)
 	lease := relayv1.RelayLease{
-		RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1", RelayLeaseRevision: 3,
+		PeerSigningPublicKey: &key,
+		RelayServiceId:       "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1", RelayLeaseRevision: 3,
 		ProtocolVersion: 1, RelayAddress: "relay-a.example.test:443", TlsServerName: "relay-a.example.test",
 		InternalRelayAddress: "relay-a.internal:9445", InternalNetworks: []string{},
 		ConnectionCapacity: 10, StreamCapacity: 100, RegisteredAt: now, RenewedAt: now,
@@ -180,7 +213,8 @@ func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	controller, err := NewController(ControllerConfig{
 		Client: client,
 		Registration: relayv1.RelayRegistration{
-			RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId,
+			PeerSigningPublicKey: key,
+			RelayServiceId:       lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId,
 			ProtocolVersion: 1, RelayAddress: lease.RelayAddress, TlsServerName: lease.TlsServerName,
 			InternalRelayAddress: lease.InternalRelayAddress, InternalNetworks: []string{},
 			ConnectionCapacity: 10, StreamCapacity: 100,

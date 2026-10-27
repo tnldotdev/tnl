@@ -39,6 +39,9 @@ type Querier interface {
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
 	BindBrowserSessionHost(ctx context.Context, arg BindBrowserSessionHostParams) error
 	BindInitialOIDCMembership(ctx context.Context, arg BindInitialOIDCMembershipParams) error
+	// run only after RegisterRelay succeeds, inside the same transaction. on a
+	// mismatched historical key the caller rolls back the lease replacement too.
+	BindRelayRunSigningKey(ctx context.Context, arg BindRelayRunSigningKeyParams) (int64, error)
 	BrowserSessionCurrentHost(ctx context.Context, arg BrowserSessionCurrentHostParams) (string, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -64,6 +67,10 @@ type Querier interface {
 	CleanupServiceHTTPLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupServiceHTTPSessions(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupServiceManagementAudit(ctx context.Context, arg CleanupServiceManagementAuditParams) (int64, error)
+	// lock the lease before key rows, as registration does. skip a relay being
+	// registered: deleting its old binding before its key check would allow a
+	// different key on a returning run. never delete the current run's key.
+	CleanupSupersededRelayRunSigningKeys(ctx context.Context, arg CleanupSupersededRelayRunSigningKeysParams) (int64, error)
 	CleanupVisitorHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
@@ -470,6 +477,9 @@ type Querier interface {
 	MarkPublishRunReady(ctx context.Context, arg MarkPublishRunReadyParams) (ControlPublishRun, error)
 	// ready is idempotent for the exact claim; a replaced assignment cannot revive.
 	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnectionSlot, error)
+	// registration holds the lease row lock until this update commits. a matching
+	// old run clears its supersession only after it has passed lease and key checks.
+	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
 	MarkVisitorIPSet(ctx context.Context, publicUrlID string) error
 	NextIngressTransportIssuerRevision(ctx context.Context) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)

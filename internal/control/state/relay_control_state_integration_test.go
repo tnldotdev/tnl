@@ -1,7 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"testing"
@@ -23,6 +26,7 @@ func TestIntegrationRelayControlState(t *testing.T) {
 	}
 	conflict := registration
 	conflict.RelayRunID = "conflicting-run"
+	conflict.PeerSigningPublicKey = testRelayPeerPublicKey(conflict.RelayRunID)
 	if _, err := database.RegisterRelay(t.Context(), conflict, now.Add(2*time.Second), 30*time.Second); !errors.Is(err, ErrRelayRegistrationConflict) {
 		t.Fatalf("live run conflict: %v", err)
 	}
@@ -38,6 +42,74 @@ func TestIntegrationRelayControlState(t *testing.T) {
 	replacement, err := database.RegisterRelay(t.Context(), conflict, renewed.LeaseExpiresAt, 30*time.Second)
 	if err != nil || replacement.RelayLeaseRevision != renewed.RelayLeaseRevision+1 {
 		t.Fatalf("replacement lease = %#v, %v", replacement, err)
+	}
+}
+
+func TestIntegrationRelayProcessSigningKeyRegistration(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "relay_process_signing_key")
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := relayLifecycleRegistration("relay-key")
+	registration.PeerSigningPublicKey = public
+	// discard the first response, as when control commits before the client sees it.
+	if _, err := database.RegisterRelay(t.Context(), registration, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := database.RegisterRelay(t.Context(), registration, now.Add(time.Second), time.Minute)
+	if err != nil || retry.RelayLeaseRevision != 1 || !retry.RegisteredAt.Equal(now) || !bytes.Equal(retry.PeerSigningPublicKey, public) {
+		t.Fatalf("lost-response retry = %#v, %v", retry, err)
+	}
+	message := []byte("relay process possession")
+	if !ed25519.Verify(retry.PeerSigningPublicKey, message, ed25519.Sign(private, message)) ||
+		ed25519.Verify(retry.PeerSigningPublicKey, message, ed25519.Sign(ed25519.NewKeyFromSeed(public), message)) {
+		t.Fatal("public lease key did not identify the process private key")
+	}
+	otherPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := registration
+	wrong.PeerSigningPublicKey = otherPublic
+	for _, at := range []time.Time{now.Add(2 * time.Second), retry.LeaseExpiresAt} {
+		if _, err := database.RegisterRelay(t.Context(), wrong, at, time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+			t.Fatalf("same run changed its key at %s: %v", at, err)
+		}
+	}
+	wrong.RelayRunID = "relay-key-new-run"
+	if _, err := database.RegisterRelay(t.Context(), wrong, now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatalf("new run took a live lease: %v", err)
+	}
+	wrong.PeerSigningPublicKey = public
+	if _, err := database.RegisterRelay(t.Context(), wrong, retry.LeaseExpiresAt, time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatalf("new run reused previous process key: %v", err)
+	}
+	wrong.PeerSigningPublicKey = otherPublic
+	newRun, err := database.RegisterRelay(t.Context(), wrong, retry.LeaseExpiresAt, time.Minute)
+	if err != nil || newRun.RelayLeaseRevision != 2 || !bytes.Equal(newRun.PeerSigningPublicKey, otherPublic) {
+		t.Fatalf("new run = %#v, %v", newRun, err)
+	}
+	if _, err := database.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: retry.RelayLeaseIdentity}, retry.LeaseExpiresAt, time.Minute); !errors.Is(err, ErrRelayLeaseStale) {
+		t.Fatalf("stale revision renewed new run: %v", err)
+	}
+	oldRunWrongKey := registration
+	thirdPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRunWrongKey.PeerSigningPublicKey = thirdPublic
+	if _, err := database.RegisterRelay(t.Context(), oldRunWrongKey, newRun.LeaseExpiresAt, time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatalf("returning run changed its historic key: %v", err)
+	}
+	reusedKey := registration
+	reusedKey.RelayRunID = "third-run"
+	if _, err := database.RegisterRelay(t.Context(), reusedKey, newRun.LeaseExpiresAt, time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatalf("third run reused first run's key: %v", err)
+	}
+	var currentRun string
+	if err := database.pool.QueryRow(t.Context(), `SELECT relay_run_id FROM control.relay_leases WHERE relay_id=$1`, registration.RelayID).Scan(&currentRun); err != nil || currentRun != newRun.RelayRunID {
+		t.Fatalf("failed registration replaced live lease: %q, %v", currentRun, err)
 	}
 }
 

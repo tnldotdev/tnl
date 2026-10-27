@@ -61,6 +61,7 @@ type RelayRegistration struct {
 	RelayServiceID       string
 	RelayID              string
 	RelayRunID           string
+	PeerSigningPublicKey []byte
 	Region               region.Code
 	ProtocolVersion      uint64
 	RelayAddress         string
@@ -89,6 +90,7 @@ type RelayRenewal struct {
 // RelayLease is the control-issued lease for one relay process.
 type RelayLease struct {
 	RelayLeaseIdentity
+	PeerSigningPublicKey []byte
 	Region               region.Code
 	ProtocolVersion      uint64
 	RelayAddress         string
@@ -147,7 +149,7 @@ func (d *Database) RegisterRelay(
 	registration RelayRegistration,
 	now time.Time,
 	leaseDuration time.Duration,
-) (RelayLease, error) {
+) (result RelayLease, retErr error) {
 	if err := validateRelayRegistration(registration, leaseDuration); err != nil {
 		return RelayLease{}, err
 	}
@@ -164,7 +166,13 @@ func (d *Database) RegisterRelay(
 	if internalNetworks == nil {
 		internalNetworks = []netip.Prefix{}
 	}
-	row, err := controlstatedb.New(d.pool).RegisterRelay(ctx, controlstatedb.RegisterRelayParams{
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return RelayLease{}, fmt.Errorf("controlstate: register relay: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "register relay", &retErr)()
+	queries := controlstatedb.New(tx)
+	row, err := queries.RegisterRelay(ctx, controlstatedb.RegisterRelayParams{
 		RelayID: registration.RelayID, RelayRunID: registration.RelayRunID,
 		Region:          string(registration.Region),
 		ProtocolVersion: protocolVersion, InternalRelayAddress: registration.InternalRelayAddress,
@@ -172,6 +180,7 @@ func (d *Database) RegisterRelay(
 		StreamCapacity: streamCapacity, RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)), RelayServiceID: registration.RelayServiceID,
 		RelayAddress: registration.RelayAddress, TlsServerName: registration.TLSServerName,
+		PeerSigningPublicKey: registration.PeerSigningPublicKey,
 	})
 	if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
 		return RelayLease{}, ErrRelayRegistrationConflict
@@ -179,7 +188,35 @@ func (d *Database) RegisterRelay(
 	if err != nil {
 		return RelayLease{}, fmt.Errorf("controlstate: register relay: %w", err)
 	}
-	return relayLeaseFromRegister(row)
+	if len(registration.PeerSigningPublicKey) != 0 {
+		bound, err := queries.BindRelayRunSigningKey(ctx, controlstatedb.BindRelayRunSigningKeyParams{
+			RelayID: registration.RelayID, RelayRunID: registration.RelayRunID,
+			PeerSigningPublicKey: registration.PeerSigningPublicKey,
+		})
+		if isUniqueViolation(err) {
+			return RelayLease{}, ErrRelayRegistrationConflict
+		}
+		if err != nil {
+			return RelayLease{}, fmt.Errorf("controlstate: bind relay process key: %w", err)
+		}
+		if bound != 1 {
+			return RelayLease{}, ErrRelayRegistrationConflict
+		}
+	}
+	if err := queries.MarkSupersededRelayRunSigningKeys(ctx, controlstatedb.MarkSupersededRelayRunSigningKeysParams{
+		RelayID: registration.RelayID, RelayRunID: registration.RelayRunID,
+		SupersededAt: timestamptz(now),
+	}); err != nil {
+		return RelayLease{}, fmt.Errorf("controlstate: supersede relay process keys: %w", err)
+	}
+	result, err = relayLeaseFromRegister(row)
+	if err != nil {
+		return RelayLease{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return RelayLease{}, fmt.Errorf("controlstate: register relay: commit: %w", err)
+	}
+	return result, nil
 }
 
 // RenewRelay extends one exact, unexpired relay lease.
@@ -403,6 +440,9 @@ func validateRelayRegistration(registration RelayRegistration, leaseDuration tim
 			return errors.New("controlstate: relay internal network is invalid")
 		}
 	}
+	if registration.PeerSigningPublicKey != nil && len(registration.PeerSigningPublicKey) != 32 {
+		return errors.New("controlstate: relay peer signing public key must be 32 bytes")
+	}
 	return nil
 }
 
@@ -529,6 +569,7 @@ func relayLeaseFromRegister(row controlstatedb.RegisterRelayRow) (RelayLease, er
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
 		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
+		peerSigningPublicKey: row.PeerSigningPublicKey,
 	})
 }
 
@@ -543,6 +584,7 @@ func relayLeaseFromRenewal(row controlstatedb.RenewRelayRow) (RelayLease, error)
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
 		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
+		peerSigningPublicKey: row.PeerSigningPublicKey,
 	})
 }
 
@@ -557,6 +599,7 @@ func relayLeaseFromDrain(row controlstatedb.BeginRelayDrainRow) (RelayLease, err
 		reportedStreams: row.ReportedStreams, draining: row.Draining, drainDeadline: row.DrainDeadline,
 		registeredAt: row.RegisteredAt, renewedAt: row.RenewedAt, leaseExpiresAt: row.LeaseExpiresAt,
 		relayAddress: row.RelayAddress, tlsServerName: row.TlsServerName,
+		peerSigningPublicKey: row.PeerSigningPublicKey,
 	})
 }
 
@@ -567,6 +610,7 @@ type relayLeaseValues struct {
 	reportedConnections, reportedStreams                                                   int64
 	observedAddress                                                                        *netip.Addr
 	internalNetworks                                                                       []netip.Prefix
+	peerSigningPublicKey                                                                   []byte
 	draining                                                                               bool
 	drainDeadline, registeredAt, renewedAt, leaseExpiresAt                                 pgtype.Timestamptz
 }
@@ -577,6 +621,7 @@ func relayLease(row relayLeaseValues) (RelayLease, error) {
 	}
 	if row.relayLeaseRevision <= 0 || row.protocolVersion <= 0 || row.connectionCapacity < 0 ||
 		row.streamCapacity < 0 || row.reportedConnections < 0 || row.reportedStreams < 0 ||
+		(len(row.peerSigningPublicKey) != 0 && len(row.peerSigningPublicKey) != 32) ||
 		!row.registeredAt.Valid || !row.renewedAt.Valid || !row.leaseExpiresAt.Valid {
 		return RelayLease{}, errors.New("controlstate: invalid relay lease row")
 	}
@@ -591,7 +636,8 @@ func relayLease(row relayLeaseValues) (RelayLease, error) {
 			RelayServiceID: row.relayServiceID, RelayID: row.relayID, RelayRunID: row.relayRunID,
 			RelayLeaseRevision: uint64(row.relayLeaseRevision),
 		},
-		ProtocolVersion: uint64(row.protocolVersion), RelayAddress: row.relayAddress,
+		PeerSigningPublicKey: append([]byte(nil), row.peerSigningPublicKey...),
+		ProtocolVersion:      uint64(row.protocolVersion), RelayAddress: row.relayAddress,
 		TLSServerName: row.tlsServerName, InternalRelayAddress: row.internalRelayAddress,
 		ObservedAddress: row.observedAddress, InternalNetworks: append([]netip.Prefix(nil), row.internalNetworks...),
 		ConnectionCapacity: uint64(row.connectionCapacity), StreamCapacity: uint64(row.streamCapacity),

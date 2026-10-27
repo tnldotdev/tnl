@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"time"
@@ -38,6 +40,10 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistration) (relayv1.RelayLease, error) {
+	publicKey, err := base64.RawURLEncoding.DecodeString(body.PeerSigningPublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(publicKey) != body.PeerSigningPublicKey {
+		return relayv1.RelayLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "relay peer signing public key must be a 32-byte base64url value")
+	}
 	code, valid := region.Parse(body.Region)
 	if !valid || code != region.Code(body.Region) {
 		return relayv1.RelayLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "relay region must be a known tnl code")
@@ -67,8 +73,9 @@ func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistrat
 	}
 	lease, err := s.store.RegisterRelay(ctx, controlstate.RelayRegistration{
 		RelayServiceID: body.RelayServiceId, RelayID: body.RelayId, RelayRunID: body.RelayRunId,
-		Region:          code,
-		ProtocolVersion: protocolVersion, RelayAddress: body.RelayAddress, TLSServerName: body.TlsServerName,
+		PeerSigningPublicKey: publicKey,
+		Region:               code,
+		ProtocolVersion:      protocolVersion, RelayAddress: body.RelayAddress, TLSServerName: body.TlsServerName,
 		InternalRelayAddress: body.InternalRelayAddress, InternalNetworks: internalNetworks,
 		ConnectionCapacity: connectionCapacity, StreamCapacity: streamCapacity,
 	}, s.now(), s.leaseDuration)

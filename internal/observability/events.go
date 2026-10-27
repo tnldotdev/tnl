@@ -222,7 +222,7 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 		return
 	}
 	switch kind {
-	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads":
+	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads", "native_peer_pairs", "relay_run_signing_keys":
 	default:
 		return
 	}

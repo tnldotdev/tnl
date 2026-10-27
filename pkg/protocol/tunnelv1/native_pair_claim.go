@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/netip"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -56,6 +57,22 @@ func (p NativePairLegProof) Message() ([]byte, error) {
 		return nil, err
 	}
 	return append([]byte("tnl native pair leg claim v1\x00"), body...), nil
+}
+
+// RelayClaimMessage binds the connector's signed proof to the source observed
+// by the relay socket. control verifies a separate relay-process signature over
+// this message before releasing a pair key.
+func (p NativePairLegProof) RelayClaimMessage(observedSource netip.Addr) ([]byte, error) {
+	message, err := p.Message()
+	if err != nil || len(p.Signature) != ed25519.SignatureSize || !observedSource.IsValid() || observedSource.Zone() != "" {
+		return nil, ErrNativePairLegProof
+	}
+	address := observedSource.Unmap().AsSlice()
+	result := make([]byte, 0, len(message)+len(p.Signature)+len(address)+40)
+	result = append(result, "tnl relay native pair leg claim v1\x00"...)
+	result = append(result, message...)
+	result = append(result, p.Signature...)
+	return append(result, address...), nil
 }
 
 func (p NativePairLegProof) Validate() error {

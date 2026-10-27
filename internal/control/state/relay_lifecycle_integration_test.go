@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -50,6 +51,7 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 					t.Fatal(err)
 				}
 				registrations[1].RelayRunID += "-returned"
+				registrations[1].PeerSigningPublicKey = testRelayPeerPublicKey(registrations[1].RelayRunID)
 				if _, err := database.RegisterRelay(t.Context(), registrations[1], at, time.Hour); err != nil {
 					t.Fatal(err)
 				}
@@ -73,6 +75,7 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 			}
 			if onlySecondReturns {
 				registrations[0].RelayRunID += "-returned"
+				registrations[0].PeerSigningPublicKey = testRelayPeerPublicKey(registrations[0].RelayRunID)
 				if _, err := database.RegisterRelay(t.Context(), registrations[0], at, time.Hour); err != nil {
 					t.Fatal(err)
 				}
@@ -248,9 +251,15 @@ func newRelayLifecycleDatabase(t *testing.T) (*Database, time.Time) {
 func relayLifecycleRegistration(name string) RelayRegistration {
 	return RelayRegistration{
 		RelayServiceID: name, RelayID: name + "-1", RelayRunID: name + "-run", ProtocolVersion: tunnelv1.Version,
-		RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test",
+		PeerSigningPublicKey: testRelayPeerPublicKey(name + "-run"),
+		RelayAddress:         name + ".example.test:443", TLSServerName: name + ".example.test",
 		InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 1, StreamCapacity: 10,
 	}
+}
+
+func testRelayPeerPublicKey(runID string) ed25519.PublicKey {
+	seed := sha256.Sum256([]byte(runID))
+	return ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
 }
 
 func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (PublishRunSetup, [2]RelayRegistration) {

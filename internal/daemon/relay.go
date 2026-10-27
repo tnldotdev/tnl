@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -29,6 +32,7 @@ const relaySessionSetupTimeout = 10 * time.Second
 type relayRuntime struct {
 	configuredIdentity string
 	processRunID       string
+	peerSigningKey     ed25519.PrivateKey
 	controller         *relay.Controller
 	registry           *relay.Registry
 	serviceRegistry    *relay.ServiceRegistry
@@ -218,7 +222,12 @@ func (d *daemon) startRelayRuntime(
 	if err != nil {
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("create relay process peer signing key: %w", err)
+	}
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.relayID, runID
+	runtime.peerSigningKey = privateKey
 	registry := relay.NewRegistry()
 	serviceRegistry := relay.NewServiceRegistry()
 	serviceRegistry.Instrument(runtimeConfig.metrics)
@@ -230,8 +239,9 @@ func (d *daemon) startRelayRuntime(
 		Client:   runtimeConfig.client,
 		Registration: relayv1.RelayRegistration{
 			RelayServiceId: runtimeConfig.relayServiceID, RelayId: runtimeConfig.relayID, RelayRunId: runID,
-			Region:          string(settings.region),
-			ProtocolVersion: tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
+			PeerSigningPublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+			Region:               string(settings.region),
+			ProtocolVersion:      tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
 			TlsServerName: runtimeConfig.tlsServerName, InternalRelayAddress: runtimeConfig.internalAddress,
 			InternalNetworks: []string{}, ConnectionCapacity: settings.publisherConnectionLimit,
 			StreamCapacity: settings.streamCapacity,

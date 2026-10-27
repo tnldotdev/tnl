@@ -191,6 +191,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 	}
 	registration := relayLifecycleRegistration(failed.RelayServiceID)
 	registration.RelayID, registration.RelayRunID = failed.RelayID, failed.RelayRunID+"-restarted"
+	registration.PeerSigningPublicKey = testRelayPeerPublicKey(registration.RelayRunID)
 	registration.ConnectionCapacity = uint64(max(4096, f.routes))
 	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
 	restarted, err = f.controls[1].RegisterRelay(callCtx, registration, now, time.Hour)

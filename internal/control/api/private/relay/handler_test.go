@@ -3,6 +3,9 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -46,6 +49,10 @@ func TestHandlerRequiresClusterSecret(t *testing.T) {
 
 func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got controlstate.RelayRegistration
 	var gotNow time.Time
 	var gotDuration time.Duration
@@ -57,7 +64,8 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	) (controlstate.RelayLease, error) {
 		got, gotNow, gotDuration = registration, registeredAt, leaseDuration
 		return controlstate.RelayLease{
-			Region: registration.Region,
+			PeerSigningPublicKey: registration.PeerSigningPublicKey,
+			Region:               registration.Region,
 			RelayLeaseIdentity: controlstate.RelayLeaseIdentity{
 				RelayServiceID: registration.RelayServiceID, RelayID: registration.RelayID,
 				RelayRunID: registration.RelayRunID, RelayLeaseRevision: 7,
@@ -70,7 +78,8 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 		}, nil
 	}}
 	body := relayv1.RelayRegistration{
-		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", Region: "sjc", ProtocolVersion: 1,
+		PeerSigningPublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+		RelayServiceId:       "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", Region: "sjc", ProtocolVersion: 1,
 		RelayAddress: "relay.example:443", TlsServerName: "relay.example",
 		InternalRelayAddress: "10.0.0.10:8443", InternalNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
 		ConnectionCapacity: 100, StreamCapacity: 1000,
@@ -80,7 +89,8 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if got.RelayServiceID != body.RelayServiceId || got.RelayID != body.RelayId || got.RelayRunID != body.RelayRunId ||
-		got.Region != "sjc" || got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.StreamCapacity != 1000 {
+		got.Region != "sjc" || got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.StreamCapacity != 1000 ||
+		!bytes.Equal(got.PeerSigningPublicKey, publicKey) {
 		t.Fatalf("registration = %#v", got)
 	}
 	wantNetworks := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("2001:db8::/64")}
@@ -97,8 +107,27 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 	var lease relayv1.RelayLease
 	decodeRelayResponse(t, response, &lease)
-	if lease.RelayId != "relay-1" || lease.Region != "sjc" || lease.RelayLeaseRevision != 7 || len(lease.InternalNetworks) != 2 {
+	if lease.RelayId != "relay-1" || lease.Region != "sjc" || lease.RelayLeaseRevision != 7 || len(lease.InternalNetworks) != 2 ||
+		lease.PeerSigningPublicKey == nil || *lease.PeerSigningPublicKey != body.PeerSigningPublicKey {
 		t.Fatalf("lease = %#v", lease)
+	}
+	if bytes.Contains(response.Body.Bytes(), privateKey) || bytes.Contains(response.Body.Bytes(), privateKey.Seed()) {
+		t.Fatal("registration response exposed relay private key material")
+	}
+}
+
+func TestRegisterRelayRejectsMissingOrMalformedProcessKey(t *testing.T) {
+	called := false
+	store := &relayStoreStub{registerRelay: func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error) {
+		called = true
+		return controlstate.RelayLease{}, nil
+	}}
+	for _, key := range []string{"", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB"} {
+		body := relayv1.RelayRegistration{PeerSigningPublicKey: key}
+		response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/relays/register", body)
+		if response.Code != http.StatusBadRequest || called {
+			t.Fatalf("process key %q: status %d, store called %t", key, response.Code, called)
+		}
 	}
 }
 

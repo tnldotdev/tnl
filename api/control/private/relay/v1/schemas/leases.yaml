@@ -6,6 +6,7 @@ schemas:
       - relay_service_id
       - relay_id
       - relay_run_id
+      - peer_signing_public_key
       - region
       - protocol_version
       - relay_address
@@ -25,6 +26,10 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_run_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      peer_signing_public_key:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        description: Unpadded base64url encoding of the 32-byte Ed25519 public key held by this relay process run. A retry for the same run must use the same key.
       protocol_version:
         type: integer
         format: int64
@@ -123,6 +128,10 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_run_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      peer_signing_public_key:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        description: Present only for leases registered with a process-bound key. Missing-key leases cannot authorize native peer leg claims.
       relay_lease_revision:
         type: integer
         format: int64

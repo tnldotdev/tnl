@@ -224,6 +224,9 @@ type RelayLease struct {
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
 	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
 	ObservedAddress      *string    `json:"observed_address,omitempty"`
+
+	// PeerSigningPublicKey Present only for leases registered with a process-bound key. Missing-key leases cannot authorize native peer leg claims.
+	PeerSigningPublicKey *string    `json:"peer_signing_public_key,omitempty"`
 	ProtocolVersion      int64      `json:"protocol_version"`
 	Region               string     `json:"region"`
 	RegisteredAt         time.Time  `json:"registered_at"`
@@ -252,7 +255,10 @@ type RelayRegistration struct {
 	ConnectionCapacity   int64      `json:"connection_capacity"`
 	InternalNetworks     []string   `json:"internal_networks"`
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
-	ProtocolVersion      int64      `json:"protocol_version"`
+
+	// PeerSigningPublicKey Unpadded base64url encoding of the 32-byte Ed25519 public key held by this relay process run. A retry for the same run must use the same key.
+	PeerSigningPublicKey string `json:"peer_signing_public_key"`
+	ProtocolVersion      int64  `json:"protocol_version"`
 
 	// Region Stable tnl region code shared by processes in this relay service.
 	Region         string     `json:"region"`

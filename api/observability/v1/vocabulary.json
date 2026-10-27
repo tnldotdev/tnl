@@ -401,7 +401,8 @@
         "service_audit",
         "guest_private_state",
         "workloads",
-        "native_peer_pairs"
+        "native_peer_pairs",
+        "relay_run_signing_keys"
       ],
       "semantics": "cleanup domain",
       "dimension_policy": "bounded"

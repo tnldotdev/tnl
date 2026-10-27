@@ -397,6 +397,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 					}
 					registration := relayLifecycleRegistration(lease.RelayServiceID)
 					registration.RelayID, registration.RelayRunID = lease.RelayID, lease.RelayRunID+"-cadence-restart"
+					registration.PeerSigningPublicKey = testRelayPeerPublicKey(registration.RelayRunID)
 					registration.ConnectionCapacity = uint64(max(4096, f.routes))
 					callCtx, stop := context.WithTimeout(ctx, cadenceControlTimeout)
 					replacement, err := f.controls[index%2].RegisterRelay(callCtx, registration, now(), cadenceProcessLease)

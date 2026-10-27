@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/json"
 	"io"
@@ -125,6 +127,27 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	if relayServices != 2 || relayLeases != 2 || ingressLeases != 2 {
 		t.Fatalf("standalone topology = %d relay services, %d relay leases, %d ingress leases", relayServices, relayLeases, ingressLeases)
 	}
+	rows, err := inspect.QueryContext(integrationOperationContext(t), `SELECT peer_signing_public_key FROM control.relay_leases ORDER BY relay_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys [][]byte
+	for rows.Next() {
+		var key []byte
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if len(keys) != 2 || len(keys[0]) != ed25519.PublicKeySize || len(keys[1]) != ed25519.PublicKeySize || bytes.Equal(keys[0], keys[1]) {
+		t.Fatal("standalone logical relays did not register distinct process public keys")
+	}
 
 	stopIntegrationProcess(t, process)
 }
@@ -194,12 +217,16 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	var relayARunID string
 	var relayARevision int64
 	var relayAExpiresAt time.Time
+	var relayAKey []byte
 	if err := inspect.QueryRowContext(integrationOperationContext(t), `
-		SELECT relay_run_id, relay_lease_revision, lease_expires_at
+		SELECT relay_run_id, relay_lease_revision, lease_expires_at, peer_signing_public_key
 		FROM control.relay_leases
 		WHERE relay_id = 'relay-a-1' AND draining
-	`).Scan(&relayARunID, &relayARevision, &relayAExpiresAt); err != nil {
+	`).Scan(&relayARunID, &relayARevision, &relayAExpiresAt, &relayAKey); err != nil {
 		t.Fatal(err)
+	}
+	if len(relayAKey) != ed25519.PublicKeySize {
+		t.Fatal("split relay did not register a process public key")
 	}
 	waitUntilIntegrationTime(t, relayAExpiresAt.Add(100*time.Millisecond))
 	relayAReplacementConfig := splitTestRelayConfig(
@@ -211,14 +238,16 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	var replacementRunID string
 	var replacementRevision int64
 	var replacementDraining bool
+	var replacementKey []byte
 	if err := inspect.QueryRowContext(integrationOperationContext(t), `
-		SELECT relay_run_id, relay_lease_revision, draining
+		SELECT relay_run_id, relay_lease_revision, draining, peer_signing_public_key
 		FROM control.relay_leases
 		WHERE relay_id = 'relay-a-1'
-	`).Scan(&replacementRunID, &replacementRevision, &replacementDraining); err != nil {
+	`).Scan(&replacementRunID, &replacementRevision, &replacementDraining, &replacementKey); err != nil {
 		t.Fatal(err)
 	}
-	if replacementRunID == relayARunID || replacementRevision != relayARevision+1 || replacementDraining {
+	if replacementRunID == relayARunID || replacementRevision != relayARevision+1 || replacementDraining ||
+		len(replacementKey) != ed25519.PublicKeySize || bytes.Equal(replacementKey, relayAKey) {
 		t.Fatalf(
 			"replacement relay lease = run %q, revision %d, draining %t; previous run %q, revision %d",
 			replacementRunID, replacementRevision, replacementDraining, relayARunID, relayARevision,

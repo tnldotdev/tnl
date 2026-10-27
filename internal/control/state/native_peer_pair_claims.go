@@ -30,13 +30,15 @@ type NativePeerPairLegClaim struct {
 func (NativePeerPairLegClaim) String() string   { return "native peer pair leg claim" }
 func (NativePeerPairLegClaim) GoString() string { return "native peer pair leg claim" }
 
-// ClaimNativePeerPairLeg is called only by an authenticated relay owner. lease
-// is its current process identity and observedSource is taken from its socket,
-// never from a connector frame, STUN, or ICE. no HTTP adapter is provided here.
-func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseIdentity, observedSource netip.Addr, proof tunnelv1.NativePairLegProof, now time.Time) (result NativePeerPairLegClaim, retErr error) {
+// ClaimNativePeerPairLeg verifies a signature from the exact current relay
+// process. a future adapter must also authenticate the cluster secret before
+// calling it. observedSource comes from the relay socket, never from a connector
+// frame, STUN, or ICE. no HTTP adapter is provided here.
+func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseIdentity, observedSource netip.Addr, proof tunnelv1.NativePairLegProof, relaySignature []byte, now time.Time) (result NativePeerPairLegClaim, retErr error) {
 	message, err := proof.Message()
+	relayMessage, relayErr := proof.RelayClaimMessage(observedSource)
 	requestAt := proof.RequestedAt.UTC().Truncate(time.Microsecond)
-	if err != nil || len(proof.Signature) != ed25519.SignatureSize || d.storageKey == nil || now.IsZero() ||
+	if err != nil || relayErr != nil || len(relaySignature) != ed25519.SignatureSize || d.storageKey == nil || now.IsZero() ||
 		!observedSource.IsValid() || observedSource.Zone() != "" || validateRelayLeaseIdentity(lease) != nil ||
 		lease.RelayServiceID != proof.RelayServiceID || lease.RelayID != proof.RelayID ||
 		lease.RelayRunID != proof.RelayRunID || lease.RelayLeaseRevision != proof.RelayLeaseRevision ||
@@ -72,7 +74,9 @@ func (d *Database) ClaimNativePeerPairLeg(ctx context.Context, lease RelayLeaseI
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if validateClaimRelayLease(current, lease, proof.RelayServiceID, now) != nil {
+	if validateClaimRelayLease(current, lease, proof.RelayServiceID, now) != nil ||
+		len(current.PeerSigningPublicKey) != ed25519.PublicKeySize ||
+		!ed25519.Verify(current.PeerSigningPublicKey, relayMessage, relaySignature) {
 		return result, ErrServiceAccess
 	}
 	// the run lock serializes assignment replacements. require the exact ready

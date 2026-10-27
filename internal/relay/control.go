@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -539,6 +541,10 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 }
 
 func validateRegistration(registration relayv1.RelayRegistration) error {
+	publicKey, err := base64.RawURLEncoding.DecodeString(registration.PeerSigningPublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(publicKey) != registration.PeerSigningPublicKey {
+		return errors.New("relay: process peer signing public key is invalid")
+	}
 	for _, value := range []string{
 		registration.RelayServiceId, registration.RelayId, registration.RelayRunId,
 		registration.RelayAddress, registration.TlsServerName, registration.InternalRelayAddress,
@@ -569,6 +575,7 @@ func validateRegistration(registration relayv1.RelayRegistration) error {
 
 func validateLease(registration relayv1.RelayRegistration, lease relayv1.RelayLease, now time.Time) error {
 	if lease.RelayServiceId != registration.RelayServiceId || lease.RelayId != registration.RelayId ||
+		lease.PeerSigningPublicKey == nil || *lease.PeerSigningPublicKey != registration.PeerSigningPublicKey ||
 		lease.RelayRunId != registration.RelayRunId || lease.ProtocolVersion != registration.ProtocolVersion ||
 		lease.RelayAddress != registration.RelayAddress || lease.TlsServerName != registration.TlsServerName ||
 		lease.InternalRelayAddress != registration.InternalRelayAddress ||

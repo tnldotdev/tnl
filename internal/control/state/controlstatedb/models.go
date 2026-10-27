@@ -1076,6 +1076,7 @@ type ControlRelayLease struct {
 	Region               string
 	RelayRunID           string
 	RelayLeaseRevision   int64
+	PeerSigningPublicKey []byte
 	ProtocolVersion      int64
 	InternalRelayAddress string
 	ObservedAddress      *netip.Addr
@@ -1089,6 +1090,13 @@ type ControlRelayLease struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+}
+
+type ControlRelayRunSigningKey struct {
+	RelayID              string
+	RelayRunID           string
+	PeerSigningPublicKey []byte
+	SupersededAt         pgtype.Timestamptz
 }
 
 type ControlRelayService struct {

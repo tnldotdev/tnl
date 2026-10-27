@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -38,6 +39,16 @@ func testNativeLegProof(t *testing.T, pair NativePeerPair, slot int, at time.Tim
 	}
 	p.Signature = ed25519.Sign(key, message)
 	return p
+}
+
+func testClaimNativePeerPairLeg(t *testing.T, d *Database, ctx context.Context, lease RelayLeaseIdentity, source netip.Addr, proof tunnelv1.NativePairLegProof, now time.Time) (NativePeerPairLegClaim, error) {
+	t.Helper()
+	seed := sha256.Sum256([]byte(lease.RelayRunID))
+	message, err := proof.RelayClaimMessage(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.ClaimNativePeerPairLeg(ctx, lease, source, proof, ed25519.Sign(ed25519.NewKeyFromSeed(seed[:]), message), now)
 }
 
 func testNativePairRelays(run ServiceRunState, leases map[string]RelayLease) (relays [2]NativePeerPairRelay) {
@@ -204,7 +215,32 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	}
 	sourceIP := netip.MustParseAddr("192.0.2.10")
 	leg0 := testNativeLegProof(t, first, 0, now, private)
-	claim0, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0, now)
+	claimMessage, err := leg0.RelayClaimMessage(sourceIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a cluster-authenticated caller with the lease ID and public key still
+	// cannot claim this leg without the process's private key.
+	publicOnly := f.leases[first.Relays[0].RelayLease.RelayServiceID].PeerSigningPublicKey
+	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0,
+		ed25519.Sign(ed25519.NewKeyFromSeed(publicOnly), claimMessage), now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("public lease key authorized a native peer leg", err)
+	}
+	relaySeed := sha256.Sum256([]byte(first.Relays[0].RelayLease.RelayRunID))
+	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.11"), leg0,
+		ed25519.Sign(ed25519.NewKeyFromSeed(relaySeed[:]), claimMessage), now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("signature for a different relay-observed source authorized a leg", err)
+	}
+	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET peer_signing_public_key=NULL WHERE relay_id=$1`, first.Relays[0].RelayLease.RelayID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("missing-key lease authorized a native peer leg", err)
+	}
+	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET peer_signing_public_key=$2 WHERE relay_id=$1`, first.Relays[0].RelayLease.RelayID, publicOnly); err != nil {
+		t.Fatal(err)
+	}
+	claim0, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, now)
 	if err != nil || claim0.Key != first.Key || claim0.SourceIP != sourceIP || claim0.ExpiresAt.After(first.ExpiresAt) ||
 		claim0.PairID != first.ID || claim0.DeliveryGeneration != first.DeliveryGeneration {
 		t.Fatal("exact relay leg did not receive bounded delivery", err)
@@ -212,21 +248,21 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if bytes.Contains([]byte(claim0.String()+claim0.GoString()), []byte(first.Key)) {
 		t.Fatal("claim formatted the key")
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replayed proof recovered key", err)
 	}
 	other := testNativeLegProof(t, first, 1, now, private)
-	if claim, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[1].RelayLease, sourceIP, other, now); err != nil || claim.Key != first.Key || claim.ConnectionSlot != 1 {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, other, now); err != nil || claim.Key != first.Key || claim.ConnectionSlot != 1 {
 		t.Fatal("sibling relay could not claim its own leg", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[1].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("sibling relay obtained other leg", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_services SET relay_address=$2 WHERE relay_service_id=$1`,
 		first.Relays[0].RelayLease.RelayServiceID, "relay-changed.example.test:443"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP,
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP,
 		testNativeLegProof(t, first, 0, now.Add(time.Microsecond), private), now.Add(time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("changed relay address retained its old pair key", err)
 	}
@@ -247,22 +283,22 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrongProcess.Signature = ed25519.Sign(private, wrongMessage)
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[1].RelayLease, sourceIP, wrongProcess, wrongProcess.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[1].RelayLease, sourceIP, wrongProcess, wrongProcess.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("signed proof for the wrong relay process obtained key", err)
 	}
 	wrongLease := first.Relays[0].RelayLease
 	wrongLease.RelayLeaseRevision++
-	if _, err := d.ClaimNativePeerPairLeg(ctx, wrongLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, wrongLease, sourceIP, leg0, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("wrong relay lease revision obtained key", err)
 	}
 	writtenAgain := testNativeLegProof(t, first, 0, now.Add(time.Microsecond), private)
-	if claim, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, writtenAgain, writtenAgain.RequestedAt); err != nil || claim.Key != first.Key {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, writtenAgain, writtenAgain.RequestedAt); err != nil || claim.Key != first.Key {
 		t.Fatal("fresh same-source retry lost delivery", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0, writtenAgain.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, writtenAgain.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("older proof recovered key after retry", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.11"), testNativeLegProof(t, first, 0, now.Add(2*time.Microsecond), private), now.Add(2*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.11"), testNativeLegProof(t, first, 0, now.Add(2*time.Microsecond), private), now.Add(2*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("new source reused an existing relay claim", err)
 	}
 	var claimCount int
@@ -319,7 +355,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	staleRunProof.Signature = ed25519.Sign(private, message)
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, staleRunProof, staleRunProof.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, staleRunProof, staleRunProof.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("stale run obtained key", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=$2 WHERE id=$1`, publisher.GrantID, now); err != nil {
@@ -328,7 +364,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.PrepareNativePeerPair(visitor, request, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher grant recovered pair", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, first, 0, now.Add(4*time.Microsecond), private), now.Add(4*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, first, 0, now.Add(4*time.Microsecond), private), now.Add(4*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher grant recovered relay key", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=NULL WHERE id=$1`, publisher.GrantID); err != nil {
@@ -366,7 +402,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if err != nil || second.ID == first.ID || second.Key == first.Key || second.DeliveryGeneration <= first.DeliveryGeneration {
 		t.Fatal("signed replacement did not rotate the exact delivery", err)
 	}
-	if claim, err := d.ClaimNativePeerPairLeg(ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key {
 		t.Fatal("new delivery could not claim its own leg", err)
 	}
 	var oldClaims int
@@ -400,7 +436,7 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.PrepareNativePeerPair(visitor, replacement, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replaced assignment recovered pair", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt.Add(time.Microsecond), private), replacement.RequestedAt.Add(time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt.Add(time.Microsecond), private), replacement.RequestedAt.Add(time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replaced ready assignment recovered relay key", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision-1 WHERE publisher_connection_id=$1`, first.Relays[0].PublisherConnectionID); err != nil {
@@ -412,13 +448,13 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.PrepareNativePeerPair(visitor, request, now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired relay lease recovered pair", err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired relay lease recovered relay key", err)
 	}
 	if err := d.RevokeVisitorDevice(visitor, principal.IdentityID, device.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ClaimNativePeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, now.Add(5*time.Microsecond), private), now.Add(5*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, now.Add(5*time.Microsecond), private), now.Add(5*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked native subject recovered relay key", err)
 	}
 	if _, err := d.PrepareNativePeerPair(visitor, request, now); err == nil {
@@ -521,10 +557,10 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 		t.Fatal("workload pair outlived confirmed authority", err)
 	}
 	proof := testNativeLegProof(t, pair, 0, now, private)
-	if _, err := d.ClaimNativePeerPairLeg(ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("198.51.100.10"), proof, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("198.51.100.10"), proof, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("connector hint overrode relay-observed IP policy", err)
 	}
-	if claim, err := d.ClaimNativePeerPairLeg(ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), proof, now); err != nil || claim.Key != pair.Key {
+	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), proof, now); err != nil || claim.Key != pair.Key {
 		t.Fatal("allowed observed source lost delivery", err)
 	}
 	for _, lease := range leases {

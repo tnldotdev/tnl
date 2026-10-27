@@ -54,6 +54,7 @@ func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
 	registration := relayLifecycleRegistration(previous.RelayServiceID)
 	registration.ConnectionCapacity = 1 // the existing reservation fills this service.
 	registration.RelayRunID += "-restart"
+	registration.PeerSigningPublicKey = testRelayPeerPublicKey(registration.RelayRunID)
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at = $1 WHERE relay_id = $2`, now.Add(time.Second), registration.RelayID); err != nil {
 		t.Fatal(err)
 	}
