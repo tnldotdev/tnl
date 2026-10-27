@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -214,6 +215,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
 					if err != nil {
+						if errors.Is(err, clientcontrol.ErrUnavailable) || errors.Is(err, clientcontrol.ErrRateLimited) {
+							response.Header().Set("Retry-After", "1")
+							http.Error(response, "share visitor permission is unavailable; retry", http.StatusServiceUnavailable)
+							return
+						}
 						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 						return
 					}

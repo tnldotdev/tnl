@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -46,6 +47,9 @@ type shareAccessTestClient struct {
 	cookie     string
 	active     bool
 	minted     bool
+	failures   int
+	failure    error
+	calls      int
 	permission func() controlv1.VisitorTokenResponse
 }
 
@@ -135,6 +139,11 @@ func (*shareAccessTestClient) EnableShareAccess(context.Context, string, uint64,
 }
 
 func (c *shareAccessTestClient) RedeemPublishRunShare(_ context.Context, _ string, body controlv1.RedeemShareRequest, _ credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+	c.calls++
+	if c.failures > 0 {
+		c.failures--
+		return controlv1.ShareRedemption{}, c.failure
+	}
 	if !c.active || body.ShareId == nil || *body.ShareId != c.shareID || body.Secret == nil || *body.Secret != base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32))) {
 		return controlv1.ShareRedemption{}, errors.New("invalid share")
 	}
@@ -148,6 +157,47 @@ func (c *shareAccessTestClient) RedeemPublishRunShare(_ context.Context, _ strin
 		ExpiresAt: time.Now().Add(time.Hour), NextUrl: "https://route.example/",
 		Permission: permission,
 	}, nil
+}
+
+func TestShareRedemptionRetriesTransientControlButDoesNotRetryHandoff(t *testing.T) {
+	client := &shareAccessTestClient{shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true,
+		failure: clientcontrol.ErrUnavailable, failures: 1}
+	access := &shareAccess{client: client, runID: "pr_test", version: 1}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer upstream.Close()
+	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: access})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	serve := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Host, request.TLS = "route.example", &tls.ConnectionState{ServerName: "route.example"}
+		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, true))
+		response := httptest.NewRecorder()
+		route.http.Handler.ServeHTTP(response, request)
+		return response
+	}
+	link := "/__tnl/share/" + client.shareID + "." + base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
+	if got := serve(link); got.Code != http.StatusSeeOther || client.calls != 2 || len(got.Result().Cookies()) != 2 {
+		t.Fatalf("transient share redemption = %d, attempts=%d", got.Code, client.calls)
+	}
+	client.failures = 1
+	client.failure = clientcontrol.ErrUnauthenticated
+	if got := serve(link); got.Code != http.StatusForbidden || client.calls != 3 || len(got.Result().Cookies()) != 0 {
+		t.Fatalf("denied share redemption = %d, attempts=%d", got.Code, client.calls)
+	}
+	client.failures = 1
+	client.failure = clientcontrol.ErrUnavailable
+	handoff := "/__tnl/share/handoff/" + base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("h", 32)))
+	if got := serve(handoff); got.Code != http.StatusServiceUnavailable || client.calls != 4 || len(got.Result().Cookies()) != 0 {
+		t.Fatalf("uncertain handoff redemption = %d, attempts=%d", got.Code, client.calls)
+	}
+	client.cookie = "invalid"
+	if got := serve(link); got.Code != http.StatusServiceUnavailable || client.calls != 5 || len(got.Result().Cookies()) != 0 {
+		t.Fatalf("invalid control redemption = %d, attempts=%d", got.Code, client.calls)
+	}
 }
 
 func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {

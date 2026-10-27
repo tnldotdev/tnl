@@ -127,6 +127,14 @@ func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAut
 	if err := d.requireOpen(); err != nil {
 		return ShareRedemption{}, err
 	}
+	return retryVisitorPreparation(ctx, now, func(at time.Time) (ShareRedemption, error) {
+		return d.redeemShareTransaction(ctx, authentication, shareID, secret, handoff, at)
+	})
+}
+
+// retrying the entire transaction cannot consume a one-use handoff when a
+// concurrent PostgreSQL update aborts its first attempt.
+func (d *Database) redeemShareTransaction(ctx context.Context, authentication PublishRunAuthentication, shareID string, secret, handoff []byte, now time.Time) (result ShareRedemption, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return ShareRedemption{}, fmt.Errorf("controlstate: redeem share: begin transaction: %w", err)

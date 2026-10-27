@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -53,16 +54,16 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 	} else {
 		return controlv1.ShareRedemption{}, errors.New("invalid share path")
 	}
-	result, err := a.client.RedeemPublishRunShare(ctx, a.runID, request, a.token)
+	result, err := a.redeemControl(ctx, request)
 	if err != nil {
 		return controlv1.ShareRedemption{}, err
 	}
 	if !opaqueid.Valid(result.ShareId, opaqueid.SharePrefix) || !result.ExpiresAt.After(time.Now()) ||
 		!strings.HasPrefix(result.NextUrl, "https://") || strings.Contains(result.CookieSecret, ".") {
-		return controlv1.ShareRedemption{}, errors.New("publisher: server returned invalid share redemption")
+		return controlv1.ShareRedemption{}, errors.Join(clientcontrol.ErrUnavailable, errors.New("publisher: server returned invalid share redemption"))
 	}
 	if cookie, err := base64.RawURLEncoding.DecodeString(result.CookieSecret); err != nil || len(cookie) != 32 {
-		return controlv1.ShareRedemption{}, errors.New("publisher: server returned invalid share cookie")
+		return controlv1.ShareRedemption{}, errors.Join(clientcontrol.ErrUnavailable, errors.New("publisher: server returned invalid share cookie"))
 	}
 	if a.browser != nil && a.browser.tokens != nil {
 		source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: result.ShareId, Secret: result.CookieSecret})
@@ -70,10 +71,32 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 			err = a.browser.prepareToken(ctx, source, result.Permission, result.ExpiresAt)
 		}
 		if err != nil {
-			return controlv1.ShareRedemption{}, err
+			return controlv1.ShareRedemption{}, errors.Join(clientcontrol.ErrUnavailable, err)
 		}
 	}
 	return result, nil
+}
+
+// a share link is reusable, so a failed control response can be retried
+// within this explicit preparation request. a one-use handoff is never retried
+// after an uncertain response; its transaction is retried inside control.
+func (a *shareAccess) redeemControl(ctx context.Context, request controlv1.RedeemShareRequest) (controlv1.ShareRedemption, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	backoff := 50 * time.Millisecond
+	for {
+		result, err := a.client.RedeemPublishRunShare(ctx, a.runID, request, a.token)
+		if err == nil || request.Secret == nil || !errors.Is(err, clientcontrol.ErrUnavailable) || !time.Now().Before(deadline) {
+			return result, err
+		}
+		timer := time.NewTimer(min(backoff, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return controlv1.ShareRedemption{}, context.Cause(ctx)
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, 200*time.Millisecond)
+	}
 }
 
 func stripTnlCookies(request *http.Request) *http.Request {
